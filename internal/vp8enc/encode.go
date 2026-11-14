@@ -1,0 +1,101 @@
+// Package vp8enc writes lossy WebP files: a VP8 key frame (RFC 6386) in a
+// RIFF container, with the alpha channel in an ALPH chunk when the image has
+// transparent pixels.
+//
+// The image is read from a pipeline.Source one macroblock row (16 pixel rows) at
+// a time. Besides that row the encoder keeps only the bottom row of its own
+// reconstruction of the macroblock row above, which intra prediction needs.
+//
+// A VP8 frame cannot be written straight through: its header, which comes
+// first, holds the token probabilities and the size of the mode partition,
+// and those are only known once every macroblock has been coded. So what is
+// decided for each macroblock (prediction modes and quantized coefficients)
+// goes to a spool, itself arithmetic coded and therefore about the size of
+// the final file, and a second pass reads the spool back and codes it again
+// with the probabilities that fit the image. The alpha plane is spooled
+// too, run-length packed. Spools live in memory while small and move to a
+// pipeline.Spill, and with it to a temporary file when the budget says so.
+//
+// What the encoder does for compression: 16x16 and 4x4 luma prediction and
+// chroma prediction chosen by rate-distortion cost, token probabilities
+// adapted to the image, the macroblock skip flag, a finer quantizer for
+// chroma than for luma, and a loop filter level that follows the quantizer.
+// It does not use segments (one quantizer for the whole frame) and does not
+// optimize quantized coefficients (no trellis).
+package vp8enc
+
+import (
+	"errors"
+	"fmt"
+	"io"
+
+	"github.com/whhhh1500/goimgtools/pipeline"
+)
+
+// Options are the encoding parameters.
+type Options struct {
+	// Quality ranges from 1 to 100; higher is better and larger. 0 means 75.
+	Quality int
+}
+
+// DefaultQuality is used when Options is nil or Quality is 0.
+const DefaultQuality = 75
+
+const maxDimension = 16383 // 14 bits in the frame header
+
+// debug carries test hooks.
+type debug struct {
+	noFilter bool // signal loop filter level 0
+	// When rec is set the encoder's reconstruction is stored here: planes
+	// of whole macroblocks, luma stride 16*mbw, chroma stride 8*mbw.
+	rec     bool
+	y, u, v []uint8
+	// Overrides, to exercise paths that only huge images reach.
+	forceParts int   // number of token partitions (1, 2, 4 or 8)
+	modeBudget int64 // room for the prediction modes, in 1/256 bit
+	// What happened.
+	usedI4     int   // macroblocks with 4x4 prediction
+	usedSkip   int   // macroblocks coded with the skip flag
+	partitions int   // token partitions
+	modeBits   int64 // what the modes were estimated to take, in 1/256 bit
+	p0Len      int64 // size of the first partition
+	spool      int64 // size of the spool
+}
+
+// Encode writes src as a lossy WebP file: a RIFF container with a VP8 chunk,
+// or VP8X + ALPH + VP8 when the image has transparent pixels. It does not
+// close src. If it returns an error, what was written to w is not a valid
+// file and must be discarded.
+func Encode(w io.Writer, src pipeline.Source, o *Options) error {
+	return encode(w, src, o, nil)
+}
+
+func encode(w io.Writer, src pipeline.Source, o *Options, dbg *debug) error {
+	quality := DefaultQuality
+	if o != nil && o.Quality != 0 {
+		quality = o.Quality
+	}
+	if quality < 1 || quality > 100 {
+		return fmt.Errorf("goimgtools: webp quality %d out of range 1..100", quality)
+	}
+	b := src.Bounds()
+	if b.Dx() <= 0 || b.Dy() <= 0 {
+		return errors.New("goimgtools: webp: image has no pixels")
+	}
+	if b.Dx() > maxDimension || b.Dy() > maxDimension {
+		return fmt.Errorf("goimgtools: webp: image %dx%d is larger than %d pixels a side", b.Dx(), b.Dy(), maxDimension)
+	}
+	e := &encoder{env: pipeline.EnvOf(src), b: b, w: b.Dx(), h: b.Dy(), dbg: dbg}
+	e.mbw, e.mbh = (e.w+15)>>4, (e.h+15)>>4
+	defer e.release()
+	// The rows are pulled straight from the source's strips; an early end
+	// of the source comes back as io.ErrUnexpectedEOF.
+	rr := pipeline.NewRowReader(src)
+	if err := e.init(quality, rr, src); err != nil {
+		return err
+	}
+	if err := e.analyse(rr); err != nil {
+		return err
+	}
+	return e.write(w)
+}

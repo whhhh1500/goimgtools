@@ -1,0 +1,6 @@
+# Go sources are kept with LF line endings on every system (gofmt expects them).
+*.go   text eol=lf
+*.mod  text eol=lf
+*.sum  text eol=lf
+*.md   text eol=lf
+*.png  binary
