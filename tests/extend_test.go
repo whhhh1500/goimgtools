@@ -1090,10 +1090,14 @@ func TestPanicBecomesError(t *testing.T) {
 	tmp := filepath.Join(dir, "tmp")
 	os.Mkdir(tmp, 0o755)
 	rows := 0
+	// The bug: an index past the end. (Not a nil pointer: that one reaches
+	// the runtime as a memory fault, and an emulated processor, as the
+	// automatic tests use, does not always report the faulting address the
+	// way the runtime needs to recognise it. An index is checked in code,
+	// the same everywhere.)
 	bad := func(strip *image.NRGBA) error {
 		if rows += strip.Rect.Dy(); rows > 200 {
-			var p *image.NRGBA
-			_ = p.Pix[0] // nil pointer
+			_ = strip.Pix[len(strip.Pix)+rows]
 		}
 		return nil
 	}
@@ -1106,7 +1110,7 @@ func TestPanicBecomesError(t *testing.T) {
 		if !errors.As(err, &pe) {
 			t.Fatalf("threads %d: %v, want a PanicError", threads, err)
 		}
-		if !strings.Contains(string(pe.Stack), "extend_test.go") || !strings.Contains(err.Error(), "nil pointer") {
+		if !strings.Contains(string(pe.Stack), "extend_test.go") || !strings.Contains(err.Error(), "index out of range") {
 			t.Errorf("threads %d: the error does not say where: %v", threads, err)
 		}
 		if errors.Is(err, ErrFormat) {
