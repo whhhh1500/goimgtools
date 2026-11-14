@@ -93,8 +93,15 @@ jobs:
           GOOS=wasip1 GOARCH=wasm go test -timeout 60m ./pipeline ./inspect ./internal/resize ./internal/ops ./tests
 
   js:
-    # WebAssembly for browsers and node (GOOS=js), run by node.
+    # WebAssembly for browsers and node (GOOS=js), run by node: the oldest
+    # and newest versions still in use. A run that gets out of hand is
+    # stopped by the time limit, not left to fill the machine.
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [18, 20, 22]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -102,7 +109,7 @@ jobs:
           go-version-file: go.mod
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ matrix.node }}
       - run: |
           export PATH="$(go env GOROOT)/lib/wasm:$PATH"
           go mod download
@@ -121,8 +128,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [freebsd, openbsd, netbsd, solaris]
+        include:
+          - {os: freebsd, goos: freebsd}
+          - {os: openbsd, goos: openbsd}
+          - {os: netbsd, goos: netbsd}
+          - {os: solaris, goos: solaris}
+          - {os: dragonfly, goos: dragonfly}
+          - {os: omnios, goos: illumos}
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -132,7 +146,7 @@ jobs:
         run: |
           mkdir -p ci/bin ci/goroot/src/image ci/mod/golang.org/x
           for p in tests pipeline inspect internal/resize internal/ops cmd/goimgtools; do
-            GOOS=${{ matrix.os }} GOARCH=amd64 go test -c -o "ci/bin/$(echo $p | tr / _).test" "./$p"
+            GOOS=${{ matrix.goos }} GOARCH=amd64 go test -c -o "ci/bin/$(echo $p | tr / _).test" "./$p"
           done
           # The test images the tests read: those of Go and of x/image.
           cp -r "$(go env GOROOT)/src/image/testdata" ci/goroot/src/image/
@@ -168,6 +182,16 @@ jobs:
         with:
           usesh: true
           run: sh ci/run.sh
+      - if: matrix.os == 'dragonfly'
+        uses: vmactions/dragonflybsd-vm@v1
+        with:
+          usesh: true
+          run: sh ci/run.sh
+      - if: matrix.os == 'omnios'
+        uses: vmactions/omnios-vm@v1
+        with:
+          usesh: true
+          run: sh ci/run.sh
 
   platforms:
     # Everything else is at least built and vetted.
@@ -178,7 +202,7 @@ jobs:
         with:
           go-version-file: go.mod
       - run: |
-          for t in freebsd/arm64 windows/arm64 js/wasm android/arm64 aix/ppc64 plan9/amd64 dragonfly/amd64 illumos/amd64; do
+          for t in freebsd/arm64 windows/arm64 android/arm64 aix/ppc64 plan9/amd64; do
             echo "$t"
             GOOS=${t%/*} GOARCH=${t#*/} go vet ./...
           done
