@@ -9,3 +9,6 @@
 # Profiles and measurement output
 *.prof
 *.out
+
+# What the automatic tests build for the FreeBSD machine
+/ci/

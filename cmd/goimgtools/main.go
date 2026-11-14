@@ -34,6 +34,12 @@ const usage = `usage:
   goimgtools check file...              decode each file completely and report
                                         the damaged ones
   goimgtools compare a b                how much two images differ (PSNR)
+  goimgtools stats file...              the colours of each image: average,
+                                        dominant, greyscale or not
+  goimgtools hash file...               a fingerprint of each image, for
+                                        finding duplicates (-similar bits)
+  goimgtools exif file...               camera, time and place from the EXIF
+                                        block
   goimgtools formats                    the formats that are read and written
   goimgtools fonts [-all]               list the fonts text is drawn with by
                                         default (-all: every installed font)
@@ -152,6 +158,12 @@ func run(args []string, stdout, stderr io.Writer) error {
 			return check(args[1:], stdout, stderr)
 		case "compare":
 			return compare(args[1:], stdout, stderr)
+		case "stats":
+			return stats(args[1:], stdout, stderr)
+		case "hash":
+			return hash(args[1:], stdout, stderr)
+		case "exif":
+			return exifInfo(args[1:], stdout, stderr)
 		case "formats":
 			return formatTable(args[1:], stdout)
 		case "fonts":

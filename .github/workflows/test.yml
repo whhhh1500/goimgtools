@@ -46,10 +46,10 @@ jobs:
       - run: GOARCH=386 go test ./...
 
   emulated:
-    # Two processors unlike any of the above, run under emulation: 32-bit
-    # ARM, and s390x, which stores numbers the other way round (big-endian).
-    # Emulation is slow, so this runs the tests of what the library does and
-    # of its core, not those of every decoder.
+    # Processors unlike the ones above, run under emulation: among them
+    # 32-bit ARM and MIPS, and s390x and MIPS, which store numbers the other
+    # way round (big-endian). Emulation is slow, so this runs the tests of
+    # what the library does and of its core, not those of every decoder.
     strategy:
       fail-fast: false
       matrix:
@@ -58,6 +58,14 @@ jobs:
             qemu: qemu-arm
           - arch: s390x
             qemu: qemu-s390x
+          - arch: riscv64
+            qemu: qemu-riscv64
+          - arch: ppc64le
+            qemu: qemu-ppc64le
+          - arch: loong64
+            qemu: qemu-loongarch64
+          - arch: mips
+            qemu: qemu-mips
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -66,6 +74,55 @@ jobs:
           go-version-file: go.mod
       - run: sudo apt-get update && sudo apt-get install -y qemu-user
       - run: GOARCH=${{ matrix.arch }} go test -exec ${{ matrix.qemu }} -timeout 120m ./tests ./pipeline ./inspect ./internal/resize ./internal/ops
+
+  wasi:
+    # WebAssembly, run by wasmtime: a 32-bit machine without threads.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: bytecodealliance/actions/wasmtime/setup@v1
+      - run: |
+          export PATH="$(go env GOROOT)/lib/wasm:$PATH"
+          # What the tests look for in the environment, handed on to the
+          # program inside wasmtime.
+          export GOWASIRUNTIMEARGS="--env GOROOT=$(go env GOROOT) --env GOMODCACHE=$(go env GOMODCACHE) --env TMPDIR=$RUNNER_TEMP"
+          go mod download
+          GOOS=wasip1 GOARCH=wasm go test -timeout 60m ./pipeline ./inspect ./internal/resize ./internal/ops ./tests
+
+  freebsd:
+    # Another operating system: the tests are built here and run inside a
+    # FreeBSD machine, which needs no Go of its own for that.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build the tests for FreeBSD
+        run: |
+          mkdir -p ci/bin ci/goroot/src/image ci/mod/golang.org/x
+          for p in tests pipeline inspect internal/resize internal/ops cmd/goimgtools; do
+            GOOS=freebsd GOARCH=amd64 go test -c -o "ci/bin/$(echo $p | tr / _).test" "./$p"
+          done
+          # The test images the tests read: those of Go and of x/image.
+          cp -r "$(go env GOROOT)/src/image/testdata" ci/goroot/src/image/
+          cp -r "$(go list -m -f '{{.Dir}}' golang.org/x/image)" "ci/mod/golang.org/x/image@$(go list -m -f '{{.Version}}' golang.org/x/image)"
+          chmod -R u+w ci
+      - uses: vmactions/freebsd-vm@v1
+        with:
+          usesh: true
+          run: |
+            set -e
+            root="$PWD"
+            export GOROOT="$root/ci/goroot" GOMODCACHE="$root/ci/mod"
+            uname -a
+            for p in tests pipeline inspect internal/resize internal/ops cmd/goimgtools; do
+              cd "$root/$p"
+              "$root/ci/bin/$(echo $p | tr / _).test" -test.timeout 40m
+            done
 
   platforms:
     # Everything else is at least built and vetted.
@@ -76,7 +133,7 @@ jobs:
         with:
           go-version-file: go.mod
       - run: |
-          for t in linux/arm linux/riscv64 linux/ppc64le linux/s390x linux/loong64 freebsd/amd64 openbsd/amd64 netbsd/amd64 windows/arm64 js/wasm wasip1/wasm android/arm64; do
+          for t in openbsd/amd64 netbsd/amd64 freebsd/arm64 windows/arm64 js/wasm android/arm64 solaris/amd64 aix/ppc64 plan9/amd64; do
             echo "$t"
             GOOS=${t%/*} GOARCH=${t#*/} go vet ./...
           done
@@ -92,3 +149,4 @@ jobs:
       - run: go test -run '^$' -fuzz '^FuzzDecode$' -fuzztime 60s ./tests
       - run: go test -run '^$' -fuzz '^FuzzChain$' -fuzztime 60s ./tests
       - run: go test -run '^$' -fuzz '^FuzzText$' -fuzztime 30s ./tests
+      - run: go test -run '^$' -fuzz '^FuzzExif$' -fuzztime 30s ./tests

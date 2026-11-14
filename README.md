@@ -429,7 +429,12 @@ goimgtools.Text("第一行\n第二行 Mixed", goimgtools.TextOptions{
 | `goimgtools info 文件...` | `img.Metadata()`、`img.Frames()` | 每个文件一行：格式、宽高、颜色类型和位深、像素数、文件大小、动图的帧数和时长、EXIF 方向、是否带 ICC / EXIF。加 `-json` 每个文件输出一行 JSON |
 | `goimgtools check 文件...` | `inspect.Verify(img)` | 把图片完整解码一遍，报告损坏、被截断或根本不是图片的文件。`info` 只读文件头，文件后半截坏了它看不出来 |
 | `goimgtools compare a b` | `inspect.Compare(a, b)` | 两张图逐像素比较，格式不同也能比：是否完全相同；不同的话给出 PSNR（越高越接近，40 以上肉眼难辨）、最大差值、有多少像素不同。`-min-psnr 35` 可以当质量关卡用：达不到就以非零状态退出 |
+| `goimgtools stats 文件...` | `inspect.Stats(img)` | 看遍每个像素：平均色、亮度、占面积最大的几种颜色、实际上是不是灰度图、实际上有没有透明像素、颜色数（不超过 256 种时）。用来取占位色、决定配深色还是浅色文字、判断能不能存成灰度或调色板 |
+| `goimgtools hash 文件...` | `inspect.Hash(img)` | 64 位的「感知指纹」：同一张图换了尺寸、格式、压缩率，指纹只差几位；不同的图差一半左右。`-similar 10` 列出彼此相近的文件，用来找重复图 |
+| `goimgtools exif 文件...` | `inspect.ReadExif(img)` | EXIF 里的相机、镜头、拍摄时间、曝光参数、GPS 位置等 |
 | `goimgtools formats` | `Formats()`、`CodecByName()` | 支持哪些格式、各自的扩展名、能读还是能写 |
+
+`info`、`stats`、`exif` 都可以加 `-json`，每个文件输出一行 JSON。
 
 ```bash
 goimgtools info photo.jpg anim.gif
@@ -451,6 +456,30 @@ d, err := inspect.Compare(goimgtools.Open("orig.png"), goimgtools.Open("small.jp
 fmt.Println(d) // PSNR 41.87 dB, largest difference 23 of 255, 96.4% of the pixels differ
 ```
 
+```go
+// 找重复：指纹相差 10 位以内，多半是同一张图
+a, _ := inspect.Hash(goimgtools.Open("a.jpg"))
+b, _ := inspect.Hash(goimgtools.Open("b.webp"))
+if a.Distance(b) <= 10 { /* 同一张图的不同版本 */ }
+
+// 取一张图的主色当占位色
+st, _ := inspect.Stats(goimgtools.Open("photo.jpg"))
+fmt.Println(inspect.Hex(st.Average), st.Brightness) // #2e2f29 0.18
+
+// 相机和拍摄信息
+if e, ok, _ := inspect.ReadExif(goimgtools.Open("photo.jpg")); ok {
+    fmt.Println(e.Model, e.Taken, e.HasGPS)
+}
+```
+
+实测（单线程）：`info`、`exif` 只读文件头，约 0.015 秒；2400 万像素的 JPEG，`check` 和 `hash` 约 0.2 秒，`stats` 约 0.34 秒，`compare` 两张约 0.5 秒。
+
+几点说明：
+
+- 指纹看的是整幅画面的明暗布局，所以裁剪、旋转、镜像之后就认不出了；没有明暗布局的图（纯色、从一边到另一边的平滑渐变）在它看来都一样。
+- EXIF 目前只从 JPEG 和 PNG 里读。库写文件时默认丢掉 EXIF（包括位置），要保留得显式 `KeepExif()`。
+- 这些工具都按行读图、内存有上限；`stats` 只留一张约 100KB 的颜色表，与图片大小无关。
+
 `Compare` 比的是两个配方处理之后的像素，所以两种处理方式可以直接比，不用先写成文件，例如同一张图用两种缩放算法：`inspect.Compare(a.Resize(800, 0), b.Resize(800, 0, goimgtools.ResizeOptions{Kernel: goimgtools.KernelLinear}))`。输出格式（`JPEG()`、`WebP()` 这些）不参与比较；要比编码造成的损失，先 `ToBytes()` 再用 `FromBytes` 读回来比。
 
 ## 命令行
@@ -462,6 +491,9 @@ goimgtools -text "文字" [选项] 输出文件
 goimgtools info [-json] 文件...
 goimgtools check 文件...
 goimgtools compare a b
+goimgtools stats [-json] 文件...
+goimgtools hash [-similar 位数] 文件...
+goimgtools exif [-json] 文件...
 goimgtools formats
 goimgtools fonts [-all]
 ```
@@ -709,7 +741,6 @@ WebP 编码器是本模块自己写的，没有标准库可对照，用两种解
 - 颜色调整（灰度、亮度、对比度）没有内置方法，用 `Pixels` 几行就能写（「扩展」里有灰度的例子）；模糊、锐化这类要看相邻像素的滤镜没有内置，要自己写成 `Pipe` 的一环。
 - JPEG 的网格量化（mozjpeg 的做法，同等观感下还能小 5%–10%，但会改变像素）。
 - `MaxFileSize` 只支持 JPEG 和有损 WebP（以及带 `Quality` 的注册格式）。
-- 小工具里还没做的：图片的颜色统计（平均色、主色）、感知哈希（找重复或相似的图）、EXIF 明细（相机、拍摄时间、GPS；现在只读方向）。
 
 ## 发布状态
 
@@ -742,7 +773,7 @@ goimgtools/
 ├── example_test.go  文档里的可运行示例
 │
 ├── pipeline/        公开包：像素流接口 Source、内存预算、暂存区，以及写扩展用的零件
-├── inspect/         公开包：校验图片是否完好、比较两张图的差异
+├── inspect/         公开包：校验、比较、颜色统计、感知指纹、EXIF 明细
 ├── internal/        各格式的解码和编码、缩放、基本操作、文字渲染、减色（见下表）
 ├── cmd/             命令行程序 goimgtools，实测程序 memprobe
 ├── tests/           库的行为测试：只通过公开接口使用这个库，和使用者的程序一样

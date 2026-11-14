@@ -9,6 +9,7 @@ import (
 	"image/color"
 	"image/gif"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	. "github.com/whhhh1500/goimgtools"
+	"github.com/whhhh1500/goimgtools/inspect"
 	"github.com/whhhh1500/goimgtools/internal/testutil"
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
@@ -274,6 +276,34 @@ func FuzzChain(f *testing.F) {
 		if _, err := FromBytes(out.Bytes()).Metadata(); err != nil {
 			t.Fatalf("the output cannot be read back: %v", err)
 		}
+	})
+}
+
+// FuzzExif reads arbitrary bytes as an EXIF block.
+func FuzzExif(f *testing.F) {
+	for _, name := range []string{"exif-pillow.jpg", "exif-pillow.png"} {
+		if data, err := os.ReadFile(filepath.Join("testdata", name)); err == nil {
+			if i := bytes.Index(data, []byte("Exif\x00\x00")); i >= 0 {
+				f.Add(data[i:])
+				f.Add(data[i+6:])
+			}
+			f.Add(data)
+		}
+	}
+	f.Add(exifWithOrientation(binary.LittleEndian, 3))
+	f.Add(exifWithOrientation(binary.BigEndian, 8))
+	f.Fuzz(func(t *testing.T, data []byte) {
+		e, err := inspect.ParseExif(data)
+		if err != nil {
+			return
+		}
+		// What comes out is always something that can be shown.
+		if e.Orientation < 0 || e.Orientation > 8 || e.Exposure < 0 || e.Aperture < 0 || e.FocalLength < 0 || e.ISO < 0 ||
+			math.IsNaN(e.Latitude) || math.Abs(e.Latitude) > 90 || math.IsNaN(e.Longitude) || math.Abs(e.Longitude) > 180 ||
+			math.IsNaN(e.Altitude) || math.IsInf(e.Altitude, 0) || math.IsNaN(e.Exposure) || math.IsInf(e.Exposure, 0) {
+			t.Fatalf("out of range: %+v", e)
+		}
+		_ = e.String()
 	})
 }
 

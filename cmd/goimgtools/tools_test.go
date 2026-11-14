@@ -8,6 +8,7 @@ import (
 	"image/gif"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -214,5 +215,101 @@ func TestFormats(t *testing.T) {
 	}
 	if _, _, err := cli("formats", "x"); err == nil {
 		t.Error("formats with an argument accepted")
+	}
+}
+
+// TestStatsHashExif: the three tools that look into the pixels or the EXIF
+// block, each on files it has something to say about.
+func TestStatsHashExif(t *testing.T) {
+	dir := t.TempDir()
+	// A red picture, the same picture smaller and as a JPEG, and another.
+	red := image.NewNRGBA(image.Rect(0, 0, 64, 48))
+	for y := 0; y < 48; y++ {
+		for x := 0; x < 64; x++ {
+			c := color.NRGBA{200, 30, 30, 255}
+			if (x/16+y/16)%2 == 0 && x < 32 {
+				c = color.NRGBA{20, 20, 60, 255}
+			}
+			red.SetNRGBA(x, y, c)
+		}
+	}
+	a, small, other, notImage := filepath.Join(dir, "a.png"), filepath.Join(dir, "small.jpg"), filepath.Join(dir, "other.png"), filepath.Join(dir, "notes.txt")
+	writePNG(t, a, red)
+	if err := goimgtools.FromImage(red).Resize(32, 0).JPEG(90).ToFile(small); err != nil {
+		t.Fatal(err)
+	}
+	writePNG(t, other, testutil.Images(64, 48)["gray"])
+	os.WriteFile(notImage, []byte("not an image"), 0o644)
+
+	// stats
+	out, _, err := cli("stats", a, other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "a.png: average #") || !strings.Contains(out, ", 2 colours; mostly #c81e1e ") || !strings.Contains(out, "other.png: average #") || !strings.Contains(out, ", greyscale,") {
+		t.Errorf("stats output:\n%s", out)
+	}
+	out, _, err = cli("stats", "-json", a, notImage)
+	if err == nil {
+		t.Error("stats of a text file succeeded")
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	var st map[string]any
+	if len(lines) != 2 || json.Unmarshal([]byte(lines[0]), &st) != nil || st["colors"] != 2.0 || st["gray"] != false || st["opaque"] != true ||
+		st["width"] != 64.0 || len(st["dominant"].([]any)) != 2 || !strings.Contains(lines[1], `"error"`) {
+		t.Errorf("stats -json output:\n%s", out)
+	}
+
+	// hash: a real picture (a video frame that comes with Go), the same
+	// picture smaller and recompressed, and another picture.
+	frame := filepath.Join(runtime.GOROOT(), "src", "image", "testdata", "video-001.png")
+	if _, err := os.Stat(frame); err != nil {
+		t.Skip("the test images of Go are not here: ", err)
+	}
+	if err := goimgtools.Open(frame).Resize(75, 0).JPEG(85).ToFile(small); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err = cli("hash", "-similar", "8", frame, small, other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "video-001.png ~ ") || !strings.Contains(out, "small.jpg (") || strings.Contains(out, "other.png (") || strings.Contains(out, "~ "+other) {
+		t.Errorf("hash -similar output:\n%s", out)
+	}
+	first := strings.Fields(strings.Split(out, "\n")[0])
+	if len(first) != 2 || len(first[0]) != 16 || first[1] != frame {
+		t.Errorf("hash line: %q", strings.Split(out, "\n")[0])
+	}
+	if out, _, err := cli("hash", "-similar", "0", a, other); err != nil || !strings.Contains(out, "no two files within 0 bits") {
+		t.Errorf("hash with nothing alike: %v\n%s", err, out)
+	}
+	if out, _, err := cli("hash", a, notImage); err == nil || !strings.Contains(out, "notes.txt: ") || !strings.Contains(out, "  "+a) {
+		t.Errorf("hash with a text file: %v\n%s", err, out)
+	}
+
+	// exif: a file written by another program, one without EXIF.
+	withExif := filepath.Join("..", "..", "tests", "testdata", "exif-pillow.jpg")
+	out, _, err = cli("exif", withExif, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "exif-pillow.jpg: TestCam Corp TestCam X100, ") || !strings.Contains(out, ", ISO 400, ") || !strings.Contains(out, "at 31.230033, 121.474967") || !strings.Contains(out, "a.png: no EXIF\n") {
+		t.Errorf("exif output:\n%s", out)
+	}
+	out, _, err = cli("exif", "-json", withExif, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines = strings.Split(strings.TrimSpace(out), "\n")
+	var e, none map[string]any
+	if len(lines) != 2 || json.Unmarshal([]byte(lines[0]), &e) != nil || json.Unmarshal([]byte(lines[1]), &none) != nil ||
+		e["model"] != "TestCam X100" || e["iso"] != 400.0 || e["taken"] != "2026-05-17T09:30:15+08:00" || e["orientation"] != 6.0 || e["exif"] != true ||
+		none["exif"] != false || none["model"] != nil {
+		t.Errorf("exif -json output:\n%s", out)
+	}
+	for _, args := range [][]string{{"stats"}, {"hash"}, {"exif"}, {"hash", "-similar", "99", a}, {"exif", notImage}} {
+		if _, _, err := cli(args...); err == nil {
+			t.Errorf("%v accepted", args)
+		}
 	}
 }
