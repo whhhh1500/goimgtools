@@ -815,6 +815,7 @@ go test ./...
 | FreeBSD 15、OpenBSD 8、NetBSD 11、Solaris 11.4 | x86-64 | 库的行为测试，`pipeline`、`inspect`、缩放、基本操作、命令行 | GitHub 自动测试里各系统的虚拟机 |
 | Linux | 32 位 ARM、MIPS（大端序）、s390x（大端序）、riscv64、ppc64le、loong64 | 库的行为测试，`pipeline`、`inspect`、缩放、基本操作 | GitHub 自动测试，qemu 模拟 |
 | WebAssembly（WASI） | wasm | 库的行为测试，`pipeline`、`inspect`、缩放、基本操作 | GitHub 自动测试，wasmtime |
+| WebAssembly（浏览器 / node 用的 `GOOS=js`） | wasm | 同上；整套行为测试时 node 内存峰值约 450MB | GitHub 自动测试，Linux 上的 node 22 |
 
 BSD、Solaris、模拟处理器和 WebAssembly 只跑上面这几个包，没有跑各格式解码器、编码器自己的测试（那些在模拟器里太慢）；不过行为测试本身会把六种格式都读写一遍。同一张图在 Linux 和 Windows 上输出的文件逐字节相同。
 
@@ -822,7 +823,7 @@ BSD、Solaris、模拟处理器和 WebAssembly 只跑上面这几个包，没有
 
 只做了编译和静态检查、**没有实跑**的：DragonFly BSD、illumos、AIX、Plan 9、Android。iOS 连编译检查都没做（需要苹果的工具链）。
 
-在浏览器或 node 里跑的那种 WebAssembly（`GOOS=js`）只跑通过四个小包：根包测试在 node 里内存涨到 25GB 被中止，原因没查。同样的测试在 WASI（wasmtime）下正常通过，所以问题多半在 node 这一侧，但 `GOOS=js` 目前仍算**未验证**。
+`GOOS=js` 有一个没查清的现象：在 WSL 里用 node 18、测试图放在 Windows 磁盘（`/mnt/d`）上时，读参考图片的那个测试会让 node 失控（一次内存涨到 25GB，一次把 WSL 拖到无法响应）。同样的测试在 Linux 的 node 22 上正常（见上表），在 Windows 本机的 node 24 上内存也不超过 300MB。所以多半是旧版 node 和 WSL 文件系统的组合问题，但没有找到确切原因。
 
 除了各格式与标准库逐字节对比的测试，还有三类专门守边界的：
 
