@@ -193,6 +193,73 @@ jobs:
           usesh: true
           run: sh ci/run.sh
 
+  android:
+    # Android, on the emulator: the tests are built with the Android NDK
+    # that comes with the machine, pushed onto the emulator and run there.
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build the tests for Android
+        run: |
+          mkdir -p ci/bin ci/goroot/src/image ci/mod/golang.org/x
+          cc="$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android24-clang"
+          for p in tests pipeline inspect internal/resize internal/ops cmd/goimgtools; do
+            GOOS=android GOARCH=amd64 CGO_ENABLED=1 CC="$cc" go test -c -o "ci/bin/$(echo $p | tr / _).test" "./$p"
+          done
+          cp -r "$(go env GOROOT)/src/image/testdata" ci/goroot/src/image/
+          cp -r "$(go list -m -f '{{.Dir}}' golang.org/x/image)" "ci/mod/golang.org/x/image@$(go list -m -f '{{.Version}}' golang.org/x/image)"
+          chmod -R u+w ci
+      - name: Let the emulator use KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          arch: x86_64
+          target: default
+          disable-animations: true
+          script: sh ci/android.sh
+
+  ios:
+    # iOS, on the simulator, with the runner Go ships for it
+    # (misc/ios/go_ios_exec.go), which puts each test program with the test
+    # data of its package into an app. That runner wants the source under
+    # GOPATH, hence where the repository is checked out.
+    runs-on: macos-latest
+    timeout-minutes: 60
+    env:
+      GOPATH: ${{ github.workspace }}/gopath
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: gopath/src/github.com/whhhh1500/goimgtools
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: gopath/src/github.com/whhhh1500/goimgtools/go.mod
+          cache: false
+      - name: Start a simulator
+        run: |
+          udid=$(xcrun simctl list devices available -j | python3 -c 'import json, sys; d = json.load(sys.stdin)["devices"]; print(next(x["udid"] for k, v in d.items() if "iOS" in k for x in v if x["name"].startswith("iPhone")))')
+          echo "simulator $udid"
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid"
+      - name: Test on the simulator
+        working-directory: gopath/src/github.com/whhhh1500/goimgtools
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          go build -o "$RUNNER_TEMP/bin/go_ios_arm64_exec" "$(go env GOROOT)/misc/ios/go_ios_exec.go"
+          export PATH="$RUNNER_TEMP/bin:$PATH"
+          # What the tests look for, handed on to the program in the simulator.
+          export SIMCTL_CHILD_GOROOT="$(go env GOROOT)" SIMCTL_CHILD_GOMODCACHE="$(go env GOMODCACHE)"
+          go mod download
+          GOOS=ios GOARCH=arm64 CGO_ENABLED=1 CC="$(go env GOROOT)/misc/ios/clangwrap.sh"             go test -timeout 60m ./pipeline ./inspect ./internal/resize ./internal/ops ./tests
+
   platforms:
     # Everything else is at least built and vetted.
     runs-on: ubuntu-latest

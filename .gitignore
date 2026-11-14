@@ -10,5 +10,6 @@
 *.prof
 *.out
 
-# What the automatic tests build for the FreeBSD machine
-/ci/
+# What the automatic tests build for the virtual machines and emulators
+/ci/*
+!/ci/android.sh
