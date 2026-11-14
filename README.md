@@ -713,10 +713,9 @@ WebP 编码器是本模块自己写的，没有标准库可对照，用两种解
 
 ## 发布状态
 
-代码公开在 https://github.com/whhhh1500/goimgtools ，模块路径 `github.com/whhhh1500/goimgtools`。还差两件事：
+代码公开在 https://github.com/whhhh1500/goimgtools ，模块路径 `github.com/whhhh1500/goimgtools`，第一个版本是 `v0.1.0`。版本号在 1.0 之前，接口还可能调整。
 
-1. **还没有版本标签。** 现在 `go get` 拿到的是主分支的最新提交；打了标签（例如 `v0.1.0`）之后别人才能固定到一个版本。
-2. **libjpeg-turbo 的 `README.ijg` 还没有放进来。** JPEG 的「优化编码表」和「渐进式」两段代码是照它移植的；它的许可条文已经在 [licenses/LICENSE-LIBJPEG-TURBO](licenses/LICENSE-LIBJPEG-TURBO) 里，但 IJG 的许可对源码衍生作品要求附上完整的 `README.ijg`（详见 [licenses/THIRD-PARTY.md](licenses/THIRD-PARTY.md)）。
+还差一件事：**libjpeg-turbo 的 `README.ijg` 还没有放进来。** JPEG 的「优化编码表」和「渐进式」两段代码是照它移植的；它的许可条文已经在 [licenses/LICENSE-LIBJPEG-TURBO](licenses/LICENSE-LIBJPEG-TURBO) 里，但 IJG 的许可对源码衍生作品要求附上完整的 `README.ijg`（详见 [licenses/THIRD-PARTY.md](licenses/THIRD-PARTY.md)）。
 
 这是一个库，不需要按平台打包：使用者拿到的是源码，由各自的 Go 工具链编译；纯 Go、不依赖 cgo，Go 支持的平台都能直接编译。只有想让没装 Go 的人直接下载命令行程序时，才需要给各平台各编一份可执行文件（没有 cgo，一台机器上就能全部交叉编译出来）。
 
@@ -782,12 +781,14 @@ go test ./...
 | Linux（Ubuntu） | arm64 | GitHub 的自动测试 |
 | macOS | arm64 | GitHub 的自动测试 |
 | 32 位程序 | x86（windows/386、linux/386） | 开发机和 GitHub 的自动测试；包括 6 万像素宽高和各格式最大边长的那几组 |
+| Linux | arm（32 位） | GitHub 的自动测试，在模拟器（qemu）里跑：库的全部行为测试，加上 `pipeline`、`inspect`、缩放和基本操作这几个包 |
+| Linux | s390x（大端序，字节顺序与以上各种相反） | 同上 |
 
 同一张图在 Linux 和 Windows 上输出的文件逐字节相同。命令行程序在 Linux 上用真实照片实际跑过（缩放、文字水印、批量模式、系统字体查找）。
 
-自动测试的配置在 [.github/workflows/test.yml](.github/workflows/test.yml)，每次推送都会跑上表的全量测试，外加竞态检测、三个模糊测试的短跑，以及其余目标的编译和静态检查。
+自动测试的配置在 [.github/workflows/test.yml](.github/workflows/test.yml)，每次推送都会跑上表的测试，外加竞态检测、三个模糊测试的短跑，以及其余目标的编译和静态检查。
 
-只做了编译和静态检查、**没有实跑**的：FreeBSD、OpenBSD、NetBSD、Solaris、AIX、Plan 9、Android，以及 arm（32 位）、riscv64、ppc64le、s390x、mips、loong64。
+只做了编译和静态检查、**没有实跑**的：FreeBSD、OpenBSD、NetBSD、Solaris、AIX、Plan 9、Android，以及 riscv64、ppc64le、mips、loong64。
 
 WebAssembly（js/wasm，在 node 里运行）只跑通了四个小包的测试：`pipeline`、缩放、基本操作、命令行。根包的整套测试在这个环境里跑不下来：文件读写极慢，node 进程的内存涨到了 25GB，被中止，原因没有查。这个平台目前应当视为**未验证**。
 
