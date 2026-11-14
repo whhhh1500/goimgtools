@@ -92,37 +92,59 @@ jobs:
           go mod download
           GOOS=wasip1 GOARCH=wasm go test -timeout 60m ./pipeline ./inspect ./internal/resize ./internal/ops ./tests
 
-  freebsd:
-    # Another operating system: the tests are built here and run inside a
-    # FreeBSD machine, which needs no Go of its own for that.
+  vm:
+    # Other operating systems: the tests are built here and run inside a
+    # virtual machine of each, which needs no Go of its own for that.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [freebsd, openbsd, netbsd, solaris]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Build the tests for FreeBSD
+      - name: Build the tests for ${{ matrix.os }}
         run: |
           mkdir -p ci/bin ci/goroot/src/image ci/mod/golang.org/x
           for p in tests pipeline inspect internal/resize internal/ops cmd/goimgtools; do
-            GOOS=freebsd GOARCH=amd64 go test -c -o "ci/bin/$(echo $p | tr / _).test" "./$p"
+            GOOS=${{ matrix.os }} GOARCH=amd64 go test -c -o "ci/bin/$(echo $p | tr / _).test" "./$p"
           done
           # The test images the tests read: those of Go and of x/image.
           cp -r "$(go env GOROOT)/src/image/testdata" ci/goroot/src/image/
           cp -r "$(go list -m -f '{{.Dir}}' golang.org/x/image)" "ci/mod/golang.org/x/image@$(go list -m -f '{{.Version}}' golang.org/x/image)"
           chmod -R u+w ci
-      - uses: vmactions/freebsd-vm@v1
+          cat > ci/run.sh <<'EOF'
+          set -e
+          root="$PWD"
+          export GOROOT="$root/ci/goroot" GOMODCACHE="$root/ci/mod"
+          uname -a
+          for p in tests pipeline inspect internal/resize internal/ops cmd/goimgtools; do
+            cd "$root/$p"
+            "$root/ci/bin/$(echo $p | tr / _).test" -test.timeout 40m
+          done
+          EOF
+      - if: matrix.os == 'freebsd'
+        uses: vmactions/freebsd-vm@v1
         with:
           usesh: true
-          run: |
-            set -e
-            root="$PWD"
-            export GOROOT="$root/ci/goroot" GOMODCACHE="$root/ci/mod"
-            uname -a
-            for p in tests pipeline inspect internal/resize internal/ops cmd/goimgtools; do
-              cd "$root/$p"
-              "$root/ci/bin/$(echo $p | tr / _).test" -test.timeout 40m
-            done
+          run: sh ci/run.sh
+      - if: matrix.os == 'openbsd'
+        uses: vmactions/openbsd-vm@v1
+        with:
+          usesh: true
+          run: sh ci/run.sh
+      - if: matrix.os == 'netbsd'
+        uses: vmactions/netbsd-vm@v1
+        with:
+          usesh: true
+          run: sh ci/run.sh
+      - if: matrix.os == 'solaris'
+        uses: vmactions/solaris-vm@v1
+        with:
+          usesh: true
+          run: sh ci/run.sh
 
   platforms:
     # Everything else is at least built and vetted.
@@ -133,7 +155,7 @@ jobs:
         with:
           go-version-file: go.mod
       - run: |
-          for t in openbsd/amd64 netbsd/amd64 freebsd/arm64 windows/arm64 js/wasm android/arm64 solaris/amd64 aix/ppc64 plan9/amd64; do
+          for t in freebsd/arm64 windows/arm64 js/wasm android/arm64 aix/ppc64 plan9/amd64 dragonfly/amd64 illumos/amd64; do
             echo "$t"
             GOOS=${t%/*} GOARCH=${t#*/} go vet ./...
           done
