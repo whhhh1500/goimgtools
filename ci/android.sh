@@ -7,6 +7,9 @@ dev=/data/local/tmp
 adb shell "rm -rf $dev/ci $dev/repo $dev/tmp && mkdir -p $dev/repo $dev/tmp"
 adb push ci "$dev/" > /dev/null
 adb push tests/testdata "$dev/repo/tests/testdata" > /dev/null
+# The tests find the version of golang.org/x/image, and with it its test
+# images, in go.mod.
+adb push go.mod "$dev/repo/go.mod" > /dev/null
 adb shell "chmod 755 $dev/ci/bin/*"
 adb shell getprop ro.build.version.release
 adb shell uname -a
