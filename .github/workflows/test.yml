@@ -31,7 +31,10 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - run: go test -race . ./pipeline ./cmd/...
+      # The race detector makes the tests several times slower: on a small
+      # machine the main package alone takes more than the ten minutes a
+      # test run is given by default.
+      - run: go test -race -timeout 45m . ./pipeline ./cmd/...
 
   bits32:
     runs-on: ubuntu-latest
