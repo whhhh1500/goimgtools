@@ -4,3 +4,4 @@
 *.sum  text eol=lf
 *.md   text eol=lf
 *.png  binary
+*.yml  text eol=lf

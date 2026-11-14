@@ -15,9 +15,9 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/iotest"
-	"time"
 
 	"golang.org/x/image/bmp"
 	"golang.org/x/image/tiff"
@@ -667,7 +667,7 @@ func TestAnimationPixelLimit(t *testing.T) {
 		t.Errorf("first frame only: %v", err)
 	}
 	// A file of a few kilobytes with many frames on a large canvas: refused
-	// after the frames the limit allows, in well under a second.
+	// after the frames the limit allows.
 	many := &gif.GIF{Config: image.Config{Width: 2000, Height: 2000}}
 	for i := 0; i < 400; i++ {
 		many.Image = append(many.Image, image.NewPaletted(image.Rect(i%5, i%7, i%5+1, i%7+1), color.Palette{color.Black, color.White}))
@@ -677,13 +677,16 @@ func TestAnimationPixelLimit(t *testing.T) {
 	if err := gif.EncodeAll(&buf, many); err != nil {
 		t.Fatal(err)
 	}
-	start := time.Now()
-	_, err = FromBytes(buf.Bytes()).Animated().LimitInputPixels(2000 * 2000 * 3).GIF().ToBytes()
+	// (Counted in frames that went through the chain, not in seconds: a
+	// slow machine is not a failure.)
+	var made, closed, rows atomic.Int64
+	_, err = FromBytes(buf.Bytes()).Animated().LimitInputPixels(2000 * 2000 * 3).
+		Pipe(closeCounter{&made, &closed, &rows}).GIF().ToBytes()
 	if !errors.Is(err, ErrPixelLimit) {
 		t.Errorf("400 frames of 2000x2000 in %d bytes with a limit of three: %v", buf.Len(), err)
 	}
-	if d := time.Since(start); d > 5*time.Second {
-		t.Errorf("refusing it took %v", d)
+	if made.Load() != 3 || closed.Load() != 3 {
+		t.Errorf("%d frames were processed (%d closed) before the limit of three stopped the run", made.Load(), closed.Load())
 	}
 }
 

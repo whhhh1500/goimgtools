@@ -43,11 +43,16 @@ licence. The ports are translations into Go: the routines were rewritten to
 work on this package's data structures, and nothing of the original files is
 included unchanged.
 
-Both licences ask that their notices accompany redistributed source. Their
-full texts are the files `README.ijg` and `LICENSE.md` of libjpeg-turbo
-(https://github.com/libjpeg-turbo/libjpeg-turbo). **Before this repository
-is published, copy those two files here unchanged**; they are not yet
-included.
+Both licences ask that their notices accompany redistributed source. The
+file `LICENSE-LIBJPEG-TURBO` holds them as libjpeg-turbo 3.1.3 itself
+distributes them: the legal section of its `README.ijg` (the IJG licence)
+and its `LICENSE.md` (which includes the Modified BSD licence), unchanged.
+
+The IJG licence asks, for source derived from the library, that the whole
+`README.ijg` file be included, not only its legal section. **That file is
+not here yet**: it should be copied unchanged from libjpeg-turbo
+(https://github.com/libjpeg-turbo/libjpeg-turbo) before this repository is
+published.
 
 ## Acknowledgements (no code taken)
 
