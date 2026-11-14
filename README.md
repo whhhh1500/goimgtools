@@ -85,7 +85,7 @@ err := goimgtools.Open("in.jpg").
 | `ToImage()` | 执行并返回整张 `image.Image`（整张在内存里，计入内存上限） |
 | `Stream(env)` | 执行并返回结果的像素流，不写文件（见「扩展」） |
 | `Formats()` / `FormatByName(s)` | 支持的格式及其扩展名；按名字或扩展名查（`"jpeg"`、`"JPG"`、`".tif"` 都认） |
-| `RegisterFormat(codec)` / `CodecByName(s)` | 增加一种格式，或取出某种格式的读写函数来改写（见「扩展」） |
+| `RegisterFormat(codec)` / `CodecByName(s)` / `UnregisterFormat(name)` | 增加一种格式，或取出某种格式的读写函数来改写；撤销注册后内置的实现恢复（见「扩展」） |
 
 不指定输出格式、也没有扩展名可依据时，输出格式同输入；文字输入默认输出 PNG。
 
@@ -97,6 +97,7 @@ err := goimgtools.Open("in.jpg").
 | `StripICC()` | 丢掉 ICC 色彩配置。默认保留，否则广色域照片会偏色 |
 | `MemoryLimit(bytes)` | 工作内存上限，默认 64MB |
 | `Threads(n)` | 一次处理最多用几个核，1–3，默认 1 |
+| `SetDefaultThreads(n)` | 整个程序的默认线程数（没有调用 `Threads` 的处理用它），不用在每个调用处都写一遍 |
 | `TempDir(dir)` | 临时文件目录，默认系统临时目录 |
 | `LimitInputPixels(n)` | 输入像素数上限，默认 16383×16383（同 sharp）。对 `Animated()` 的动图是所有帧的像素合计 |
 | `LimitOutputPixels(n)` | 链上任何一步产生的图（因此也包括结果）的像素数上限，默认同上。防止一个小文件被放大成占满磁盘、算上几小时的结果 |
@@ -232,7 +233,7 @@ count := goimgtools.OperationFunc(func(src pipeline.Source) (pipeline.Source, er
 goimgtools.Open("in.jpg").Resize(800, 0).Pipe(count).ToFile("out.jpg")
 ```
 
-操作可以改尺寸（`OutputSize()` 会报出它给的尺寸），可以放在链的任何位置。测试里有一个完整的「加边框」操作（[extend_test.go](extend_test.go) 的 `border`）可以照着写。
+操作可以改尺寸（`OutputSize()` 会报出它给的尺寸），可以放在链的任何位置。测试里有一个完整的「加边框」操作（[tests/extend_test.go](tests/extend_test.go) 的 `border`）可以照着写。
 
 `pipeline` 包里还有写环节用得上的零件：`Map`（`Pixels` 的底层）、`RowReader` / `Rechunk`（按自己要的行数重新切带）、`NewBand` / `CopyRows`（按像素类型分配和拷贝）、`Spill` / `Scratch`（超出内存份额就自动落到临时文件的存储）。
 
@@ -677,28 +678,42 @@ WebP 编码器是本模块自己写的，没有标准库可对照，用两种解
 代码公开在 https://github.com/whhhh1500/goimgtools ，模块路径 `github.com/whhhh1500/goimgtools`。还差两件事：
 
 1. **还没有版本标签。** 现在 `go get` 拿到的是主分支的最新提交；打了标签（例如 `v0.1.0`）之后别人才能固定到一个版本。
-2. **libjpeg-turbo 的 `README.ijg` 还没有放进来。** JPEG 的「优化编码表」和「渐进式」两段代码是照它移植的；它的许可条文已经在 [LICENSE-LIBJPEG-TURBO](LICENSE-LIBJPEG-TURBO) 里，但 IJG 的许可对源码衍生作品要求附上完整的 `README.ijg`（详见 [THIRD-PARTY.md](THIRD-PARTY.md)）。
+2. **libjpeg-turbo 的 `README.ijg` 还没有放进来。** JPEG 的「优化编码表」和「渐进式」两段代码是照它移植的；它的许可条文已经在 [licenses/LICENSE-LIBJPEG-TURBO](licenses/LICENSE-LIBJPEG-TURBO) 里，但 IJG 的许可对源码衍生作品要求附上完整的 `README.ijg`（详见 [licenses/THIRD-PARTY.md](licenses/THIRD-PARTY.md)）。
 
 这是一个库，不需要按平台打包：使用者拿到的是源码，由各自的 Go 工具链编译；纯 Go、不依赖 cgo，Go 支持的平台都能直接编译。只有想让没装 Go 的人直接下载命令行程序时，才需要给各平台各编一份可执行文件（没有 cgo，一台机器上就能全部交叉编译出来）。
 
 ## 许可
 
-本项目用 MIT 许可（[LICENSE](LICENSE)）。其中从 Go 标准库和 `golang.org/x/image` 改写的代码沿用其 BSD 许可（[LICENSE-GO](LICENSE-GO)）；从 libjpeg 移植的两段沿用其许可（[LICENSE-LIBJPEG-TURBO](LICENSE-LIBJPEG-TURBO)）。[THIRD-PARTY.md](THIRD-PARTY.md) 逐项列了哪些文件来自哪里。
+本项目用 MIT 许可（[LICENSE](LICENSE)）。其中从 Go 标准库和 `golang.org/x/image` 改写的代码沿用其 BSD 许可（[licenses/LICENSE-GO](licenses/LICENSE-GO)）；从 libjpeg 移植的两段沿用其许可（[licenses/LICENSE-LIBJPEG-TURBO](licenses/LICENSE-LIBJPEG-TURBO)）。[licenses/THIRD-PARTY.md](licenses/THIRD-PARTY.md) 逐项列了哪些文件来自哪里。
 
 ## 目录
 
+根目录里的 Go 文件就是这个库本身（一个包，`import` 一次就能用全部功能；Go 要求同一个包的文件放在同一个目录里）。其余都在子目录里：
+
+```
+goimgtools/
+├── goimgtools.go    包说明、Image 类型、三种输入来源、内存 / 线程 / 上限等设置
+├── operations.go    各个操作的方法和选项（缩放、旋转、裁剪、铺底、叠图）
+├── output.go        选输出格式及其选项、MaxFileSize、写出
+├── run.go           一次执行：打开输入、搭起处理链、Metadata、OutputSize
+├── chain.go         操作列表和执行顺序的规划
+├── formats.go       格式表：内置和注册的格式都在这一张表里；RegisterFormat
+├── extend.go        扩展入口：Pipe、Pixels、Apply、FromImage、FromSource、ToFormat、Stream、ToImage
+├── input.go         输入的打开、读取出错的记录、错误分类
+├── text.go          文字输入
+├── animate.go       动图
+├── example_test.go  文档里的可运行示例
+│
+├── pipeline/        公开包：像素流接口 Source、内存预算、暂存区，以及写扩展用的零件
+├── internal/        各格式的解码和编码、缩放、基本操作、文字渲染、减色（见下表）
+├── cmd/             命令行程序 goimgtools，实测程序 memprobe
+├── tests/           库的行为测试：只通过公开接口使用这个库，和使用者的程序一样
+├── licenses/        第三方代码的许可和来源说明
+└── docs/            文档用的图片
+```
+
 | 路径 | 内容 |
 |---|---|
-| `goimgtools.go` | 包说明、`Image` 类型、输入的三种来源、内存 / 线程 / 上限等设置 |
-| `operations.go` | 各个操作的方法和选项类型（缩放、旋转、裁剪、铺底、叠图） |
-| `output.go` | 选输出格式及其选项、`MaxFileSize`、写出 |
-| `run.go` | 一次执行：打开输入、搭起处理链、`Metadata`、`OutputSize` |
-| `chain.go` | 操作列表和执行顺序的规划（旋转后紧跟缩放时先缩后转、JPEG 解码时缩小、每一步的像素上限） |
-| `formats.go` | 格式表：内置和注册的格式的名字、扩展名、识别、解码、编码都只在这里；`RegisterFormat` |
-| `extend.go` | 扩展入口：`Pipe`、`Pixels`、`Apply`、`FromImage`、`FromSource`、`ToFormat`、`Stream`、`ToImage` |
-| `input.go` | 输入的打开、读取出错的记录、错误分类 |
-| `text.go`、`animate.go` | 文字输入、动图 |
-| `pipeline/`（公开包） | 像素流接口 `Source`、内存预算、暂存区（`Spill`、`Scratch`）、线程间交接、元数据，以及写扩展用的零件 |
 | `cmd/goimgtools` | 命令行 |
 | `cmd/memprobe` | 内存 / CPU / 耗时实测程序（Windows、Linux、macOS、BSD 上读取进程自身的峰值内存和 CPU 时间） |
 | `internal/pngstream`、`jpegstream`、`gifstream`、`bmpstream`、`tiffstream` | 各格式的流式解码和编码 |
@@ -709,7 +724,6 @@ WebP 编码器是本模块自己写的，没有标准库可对照，用两种解
 | `internal/textsrc` | 文字排版渲染、字体查找 |
 | `internal/quant` | 减色：按图选调色板、抖动 |
 
-
 ## 测试
 
 ```bash
@@ -717,6 +731,8 @@ go test ./...
 ```
 
 全量约 3–5 分钟（各包并行跑）。WebP 编码器与 libwebp 的交叉验证需要装有 Pillow 的 Python，没有时自动跳过。
+
+库本身的行为测试都在 `tests/` 里，只通过公开接口使用这个库；各个零件（`internal/` 下的各格式、`pipeline`）的测试挨着它们的代码。
 
 **在哪些系统上验证过。** 全量测试在下面这些环境里实跑通过：
 
@@ -738,20 +754,20 @@ WebAssembly（js/wasm，在 node 里运行）只跑通了四个小包的测试�
 
 除了各格式与标准库逐字节对比的测试，还有三类专门守边界的：
 
-- **极限情况**（[limits_test.go](limits_test.go)）：1×1、1×N、N×1 以及 8 / 16 像素块边界附近的尺寸，每种像素类型写成每种格式再读回；这些小图走每一个操作和每一种缩放算法；每种格式能容纳的最大边长（JPEG、GIF 65535，有损 WebP 16383，无损 WebP 16384）以及多一个像素时的报错；6 万像素宽 / 高的图在默认内存上限内跑完；一百多组参数极值（质量、颜色数、角度、比例、偏移、字号的上下界和无穷大、NaN）；一次只给一个字节的输入流、中途断开的输入流；覆盖输入文件、输出目录不存在等文件系统情况。
-- **扩展接口**（[extend_test.go](extend_test.go)、[example_test.go](example_test.go)）：只用公开包写出的操作、输入和文件格式；示例在包外编译运行。
-- **模糊测试**（[fuzz_test.go](fuzz_test.go)）：
+- **极限情况**（[tests/limits_test.go](tests/limits_test.go)）：1×1、1×N、N×1 以及 8 / 16 像素块边界附近的尺寸，每种像素类型写成每种格式再读回；这些小图走每一个操作和每一种缩放算法；每种格式能容纳的最大边长（JPEG、GIF 65535，有损 WebP 16383，无损 WebP 16384）以及多一个像素时的报错；6 万像素宽 / 高的图在默认内存上限内跑完；一百多组参数极值（质量、颜色数、角度、比例、偏移、字号的上下界和无穷大、NaN）；一次只给一个字节的输入流、中途断开的输入流；覆盖输入文件、输出目录不存在等文件系统情况。
+- **扩展接口**（[tests/extend_test.go](tests/extend_test.go)、[example_test.go](example_test.go)）：只用公开包写出的操作、输入和文件格式；示例在包外编译运行。
+- **模糊测试**（[tests/fuzz_test.go](tests/fuzz_test.go)）：
 
 ```bash
-go test -run '^$' -fuzz FuzzDecode -fuzztime 5m .
+go test -run '^$' -fuzz FuzzDecode -fuzztime 5m ./tests
 ```
 
 ```bash
-go test -run '^$' -fuzz FuzzChain -fuzztime 5m .
+go test -run '^$' -fuzz FuzzChain -fuzztime 5m ./tests
 ```
 
 ```bash
-go test -run '^$' -fuzz FuzzText -fuzztime 5m .
+go test -run '^$' -fuzz FuzzText -fuzztime 5m ./tests
 ```
 
 `FuzzDecode` 把任意字节当图片解码，`FuzzChain` 让任意字节走任意操作组合再写成任意格式，`FuzzText` 画任意文字。要求：不 panic、不卡住、各条带正好覆盖整张图、内存预算不超且全部归还、不留临时文件。种子是 Go 和 `x/image` 自带的测试图加上本库写出的各种格式的小图。

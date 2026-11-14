@@ -1,6 +1,6 @@
 // Copyright 2011 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE-GO file.
+// license that can be found in the licenses/LICENSE-GO file.
 
 // Package webpstream is a streaming WebP decoder: it produces the image as
 // horizontal strips instead of one whole image.

@@ -1,4 +1,4 @@
-package goimgtools
+package tests
 
 import (
 	"bytes"
@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	. "github.com/whhhh1500/goimgtools"
 	"github.com/whhhh1500/goimgtools/internal/testutil"
 )
 

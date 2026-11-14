@@ -1,4 +1,4 @@
-package goimgtools
+package tests
 
 import (
 	"bytes"
@@ -10,7 +10,9 @@ import (
 	"image/png"
 	"testing"
 
+	. "github.com/whhhh1500/goimgtools"
 	"github.com/whhhh1500/goimgtools/internal/testutil"
+	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
 // turnRef applies an EXIF orientation (1 to 8) to m the obvious way.
@@ -292,13 +294,13 @@ func TestMetadataKept(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		src, closer, _, meta, err := m.build(nil, false)
+		src, err := m.Stream(nil)
 		if err != nil {
 			t.Fatal(err)
 		}
+		icc := pipeline.MetaOf(src).ICC
 		src.Close()
-		closer.Close()
-		return info.Format, info.HasProfile, info.HasExif, info.Orientation, meta.ICC
+		return info.Format, info.HasProfile, info.HasExif, info.Orientation, icc
 	}
 	for _, out := range []string{"jpeg", "png"} {
 		enc := func(m *Image) []byte {

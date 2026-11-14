@@ -1,6 +1,6 @@
 // Copyright 2011 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE-GO file.
+// license that can be found in the licenses/LICENSE-GO file.
 
 // Package jpegstream is Go's image/jpeg encoder (go1.27.1) changed to read
 // the image from a pipeline.Source in 16-row bands. Only writeSOS and Encode

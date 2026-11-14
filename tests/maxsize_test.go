@@ -1,13 +1,16 @@
-package goimgtools
+package tests
 
 import (
 	"bytes"
 	"errors"
 	"image"
 	"image/jpeg"
+	"io"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 
+	. "github.com/whhhh1500/goimgtools"
 	"github.com/whhhh1500/goimgtools/internal/testutil"
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
@@ -67,6 +70,21 @@ func TestRecording(t *testing.T) {
 // TestMaxFileSize: the file fits, at the highest quality that fits, and is
 // exactly what asking for that quality directly gives.
 func TestMaxFileSize(t *testing.T) {
+	// How often an image is encoded is counted by encoders of our own
+	// around the package's: the way any program can look at what it does.
+	var encodes atomic.Int64
+	var counted []Codec
+	for _, name := range []string{"jpeg", "webp"} {
+		c, _ := CodecByName(name)
+		encode := c.Encode
+		c.Encode = func(w io.Writer, src pipeline.Source, o EncodeOptions) error {
+			encodes.Add(1)
+			return encode(w, src, o)
+		}
+		counted = append(counted, c)
+	}
+	withFormats(t, counted...)
+
 	src := testutil.Images(613, 457)["rgba-opaque"]
 	inPNG := pngBytes(t, src)
 	inJPG := jpegBytes(src, 95)
@@ -94,13 +112,13 @@ func TestMaxFileSize(t *testing.T) {
 		}
 		full := at(c.top)
 		for _, limit := range []int{full + 1000, full, full * 3 / 4, full / 2, full / 3, at(1) + 10, at(1)} {
-			testTries.Store(0)
+			encodes.Store(0)
 			got, err := c.format(FromBytes(c.in), 0).MaxFileSize(int64(limit)).ToBytes()
 			if err != nil {
 				t.Fatalf("%s limit %d: %v", c.name, limit, err)
 			}
 			// Halving the range of qualities would take eight encodes.
-			if n := testTries.Load(); n > 9 {
+			if n := encodes.Load(); n > 9 {
 				t.Errorf("%s limit %d: %d encodes", c.name, limit, n)
 			}
 			if len(got) > limit {

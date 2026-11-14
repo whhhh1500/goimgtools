@@ -1,4 +1,4 @@
-package goimgtools
+package tests
 
 import (
 	"bytes"
@@ -20,6 +20,7 @@ import (
 	"golang.org/x/image/tiff"
 	"golang.org/x/image/webp"
 
+	. "github.com/whhhh1500/goimgtools"
 	"github.com/whhhh1500/goimgtools/internal/testutil"
 	"github.com/whhhh1500/goimgtools/internal/webpstream"
 	"github.com/whhhh1500/goimgtools/pipeline"
@@ -247,7 +248,7 @@ func TestMemoryLimitAndDisk(t *testing.T) {
 		}
 		dir := t.TempDir()
 		// Each extra thread holds three strips of its own.
-		limit := int64(300+150*max(0, testThreads-1)) << 10
+		limit := int64(300+150*max(0, defaultThreads-1)) << 10
 		got, err := Open(in).MemoryLimit(limit).TempDir(dir).PNG().ToBytes()
 		if err != nil {
 			t.Fatalf("%s with a %dKB limit: %v", name, limit>>10, err)

@@ -1,13 +1,14 @@
 # Third-party code and acknowledgements
 
-goimgtools is released under the MIT License (see `LICENSE`). Parts of it
+goimgtools is released under the MIT License (see `LICENSE` in the top
+directory). Parts of it
 come from, or follow, other projects. This file says which parts, and under
 what terms.
 
 ## Go standard library and golang.org/x/image
 
 BSD 3-Clause License, copyright The Go Authors. The full text is in
-`LICENSE-GO`. The files concerned carry the Go Authors' copyright line.
+`LICENSE-GO`, next to this file. The files concerned carry the Go Authors' copyright line.
 
 The decoders and encoders below are the standard ones, changed to work a few
 rows at a time instead of on a whole image; the pixel arithmetic is theirs.
@@ -44,15 +45,14 @@ work on this package's data structures, and nothing of the original files is
 included unchanged.
 
 Both licences ask that their notices accompany redistributed source. The
-file `LICENSE-LIBJPEG-TURBO` holds them as libjpeg-turbo 3.1.3 itself
+file `LICENSE-LIBJPEG-TURBO`, next to this one, holds them as libjpeg-turbo 3.1.3 itself
 distributes them: the legal section of its `README.ijg` (the IJG licence)
 and its `LICENSE.md` (which includes the Modified BSD licence), unchanged.
 
 The IJG licence asks, for source derived from the library, that the whole
 `README.ijg` file be included, not only its legal section. **That file is
-not here yet**: it should be copied unchanged from libjpeg-turbo
-(https://github.com/libjpeg-turbo/libjpeg-turbo) before this repository is
-published.
+not here yet**: it is to be copied unchanged from libjpeg-turbo
+(https://github.com/libjpeg-turbo/libjpeg-turbo) into this directory.
 
 ## Acknowledgements (no code taken)
 

@@ -1,4 +1,4 @@
-package goimgtools
+package tests
 
 import (
 	"errors"
@@ -13,6 +13,7 @@ import (
 	"golang.org/x/image/font/gofont/gobold"
 	"golang.org/x/image/font/gofont/goregular"
 
+	. "github.com/whhhh1500/goimgtools"
 	"github.com/whhhh1500/goimgtools/internal/textsrc"
 	"github.com/whhhh1500/goimgtools/pipeline"
 )

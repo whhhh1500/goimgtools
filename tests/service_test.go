@@ -1,4 +1,4 @@
-package goimgtools
+package tests
 
 import (
 	"bytes"
@@ -21,6 +21,7 @@ import (
 	"golang.org/x/image/tiff"
 	"golang.org/x/image/webp"
 
+	. "github.com/whhhh1500/goimgtools"
 	"github.com/whhhh1500/goimgtools/internal/testutil"
 )
 

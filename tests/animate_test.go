@@ -1,4 +1,4 @@
-package goimgtools
+package tests
 
 import (
 	"bytes"
@@ -9,6 +9,8 @@ import (
 	"image/gif"
 	"path/filepath"
 	"testing"
+
+	. "github.com/whhhh1500/goimgtools"
 )
 
 // testAnimation builds an animation whose frames cover parts of the canvas,

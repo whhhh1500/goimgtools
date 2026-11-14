@@ -1,6 +1,6 @@
 // Copyright 2011 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+// license that can be found in the licenses/LICENSE-GO file.
 
 // Package lzw is golang.org/x/image/tiff/lzw (v0.47.0) with two changes: a
 // reader can be reused for the next stream (Reset) instead of allocating its

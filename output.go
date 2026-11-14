@@ -12,17 +12,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync/atomic"
 
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
 // The output: choosing the format and its settings, and writing the
 // result. The formats themselves are in formats.go.
-
-// testTries counts the encodes MaxFileSize has made (read by tests only;
-// atomic because images are processed concurrently).
-var testTries atomic.Int64
 
 // KeepExif copies the EXIF block of the input (camera, date, GPS, ...) to
 // the output. By default it is dropped. After Rotate() the copied block
@@ -253,7 +248,7 @@ func (m *Image) write(w io.Writer, ext string) (err error) {
 	}
 	exif, icc := m.outputMeta(meta)
 	defer closer.Close()
-	if max(m.threads, testThreads) >= 3 {
+	if m.threadCount() >= 3 {
 		src = pipeline.Async(src)
 	}
 	defer src.Close()
@@ -366,7 +361,6 @@ func (m *Image) writeWithin(w io.Writer, src pipeline.Source, format string, exi
 	// try encodes at quality q and reports whether the file fits; a file
 	// that fits replaces the best one so far.
 	try := func(q int) (bool, int64, error) {
-		testTries.Add(1)
 		in, err := rec.Source()
 		if err != nil {
 			return false, 0, err

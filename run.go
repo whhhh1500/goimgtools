@@ -36,9 +36,6 @@ type Info struct {
 	HasExif     bool
 }
 
-// testThreads, when positive, is a lower bound on Threads (tests only).
-var testThreads int
-
 // build opens the input and assembles the pipeline. env is nil for a
 // top-level image, or the parent's for an overlay. With sizeOnly only the
 // size of the result is wanted.
@@ -146,7 +143,7 @@ func (m *Image) buildFrom(env *pipeline.Env, f *input, format string, sizeOnly b
 	if top && m.ctx != nil {
 		src = cancelable{src, m.ctx}
 	}
-	if top && max(m.threads, testThreads) >= 2 {
+	if top && m.threadCount() >= 2 {
 		src = pipeline.Async(src)
 	}
 	src, err = applyOps(m.chain, src, r, pre)

@@ -1,4 +1,4 @@
-package goimgtools
+package tests
 
 import (
 	"image"
@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"golang.org/x/image/font/gofont/goregular"
+
+	. "github.com/whhhh1500/goimgtools"
 )
 
 // TestTextOutlineAndShadow checks where outline and shadow put their

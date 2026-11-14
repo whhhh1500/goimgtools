@@ -312,7 +312,7 @@ func ExampleRegisterFormat() {
 // take its Codec, wrap what you want to change, register it again.
 func ExampleCodecByName() {
 	original, _ := goimgtools.CodecByName("jpeg")
-	defer goimgtools.RegisterFormat(original) // undo, for the other examples
+	defer goimgtools.UnregisterFormat("jpeg") // the package's own again
 
 	logged := original
 	logged.Encode = func(w io.Writer, src pipeline.Source, o goimgtools.EncodeOptions) error {

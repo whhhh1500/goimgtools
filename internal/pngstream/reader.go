@@ -1,6 +1,6 @@
 // Copyright 2009 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE-GO file.
+// license that can be found in the licenses/LICENSE-GO file.
 
 // Package pngstream is Go's image/png decoder (go1.27.1) changed to emit the
 // image as horizontal strips instead of one full-size image. Chunk parsing,

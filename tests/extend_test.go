@@ -1,4 +1,4 @@
-package goimgtools
+package tests
 
 import (
 	"bytes"
@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	. "github.com/whhhh1500/goimgtools"
 	"github.com/whhhh1500/goimgtools/internal/testutil"
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
@@ -777,13 +778,10 @@ var tpixCodec = Codec{
 // withFormats registers codecs for the duration of a test.
 func withFormats(t *testing.T, codecs ...Codec) {
 	t.Helper()
-	formatsMu.Lock()
-	saved := formats
-	formatsMu.Unlock()
 	t.Cleanup(func() {
-		formatsMu.Lock()
-		formats = saved
-		formatsMu.Unlock()
+		for _, c := range codecs {
+			UnregisterFormat(c.Name)
+		}
 	})
 	for _, c := range codecs {
 		RegisterFormat(c)
@@ -974,6 +972,16 @@ func TestWrapBuiltinFormat(t *testing.T) {
 	}
 	if all := Formats(); len(all) != 6 || all[0].Name != "jpeg" {
 		t.Errorf("replacing a format changed the list: %+v", all)
+	}
+	// Taking the replacement back brings the package's own format back.
+	if !UnregisterFormat("JPEG") || UnregisterFormat("jpeg") || UnregisterFormat("no-such-format") {
+		t.Error("UnregisterFormat: wrong report")
+	}
+	if again := run(); !bytes.Equal(again, before) || encodes.Load() != 1 {
+		t.Errorf("after UnregisterFormat the wrapper was still used (%d encodes)", encodes.Load())
+	}
+	if all := Formats(); len(all) != 6 || all[0].Name != "jpeg" {
+		t.Errorf("unregistering changed the list: %+v", all)
 	}
 
 	// The package's decoder on an input of the caller's own, the package's
@@ -1211,7 +1219,11 @@ func TestAddTransparency(t *testing.T) {
 
 // TestRegisterWhileRunning: formats may be registered while recipes run.
 func TestRegisterWhileRunning(t *testing.T) {
-	withFormats(t)
+	t.Cleanup(func() {
+		for i := 0; i < 7; i++ {
+			UnregisterFormat(fmt.Sprintf("tp%d", i))
+		}
+	})
 	in := pngBytes(t, testutil.Images(64, 48)["nrgba"])
 	var wg sync.WaitGroup
 	stop := make(chan struct{})

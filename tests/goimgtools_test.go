@@ -1,4 +1,4 @@
-package goimgtools
+package tests
 
 import (
 	"bytes"
@@ -15,6 +15,7 @@ import (
 
 	"golang.org/x/image/draw"
 
+	. "github.com/whhhh1500/goimgtools"
 	"github.com/whhhh1500/goimgtools/internal/testutil"
 )
 
@@ -197,12 +198,16 @@ func TestInputLimits(t *testing.T) {
 	}
 }
 
+// defaultThreads is what the tests have set with SetDefaultThreads.
+var defaultThreads = 1
+
 // TestThreads repeats the tests above with the decoder, and then the encoder
 // too, on their own goroutines: every result must be what one thread gives.
 func TestThreads(t *testing.T) {
-	defer func() { testThreads = 0 }()
+	defer func() { SetDefaultThreads(1); defaultThreads = 1 }()
 	for _, n := range []int{2, 3} {
-		testThreads = n
+		SetDefaultThreads(n)
+		defaultThreads = n
 		TestChain(t)
 		TestExtractAndFit(t)
 		TestToFileAndErrors(t)

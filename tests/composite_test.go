@@ -1,4 +1,4 @@
-package goimgtools
+package tests
 
 import (
 	"image"
@@ -6,6 +6,8 @@ import (
 	stddraw "image/draw"
 	"math"
 	"testing"
+
+	. "github.com/whhhh1500/goimgtools"
 )
 
 // TestCompositePlacement covers the overlay position by ratio, the choice

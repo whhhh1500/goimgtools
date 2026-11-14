@@ -34,7 +34,7 @@ jobs:
       # The race detector makes the tests several times slower: on a small
       # machine the main package alone takes more than the ten minutes a
       # test run is given by default.
-      - run: go test -race -timeout 45m . ./pipeline ./cmd/...
+      - run: go test -race -timeout 45m . ./tests ./pipeline ./cmd/...
 
   bits32:
     runs-on: ubuntu-latest
@@ -67,6 +67,6 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - run: go test -run '^$' -fuzz '^FuzzDecode$' -fuzztime 60s .
-      - run: go test -run '^$' -fuzz '^FuzzChain$' -fuzztime 60s .
-      - run: go test -run '^$' -fuzz '^FuzzText$' -fuzztime 30s .
+      - run: go test -run '^$' -fuzz '^FuzzDecode$' -fuzztime 60s ./tests
+      - run: go test -run '^$' -fuzz '^FuzzChain$' -fuzztime 60s ./tests
+      - run: go test -run '^$' -fuzz '^FuzzText$' -fuzztime 30s ./tests

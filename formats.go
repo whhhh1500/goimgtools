@@ -339,7 +339,8 @@ func allFormats() []*formatDef {
 // A Codec with the name of a known format replaces it. That is the way to
 // change how one of this package's formats is read or written, or to add
 // to it: take the format with CodecByName, wrap its Decode or Encode in a
-// function of your own, and register the result.
+// function of your own, and register the result. UnregisterFormat undoes
+// it.
 //
 //	jpeg, _ := goimgtools.CodecByName("jpeg")
 //	encode := jpeg.Encode
@@ -405,6 +406,35 @@ func RegisterFormat(c Codec) {
 		next = append([]*formatDef{def}, next...)
 	}
 	formats = next
+}
+
+// UnregisterFormat takes a RegisterFormat back: the format is no longer
+// known, or, when it had replaced one of the package's own formats, the
+// package's own is used again. It reports whether there was such a
+// registration. It is for a format that is only wanted for a while, and
+// for tests, which should leave the formats as they found them.
+func UnregisterFormat(name string) bool {
+	name = strings.ToLower(strings.TrimSpace(name))
+	formatsMu.Lock()
+	defer formatsMu.Unlock()
+	next := make([]*formatDef, 0, len(formats))
+	found := false
+	for _, f := range formats {
+		if f.Name != name || f.codec == nil {
+			next = append(next, f)
+			continue
+		}
+		found = true
+		for _, own := range builtin {
+			if own.Name == name {
+				next = append(next, own)
+			}
+		}
+	}
+	if found {
+		formats = next
+	}
+	return found
 }
 
 // CodecByName returns the Codec of a format, found the way FormatByName

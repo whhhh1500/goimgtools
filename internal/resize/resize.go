@@ -1,6 +1,6 @@
 // Copyright 2015 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE-GO file.
+// license that can be found in the licenses/LICENSE-GO file.
 
 // Package resize scales a pipeline.Source with a separable kernel, one source row
 // at a time. The weights (newDistrib) and the per-pixel arithmetic are those

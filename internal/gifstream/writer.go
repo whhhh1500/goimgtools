@@ -1,6 +1,6 @@
 // Copyright 2013 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE-GO file.
+// license that can be found in the licenses/LICENSE-GO file.
 
 // This file is Go's image/gif encoder (go1.27) changed to take its pixels
 // row by row. The header, colour table, graphic control, image descriptor
