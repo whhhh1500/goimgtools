@@ -813,15 +813,17 @@ go test ./...
 | macOS | arm64 | 全部测试 | GitHub 自动测试 |
 | Windows、Linux | 32 位 x86 | 全部测试，包括 6 万像素宽高和各格式最大边长的那几组 | 开发机，GitHub 自动测试 |
 | FreeBSD 15、OpenBSD 8、NetBSD 11、DragonFly BSD 6.4、Solaris 11.4、illumos（OmniOS） | x86-64 | 库的行为测试，`pipeline`、`inspect`、缩放、基本操作、命令行 | GitHub 自动测试里各系统的虚拟机 |
+| Android 11 | x86-64 | 库的行为测试，`pipeline`、`inspect`、缩放、基本操作、命令行 | GitHub 自动测试里的 Android 模拟器（用 NDK 编译，adb 推送运行） |
+| iOS | arm64 | 库的行为测试，`pipeline`、`inspect`、缩放、基本操作 | GitHub 自动测试里的 iOS 模拟器（用 Go 自带的 `go_ios_exec` 打包成 App 运行） |
 | Linux | 32 位 ARM、MIPS（大端序）、s390x（大端序）、riscv64、ppc64le、loong64 | 库的行为测试，`pipeline`、`inspect`、缩放、基本操作 | GitHub 自动测试，qemu 模拟 |
 | WebAssembly（WASI） | wasm | 库的行为测试，`pipeline`、`inspect`、缩放、基本操作 | GitHub 自动测试，wasmtime |
 | WebAssembly（浏览器 / node 用的 `GOOS=js`） | wasm | 同上；整套行为测试时 node 内存峰值 425～455MB | GitHub 自动测试，Linux 上的 node 18、20、22 |
 
-BSD、Solaris、模拟处理器和 WebAssembly 只跑上面这几个包，没有跑各格式解码器、编码器自己的测试（那些在模拟器里太慢）；不过行为测试本身会把六种格式都读写一遍。同一张图在 Linux 和 Windows 上输出的文件逐字节相同。
+BSD、Solaris、Android、iOS、模拟处理器和 WebAssembly 只跑上面这几个包，没有跑各格式解码器、编码器自己的测试（那些在模拟器里太慢）；不过行为测试本身会把六种格式都读写一遍。同一张图在 Linux 和 Windows 上输出的文件逐字节相同。
 
 自动测试的配置在 [.github/workflows/test.yml](.github/workflows/test.yml)，每次推送都会跑上表的测试，外加竞态检测、四个模糊测试的短跑，以及其余目标的编译和静态检查。
 
-只做了编译和静态检查、**没有实跑**的：AIX、Plan 9（没有可用的测试机）、Android（要模拟器）。iOS 连编译检查都没做（需要苹果的工具链）。
+只做了编译和静态检查、**没有实跑**的：AIX 和 Plan 9（找不到可用的测试机）。
 
 `GOOS=js` 有一个没查清的现象：在 WSL 里跑、测试图放在 Windows 磁盘（`/mnt/d`）上时，读参考图片的那个测试会让 node 失控（一次内存涨到 25GB，一次把 WSL 拖到无法响应）。同样的测试在 Linux 上用 node 18、20、22 都正常（WSL 里也是 node 18，所以不是 node 版本的问题），在 Windows 本机的 node 24 上内存也不超过 300MB。因此问题出在 WSL 这个环境（最可能是隔着 `/mnt/d` 读 Windows 磁盘），确切原因没有找到。
 
