@@ -55,16 +55,16 @@ jobs:
       matrix:
         include:
           - arch: arm
-            qemu: qemu-arm-static
+            qemu: qemu-arm
           - arch: s390x
-            qemu: qemu-s390x-static
+            qemu: qemu-s390x
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - run: sudo apt-get update && sudo apt-get install -y qemu-user-static
+      - run: sudo apt-get update && sudo apt-get install -y qemu-user
       - run: GOARCH=${{ matrix.arch }} go test -exec ${{ matrix.qemu }} -timeout 120m ./tests ./pipeline ./inspect ./internal/resize ./internal/ops
 
   platforms:
