@@ -92,6 +92,29 @@ jobs:
           go mod download
           GOOS=wasip1 GOARCH=wasm go test -timeout 60m ./pipeline ./inspect ./internal/resize ./internal/ops ./tests
 
+  js:
+    # WebAssembly for browsers and node (GOOS=js), run by node.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: |
+          export PATH="$(go env GOROOT)/lib/wasm:$PATH"
+          go mod download
+          # Each test program runs in a node of its own; the peak memory of
+          # each is printed after it, to see that node stays bounded.
+          for p in pipeline inspect internal/resize internal/ops tests; do
+            status=0
+            GOOS=js GOARCH=wasm /usr/bin/time -v -o time.txt go test -timeout 60m "./$p" || status=$?
+            grep -E "Maximum resident" time.txt | sed "s#^#  $p: #"
+            [ $status -eq 0 ] || exit $status
+          done
+
   vm:
     # Other operating systems: the tests are built here and run inside a
     # virtual machine of each, which needs no Go of its own for that.

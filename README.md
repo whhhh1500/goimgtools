@@ -812,15 +812,15 @@ go test ./...
 | Linux | arm64 | 全部测试 | GitHub 自动测试 |
 | macOS | arm64 | 全部测试 | GitHub 自动测试 |
 | Windows、Linux | 32 位 x86 | 全部测试，包括 6 万像素宽高和各格式最大边长的那几组 | 开发机，GitHub 自动测试 |
-| FreeBSD 15 | x86-64 | 库的行为测试，`pipeline`、`inspect`、缩放、基本操作、命令行 | GitHub 自动测试里的 FreeBSD 虚拟机 |
+| FreeBSD 15、OpenBSD 8、NetBSD 11、Solaris 11.4 | x86-64 | 库的行为测试，`pipeline`、`inspect`、缩放、基本操作、命令行 | GitHub 自动测试里各系统的虚拟机 |
 | Linux | 32 位 ARM、MIPS（大端序）、s390x（大端序）、riscv64、ppc64le、loong64 | 库的行为测试，`pipeline`、`inspect`、缩放、基本操作 | GitHub 自动测试，qemu 模拟 |
 | WebAssembly（WASI） | wasm | 库的行为测试，`pipeline`、`inspect`、缩放、基本操作 | GitHub 自动测试，wasmtime |
 
-FreeBSD、模拟处理器和 WebAssembly 只跑上面这几个包，没有跑各格式解码器、编码器自己的测试（那些在模拟器里太慢）；不过行为测试本身会把六种格式都读写一遍。同一张图在 Linux 和 Windows 上输出的文件逐字节相同。
+BSD、Solaris、模拟处理器和 WebAssembly 只跑上面这几个包，没有跑各格式解码器、编码器自己的测试（那些在模拟器里太慢）；不过行为测试本身会把六种格式都读写一遍。同一张图在 Linux 和 Windows 上输出的文件逐字节相同。
 
 自动测试的配置在 [.github/workflows/test.yml](.github/workflows/test.yml)，每次推送都会跑上表的测试，外加竞态检测、四个模糊测试的短跑，以及其余目标的编译和静态检查。
 
-只做了编译和静态检查、**没有实跑**的：OpenBSD、NetBSD、Solaris、AIX、Plan 9、Android、iOS。
+只做了编译和静态检查、**没有实跑**的：DragonFly BSD、illumos、AIX、Plan 9、Android。iOS 连编译检查都没做（需要苹果的工具链）。
 
 在浏览器或 node 里跑的那种 WebAssembly（`GOOS=js`）只跑通过四个小包：根包测试在 node 里内存涨到 25GB 被中止，原因没查。同样的测试在 WASI（wasmtime）下正常通过，所以问题多半在 node 这一侧，但 `GOOS=js` 目前仍算**未验证**。
 
