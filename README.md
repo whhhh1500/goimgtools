@@ -80,7 +80,8 @@ err := goimgtools.Open("in.jpg").
 | `ToFormat(name, 选项)` | 按名字选输出格式（`"jpeg"`、`"png"`、`".tif"`……，以及注册的格式）；选项是该格式的选项结构体，可不给 |
 | `MaxFileSize(n)` | 输出不超过 n 字节：自动用能放下的最高质量（JPEG、有损 WebP，以及带 `Quality` 的注册格式） |
 | `ToFile(path)` / `ToWriter(w)` / `ToBytes()` | 执行并写出。`ToFile` 不指定格式时按扩展名；只有全程成功才留下文件 |
-| `Metadata()` | 只读文件头，说明**输入**是什么：格式、存储的宽高、是否带透明、EXIF 方向、是否有 ICC / EXIF。与链上的操作无关 |
+| `Metadata()` | 只读文件头，说明**输入**是什么：格式、存储的宽高、颜色类型（灰度 / 调色板 / RGB / YCbCr / CMYK）和位深、是否带透明、EXIF 方向、是否有 ICC / EXIF。与链上的操作无关 |
+| `Frames()` | 输入有几帧、播放一遍多长、循环几次（只有 GIF 会多于一帧）。要读完整个文件，但不解码像素 |
 | `OutputSize()` | **结果**会是多大：链上所有操作之后的宽高，不解码像素 |
 | `ToImage()` | 执行并返回整张 `image.Image`（整张在内存里，计入内存上限） |
 | `Stream(env)` | 执行并返回结果的像素流，不写文件（见「扩展」） |
@@ -419,13 +420,49 @@ goimgtools.Text("第一行\n第二行 Mixed", goimgtools.TextOptions{
 - 每打开一个字体按 256KB、画字的缓冲按「6 × 字号²」字节计入内存上限（1000 像素的字约 6MB），超出时报内存超限。
 - 文字按行出图，内存只占一行。
 
+## 小工具：查看和检查图片
+
+不改图片、只看图片的几样工具。命令行里是子命令；库里除了上面的 `Metadata()`、`Frames()`，还有一个公开子包 `inspect`（它只用库的公开接口写成，内存同样是按行处理、有上限的）。
+
+| 命令行 | 库 | 做什么 |
+|---|---|---|
+| `goimgtools info 文件...` | `img.Metadata()`、`img.Frames()` | 每个文件一行：格式、宽高、颜色类型和位深、像素数、文件大小、动图的帧数和时长、EXIF 方向、是否带 ICC / EXIF。加 `-json` 每个文件输出一行 JSON |
+| `goimgtools check 文件...` | `inspect.Verify(img)` | 把图片完整解码一遍，报告损坏、被截断或根本不是图片的文件。`info` 只读文件头，文件后半截坏了它看不出来 |
+| `goimgtools compare a b` | `inspect.Compare(a, b)` | 两张图逐像素比较，格式不同也能比：是否完全相同；不同的话给出 PSNR（越高越接近，40 以上肉眼难辨）、最大差值、有多少像素不同。`-min-psnr 35` 可以当质量关卡用：达不到就以非零状态退出 |
+| `goimgtools formats` | `Formats()`、`CodecByName()` | 支持哪些格式、各自的扩展名、能读还是能写 |
+
+```bash
+goimgtools info photo.jpg anim.gif
+```
+
+```
+photo.jpg: jpeg 6000x4000, ycbcr 8-bit, 24.0 MP, 5.6MB, EXIF orientation 6 (upright it is 4000x6000), ICC profile, EXIF
+anim.gif: gif 400x300, palette 8-bit, 0.1 MP, 1.2MB, 24 frames in 2.40s, plays for ever
+```
+
+```go
+// 上传的文件是不是一张完好的图
+if err := inspect.Verify(goimgtools.FromBytes(upload)); err != nil {
+    // errors.Is(err, goimgtools.ErrFormat)：文件有问题
+}
+
+// 压缩之后和原图差多少
+d, err := inspect.Compare(goimgtools.Open("orig.png"), goimgtools.Open("small.jpg"))
+fmt.Println(d) // PSNR 41.87 dB, largest difference 23 of 255, 96.4% of the pixels differ
+```
+
+`Compare` 比的是两个配方处理之后的像素，所以两种处理方式可以直接比，不用先写成文件，例如同一张图用两种缩放算法：`inspect.Compare(a.Resize(800, 0), b.Resize(800, 0, goimgtools.ResizeOptions{Kernel: goimgtools.KernelLinear}))`。输出格式（`JPEG()`、`WebP()` 这些）不参与比较；要比编码造成的损失，先 `ToBytes()` 再用 `FromBytes` 读回来比。
+
 ## 命令行
 
 ```
 goimgtools [选项] 输入文件 输出文件
 goimgtools batch [选项] 输入目录 输出目录
 goimgtools -text "文字" [选项] 输出文件
-goimgtools info 文件...
+goimgtools info [-json] 文件...
+goimgtools check 文件...
+goimgtools compare a b
+goimgtools formats
 goimgtools fonts [-all]
 ```
 
@@ -672,6 +709,7 @@ WebP 编码器是本模块自己写的，没有标准库可对照，用两种解
 - 颜色调整（灰度、亮度、对比度）没有内置方法，用 `Pixels` 几行就能写（「扩展」里有灰度的例子）；模糊、锐化这类要看相邻像素的滤镜没有内置，要自己写成 `Pipe` 的一环。
 - JPEG 的网格量化（mozjpeg 的做法，同等观感下还能小 5%–10%，但会改变像素）。
 - `MaxFileSize` 只支持 JPEG 和有损 WebP（以及带 `Quality` 的注册格式）。
+- 小工具里还没做的：图片的颜色统计（平均色、主色）、感知哈希（找重复或相似的图）、EXIF 明细（相机、拍摄时间、GPS；现在只读方向）。
 
 ## 发布状态
 
@@ -705,6 +743,7 @@ goimgtools/
 ├── example_test.go  文档里的可运行示例
 │
 ├── pipeline/        公开包：像素流接口 Source、内存预算、暂存区，以及写扩展用的零件
+├── inspect/         公开包：校验图片是否完好、比较两张图的差异
 ├── internal/        各格式的解码和编码、缩放、基本操作、文字渲染、减色（见下表）
 ├── cmd/             命令行程序 goimgtools，实测程序 memprobe
 ├── tests/           库的行为测试：只通过公开接口使用这个库，和使用者的程序一样

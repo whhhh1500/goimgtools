@@ -34,7 +34,7 @@ jobs:
       # The race detector makes the tests several times slower: on a small
       # machine the main package alone takes more than the ten minutes a
       # test run is given by default.
-      - run: go test -race -timeout 45m . ./tests ./pipeline ./cmd/...
+      - run: go test -race -timeout 45m . ./tests ./pipeline ./inspect ./cmd/...
 
   bits32:
     runs-on: ubuntu-latest
@@ -44,6 +44,28 @@ jobs:
         with:
           go-version-file: go.mod
       - run: GOARCH=386 go test ./...
+
+  emulated:
+    # Two processors unlike any of the above, run under emulation: 32-bit
+    # ARM, and s390x, which stores numbers the other way round (big-endian).
+    # Emulation is slow, so this runs the tests of what the library does and
+    # of its core, not those of every decoder.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm
+            qemu: qemu-arm-static
+          - arch: s390x
+            qemu: qemu-s390x-static
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: sudo apt-get update && sudo apt-get install -y qemu-user-static
+      - run: GOARCH=${{ matrix.arch }} go test -exec ${{ matrix.qemu }} -timeout 120m ./tests ./pipeline ./inspect ./internal/resize ./internal/ops
 
   platforms:
     # Everything else is at least built and vetted.

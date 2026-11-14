@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"image/color"
 	"io"
 	"runtime/debug"
 
@@ -28,6 +29,13 @@ type Info struct {
 	Width, Height int
 	// HasAlpha reports whether the image can have transparent pixels.
 	HasAlpha bool
+	// Color is how the pixels are stored: "gray", "palette" (up to 256
+	// colours from a table), "rgb", "ycbcr" (brightness and two colour
+	// differences, as in JPEG and lossy WebP) or "cmyk". Transparency is
+	// told by HasAlpha, not here.
+	Color string
+	// Bits is the number of bits of one channel of a pixel: 8 or 16.
+	Bits int
 	// Orientation is the EXIF orientation, 1 (upright) to 8; 1 when the
 	// file does not say. Rotate() without arguments undoes it. From 5 on,
 	// the upright image has Width and Height exchanged.
@@ -184,8 +192,30 @@ func (m *Image) Metadata() (info Info, err error) {
 		format = f.kind
 	}
 	b, meta := src.Bounds(), pipeline.MetaOf(src)
-	return Info{Format: format, Width: b.Dx(), Height: b.Dy(), HasAlpha: !pipeline.IsOpaque(src),
+	kind, bits := colorOf(src.ColorModel())
+	return Info{Format: format, Width: b.Dx(), Height: b.Dy(), HasAlpha: !pipeline.IsOpaque(src), Color: kind, Bits: bits,
 		Orientation: pipeline.ExifOrientation(meta.Exif), HasProfile: len(meta.ICC) > 0, HasExif: len(meta.Exif) > 0}, nil
+}
+
+// colorOf names how a colour model stores a pixel, and with how many bits
+// a channel.
+func colorOf(m color.Model) (kind string, bits int) {
+	if _, ok := m.(color.Palette); ok {
+		return "palette", 8
+	}
+	switch m {
+	case color.GrayModel:
+		return "gray", 8
+	case color.Gray16Model:
+		return "gray", 16
+	case color.YCbCrModel, color.NYCbCrAModel:
+		return "ycbcr", 8
+	case color.CMYKModel:
+		return "cmyk", 8
+	case color.RGBA64Model, color.NRGBA64Model:
+		return "rgb", 16
+	}
+	return "rgb", 8
 }
 
 // OutputSize reports the width and height the result will have, after

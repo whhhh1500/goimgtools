@@ -29,7 +29,12 @@ const usage = `usage:
   goimgtools batch [options] in-dir out-dir
                                         process every image of a directory
                                         (see: goimgtools batch -h)
-  goimgtools info input...              print format and size
+  goimgtools info [-json] file...       what each file is: format, size,
+                                        colours, metadata, frames
+  goimgtools check file...              decode each file completely and report
+                                        the damaged ones
+  goimgtools compare a b                how much two images differ (PSNR)
+  goimgtools formats                    the formats that are read and written
   goimgtools fonts [-all]               list the fonts text is drawn with by
                                         default (-all: every installed font)
 
@@ -142,14 +147,20 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if len(args) > 0 {
 		switch args[0] {
 		case "info":
-			return info(args[1:], stdout)
+			return info(args[1:], stdout, stderr)
+		case "check":
+			return check(args[1:], stdout, stderr)
+		case "compare":
+			return compare(args[1:], stdout, stderr)
+		case "formats":
+			return formatTable(args[1:], stdout)
 		case "fonts":
 			return fonts(args[1:], stdout)
 		case "batch":
 			return batch(args[1:], stdout, stderr)
 		}
 	}
-	fs := flag.NewFlagSet("github.com/whhhh1500/goimgtools", flag.ContinueOnError)
+	fs := flag.NewFlagSet("goimgtools", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	o := register(fs)
 	fs.Usage = func() {
@@ -495,27 +506,6 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 	}
 	// (A name without a known extension: the library reports it.)
 	return im, nil
-}
-
-func info(files []string, stdout io.Writer) error {
-	if len(files) == 0 {
-		return errors.New("info: need at least one file")
-	}
-	var failed error
-	for _, f := range files {
-		m, err := goimgtools.Open(f).Metadata()
-		if err != nil {
-			fmt.Fprintf(stdout, "%s: %v\n", f, err)
-			failed = errors.New("some files could not be read")
-			continue
-		}
-		alpha := ""
-		if m.HasAlpha {
-			alpha = " alpha"
-		}
-		fmt.Fprintf(stdout, "%s: %s %dx%d%s\n", f, m.Format, m.Width, m.Height, alpha)
-	}
-	return failed
 }
 
 func ints(s string, n int) ([]int, error) {

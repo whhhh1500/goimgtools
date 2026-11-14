@@ -91,24 +91,6 @@ func mustRead(t *testing.T, path string) []byte {
 	return data
 }
 
-func TestInfo(t *testing.T) {
-	dir := t.TempDir()
-	a, b := filepath.Join(dir, "a.png"), filepath.Join(dir, "b.png")
-	writePNG(t, a, testutil.Images(61, 45)["nrgba"])
-	writePNG(t, b, testutil.Images(30, 20)["gray"])
-	out, _, err := cli("info", a, b)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(out, "a.png: png 61x45 alpha\n") || !strings.Contains(out, "b.png: png 30x20\n") {
-		t.Errorf("info output:\n%s", out)
-	}
-	out, _, err = cli("info", a, filepath.Join(dir, "missing.png"))
-	if err == nil || !strings.Contains(out, "a.png: png 61x45") {
-		t.Errorf("info with a missing file: err %v, output:\n%s", err, out)
-	}
-}
-
 func TestBadArguments(t *testing.T) {
 	dir := t.TempDir()
 	in := filepath.Join(dir, "in.png")

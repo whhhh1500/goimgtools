@@ -6,6 +6,7 @@ import (
 	"image"
 	"image/color"
 	"io"
+	"time"
 
 	"github.com/whhhh1500/goimgtools/internal/gifstream"
 	"github.com/whhhh1500/goimgtools/pipeline"
@@ -28,6 +29,74 @@ import (
 // height x frames), and an animation with more is refused with an
 // ErrPixelLimit once that many have been processed.
 func (m *Image) Animated() *Image { m.animated = true; return m }
+
+// Frames is what Image.Frames reports about an input that may be an
+// animation.
+type Frames struct {
+	// Count is the number of frames: 1 for a still image.
+	Count int
+	// Duration is how long the frames are shown one after the other, once
+	// through. Zero for a still image.
+	Duration time.Duration
+	// LoopCount is how often an animation plays: 0 for ever, n > 0 for n
+	// times, -1 when the file does not say (viewers then play it once).
+	LoopCount int
+}
+
+// Frames goes through the input and reports how many frames it has and how
+// long they play. Only a GIF can have more than one.
+//
+// Unlike Metadata it reads the whole file, since a GIF does not say in its
+// header how many frames follow; the pixels are stepped over, not decoded,
+// so it costs the reading and little else. It does not depend on Animated.
+func (m *Image) Frames() (fr Frames, err error) {
+	defer guard(&err)
+	if m.err != nil {
+		return Frames{}, m.err
+	}
+	f, format, err := m.openInput()
+	if err != nil {
+		return Frames{}, err
+	}
+	if format != "gif" {
+		// A still image, once its header says that it is an image at all.
+		src, err := m.decode(m.newEnv(), f, format)
+		if err != nil {
+			return Frames{}, err
+		}
+		src.Close()
+		f.Close()
+		return Frames{Count: 1}, nil
+	}
+	defer f.Close()
+	anim, err := gifstream.OpenAnimation(f.br, m.newEnv())
+	if err != nil {
+		return Frames{}, f.classify(err)
+	}
+	defer anim.Close()
+	fr.LoopCount = anim.Config().LoopCount
+	for {
+		if m.ctx != nil {
+			if err := m.ctx.Err(); err != nil {
+				return Frames{}, err
+			}
+		}
+		frame, info, err := anim.NextFrame()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return Frames{}, f.classify(err)
+		}
+		frame.Close() // unread: its data is stepped over
+		fr.Count++
+		fr.Duration += time.Duration(info.Delay) * 10 * time.Millisecond
+	}
+	if fr.Count == 0 {
+		return Frames{}, fmt.Errorf("%w: the GIF has no frames", ErrFormat)
+	}
+	return fr, nil
+}
 
 // GIF disposal methods.
 const (

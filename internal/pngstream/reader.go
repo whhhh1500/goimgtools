@@ -1029,10 +1029,20 @@ func (d *decoder) parseIEND(length uint32) error {
 }
 
 // Opaque reports whether the PNG has no alpha channel and no tRNS chunk.
+// For a paletted image the tRNS chunk gives single palette entries their
+// transparency, so it is opaque when every entry is (a pixel that points
+// past the end of the palette is opaque black).
 func (s *stream) Opaque() bool {
 	switch s.d.cb {
 	case cbG1, cbG2, cbG4, cbG8, cbG16, cbTC8, cbTC16:
 		return !s.d.useTransparent
+	case cbP1, cbP2, cbP4, cbP8:
+		for _, c := range s.d.palette {
+			if _, _, _, a := c.RGBA(); a != 0xffff {
+				return false
+			}
+		}
+		return true
 	}
 	return false
 }
