@@ -16,11 +16,12 @@ import (
 // first and keep it in working storage.
 
 // Grayscale turns the image into shades of grey: the Rec. 601 brightness
-// of each pixel. For a JPEG that is the brightness it stores; for other
-// images it is exactly what image/color's GrayModel gives (Pillow uses the
-// same weights and rounds slightly differently, at most 1 apart). An image
-// without transparency becomes a one-channel greyscale image, which a JPEG
-// or PNG then stores as such, smaller; transparency is kept.
+// of each pixel, rounded to the nearest level, as Pillow's convert("L"),
+// image/color's RGBToYCbCr and JPEG encoders compute it (Pillow's result
+// to the byte; image/color's GrayModel drops a fraction instead and can be
+// a level lower). For a JPEG it is the brightness the file stores. An
+// image without transparency becomes a one-channel greyscale image, which
+// a JPEG or PNG then stores as such, smaller; transparency is kept.
 func (m *Image) Grayscale() *Image { return m.add(grayscaleOp{}) }
 
 // Modulate changes brightness and saturation by a factor and turns the
@@ -29,7 +30,8 @@ func (m *Image) Grayscale() *Image { return m.add(grayscaleOp{}) }
 // perceived lightness in grey, not an average of red, green and blue).
 // Modulate(1, 1, 0) leaves the image as it is; Modulate(1.2, 0.8, 0) is a
 // fifth brighter and less vivid; Modulate(1, 1, 180) gives the opposite
-// colours. Transparency is kept.
+// colours. Transparency is kept. The result is within one level of
+// sharp's (0.35) on every pixel.
 func (m *Image) Modulate(brightness, saturation, hue float64) *Image {
 	for _, v := range []float64{brightness, saturation, hue} {
 		if math.IsNaN(v) || math.IsInf(v, 0) {

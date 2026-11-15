@@ -83,7 +83,11 @@ func (a *async) run() {
 	// stage instead.
 	defer func() {
 		if v := recover(); v != nil {
-			a.send(asyncItem{err: &PanicError{Value: v, Stack: debug.Stack()}})
+			p, ok := v.(*PanicError) // raised again by Parallel
+			if !ok {
+				p = &PanicError{Value: v, Stack: debug.Stack()}
+			}
+			a.send(asyncItem{err: p})
 		}
 	}()
 	for {

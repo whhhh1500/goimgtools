@@ -342,6 +342,48 @@ func TestGradientQuality(t *testing.T) {
 	}
 }
 
+// TestCloseShades: an image of a few hundred close shades (a sky, a soft
+// radial gradient) gets its palette from the colours themselves, not from
+// the bins of the histogram, which are wider than the steps between them:
+// it comes out nearly as it was, and dithering adds no noise to it. (With
+// the bins it was 47 dB, and dithering made the file 15 times larger.)
+func TestCloseShades(t *testing.T) {
+	sky := image.NewRGBA(image.Rect(0, 0, 400, 1080))
+	for y := 0; y < 1080; y++ {
+		v := float64(y) / 1079
+		for x := 0; x < 400; x++ {
+			sky.SetRGBA(x, y, color.RGBA{uint8(40 + 120*v), uint8(90 + 110*v), uint8(200 + 50*v), 255})
+		}
+	}
+	radial := image.NewRGBA(image.Rect(0, 0, 500, 500))
+	for y := 0; y < 500; y++ {
+		for x := 0; x < 500; x++ {
+			r := min(1, math.Hypot(float64(x-250), float64(y-250))/354)
+			radial.SetRGBA(x, y, color.RGBA{uint8(250 - 200*r), uint8(200 - 150*r), uint8(120 + 100*r), 255})
+		}
+	}
+	for name, m := range map[string]*image.RGBA{"sky": sky, "radial": radial} {
+		dith := quantizeImage(t, m, nil)
+		flat := quantizeImage(t, m, &Options{NoDither: true})
+		pd, pf := psnr(m, dith), psnr(m, flat)
+		t.Logf("%s: %.1f dB dithered, %.1f dB not", name, pd, pf)
+		if pd < 60 || pf < 60 {
+			t.Errorf("%s: %.1f dB dithered, %.1f dB not; want at least 60", name, pd, pf)
+		}
+		// Dithering may change a pixel only where the palette lacks its
+		// colour: few of them.
+		changed := 0
+		for i := range dith.Pix {
+			if dith.Pix[i] != flat.Pix[i] {
+				changed++
+			}
+		}
+		if changed*20 > len(dith.Pix) {
+			t.Errorf("%s: dithering changed %d of %d pixels", name, changed, len(dith.Pix))
+		}
+	}
+}
+
 // softShape is a colourful disc with a soft edge on a fully transparent
 // background, whose hidden colour varies.
 func softShape(w, h int) *image.NRGBA {

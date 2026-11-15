@@ -131,14 +131,16 @@ func TestGrayscale(t *testing.T) {
 					want = yc.Y[yc.YOffset(b.Min.X+x, b.Min.Y+y)] // the stored brightness
 				} else {
 					n := color.NRGBAModel.Convert(src).(color.NRGBA)
-					want = color.GrayModel.Convert(color.NRGBA{n.R, n.G, n.B, 255}).(color.Gray).Y
+					want, _, _ = color.RGBToYCbCr(n.R, n.G, n.B)
 				}
 				g := color.NRGBAModel.Convert(got.At(x, y)).(color.NRGBA)
 				_, _, _, a16 := src.RGBA()
 				if g.R != g.G || g.G != g.B {
 					t.Fatalf("%s: pixel (%d,%d) is not grey: %v", name, x, y, g)
 				}
-				if a16 != 0 && int(g.R)-int(want) > 1 || int(want)-int(g.R) > 1 && a16 != 0 {
+				// Exact where opaque; translucent colours of 16-bit sources are
+				// first brought to 8 bits, which can round the other way.
+				if d := int(g.R) - int(want); a16 == 0xffff && d != 0 || a16 != 0 && (d > 1 || d < -1) {
 					t.Fatalf("%s: pixel (%d,%d) is %d, want %d", name, x, y, g.R, want)
 				}
 				if a := uint8(a16 >> 8); g.A != a {
@@ -149,6 +151,18 @@ func TestGrayscale(t *testing.T) {
 		if _, isGray := got.(*image.Gray); isGray != opaque {
 			t.Errorf("%s: opaque %v, written as %T", name, opaque, got)
 		}
+	}
+	// The same as Pillow's convert("L").
+	src, err := os.ReadFile(filepath.Join("testdata", "pillow", "source.png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := FromBytes(src).Grayscale().PNG().ToBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if maxd, mean, _ := channelDiff(t, decodePNG(t, out), readPNG(t, "pillow/gray.png")); maxd != 0 {
+		t.Errorf("differs from Pillow by up to %d, %.3f on average", maxd, mean)
 	}
 	// A JPEG becomes a greyscale JPEG.
 	jp, err := FromBytes(jpegBytes(photoLike(160, 120), 90)).Grayscale().JPEG(85).ToBytes()
@@ -662,7 +676,7 @@ func TestAdjustTogether(t *testing.T) {
 	if c, err := jpeg.DecodeConfig(bytes.NewReader(out)); err != nil || c.Width < 336 || c.Height < 250 {
 		t.Errorf("chain: %+v, %v", c, err)
 	}
-	for threads := 1; threads <= 3; threads++ {
+	for _, threads := range []int{1, 2, 3, 4, 8} {
 		again, err := FromBytes(jp).Rotate().Trim(10).Resize(320, 0).Extend(8, 8, 8, 8, color.White).
 			Modulate(1.05, 1.1, 0).Sharpen().RotateBy(3, color.White).Threads(threads).JPEG(85).ToBytes()
 		if err != nil || !bytes.Equal(again, out) {

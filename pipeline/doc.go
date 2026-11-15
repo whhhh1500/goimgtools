@@ -77,6 +77,10 @@
 //     limit holds, so a stage that skips it breaks the limit for everyone.
 //   - Env returns the Env of the Source a stage reads, so that the whole
 //     pipeline accounts against one budget.
+//   - A stage that wants more than one core shares its work through
+//     Env().Parallel rather than goroutines of its own: Parallel hands the
+//     work to the helpers of the pipeline that are free (see SetHelpers),
+//     so that the pipeline as a whole stays within the cores it was given.
 //
 // Strips may be of any of the standard library's image types; which one a
 // Source hands out is fixed for its whole run. NewBand, BandBytes, CopyRows

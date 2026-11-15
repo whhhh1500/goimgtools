@@ -31,22 +31,63 @@ type rowSource interface {
 	nextRow() ([]uint8, error)
 }
 
+// ---- work shared with helpers ----
+
+// batch says how the passes of a filter share their work. Without helpers
+// a pass works out one row at a time, on the goroutine that reads the
+// stage; with them, rows at a time, its work split into ways parts done at
+// once. Each part does to its rows or columns what one pass alone would:
+// the result is the same to the byte.
+type batch struct {
+	env  *pipeline.Env
+	rows int // rows a pass works out at a time
+	ways int // parts its work is split into
+}
+
+// split cuts [0, n) into at most ways parts of at least least each, their
+// ends on multiples of align, and calls fn on them at the same time.
+func (w batch) split(n, least, align int, fn func(lo, hi int)) {
+	parts := min(w.ways, max(1, n/max(least, 1)))
+	if parts <= 1 {
+		fn(0, n)
+		return
+	}
+	w.env.Parallel(parts, func(i int) {
+		lo, hi := i*n/parts/align*align, (i+1)*n/parts/align*align
+		if i == parts-1 {
+			hi = n
+		}
+		fn(lo, hi)
+	})
+}
+
 // ---- rows of the source ----
 
 // inputRows turns the strips of a Source into rows of premultiplied RGBA,
 // optionally keeping each in a store (for a filter that needs the original
-// next to its result) and passing it through the horizontal blurs.
+// next to its result) and passing it through the horizontal blurs, a
+// batch of rows at a time.
 type inputRows struct {
 	src   pipeline.Source
 	w, h  int
 	band  rgbaBand
 	cur   *image.RGBA
-	y     int // rows handed out
+	y     int // rows taken from the source
 	keep  rowStore
-	hblur *hbox
+	hblur []*hbox // one for each part of the work; nil for none
+	work  batch
+	// The batch: rows of cur, or their blurred copies in out; n of them,
+	// handed of those handed out.
+	rows      [][]uint8
+	out       [][]uint8
+	n, handed int
 }
 
 func (in *inputRows) nextRow() ([]uint8, error) {
+	if in.handed < in.n {
+		in.handed++
+		return in.rows[in.handed-1], nil
+	}
 	if in.y >= in.h {
 		return nil, io.EOF
 	}
@@ -65,20 +106,34 @@ func (in *inputRows) nextRow() ([]uint8, error) {
 		if err != nil {
 			return nil, err
 		}
-		draw.Draw(dst, r, s, r.Min, draw.Src)
+		in.work.split(r.Dy(), 1, 1, func(lo, hi int) {
+			part := image.Rect(r.Min.X, r.Min.Y+lo, r.Max.X, r.Min.Y+hi)
+			draw.Draw(dst, part, s, part.Min, draw.Src)
+		})
 		in.cur = dst
 	}
-	row := in.cur.Pix[in.cur.PixOffset(sb.Min.X, abs):][:4*in.w]
-	if in.keep != nil {
-		if err := in.keep.put(in.y, row); err != nil {
-			return nil, err
+	n := min(len(in.rows), in.cur.Rect.Max.Y-abs)
+	for i := 0; i < n; i++ {
+		row := in.cur.Pix[in.cur.PixOffset(sb.Min.X, abs+i):][:4*in.w]
+		if in.keep != nil {
+			if err := in.keep.put(in.y+i, row); err != nil {
+				return nil, err
+			}
 		}
+		in.rows[i] = row
 	}
-	in.y++
 	if in.hblur != nil {
-		return in.hblur.apply(row), nil
+		k := len(in.hblur)
+		in.work.env.Parallel(min(k, n), func(g int) {
+			for i := g; i < n; i += k {
+				in.hblur[g].apply(in.out[i], in.rows[i])
+			}
+		})
+		copy(in.rows, in.out[:n])
 	}
-	return row, nil
+	in.y += n
+	in.n, in.handed = n, 1
+	return in.rows[0], nil
 }
 
 // drain reads the source to its end, so that a decoder has verified its
@@ -143,14 +198,12 @@ type hbox struct {
 	t  [2][]uint8
 }
 
-func (h *hbox) apply(row []uint8) []uint8 {
-	if !h.b.any {
-		return row
-	}
+// apply puts the blurred row into dst (whose alpha stays as it is when
+// only the colours are blurred).
+func (h *hbox) apply(dst, row []uint8) {
 	h.pass(h.t[0], row)
 	h.pass(h.t[1], h.t[0])
-	h.pass(h.t[0], h.t[1])
-	return h.t[0]
+	h.pass(dst, h.t[1])
 }
 
 // pass is one horizontal box blur of src into dst, the pixels at the ends
@@ -196,17 +249,20 @@ func (h *hbox) pass(dst, src []uint8) {
 }
 
 // vbox is one vertical box blur: a window of rows of its input, kept in a
-// store, and the running sum of its body.
+// store, and the running sum of its body. It works out a batch of rows at
+// a time, its columns shared out.
 type vbox struct {
-	prev  rowSource
-	b     box
-	w4, h int
-	nc    int // as hbox's
-	store rowStore
-	sum   []uint32
-	out   []uint8
-	got   int // input rows taken
-	next  int // next output row
+	prev       rowSource
+	b          box
+	w4, h      int
+	store      rowStore
+	sum        []uint32
+	out        [][]uint8 // the batch
+	ra, rb, rc [][]uint8 // the rows each row of the batch is made of
+	work       batch
+	got        int // input rows taken
+	next       int // next output row to work out
+	n, handed  int // rows of the batch, of them handed out
 }
 
 func (v *vbox) row(i int) ([]uint8, error) {
@@ -219,12 +275,17 @@ func (v *vbox) row(i int) ([]uint8, error) {
 }
 
 func (v *vbox) nextRow() ([]uint8, error) {
-	y := v.next
-	if y >= v.h {
+	if v.handed < v.n {
+		v.handed++
+		return v.out[v.handed-1], nil
+	}
+	y0 := v.next
+	if y0 >= v.h {
 		return nil, io.EOF
 	}
+	n := min(len(v.out), v.h-y0)
 	ri := v.b.ri
-	for need := min(y+ri+1, v.h-1); v.got <= need; v.got++ {
+	for need := min(y0+n+ri, v.h-1); v.got <= need; v.got++ {
 		r, err := v.prev.nextRow()
 		if err != nil {
 			if err == io.EOF {
@@ -236,7 +297,7 @@ func (v *vbox) nextRow() ([]uint8, error) {
 			return nil, err
 		}
 	}
-	if y == 0 {
+	if y0 == 0 {
 		clear(v.sum)
 		for k := -ri; k <= ri; k++ {
 			r, err := v.row(k)
@@ -248,38 +309,39 @@ func (v *vbox) nextRow() ([]uint8, error) {
 			}
 		}
 	}
-	// Three gets: all three rows stay valid.
-	a, err := v.row(y - ri - 1)
-	if err != nil {
-		return nil, err
-	}
-	b, err := v.row(y + ri + 1)
-	if err != nil {
-		return nil, err
-	}
-	c, err := v.row(y - ri)
-	if err != nil {
-		return nil, err
-	}
-	out, sum := v.out, v.sum[:len(v.out)]
-	a, b, c = a[:len(out)], b[:len(out)], c[:len(out)]
-	if v.nc == 4 {
-		for j := range out {
-			s, bj := sum[j], uint32(b[j])
-			out[j] = v.b.value(s, uint32(a[j]), bj)
-			sum[j] = s + bj - uint32(c[j])
+	// Three gets for each row. A store on disk comes with batches of one
+	// row, whose three rows then all stay valid; in memory every row does.
+	for i := 0; i < n; i++ {
+		y := y0 + i
+		var err error
+		if v.ra[i], err = v.row(y - ri - 1); err != nil {
+			return nil, err
 		}
-	} else {
-		for j := 0; j+3 < len(out); j += 4 {
-			for k := j; k < j+3; k++ {
-				s, bk := sum[k], uint32(b[k])
-				out[k] = v.b.value(s, uint32(a[k]), bk)
-				sum[k] = s + bk - uint32(c[k])
+		if v.rb[i], err = v.row(y + ri + 1); err != nil {
+			return nil, err
+		}
+		if v.rc[i], err = v.row(y - ri); err != nil {
+			return nil, err
+		}
+	}
+	// Every column is a sum of its own. All four channels: the alpha of an
+	// opaque image comes in as 255 and stays so.
+	v.work.split(v.w4, 4096, 64, func(lo, hi int) {
+		sum := v.sum[lo:hi]
+		for i := 0; i < n; i++ {
+			out := v.out[i][lo:hi]
+			a, b, c := v.ra[i][lo:hi], v.rb[i][lo:hi], v.rc[i][lo:hi]
+			a, b, c = a[:len(out)], b[:len(out)], c[:len(out)]
+			for j := range out {
+				s, bj := sum[j], uint32(b[j])
+				out[j] = v.b.value(s, uint32(a[j]), bj)
+				sum[j] = s + bj - uint32(c[j])
 			}
 		}
-	}
-	v.next++
-	return v.out, nil
+	})
+	v.next += n
+	v.n, v.handed = n, 1
+	return v.out[0], nil
 }
 
 // ---- a store of rows ----
@@ -374,8 +436,10 @@ type filterStage struct {
 	band     rgbaBand
 	n, y     int
 	stores   []rowStore
+	onDisk   bool // a store went to a temporary file
 	reserved int64
 	opaque   bool
+	work     batch
 }
 
 func (f *filterStage) Env() *pipeline.Env      { return f.env }
@@ -449,6 +513,7 @@ func (f *filterStage) newStore(n, rowBytes int) (rowStore, error) {
 		}
 		s = m
 	} else {
+		f.onDisk = true
 		if err := f.reserve(int64(len(diskStore{}.buf))*int64(rowBytes), "filter row buffers"); err != nil {
 			return nil, err
 		}
@@ -475,13 +540,55 @@ func newFilter(src pipeline.Source) *filterStage {
 	return f
 }
 
-// fail gives back what a stage took while it was being set up, when that
-// failed; src stays the caller's.
-func (f *filterStage) fail(err error) error {
+// setup builds the passes of f with build: with the helpers of the
+// pipeline, if there are any and the image is wide enough to share the
+// work out, and everything fits in memory; otherwise (a store would go to
+// a temporary file, whose rows are read back one at a time) row by row.
+func (f *filterStage) setup(build func() error) error {
+	alone := batch{env: f.env, rows: 1, ways: 1}
+	if h := f.env.Helpers(); h > 0 && f.in.w >= 256 {
+		f.work = batch{env: f.env, rows: max(f.n, 8), ways: h + 1}
+		if err := f.prepare(build); err == nil && !f.onDisk {
+			return nil
+		}
+		f.undo()
+	}
+	f.work = alone
+	return f.prepare(build)
+}
+
+// prepare runs build after making the batch buffers of the input.
+func (f *filterStage) prepare(build func() error) error {
+	f.in.work = f.work
+	f.in.rows = make([][]uint8, f.work.rows)
+	f.in.out = nil
+	return build()
+}
+
+// undo gives back what a setup took.
+func (f *filterStage) undo() {
 	for _, s := range f.stores {
 		s.close()
 	}
+	f.stores, f.onDisk = nil, false
 	f.env.Budget.Release(f.reserved)
+	f.reserved = 0
+	f.in.keep, f.in.hblur = nil, nil
+}
+
+// rowBatch is n rows of rowBytes, all alpha 255 (see opaqueRow).
+func rowBatch(n, rowBytes int) [][]uint8 {
+	r := make([][]uint8, n)
+	for i := range r {
+		r[i] = opaqueRow(rowBytes)
+	}
+	return r
+}
+
+// fail gives back what a stage took while it was being set up, when that
+// failed; src stays the caller's.
+func (f *filterStage) fail(err error) error {
+	f.undo()
 	return err
 }
 
@@ -494,25 +601,35 @@ func (f *filterStage) blurPasses(sigma float64) (rowSource, error) {
 	}
 	w := f.in.w
 	w4 := 4 * w
-	if err := f.reserve(int64(w4)*2, "blur rows"); err != nil {
+	rows, ways := f.work.rows, f.work.ways
+	// The blurred rows of a batch, and two rows for each part of the work.
+	if err := f.reserve(int64(w4)*int64(rows+2*ways), "blur rows"); err != nil {
 		return nil, err
 	}
 	nc := 4
 	if f.opaque {
 		nc = 3
 	}
-	f.in.hblur = &hbox{b: b, w: w, nc: nc, t: [2][]uint8{opaqueRow(w4), opaqueRow(w4)}}
+	f.in.out = rowBatch(rows, w4)
+	f.in.hblur = make([]*hbox, ways)
+	for g := range f.in.hblur {
+		f.in.hblur[g] = &hbox{b: b, w: w, nc: nc, t: [2][]uint8{opaqueRow(w4), opaqueRow(w4)}}
+	}
 	var last rowSource = f.in
 	h := f.in.h
 	for i := 0; i < 3; i++ {
-		if err := f.reserve(int64(w4)*(4+1), "blur sums"); err != nil {
+		// The sums, and the batch of rows worked out.
+		if err := f.reserve(int64(w4)*int64(4+rows), "blur sums"); err != nil {
 			return nil, err
 		}
-		st, err := f.newStore(min(2*b.ri+4, h), w4)
+		// What a batch of rows is made of: from ri+1 rows above the first
+		// to ri+1 below the last.
+		st, err := f.newStore(min(2*b.ri+3+rows, h), w4)
 		if err != nil {
 			return nil, err
 		}
-		last = &vbox{prev: last, b: b, w4: w4, h: h, nc: nc, store: st, sum: make([]uint32, w4), out: opaqueRow(w4)}
+		last = &vbox{prev: last, b: b, w4: w4, h: h, store: st, sum: make([]uint32, w4), out: rowBatch(rows, w4),
+			ra: make([][]uint8, rows), rb: make([][]uint8, rows), rc: make([][]uint8, rows), work: f.work}
 	}
 	return last, nil
 }
@@ -548,8 +665,10 @@ func Blur(src pipeline.Source, sigma float64) (pipeline.Source, error) {
 		return nil, err
 	}
 	f := newFilter(src)
-	var err error
-	if f.last, err = f.blurPasses(sigma); err != nil {
+	if err := f.setup(func() (err error) {
+		f.last, err = f.blurPasses(sigma)
+		return err
+	}); err != nil {
 		return nil, f.fail(err)
 	}
 	f.finish = func(_ int, row []uint8, dst []uint8) error {
@@ -585,17 +704,23 @@ func Sharpen(src pipeline.Source, sigma float64, percent, threshold int) (pipeli
 	f := newFilter(src)
 	w4 := 4 * f.in.w
 	b := newBox(boxRadius(sigma, 3))
-	// The originals are kept until the blurred row of the same number
-	// comes out: each vertical pass is at most ri+2 rows behind the one
-	// before it.
-	keep, err := f.newStore(min(3*(b.ri+2)+2, f.in.h), w4)
-	if err != nil {
+	var keep rowStore
+	if err := f.setup(func() (err error) {
+		// The originals are kept until the blurred row of the same number
+		// comes out: each vertical pass is at most ri+2 rows behind the one
+		// before it, and a batch more for each pass and the input.
+		if keep, err = f.newStore(min(3*(b.ri+2)+2+4*(f.work.rows-1), f.in.h), w4); err != nil {
+			return err
+		}
+		f.in.keep = keep
+		if f.last, err = f.blurPasses(sigma); err != nil {
+			return err
+		}
+		return f.reserve(1<<16, "sharpen table")
+	}); err != nil {
 		return nil, f.fail(err)
 	}
-	f.in.keep = keep
-	if f.last, err = f.blurPasses(sigma); err != nil {
-		return nil, f.fail(err)
-	}
+	lut := usmTable(percent, threshold)
 	opaque := f.opaque
 	f.finish = func(y int, blurred []uint8, dst []uint8) error {
 		orig, err := keep.get(y)
@@ -605,15 +730,11 @@ func Sharpen(src pipeline.Source, sigma float64, percent, threshold int) (pipeli
 		if opaque { // the loop below, with every alpha 255
 			orig, blurred = orig[:len(dst)], blurred[:len(dst)]
 			for x := 0; x+3 < len(dst); x += 4 {
-				for c := x; c < x+3; c++ {
-					in := int(orig[c])
-					out := in
-					if diff := in - int(blurred[c]); diff > threshold || -diff > threshold {
-						out = max(0, min(255, in+diff*percent/100))
-					}
-					dst[c] = uint8(out)
-				}
-				dst[x+3] = 255
+				o, b, d := orig[x:x+4:x+4], blurred[x:x+4:x+4], dst[x:x+4:x+4]
+				d[0] = lut[uint16(o[0])<<8|uint16(b[0])]
+				d[1] = lut[uint16(o[1])<<8|uint16(b[1])]
+				d[2] = lut[uint16(o[2])<<8|uint16(b[2])]
+				d[3] = 255
 			}
 			return nil
 		}
@@ -630,10 +751,7 @@ func Sharpen(src pipeline.Source, sigma float64, percent, threshold int) (pipeli
 				if ba > 0 {
 					bl = straight(uint32(blurred[x+c]), ba)
 				}
-				out := in
-				if diff := in - bl; diff > threshold || -diff > threshold {
-					out = max(0, min(255, in+diff*percent/100))
-				}
+				out := lut[uint16(in)<<8|uint16(bl)]
 				if a == 255 {
 					dst[x+c] = uint8(out)
 				} else {
@@ -647,6 +765,22 @@ func Sharpen(src pipeline.Source, sigma float64, percent, threshold int) (pipeli
 	return f, nil
 }
 
+// usmTable holds the unsharp mask's result for every original value (the
+// high byte of the index) and blurred value (the low byte).
+func usmTable(percent, threshold int) *[1 << 16]uint8 {
+	t := new([1 << 16]uint8)
+	for in := 0; in < 256; in++ {
+		for bl := 0; bl < 256; bl++ {
+			out := in
+			if diff := in - bl; diff > threshold || -diff > threshold {
+				out = max(0, min(255, in+diff*percent/100))
+			}
+			t[in<<8|bl] = uint8(out)
+		}
+	}
+	return t
+}
+
 // straight is the colour of a premultiplied 8-bit value.
 func straight(c, a uint32) int {
 	if a == 255 {
@@ -658,18 +792,26 @@ func straight(c, a uint32) int {
 func sharpenMild(src pipeline.Source) (pipeline.Source, error) {
 	f := newFilter(src)
 	w4 := 4 * f.in.w
-	if err := f.reserve(int64(w4), "sharpen row"); err != nil {
-		return nil, f.fail(err)
-	}
-	st, err := f.newStore(min(4, f.in.h), w4)
-	if err != nil {
-		return nil, f.fail(err)
-	}
 	nc := 4
 	if f.opaque {
 		nc = 3
 	}
-	f.last = &conv3{prev: f.in, w: f.in.w, h: f.in.h, nc: nc, store: st, out: opaqueRow(w4)}
+	if err := f.setup(func() error {
+		rows := f.work.rows
+		if err := f.reserve(int64(w4)*int64(rows), "sharpen rows"); err != nil {
+			return err
+		}
+		// A batch of rows and the one above and below it.
+		st, err := f.newStore(min(rows+3, f.in.h), w4)
+		if err != nil {
+			return err
+		}
+		f.last = &conv3{prev: f.in, w: f.in.w, h: f.in.h, nc: nc, store: st, out: rowBatch(rows, w4),
+			up: make([][]uint8, rows), mid: make([][]uint8, rows), down: make([][]uint8, rows), work: f.work}
+		return nil
+	}); err != nil {
+		return nil, f.fail(err)
+	}
 	f.finish = func(_ int, row []uint8, dst []uint8) error {
 		copy(dst, row)
 		return nil
@@ -677,15 +819,19 @@ func sharpenMild(src pipeline.Source) (pipeline.Source, error) {
 	return f, nil
 }
 
-// conv3 applies sharp's mild sharpening kernel.
+// conv3 applies the mild sharpening kernel of sharp, a batch of rows at a
+// time, the rows shared out.
 type conv3 struct {
-	prev  rowSource
-	w, h  int
-	nc    int // as hbox's
-	store rowStore
-	out   []uint8
-	got   int
-	next  int
+	prev          rowSource
+	w, h          int
+	nc            int // as hbox's
+	store         rowStore
+	out           [][]uint8 // the batch
+	up, mid, down [][]uint8 // the rows each row of the batch is made of
+	work          batch
+	got           int
+	next          int
+	n, handed     int
 }
 
 func (c *conv3) row(i int) ([]uint8, error) {
@@ -698,11 +844,16 @@ func (c *conv3) row(i int) ([]uint8, error) {
 }
 
 func (c *conv3) nextRow() ([]uint8, error) {
-	y := c.next
-	if y >= c.h {
+	if c.handed < c.n {
+		c.handed++
+		return c.out[c.handed-1], nil
+	}
+	y0 := c.next
+	if y0 >= c.h {
 		return nil, io.EOF
 	}
-	for need := min(y+1, c.h-1); c.got <= need; c.got++ {
+	n := min(len(c.out), c.h-y0)
+	for need := min(y0+n, c.h-1); c.got <= need; c.got++ {
 		r, err := c.prev.nextRow()
 		if err != nil {
 			if err == io.EOF {
@@ -714,18 +865,31 @@ func (c *conv3) nextRow() ([]uint8, error) {
 			return nil, err
 		}
 	}
-	up, err := c.row(y - 1)
-	if err != nil {
-		return nil, err
+	// Three gets for each row, as for vbox.
+	for i := 0; i < n; i++ {
+		y := y0 + i
+		var err error
+		if c.up[i], err = c.row(y - 1); err != nil {
+			return nil, err
+		}
+		if c.mid[i], err = c.row(y); err != nil {
+			return nil, err
+		}
+		if c.down[i], err = c.row(y + 1); err != nil {
+			return nil, err
+		}
 	}
-	mid, err := c.row(y)
-	if err != nil {
-		return nil, err
-	}
-	down, err := c.row(y + 1)
-	if err != nil {
-		return nil, err
-	}
+	c.work.split(n, 1, 1, func(lo, hi int) {
+		for i := lo; i < hi; i++ {
+			c.sharpenRow(c.out[i], c.up[i], c.mid[i], c.down[i])
+		}
+	})
+	c.next += n
+	c.n, c.handed = n, 1
+	return c.out[0], nil
+}
+
+func (c *conv3) sharpenRow(out, up, mid, down []uint8) {
 	last := c.w - 1
 	for x := 0; x < c.w; x++ {
 		l, r := 4*max(x-1, 0), 4*min(x+1, last)
@@ -741,16 +905,14 @@ func (c *conv3) nextRow() ([]uint8, error) {
 			} else {
 				v = -((-v + 12) / 24)
 			}
-			c.out[m+ch] = uint8(max(0, min(255, v)))
+			out[m+ch] = uint8(max(0, min(255, v)))
 		}
 		if c.nc == 4 {
 			// Premultiplied: no colour above the alpha.
-			a := c.out[m+3]
+			a := out[m+3]
 			for ch := 0; ch < 3; ch++ {
-				c.out[m+ch] = min(c.out[m+ch], a)
+				out[m+ch] = min(out[m+ch], a)
 			}
 		}
 	}
-	c.next++
-	return c.out, nil
 }

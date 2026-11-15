@@ -108,10 +108,12 @@ func (b *Budget) Release(n int64) {
 	b.mu.Unlock()
 }
 
-// Env is the shared context of one pipeline: its budget and temp directory.
+// Env is the shared context of one pipeline: its budget, temp directory
+// and the helpers its stages may share their work with (SetHelpers).
 type Env struct {
 	Budget  *Budget
 	TempDir string
+	helpers chan struct{} // a token for each helper that is free
 }
 
 // NewEnv builds an Env; zero values mean defaults.

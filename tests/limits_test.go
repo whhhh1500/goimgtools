@@ -166,7 +166,7 @@ func TestSmallestThroughOperations(t *testing.T) {
 		for _, name := range []string{"nrgba", "gray", "paletted", "ycbcr420", "rgba-opaque"} {
 			m := testutil.Images(size.X, size.Y)[name]
 			for _, o := range ops {
-				for threads := 1; threads <= 3; threads += 2 {
+				for _, threads := range []int{1, 3, 6} {
 					what := fmt.Sprintf("%s %dx%d, %s, %d threads", name, size.X, size.Y, o.name, threads)
 					b, err := o.do(FromImage(m), size.X, size.Y).Threads(threads).PNG().ToBytes()
 					noPanic(t, what, err)

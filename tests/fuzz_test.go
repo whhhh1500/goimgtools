@@ -200,7 +200,7 @@ func FuzzChain(f *testing.F) {
 		// reducing a quarter of a million pixels of noise to a palette
 		// takes a second, which is time not spent on other inputs.
 		m := FromBytes(data).LimitInputPixels(1 << 15).LimitOutputPixels(1 << 15).MemoryLimit(8 << 20).TempDir(dir).
-			Threads(1 + pick(28, 3))
+			Threads([]int{1, 2, 3, 5, 8}[pick(28, 5)])
 		if bit(0) {
 			m.Rotate()
 		}

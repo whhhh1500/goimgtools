@@ -92,6 +92,76 @@ func smoothWeight(row []byte, i int) int32 {
 // distinctMax is the most distinct colours that are tracked exactly.
 const distinctMax = 256
 
+// The exact colours of an image of up to exactMax of them (smooth
+// gradients, graphics, screenshots) are counted as well: their palette is
+// then chosen from the colours themselves rather than from bin means,
+// which matters where the colours are closer together than the bins are
+// wide (a sky of 300 shades falls into a few dozen bins). An open
+// addressing table at most half full, 256KB, given back as soon as an
+// image turns out to have more colours.
+const (
+	exactMax   = 1 << 14
+	exactBits  = 15
+	exactSlots = 1 << exactBits
+	exactBytes = exactSlots * 8
+)
+
+// exactHist counts the weighted pixels of each colour while there are no
+// more than exactMax colours. Fully transparent pixels are not counted, so
+// key 0 marks an empty slot.
+type exactHist struct {
+	keys  []uint32
+	n     []uint32
+	count int
+	over  bool
+}
+
+func newExactHist() *exactHist {
+	return &exactHist{keys: make([]uint32, exactSlots), n: make([]uint32, exactSlots)}
+}
+
+func (e *exactHist) add(key, wt uint32) {
+	h := key * 2654435761 >> (32 - exactBits)
+	for {
+		switch e.keys[h] {
+		case key:
+			if e.n[h] < binCap {
+				e.n[h] += wt
+			}
+			return
+		case 0:
+			if e.count == exactMax {
+				e.over, e.keys, e.n = true, nil, nil
+				return
+			}
+			e.keys[h], e.n[h] = key, wt
+			e.count++
+			return
+		}
+		h = (h + 1) & (exactSlots - 1)
+	}
+}
+
+// exactPoints turns the counted colours into weighted points at the front
+// of bins and returns them; the first opaque of them are those of opaque
+// colours.
+func exactPoints(bins []bin, e *exactHist) (pts []bin, opaque int) {
+	n := 0
+	for pass := 0; pass < 2; pass++ {
+		for h, key := range e.keys {
+			if key == 0 || (key>>24 == 255) != (pass == 0) {
+				continue
+			}
+			bins[n] = bin{n: e.n[h], v: coords(uint8(key), uint8(key>>8), uint8(key>>16), uint8(key>>24))}
+			n++
+		}
+		if pass == 0 {
+			opaque = n
+		}
+	}
+	return bins[:n], opaque
+}
+
 // distinct collects the exact colours of the image while there are no more
 // than limit of them.
 type distinct struct {
@@ -134,7 +204,7 @@ func pixKey(p []byte) uint32 {
 
 // addRow counts the pixels of one NRGBA row, after setting the fully
 // transparent ones to (0,0,0,0).
-func addRow(bins []bin, d *distinct, row []byte) {
+func addRow(bins []bin, d *distinct, e *exactHist, row []byte) {
 	for i := 3; i < len(row); i += 4 {
 		if row[i] == 0 {
 			row[i-3], row[i-2], row[i-1] = 0, 0, 0
@@ -164,6 +234,9 @@ func addRow(bins []bin, d *distinct, row []byte) {
 			q.v[1] += o[1] * wt
 			q.v[2] += o[2] * wt
 			q.v[3] += o[3] * wt
+		}
+		if !e.over && a != 0 {
+			e.add(pixKey(p), uint32(wt))
 		}
 		if !d.over {
 			if key := pixKey(p); !have || key != prev {

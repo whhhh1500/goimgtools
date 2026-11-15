@@ -257,9 +257,11 @@ func (q *quantized) load() (image.Image, error) {
 	b := q.bounds
 	w, h := b.Dx(), b.Dy()
 	var (
-		bins []bin
-		d    = &distinct{limit: min(q.colors, distinctMax)}
-		y    = b.Min.Y
+		bins       []bin
+		d          = &distinct{limit: min(q.colors, distinctMax)}
+		e          *exactHist
+		exactFreed bool
+		y          = b.Min.Y
 	)
 	for {
 		s, err := q.src.Next()
@@ -277,9 +279,10 @@ func (q *quantized) load() (image.Image, error) {
 				q.state = statePass
 				return s, nil
 			}
-			if err := q.reserve(numBins*binBytes, "colour histogram"); err != nil {
+			if err := q.reserve(numBins*binBytes+exactBytes, "colour histogram"); err != nil {
 				return nil, err
 			}
+			e = newExactHist()
 			if err := q.reserve(int64(w)*4, "quantizer row"); err != nil {
 				return nil, err
 			}
@@ -295,10 +298,16 @@ func (q *quantized) load() (image.Image, error) {
 		conv := rowFunc(s, b.Min.X)
 		for ; y < r.Max.Y; y++ {
 			conv(q.row, y)
-			addRow(bins, d, q.row)
+			addRow(bins, d, e, q.row)
 			if _, err := q.spill.Write(q.row); err != nil {
 				return nil, err
 			}
+		}
+		if e != nil && e.over && !exactFreed {
+			// Too many colours to count exactly: the table is gone.
+			exactFreed = true
+			q.env.Budget.Release(exactBytes)
+			q.reserved -= exactBytes
 		}
 	}
 	if bins == nil || y != b.Max.Y {
@@ -324,13 +333,23 @@ func (q *quantized) load() (image.Image, error) {
 		if transparent {
 			k--
 		}
-		pts, opaque := points(bins)
+		var pts []bin
+		var opaque int
+		if e.over {
+			pts, opaque = points(bins)
+		} else {
+			pts, opaque = exactPoints(bins, e)
+		}
 		cent, solid = centres(pts, opaque, k)
 	}
 	// The histogram is not needed any more; what follows gets its room.
-	bins = nil
-	q.env.Budget.Release(numBins * binBytes)
-	q.reserved -= numBins * binBytes
+	bins, e = nil, nil
+	held := int64(numBins * binBytes)
+	if !exactFreed {
+		held += exactBytes
+	}
+	q.env.Budget.Release(held)
+	q.reserved -= held
 	if q.exact == nil {
 		if err := q.polish(cent, solid); err != nil {
 			return nil, err

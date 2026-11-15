@@ -7,6 +7,7 @@ import (
 	"image/draw"
 	"io"
 	"math"
+	"sync"
 
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
@@ -38,7 +39,7 @@ func RotateAny(src pipeline.Source, deg float64, bg color.Color) (pipeline.Sourc
 	return &rotated{
 		src: src, env: env, sin: sin, cos: cos,
 		rect:     image.Rect(0, 0, ow, oh),
-		bg:       [4]float32{float32(r >> 8), float32(g >> 8), float32(bl >> 8), float32(a >> 8)},
+		bg:       [4]uint32{r >> 8, g >> 8, bl >> 8, a >> 8},
 		bgOpaque: a == 0xffff,
 		band:     rgbaBand{env: env},
 	}, nil
@@ -51,23 +52,49 @@ type rotated struct {
 	env      *pipeline.Env
 	sin, cos float64
 	rect     image.Rectangle
-	bg       [4]float32
+	bg       [4]uint32 // premultiplied
 	bgOpaque bool
 	band     rgbaBand
 
 	sc             *pipeline.Scratch
 	sw, sh         int // source size
 	tilesX, tilesY int
-	// The cache: slot of each tile (-1 when not held), tile of each slot,
-	// whether a slot was used since the clock hand last passed.
-	slotOf   []int32
-	tileOf   []int32
-	used     []bool
-	cache    []uint8
-	hand     int
+	// The output columns are shared out in parts, each with a cache of
+	// its own.
+	caches   []*tileCache
 	reserved int64
 	n, y     int
 	loaded   bool
+}
+
+// tileCache holds some of the tiles of the stored source, read in as they
+// are needed and replaced by the clock.
+type tileCache struct {
+	// The slot of each tile (-1 when not held), the tile of each slot,
+	// whether a slot was used since the clock hand last passed.
+	slotOf []int32
+	tileOf []int32
+	used   []bool
+	data   []uint8
+	hand   int
+}
+
+func newTileCache(nTiles, slots int) *tileCache {
+	c := &tileCache{slotOf: make([]int32, nTiles), tileOf: make([]int32, slots), used: make([]bool, slots),
+		data: make([]uint8, slots*tileBytes)}
+	for i := range c.slotOf {
+		c.slotOf[i] = -1
+	}
+	for i := range c.tileOf {
+		c.tileOf[i] = -1
+	}
+	return c
+}
+
+// columns is the range of output columns of part p.
+func (t *rotated) columns(p int) (int, int) {
+	ow, parts := t.rect.Dx(), len(t.caches)
+	return p * ow / parts, (p + 1) * ow / parts
 }
 
 func (t *rotated) Env() *pipeline.Env      { return t.env }
@@ -82,7 +109,7 @@ func (t *rotated) Close() error {
 	}
 	t.band.release()
 	t.env.Budget.Release(t.reserved)
-	t.reserved, t.cache = 0, nil
+	t.reserved, t.caches = 0, nil
 	return t.src.Close()
 }
 
@@ -103,13 +130,13 @@ func (t *rotated) load() error {
 	t.tilesX = (t.sw + tileSide - 1) / tileSide
 	t.tilesY = (t.sh + tileSide - 1) / tileSide
 	nTiles := t.tilesX * t.tilesY
-	// A row of tiles is gathered before it is written.
+	// A row of tiles is gathered, laid out as it is stored (tile after
+	// tile, each row after row), and written in one go.
 	rowsBytes := int64(t.tilesX) * tileBytes
-	if err := t.reserve(rowsBytes+tileBytes+int64(nTiles)*4, "rotation tiles"); err != nil {
+	if err := t.reserve(rowsBytes+int64(nTiles)*4, "rotation tiles"); err != nil {
 		return err
 	}
 	gather := make([]uint8, rowsBytes)
-	tile := make([]uint8, tileBytes)
 	var err error
 	if t.sc, err = pipeline.NewScratch(t.env, int64(nTiles)*tileBytes); err != nil {
 		return err
@@ -117,13 +144,8 @@ func (t *rotated) load() error {
 	conv := rgbaBand{env: t.env}
 	defer conv.release()
 	flush := func(ty int) error {
-		for tx := 0; tx < t.tilesX; tx++ {
-			for row := 0; row < tileSide; row++ {
-				copy(tile[row*tileSide*4:(row+1)*tileSide*4], gather[(row*t.tilesX+tx)*tileSide*4:])
-			}
-			if _, err := t.sc.WriteAt(tile, int64(ty*t.tilesX+tx)*tileBytes); err != nil {
-				return err
-			}
+		if _, err := t.sc.WriteAt(gather, int64(ty*t.tilesX)*tileBytes); err != nil {
+			return err
 		}
 		clear(gather)
 		return nil
@@ -144,14 +166,13 @@ func (t *rotated) load() error {
 		}
 		draw.Draw(dst, r, s, r.Min, draw.Src)
 		for sy := r.Min.Y; sy < r.Max.Y; sy++ {
-			// Row y of the image goes to row y%32 of the gathered tile row,
-			// which is laid out as tilesX tiles side by side, row by row.
+			// Row y of the image is row y%32 of each tile of the row.
 			src := dst.Pix[dst.PixOffset(b.Min.X, sy):][:4*t.sw]
 			ry := y % tileSide
 			for tx := 0; tx < t.tilesX; tx++ {
 				x0 := tx * tileSide
 				x1 := min(x0+tileSide, t.sw)
-				copy(gather[(ry*t.tilesX+tx)*tileSide*4:], src[4*x0:4*x1])
+				copy(gather[tx*tileBytes+ry*tileSide*4:], src[4*x0:4*x1])
 			}
 			y++
 			if y%tileSide == 0 {
@@ -169,61 +190,60 @@ func (t *rotated) load() error {
 			return err
 		}
 	}
-	// The cache holds what an output row's line through the source
-	// passes, twice over, and a little more.
-	ow := float64(t.rect.Dx())
-	span := int(math.Ceil(ow*(math.Abs(t.cos)+math.Abs(t.sin))/tileSide)) + 4
-	slots := min(nTiles, 2*span+8)
-	if err := t.reserve(int64(slots)*(tileBytes+5), "rotation tile cache"); err != nil {
-		return err
-	}
-	t.cache = make([]uint8, slots*tileBytes)
-	t.tileOf = make([]int32, slots)
-	t.used = make([]bool, slots)
-	for i := range t.tileOf {
-		t.tileOf[i] = -1
-	}
-	t.slotOf = make([]int32, nTiles)
-	for i := range t.slotOf {
-		t.slotOf[i] = -1
+	// With helpers the output columns are shared out, in parts at least
+	// 256 pixels wide. The cache of a part holds what the line of its
+	// columns of an output row passes through the source, twice over, and
+	// a little more.
+	parts := max(1, min(t.env.Helpers()+1, t.rect.Dx()/256))
+	t.caches = make([]*tileCache, parts)
+	for p := range t.caches {
+		t.caches[p] = &tileCache{}
+		x0, x1 := t.columns(p)
+		span := int(math.Ceil(float64(x1-x0)*(math.Abs(t.cos)+math.Abs(t.sin))/tileSide)) + 4
+		slots := min(nTiles, 2*span+8)
+		if err := t.reserve(int64(slots)*(tileBytes+5)+int64(nTiles)*4, "rotation tile cache"); err != nil {
+			return err
+		}
+		t.caches[p] = newTileCache(nTiles, slots)
 	}
 	t.n = pipeline.StripRows(int64(t.rect.Dx())*4, t.rect.Dy())
 	t.loaded = true
 	return nil
 }
 
-// tile returns the pixels of tile ti, reading it into the cache if needed.
-func (t *rotated) tile(ti int) ([]uint8, error) {
-	if s := t.slotOf[ti]; s >= 0 {
-		t.used[s] = true
-		return t.cache[int(s)*tileBytes:][:tileBytes], nil
+// tile returns the pixels of tile ti, reading it from sc into the cache if
+// needed. (Reading a Scratch from several goroutines at once is safe.)
+func (c *tileCache) tile(sc *pipeline.Scratch, ti int) ([]uint8, error) {
+	if s := c.slotOf[ti]; s >= 0 {
+		c.used[s] = true
+		return c.data[int(s)*tileBytes:][:tileBytes], nil
 	}
 	// The clock: the first slot not used since the hand last passed.
-	for t.used[t.hand] {
-		t.used[t.hand] = false
-		t.hand = (t.hand + 1) % len(t.tileOf)
+	for c.used[c.hand] {
+		c.used[c.hand] = false
+		c.hand = (c.hand + 1) % len(c.tileOf)
 	}
-	s := t.hand
-	t.hand = (t.hand + 1) % len(t.tileOf)
-	if old := t.tileOf[s]; old >= 0 {
-		t.slotOf[old] = -1
+	s := c.hand
+	c.hand = (c.hand + 1) % len(c.tileOf)
+	if old := c.tileOf[s]; old >= 0 {
+		c.slotOf[old] = -1
 	}
-	buf := t.cache[s*tileBytes:][:tileBytes]
-	if _, err := t.sc.ReadAt(buf, int64(ti)*tileBytes); err != nil {
-		t.tileOf[s] = -1
+	buf := c.data[s*tileBytes:][:tileBytes]
+	if _, err := sc.ReadAt(buf, int64(ti)*tileBytes); err != nil {
+		c.tileOf[s] = -1
 		return nil, err
 	}
-	t.tileOf[s], t.slotOf[ti], t.used[s] = int32(ti), int32(s), true
+	c.tileOf[s], c.slotOf[ti], c.used[s] = int32(ti), int32(s), true
 	return buf, nil
 }
 
-// pixel returns the premultiplied pixel at (x, y), or nil when it is
-// outside the source.
-func (t *rotated) pixel(x, y int) ([]uint8, error) {
+// pixel returns the premultiplied pixel at (x, y) through cache c, or nil
+// when it is outside the source.
+func (t *rotated) pixel(c *tileCache, x, y int) ([]uint8, error) {
 	if x < 0 || y < 0 || x >= t.sw || y >= t.sh {
 		return nil, nil
 	}
-	tl, err := t.tile((y/tileSide)*t.tilesX + x/tileSide)
+	tl, err := c.tile(t.sc, (y/tileSide)*t.tilesX+x/tileSide)
 	if err != nil {
 		return nil, err
 	}
@@ -247,61 +267,113 @@ func (t *rotated) Next() (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	ow := t.rect.Dx()
-	cx, cy := float64(ow)/2, float64(oh)/2
-	scx, scy := float64(t.sw)/2-0.5, float64(t.sh)/2-0.5
-	for oy := t.y; oy < y1; oy++ {
-		dst := out.Pix[(oy-t.y)*out.Stride:][:4*ow]
-		dy := float64(oy) + 0.5 - cy
-		// The source point of the centre of output pixel (ox, oy): the
-		// output centre turned back by the angle.
-		dx0 := 0.5 - cx
-		sx := dx0*t.cos + dy*t.sin + scx
-		sy := -dx0*t.sin + dy*t.cos + scy
-		for ox := 0; ox < ow; ox++ {
-			if err := t.sample(dst[4*ox:4*ox+4], sx, sy); err != nil {
-				return nil, err
+	var failed error
+	var mu sync.Mutex
+	t.env.Parallel(len(t.caches), func(p int) {
+		x0, x1 := t.columns(p)
+		if err := t.render(out, x0, x1, t.caches[p]); err != nil {
+			mu.Lock()
+			if failed == nil {
+				failed = err
 			}
-			sx += t.cos
-			sy -= t.sin
+			mu.Unlock()
 		}
+	})
+	if failed != nil {
+		return nil, failed
 	}
 	t.y = y1
 	return out, nil
 }
 
-// sample writes the bilinear interpolation at (sx, sy) of the source, the
-// background standing in for what is outside it.
-func (t *rotated) sample(dst []uint8, sx, sy float64) error {
-	if sx <= -1 || sy <= -1 || sx >= float64(t.sw) || sy >= float64(t.sh) {
-		dst[0], dst[1], dst[2], dst[3] = uint8(t.bg[0]), uint8(t.bg[1]), uint8(t.bg[2]), uint8(t.bg[3])
-		return nil
-	}
-	x0, y0 := int(math.Floor(sx)), int(math.Floor(sy))
-	fx, fy := float32(sx-float64(x0)), float32(sy-float64(y0))
-	var acc [4]float32
-	for k, wgt := range [4]float32{(1 - fx) * (1 - fy), fx * (1 - fy), (1 - fx) * fy, fx * fy} {
-		if wgt == 0 {
-			continue
+// render works out columns x0 to x1 of the rows of out through cache c.
+// The source point of every pixel is worked out on its own, not by adding
+// up steps, so that it does not depend on where a part of the columns
+// begins; and every product is rounded before it is added (the explicit
+// conversions), so that processors that could fuse the two give the same
+// result as those that cannot.
+func (t *rotated) render(out *image.RGBA, x0, x1 int, c *tileCache) error {
+	ow, oh := t.rect.Dx(), t.rect.Dy()
+	cx, cy := float64(ow)/2, float64(oh)/2
+	scx, scy := float64(t.sw)/2-0.5, float64(t.sh)/2-0.5
+	fw, fh := float64(t.sw), float64(t.sh)
+	bg := [4]uint8{uint8(t.bg[0]), uint8(t.bg[1]), uint8(t.bg[2]), uint8(t.bg[3])}
+	// The tile of the last pixel; a read into the cache may replace it.
+	last, lastTi := []uint8(nil), -1
+	for oy := out.Rect.Min.Y; oy < out.Rect.Max.Y; oy++ {
+		dst := out.Pix[(oy-out.Rect.Min.Y)*out.Stride:][:4*ow]
+		dy := float64(oy) + 0.5 - cy
+		ys, yc := float64(dy*t.sin), float64(dy*t.cos)
+		for ox := x0; ox < x1; ox++ {
+			// The centre of output pixel (ox, oy), turned back by the angle.
+			dx := float64(ox) + 0.5 - cx
+			sx := float64(dx*t.cos) + ys + scx
+			sy := yc - float64(dx*t.sin) + scy
+			d := dst[4*ox : 4*ox+4 : 4*ox+4]
+			if !(sx > -1 && sy > -1 && sx < fw && sy < fh) {
+				d[0], d[1], d[2], d[3] = bg[0], bg[1], bg[2], bg[3]
+				continue
+			}
+			// floor, for values above -1
+			sx0, sy0 := int(sx+1)-1, int(sy+1)-1
+			wx := uint32(float64((sx-float64(sx0))*weightOne) + 0.5)
+			wy := uint32(float64((sy-float64(sy0))*weightOne) + 0.5)
+			if sx0 < 0 || sy0 < 0 || sx0+1 >= t.sw || sy0+1 >= t.sh || sx0%tileSide == tileSide-1 || sy0%tileSide == tileSide-1 {
+				// At an edge of the source or of a tile.
+				lastTi = -1
+				if err := t.sampleEdge(c, d, sx0, sy0, wx, wy); err != nil {
+					return err
+				}
+				continue
+			}
+			if ti := (sy0/tileSide)*t.tilesX + sx0/tileSide; ti != lastTi {
+				var err error
+				if last, err = c.tile(t.sc, ti); err != nil {
+					return err
+				}
+				lastTi = ti
+			}
+			o := ((sy0%tileSide)*tileSide + sx0%tileSide) * 4
+			q := last[o : o+tileSide*4+8 : o+tileSide*4+8]
+			ix, iy := weightOne-wx, weightOne-wy
+			for ch := 0; ch < 4; ch++ {
+				top := uint32(q[ch])*ix + uint32(q[4+ch])*wx
+				bot := uint32(q[tileSide*4+ch])*ix + uint32(q[tileSide*4+4+ch])*wx
+				d[ch] = uint8((uint64(top)*uint64(iy) + uint64(bot)*uint64(wy) + 1<<31) >> 32)
+			}
 		}
-		p, err := t.pixel(x0+k%2, y0+k/2)
+	}
+	return nil
+}
+
+// weightOne is a whole pixel in the fixed point of the interpolation
+// weights, 16 bits: the result is within a few thousandths of a level of
+// the exact one, and the same on every processor (floating point may fuse
+// a multiplication and an addition on some and not on others).
+const weightOne = 1 << 16
+
+// sampleEdge interpolates between the four source pixels from (x0, y0),
+// some of which may lie outside the source (the background stands in) or
+// in other tiles, with the same arithmetic as Next. Premultiplied colours
+// stay at most their alpha.
+func (t *rotated) sampleEdge(c *tileCache, d []uint8, x0, y0 int, wx, wy uint32) error {
+	var q [4][4]uint32
+	for k := range q {
+		p, err := t.pixel(c, x0+k%2, y0+k/2)
 		if err != nil {
 			return err
 		}
 		if p == nil {
-			for c := range acc {
-				acc[c] += wgt * t.bg[c]
-			}
+			q[k] = t.bg
 			continue
 		}
-		for c := range acc {
-			acc[c] += wgt * float32(p[c])
-		}
+		q[k] = [4]uint32{uint32(p[0]), uint32(p[1]), uint32(p[2]), uint32(p[3])}
 	}
-	a := min(255, acc[3]+0.5)
-	dst[3] = uint8(a)
-	for c := 0; c < 3; c++ {
-		dst[c] = uint8(min(a, acc[c]+0.5))
+	ix, iy := weightOne-wx, weightOne-wy
+	for ch := 0; ch < 4; ch++ {
+		top := q[0][ch]*ix + q[1][ch]*wx
+		bot := q[2][ch]*ix + q[3][ch]*wx
+		d[ch] = uint8((uint64(top)*uint64(iy) + uint64(bot)*uint64(wy) + 1<<31) >> 32)
 	}
 	return nil
 }

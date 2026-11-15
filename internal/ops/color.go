@@ -13,11 +13,12 @@ import (
 // ---- grayscale ----
 
 // Grayscale turns src into shades of grey. The grey of a pixel is the
-// Rec. 601 luma of its colours, as image/color's GrayModel computes it and
-// as JPEG stores brightness; for a JPEG (YCbCr strips) it is the stored
-// brightness itself. An opaque source gives *image.Gray strips; one that
-// can be transparent gives NRGBA strips with red, green and blue equal and
-// the transparency kept.
+// Rec. 601 luma of its colours rounded to the nearest level, as
+// image/color's RGBToYCbCr, JPEG encoders and Pillow's convert("L")
+// compute it; for a JPEG (YCbCr strips) it is the stored brightness
+// itself. An opaque source gives *image.Gray strips; one that can be
+// transparent gives NRGBA strips with red, green and blue equal and the
+// transparency kept.
 func Grayscale(src pipeline.Source) pipeline.Source {
 	if !pipeline.IsOpaque(src) {
 		return pipeline.Map(src, func(strip *image.NRGBA) error {
@@ -36,9 +37,18 @@ func Grayscale(src pipeline.Source) pipeline.Source {
 	return &grayscale{src: src, env: env}
 }
 
-// luma is color.GrayModel for 8-bit colours.
+// luma is the Rec. 601 brightness of 8-bit colours, in 16 fractional bits
+// and rounded: at most half a level from the exact value, and the Y of
+// color.RGBToYCbCr. (color.GrayModel goes through 16 bits and drops the
+// low byte, up to a level off.)
 func luma(r, g, b uint8) uint8 {
-	return uint8((19595*uint32(r)*0x101 + 38470*uint32(g)*0x101 + 7471*uint32(b)*0x101 + 1<<15) >> 24)
+	return uint8((19595*uint32(r) + 38470*uint32(g) + 7471*uint32(b) + 1<<15) >> 16)
+}
+
+// lumaOf is luma for an opaque colour of any model.
+func lumaOf(c color.Color) uint8 {
+	r, g, b, _ := c.RGBA()
+	return luma(uint8(r>>8), uint8(g>>8), uint8(b>>8))
 }
 
 type grayscale struct {
@@ -110,7 +120,7 @@ func (g *grayscale) Next() (image.Image, error) {
 					if i > 255 {
 						break
 					}
-					g.lut[i] = color.GrayModel.Convert(c).(color.Gray).Y
+					g.lut[i] = lumaOf(c)
 				}
 			}
 			for x, v := range p.Pix[p.PixOffset(r.Min.X, y):][:w] {
@@ -118,7 +128,7 @@ func (g *grayscale) Next() (image.Image, error) {
 			}
 		default:
 			for x := range d {
-				d[x] = color.GrayModel.Convert(s.At(r.Min.X+x, y)).(color.Gray).Y
+				d[x] = lumaOf(s.At(r.Min.X+x, y))
 			}
 		}
 	}
@@ -148,11 +158,14 @@ func Modulate(src pipeline.Source, brightness, saturation, hue float64) (pipelin
 	// Hue turns (a, b) about the grey axis; saturation scales it.
 	ka, kb := float32(saturation*cos), float32(saturation*sin)
 	br := float32(brightness)
-	return pipeline.Map(src, func(strip *image.NRGBA) error {
+	env := pipeline.EnvOf(src)
+	ways := env.Helpers() + 1
+	// The pixels of a part of a strip.
+	modulate := func(pix []uint8) {
 		var lastIn, lastOut [3]uint8
 		have := false
-		for i := 0; i < len(strip.Pix); i += 4 {
-			p := strip.Pix[i : i+4 : i+4]
+		for i := 0; i+3 < len(pix); i += 4 {
+			p := pix[i : i+4 : i+4]
 			if p[3] == 0 {
 				continue
 			}
@@ -163,10 +176,24 @@ func Modulate(src pipeline.Source, brightness, saturation, hue float64) (pipelin
 			}
 			L, a, b := t.toLab(p[0], p[1], p[2])
 			L *= br
-			a, b = a*ka-b*kb, a*kb+b*ka
+			// Each product rounded before it is added: see toLab.
+			a, b = float32(a*ka)-float32(b*kb), float32(a*kb)+float32(b*ka)
 			p[0], p[1], p[2] = t.fromLab(L, a, b)
 			lastIn, lastOut, have = in, [3]uint8{p[0], p[1], p[2]}, true
 		}
+	}
+	return pipeline.Map(src, func(strip *image.NRGBA) error {
+		// With helpers, the rows of the strip are shared out, in parts of
+		// at least 8K pixels.
+		rows := strip.Rect.Dy()
+		parts := max(1, min(ways, rows, rows*strip.Rect.Dx()/(8<<10)))
+		row := 4 * strip.Rect.Dx()
+		env.Parallel(parts, func(k int) {
+			y0, y1 := k*rows/parts, (k+1)*rows/parts
+			for y := y0; y < y1; y++ {
+				modulate(strip.Pix[y*strip.Stride:][:row])
+			}
+		})
 		return nil
 	}), nil
 }
@@ -237,23 +264,28 @@ func (t *labTable) f(v float32) float32 {
 	x := v * cbrtSteps
 	i := int(x)
 	frac := x - float32(i)
-	return t.cbrt[i] + (t.cbrt[i+1]-t.cbrt[i])*frac
+	return t.cbrt[i] + float32((t.cbrt[i+1]-t.cbrt[i])*frac)
 }
 
 func fInv(v float32) float32 {
 	if v > 6.0/29 {
 		return v * v * v
 	}
-	return (116*v - 16) / labKappa
+	return (float32(116*v) - 16) / labKappa
 }
 
+// toLab and fromLab round every product before adding it to something
+// (the explicit float32 conversions): Go may otherwise fuse a
+// multiplication and an addition into one instruction, which rounds once
+// instead of twice, on some processors (ARM64, PowerPC, s390x, RISC-V)
+// and not on others, and the same image would come out differently.
 func (t *labTable) toLab(r8, g8, b8 uint8) (L, a, b float32) {
 	r, g, bl := t.linear[r8], t.linear[g8], t.linear[b8]
-	x := (0.4124564*r + 0.3575761*g + 0.1804375*bl) / whiteX
-	y := 0.2126729*r + 0.7151522*g + 0.0721750*bl
-	z := (0.0193339*r + 0.1191920*g + 0.9503041*bl) / whiteZ
+	x := (float32(0.4124564*r) + float32(0.3575761*g) + float32(0.1804375*bl)) / whiteX
+	y := float32(0.2126729*r) + float32(0.7151522*g) + float32(0.0721750*bl)
+	z := (float32(0.0193339*r) + float32(0.1191920*g) + float32(0.9503041*bl)) / whiteZ
 	fx, fy, fz := t.f(x), t.f(y), t.f(z)
-	return 116*fy - 16, 500 * (fx - fy), 200 * (fy - fz)
+	return float32(116*fy) - 16, 500 * (fx - fy), 200 * (fy - fz)
 }
 
 func (t *labTable) fromLab(L, a, b float32) (uint8, uint8, uint8) {
@@ -261,9 +293,9 @@ func (t *labTable) fromLab(L, a, b float32) (uint8, uint8, uint8) {
 	x := whiteX * fInv(fy+a/500)
 	y := fInv(fy)
 	z := whiteZ * fInv(fy-b/200)
-	r := 3.2404542*x - 1.5371385*y - 0.4985314*z
-	g := -0.9692660*x + 1.8760108*y + 0.0415560*z
-	bl := 0.0556434*x - 0.2040259*y + 1.0572252*z
+	r := float32(3.2404542*x) - float32(1.5371385*y) - float32(0.4985314*z)
+	g := float32(-0.9692660*x) + float32(1.8760108*y) + float32(0.0415560*z)
+	bl := float32(0.0556434*x) - float32(0.2040259*y) + float32(1.0572252*z)
 	return t.level(r), t.level(g), t.level(bl)
 }
 
@@ -276,5 +308,5 @@ func (t *labTable) level(v float32) uint8 {
 	if v >= 1 {
 		return 255
 	}
-	return t.gamma[int(v*gammaSteps+0.5)]
+	return t.gamma[int(float32(v*gammaSteps)+0.5)]
 }

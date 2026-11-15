@@ -89,7 +89,9 @@ func (m *Image) newEnv() *pipeline.Env {
 	if limit == 0 {
 		limit = DefaultMemoryLimit
 	}
-	return pipeline.NewEnv(limit, m.tempDir)
+	env := pipeline.NewEnv(limit, m.tempDir)
+	env.SetHelpers(m.helperCount())
+	return env
 }
 
 // decode starts the decoder on an opened input and holds the image against
@@ -236,6 +238,10 @@ func (m *Image) OutputSize() (width, height int, err error) {
 // Every method that runs a recipe defers it.
 func guard(err *error) {
 	if v := recover(); v != nil {
+		if p, ok := v.(*pipeline.PanicError); ok { // raised again by Parallel
+			*err = p
+			return
+		}
 		*err = &pipeline.PanicError{Value: v, Stack: debug.Stack()}
 	}
 }

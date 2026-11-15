@@ -154,7 +154,7 @@ func register(fs *flag.FlagSet) *options {
 		keepExif:   fs.Bool("keep-exif", false, "copy the EXIF block (camera, date, GPS) to the output"),
 		stripICC:   fs.Bool("strip-icc", false, "drop the ICC colour profile instead of copying it"),
 		mem:        fs.Int("mem", 64, "working memory limit in `MB` for one image; beyond it data goes to temporary files"),
-		threads:    fs.Int("threads", 1, "CPU cores to use for one image, 1 to 3"),
+		threads:    fs.Int("threads", 1, "CPU cores to use for one image, at most the number of CPUs: 2 decodes on a core of its own, 3 encodes on another, more go to -blur, -sharpen, -modulate and -rotate"),
 		maxPixels:  fs.Int("max-pixels", 0, "largest image accepted or made, in `megapixels` (default 268: 16383 x 16383); all frames together for -animated"),
 		tmp:        fs.String("tmp", "", "`directory` for temporary files (default: the system one)"),
 	}

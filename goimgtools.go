@@ -44,6 +44,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"runtime"
 	"sync/atomic"
 
 	"github.com/whhhh1500/goimgtools/pipeline"
@@ -200,32 +201,40 @@ func (m *Image) pixelLimit() int64 {
 	return DefaultInputPixels
 }
 
-// Threads sets how many CPU cores one run may use, 1 to 3 (larger values
-// mean 3). Without it a run uses what SetDefaultThreads says, which is 1
-// unless the program changed it. With 2 the input is decoded on one core while the other
-// does the rest; with 3 the encoder gets a core of its own as well. Each
-// extra thread costs three strips of memory (under 1MB), counted in the
-// memory limit. The output does not depend on it.
+// Threads sets how many CPU cores one run may use, at most the number of
+// CPUs. Without it a run uses what SetDefaultThreads says, which is 1
+// unless the program changed it. With 2 the input is decoded on one core
+// while the other does the rest; with 3 the encoder gets a core of its own
+// as well; from 4 on, the cores beyond those three are shared by the
+// operations that can split their work: Blur, Sharpen, Modulate and
+// RotateBy. However the work is split, no more than n cores are busy at a
+// time. Each extra thread costs a few strips of memory (under 1MB each),
+// counted in the memory limit. The output does not depend on it.
 func (m *Image) Threads(n int) *Image { m.threads = n; return m }
 
 // defaultThreads is what SetDefaultThreads was given; 0 stands for 1.
 var defaultThreads atomic.Int32
 
 // SetDefaultThreads sets how many CPU cores a run uses when its Image does
-// not say (Threads): 1 to 3, as there; anything below 1 goes back to 1,
+// not say (Threads): as there; anything below 1 goes back to 1,
 // the default of the package. It is the one setting for a whole program,
 // for a service that wants every run on two cores without saying so at
 // each place an image is processed. It may be called at any time; runs
 // that have started keep what they started with.
-func SetDefaultThreads(n int) { defaultThreads.Store(int32(max(0, min(n, 3)))) }
+func SetDefaultThreads(n int) { defaultThreads.Store(int32(max(0, min(n, runtime.NumCPU())))) }
 
 // threadCount is how many cores this run may use.
 func (m *Image) threadCount() int {
 	if m.threads > 0 {
-		return m.threads
+		return min(m.threads, runtime.NumCPU())
 	}
 	return max(1, int(defaultThreads.Load()))
 }
+
+// helperCount is how many cores of the run go to the operations that
+// split their work: those beyond the run's own, the decoder's and the
+// encoder's.
+func (m *Image) helperCount() int { return max(0, m.threadCount()-3) }
 
 // TempDir sets where temporary files go when an image has to spill to disk
 // (default: the system temporary directory).
