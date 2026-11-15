@@ -387,7 +387,7 @@ goimgtools.RegisterOperation(goimgtools.OperationDef{
 goimgtools.Open("in.jpg").Do("resize", "800", "0").Do("sepia", "0.8").ToFile("out.jpg")
 ```
 
-用内置的名字注册（比如 `blur`）就替换掉它：`Do("blur", ...)` 和命令行 `-op blur:...` 改用你的；`Blur()` 方法本身不变（要改它见下面的钩子）。`UnregisterOperation` 撤销后恢复内置。
+用内置的名字注册（比如 `blur`）就替换掉它：`Do("blur", ...)` 和命令行 `-op blur:...` 改用你的；`Blur()` 方法本身不变（要改它见下面的钩子）。`UnregisterOperation` 撤销后恢复内置。要在内置操作的基础上加自己的想法，先用 `LookupOperation("blur")` 取出内置的定义，在自己的 `New` 里调用它的 `New`（比如限制参数范围后照常模糊）。
 
 ### 改写内置行为：`Around` 钩子
 

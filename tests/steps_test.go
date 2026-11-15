@@ -2,6 +2,7 @@ package tests
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"image"
@@ -358,12 +359,26 @@ func TestDoBuiltIns(t *testing.T) {
 		if !bytes.Equal(a, b) {
 			t.Errorf("Do(%s, %v) and the method made other files", c.name, c.args)
 		}
+		// The built-in's New, as an Operation of its own, does the same.
+		d, _ := LookupOperation(c.name)
+		op, err := d.New(c.args...)
+		if err != nil {
+			t.Fatalf("New of %s %v: %v", c.name, c.args, err)
+		}
+		if p, err := FromBytes(in).Pipe(op).PNG().ToBytes(); err != nil || !bytes.Equal(p, b) {
+			t.Errorf("the New of %s %v made another file (%v)", c.name, c.args, err)
+		}
 	}
 	for _, bad := range [][]string{{"resize", "40"}, {"resize", "a", "1"}, {"resize", "4", "4", "squash"}, {"crop", "1", "2"},
 		{"rotate"}, {"rotate", "x"}, {"rotate", "NaN"}, {"flip", "1"}, {"extend", "1", "2", "3", "4", "pink"}, {"blur"}, {"blur", "Inf"},
 		{"sharpen", "1", "1", "1.5"}, {"modulate", "1", "1"}, {"flatten"}, {"trim", "1", "2"}} {
 		if _, err := FromBytes(in).Do(bad[0], bad[1:]...).ToBytes(); err == nil {
 			t.Errorf("Do%v accepted", bad)
+		}
+		if d, _ := LookupOperation(bad[0]); d.New == nil {
+			t.Errorf("%s has no New", bad[0])
+		} else if op, err := d.New(bad[1:]...); err == nil || op != nil {
+			t.Errorf("New%v accepted", bad)
 		}
 	}
 	for _, d := range Operations() {
@@ -388,5 +403,48 @@ func TestParseColor(t *testing.T) {
 		if _, err := ParseColor(s); err == nil {
 			t.Errorf("%q accepted", s)
 		}
+	}
+}
+
+// TestWrapBuiltIn: an operation registered under a built-in name can do the
+// built-in one and add to it, and "rotate auto" made by New turns by the
+// orientation of the file when it is the first step.
+func TestWrapBuiltIn(t *testing.T) {
+	in := pngBytes(t, photoLike(64, 48))
+	blur, _ := LookupOperation("blur")
+	err := RegisterOperation(OperationDef{Name: "blur", Usage: "SIGMA", Help: "blur, at most 1",
+		New: func(args ...string) (Operation, error) {
+			if len(args) == 1 && args[0] > "1" {
+				args = []string{"1"}
+			}
+			return blur.New(args...)
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := FromBytes(in).Do("blur", "9").PNG().ToBytes()
+	UnregisterOperation("blur")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, _ := FromBytes(in).Blur(1).PNG().ToBytes()
+	if !bytes.Equal(got, want) {
+		t.Error("the wrapped blur is not Blur(1)")
+	}
+
+	plain := jpegBytes(testutil.Images(60, 40)["rgba-opaque"], 92)
+	jpg := withAPP(plain, app(0xe1, append([]byte("Exif\x00\x00"), exifWithOrientation(binary.BigEndian, 6)...)))
+	auto, _ := LookupOperation("rotate")
+	op, err := auto.New("auto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := FromBytes(jpg).Pipe(op).PNG().ToBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := FromBytes(jpg).Rotate().PNG().ToBytes()
+	if !bytes.Equal(a, b) {
+		t.Error("rotate auto made by New does not turn by the file's orientation")
 	}
 }

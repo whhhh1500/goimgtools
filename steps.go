@@ -184,19 +184,11 @@ func applyHooked(list []operation, src pipeline.Source, r *run, pre preShrunk) (
 	for i, op := range list {
 		name, args := describe(op)
 		step := Step{Name: name, Args: args, Index: i}
-		do := func(in pipeline.Source) (pipeline.Source, error) {
-			switch o := op.(type) {
-			case resizeOp:
-				p := preShrunk{}
-				if i == 0 {
-					p = pre
-				}
-				return o.resize(in, ops.Upright, p, r)
-			case turnOp:
-				return ops.Orient(in, o.orientation(r)), nil
-			}
-			return op.apply(in, r)
+		p := preShrunk{}
+		if i == 0 {
+			p = pre
 		}
+		do := func(in pipeline.Source) (pipeline.Source, error) { return applyOne(op, in, r, p) }
 		guarded := &onceSource{Source: src}
 		var made pipeline.Source // what the step itself made, for cleaning up
 		used := false
@@ -246,6 +238,17 @@ func applyHooked(list []operation, src pipeline.Source, r *run, pre preShrunk) (
 	return src, nil
 }
 
+// applyOne does op alone on in.
+func applyOne(op operation, in pipeline.Source, r *run, pre preShrunk) (pipeline.Source, error) {
+	switch o := op.(type) {
+	case resizeOp:
+		return o.resize(in, ops.Upright, pre, r)
+	case turnOp:
+		return ops.Orient(in, o.orientation(r)), nil
+	}
+	return op.apply(in, r)
+}
+
 // onceSource is a source whose Close closes it the first time only, so
 // that a hook's error can be cleaned up whatever the hook had done.
 type onceSource struct {
@@ -281,6 +284,11 @@ type OperationDef struct {
 	Help string
 	// New makes the operation from its arguments: the words given to Do,
 	// or the command line's NAME:ARG1,ARG2 split at the commas.
+	//
+	// The built-in ones have it too, so that an operation registered under
+	// a built-in name can do the built-in one and add to it. Done that way,
+	// on its own, "rotate auto" reads the orientation from the Meta of the
+	// source it is given (the decoder's, when it is the first step).
 	New func(args ...string) (Operation, error)
 
 	// builtIn makes a built-in step instead (it applies it to the image).
@@ -609,6 +617,39 @@ var builtInOps = map[string]OperationDef{
 			m.Flatten(c)
 			return nil
 		}},
+}
+
+func init() {
+	for name, d := range builtInOps {
+		d.New = builtInNew(name, d.builtIn)
+		builtInOps[name] = d
+	}
+}
+
+// builtInNew makes the New of a built-in operation: the step the method
+// adds (each adds one), as an Operation.
+func builtInNew(name string, add func(m *Image, args []string) error) func(args ...string) (Operation, error) {
+	return func(args ...string) (Operation, error) {
+		m := &Image{}
+		if err := add(m, args); err != nil {
+			return nil, fmt.Errorf("goimgtools: %s: %w", name, err)
+		}
+		if m.err != nil {
+			return nil, m.err
+		}
+		if len(m.chain) != 1 {
+			return nil, fmt.Errorf("goimgtools: %s made %d steps", name, len(m.chain))
+		}
+		return builtInOp{m.chain[0]}, nil
+	}
+}
+
+// builtInOp is a built-in operation made by its New.
+type builtInOp struct{ op operation }
+
+func (b builtInOp) Apply(src pipeline.Source) (pipeline.Source, error) {
+	r := &run{exifOrient: pipeline.ExifOrientation(pipeline.MetaOf(src).Exif)}
+	return applyOne(b.op, src, r, preShrunk{})
 }
 
 func isResize(op operation) bool {
