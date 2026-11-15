@@ -199,6 +199,7 @@ type encoder struct {
 const (
 	ioBufSize   = 4 << 10
 	readBufSize = 32 << 10
+	yuvInMemory = 256 << 10 // the largest converted image kept in memory
 
 	// The first partition's length field has 19 bits. modeBudget is what
 	// the prediction modes may use of it, in 1/256 bit, leaving room for
@@ -235,6 +236,9 @@ func (e *encoder) init(quality int, rr *pipeline.RowReader, src pipeline.Source)
 	}
 	e.rr = rr
 	e.yuv = newStore(e.env)
+	// The converted image is only read back, row by row: beyond a small
+	// image it costs nothing measurable on disk, and memory comes first.
+	e.yuv.expect(int64(e.mbh)*e.yuvRowBytes(), yuvInMemory)
 	e.spool = newStore(e.env)
 	if wantAlpha {
 		e.alphaStore = newStore(e.env)

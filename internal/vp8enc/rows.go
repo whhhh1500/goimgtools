@@ -66,9 +66,11 @@ type pass1 struct {
 	grant, used, usedSum []int64
 
 	// costs[v] is built from the statistics of the rows above v (and v
-	// is a multiple of every, or 0 for the defaults).
+	// is a multiple of every, or 0 for the defaults); spare holds tables
+	// no longer in use, for the next versions.
 	every int
 	costs map[int]*costTables
+	spare []*costTables
 }
 
 // firstPass codes every macroblock row and leaves the decisions in the
@@ -241,13 +243,21 @@ func (p *pass1) commit(c *mbCoder, r int) error {
 	if v := r + 1; v%p.every == 0 {
 		var pr probs
 		e.stats.finalize(&pr)
-		t := new(costTables)
+		var t *costTables
+		if n := len(p.spare); n > 0 {
+			t, p.spare = p.spare[n-1], p.spare[:n-1]
+		} else {
+			t = new(costTables)
+		}
 		t.build(&pr)
 		p.costs[v] = t
 	}
 	// The rows still to come need no older version.
 	for v := range p.costs {
 		if v < p.version(r+1) {
+			if v != 0 {
+				p.spare = append(p.spare, p.costs[v])
+			}
 			delete(p.costs, v)
 		}
 	}

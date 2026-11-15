@@ -17,6 +17,19 @@ type store struct {
 	memMax   int
 	reserved int64
 	sp       *pipeline.Spill
+	toDisk   bool // what goes beyond the slice goes to a temporary file at once
+}
+
+// expect says that n bytes will be written and nothing else should be
+// kept in memory: a store for n bytes of at most max goes in one slice
+// of that size, a larger one to a temporary file from the start.
+func (s *store) expect(n int64, max int) {
+	s.toDisk = true
+	if n <= int64(max) && s.grow(int(n)) {
+		s.memMax = int(n)
+		return
+	}
+	s.memMax = 0
 }
 
 // newStore returns an empty store. The encoder has up to four of them at a
@@ -58,8 +71,8 @@ func (s *store) Write(p []byte) (int, error) {
 		s.sp = pipeline.NewSpill(s.env)
 		// A Spill holds on to memory while it can. With a small budget
 		// that could starve the other stores, so send it to disk at once.
-		if b := s.env.Budget; b.Limit()-b.Used() < 4<<20 {
-			s.sp.Expect(b.Limit())
+		if b := s.env.Budget; s.toDisk || b.Limit()-b.Used() < 4<<20 {
+			s.sp.Expect(b.Limit() + 1)
 		}
 		_, err := s.sp.Write(s.mem)
 		s.mem = nil

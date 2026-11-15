@@ -91,7 +91,7 @@ func (e *encoder) readRow(r int, buf []uint8) error {
 	return err
 }
 
-// rowAnalysis is what measuring one macroblock row found: how many
+// rowAnalysis is what measuring macroblock rows found: how many
 // macroblocks have each susceptibility.
 type rowAnalysis struct {
 	alphas [maxAlpha + 1]int32
@@ -105,12 +105,7 @@ func (e *encoder) analyse(quality int) error {
 		return err
 	}
 	e.segMap = make([]uint8, nmb)
-	held := int64(e.mbh) * (maxAlpha + 1) * 4
-	if err := e.env.Budget.Reserve(held, "webp analysis"); err != nil {
-		return err
-	}
-	defer e.env.Budget.Release(held)
-	rows := make([]rowAnalysis, e.mbh)
+
 	// Each goroutine measures rows of its own: the samples of the row and
 	// the last ones of the row above.
 	w16 := e.mbw * 16
@@ -124,7 +119,10 @@ func (e *encoder) analyse(quality int) error {
 		}
 	}
 	defer e.env.Budget.Release(need * int64(at))
+	// Each goroutine counts the susceptibilities of its rows; the counts
+	// are added up afterwards.
 	errs := make([]error, at)
+	counts := make([]rowAnalysis, at)
 	var next atomic.Int64
 	worker := func(i int) {
 		a := newAnalyser(e)
@@ -133,7 +131,7 @@ func (e *encoder) analyse(quality int) error {
 			if r >= e.mbh {
 				return
 			}
-			if err := a.row(r, &rows[r]); err != nil {
+			if err := a.row(r, &counts[i]); err != nil {
 				errs[i] = err
 				return
 			}
@@ -150,8 +148,8 @@ func (e *encoder) analyse(quality int) error {
 		}
 	}
 	var alphas [maxAlpha + 1]int64
-	for i := range rows {
-		for a, n := range rows[i].alphas {
+	for i := range counts {
+		for a, n := range counts[i].alphas {
 			alphas[a] += int64(n)
 		}
 	}

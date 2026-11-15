@@ -470,21 +470,28 @@ func (e *encoder) code() error {
 		}
 	}
 	errs := make([]error, jobs)
-	job := func(j int) {
-		ioBuf := make([]byte, ioBufSize)
-		bufs := [2][]byte{make([]byte, passReadBuf), make([]byte, passReadBuf)}
+	type bufs struct {
+		io   []byte
+		read [2][]byte
+		ctxs []byte
+	}
+	newBufs := func() *bufs {
+		return &bufs{make([]byte, ioBufSize), [2][]byte{make([]byte, passReadBuf), make([]byte, passReadBuf)}, make([]byte, 2*e.mbw)}
+	}
+	job := func(j int, b *bufs) {
 		if j == e.nParts {
-			errs[j] = e.writeModes(ioBuf, bufs[0])
+			errs[j] = e.writeModes(b.io, b.read[0])
 			return
 		}
-		errs[j] = e.writeTokens(j, ioBuf, bufs, make([]byte, 2*e.mbw))
+		errs[j] = e.writeTokens(j, b.io, b.read, b.ctxs)
 	}
 	if at == 1 {
+		b := newBufs()
 		for j := 0; j < jobs; j++ {
-			job(j)
+			job(j, b)
 		}
 	} else {
-		e.env.Parallel(jobs, job)
+		e.env.Parallel(jobs, func(j int) { job(j, newBufs()) })
 	}
 	for _, err := range errs {
 		if err != nil {
