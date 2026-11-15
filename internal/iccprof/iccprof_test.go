@@ -10,7 +10,7 @@ import (
 
 func readPNG(t *testing.T, name string) image.Image {
 	t.Helper()
-	f, err := os.Open(filepath.Join("testdata", name))
+	f, err := os.Open(filepath.Join("..", "..", "tests", "testdata", "icc", name))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +28,7 @@ func readPNG(t *testing.T, name string) image.Image {
 func TestMatchesLittleCMS(t *testing.T) {
 	wheel := readPNG(t, "wheel.png")
 	for _, name := range []string{"p3-table", "adobe-gamma", "p3-para"} {
-		icc, err := os.ReadFile(filepath.Join("testdata", name+".icc"))
+		icc, err := os.ReadFile(filepath.Join("..", "..", "tests", "testdata", "icc", name+".icc"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -68,7 +68,7 @@ func TestMatchesLittleCMS(t *testing.T) {
 // converts nothing; data that is not a matrix/TRC RGB profile is refused,
 // not misread.
 func TestSRGBAndBadProfiles(t *testing.T) {
-	icc, err := os.ReadFile(filepath.Join("testdata", "p3-para.icc"))
+	icc, err := os.ReadFile(filepath.Join("..", "..", "tests", "testdata", "icc", "p3-para.icc"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func putS15(b []byte, v float64) {
 // conversion works on every value, without a panic.
 func FuzzParse(f *testing.F) {
 	for _, name := range []string{"p3-table.icc", "adobe-gamma.icc", "p3-para.icc"} {
-		b, err := os.ReadFile(filepath.Join("testdata", name))
+		b, err := os.ReadFile(filepath.Join("..", "..", "tests", "testdata", "icc", name))
 		if err != nil {
 			f.Fatal(err)
 		}

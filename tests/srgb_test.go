@@ -16,10 +16,10 @@ import (
 )
 
 // The colour wheel, a Display P3 test profile and what LittleCMS makes of
-// the wheel in that profile in sRGB (internal/iccprof/testdata).
+// the wheel in that profile in sRGB (testdata/icc).
 func iccData(t *testing.T, name string) []byte {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("..", "internal", "iccprof", "testdata", name))
+	b, err := os.ReadFile(filepath.Join("testdata", "icc", name))
 	if err != nil {
 		t.Fatal(err)
 	}
