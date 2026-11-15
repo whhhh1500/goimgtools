@@ -6,14 +6,18 @@ import (
 	"math/bits"
 )
 
-// The spool is itself one arithmetic-coded stream, so that it is about as
-// small as the final file. For every macroblock it holds a "no coefficients"
-// bit, a "4x4 prediction" bit, the prediction modes as plain numbers and,
-// unless the macroblock is empty, its coefficient blocks coded exactly as in
-// a VP8 token partition but with the default probabilities.
+// The spool holds, per macroblock row (see rows.go): the contexts found
+// above each macroblock, a stream with the modes of its macroblocks (a "no
+// coefficients" bit, a "4x4 prediction" bit and the prediction modes as
+// plain numbers) and a stream with their coefficient blocks, coded exactly
+// as in a VP8 token partition but with the default probabilities. Both are
+// arithmetic coded, so that the spool is about as small as the final file.
 //
-// Writing the file decodes the spool once per partition and codes the
-// macroblocks again with the frame's final probabilities.
+// Writing the file decodes the spool and codes it again with the frame's
+// final probabilities: the modes into the first partition, the
+// coefficients of every nParts-th row into each token partition. Each
+// partition is coded on its own, at the same time as the others when there
+// are helpers, which is what a row's contexts in the spool are for.
 
 // walkBlocks visits the coefficient blocks of a macroblock in coding order:
 // the Y2 block (index 24) when the luma is 16x16-predicted, the 16 luma
@@ -50,72 +54,6 @@ func walkBlocks(i4 bool, up, left *mbCtx, visit func(plane, first, ctx, n int) b
 	up.nzMask, left.nzMask = unz, lnz
 }
 
-// emitMB records the final coding of a macroblock: it counts its tokens,
-// appends it to the spool and leaves the contexts for its neighbours.
-func (e *encoder) emitMB(up *mbCtx, i4 bool, c *cand16, uv *candUV) {
-	lv, lasts := &c.lv, &c.last
-	if i4 {
-		lv, lasts = &e.c4.lv, &e.c4.last
-	}
-	// quantize returns -1 for an empty block whether it starts at
-	// coefficient 0 or (below a Y2 block) at 1.
-	skip := i4 || c.y2last < 0
-	for _, l := range lasts {
-		skip = skip && l < 0
-	}
-	for _, l := range uv.last {
-		skip = skip && l < 0
-	}
-
-	sw := &e.sw
-	sw.putBit(skip, 128)
-	sw.putBit(i4, 128)
-	if i4 {
-		for _, m := range e.c4.modes {
-			sw.putUint(uint32(m), 4)
-		}
-		for i := 0; i < 4; i++ {
-			up.pred[i] = e.c4.modes[12+i]
-			e.left.pred[i] = e.c4.modes[4*i+3]
-		}
-		if e.dbg != nil {
-			e.dbg.usedI4++
-		}
-	} else {
-		sw.putUint(uint32(c.mode), 2)
-		for i := 0; i < 4; i++ {
-			up.pred[i], e.left.pred[i] = c.mode, c.mode
-		}
-	}
-	sw.putUint(uint32(uv.mode), 2)
-
-	st := &e.stats
-	if skip {
-		// Count the "end of block" bits it would take to code this
-		// macroblock without the skip flag.
-		e.nSkip++
-		st = &e.skipStats
-	}
-	walkBlocks(i4, up, &e.left, func(plane, first, ctx, n int) bool {
-		var b *[16]int16
-		var last int
-		switch {
-		case n < 16:
-			b, last = &lv[n], int(lasts[n])
-		case n < 24:
-			b, last = &uv.lv[n-16], int(uv.last[n-16])
-		default:
-			b, last = &c.y2, c.y2last
-		}
-		st.record(plane, first, ctx, last, b)
-		if skip {
-			return false
-		}
-		putCoeffs(sw, &defaultTokenProb[plane], first, ctx, last, b)
-		return last >= 0
-	})
-}
-
 // boolDec is the boolean arithmetic decoder (the decoder's partition
 // reader), reading the spool through a buffer.
 type boolDec struct {
@@ -130,8 +68,37 @@ type boolDec struct {
 	nBits   uint8
 }
 
-func (d *boolDec) init(sp *store, buf []byte) {
-	*d = boolDec{sp: sp, end: sp.Size(), buf: buf, rangeM1: 254}
+// init reads bytes off..end of sp.
+func (d *boolDec) init(sp *store, off, end int64, buf []byte) {
+	*d = boolDec{sp: sp, off: off, end: end, buf: buf, rangeM1: 254}
+}
+
+// readModes reads a macroblock's entry in a row's modes stream: modes holds
+// the sixteen 4x4 modes when i4 is set and the 16x16 mode in modes[0]
+// otherwise.
+func readModes(d *boolDec, modes *[16]uint8) (skip, i4 bool, uvMode uint8) {
+	skip = d.readBit(128)
+	i4 = d.readBit(128)
+	if i4 {
+		for i := range modes {
+			modes[i] = d.readUint(4)
+		}
+	} else {
+		modes[0] = d.readUint(2)
+	}
+	return skip, i4, d.readUint(2)
+}
+
+// setPreds leaves a macroblock's luma modes for the macroblocks below and
+// to the right.
+func setPreds(up, left *mbCtx, i4 bool, modes *[16]uint8) {
+	for i := 0; i < 4; i++ {
+		if i4 {
+			up.pred[i], left.pred[i] = modes[12+i], modes[4*i+3]
+		} else {
+			up.pred[i], left.pred[i] = modes[0], modes[0]
+		}
+	}
 }
 
 func (d *boolDec) fill() {
@@ -318,21 +285,21 @@ func (e *encoder) putHeader(bw *boolEnc) {
 // putModes writes the prediction modes of one macroblock to the first
 // partition (chapter 11). modes holds the sixteen 4x4 modes when i4 is set
 // and the 16x16 mode in modes[0] otherwise.
-func (e *encoder) putModes(bw *boolEnc, put func(bool, uint8), up *mbCtx, skip, i4 bool, modes *[16]uint8, uvMode uint8) {
+func (e *encoder) putModes(bw *boolEnc, put func(bool, uint8), up, left *mbCtx, skip, i4 bool, modes *[16]uint8, uvMode uint8) {
 	if e.useSkip {
 		bw.putBit(skip, e.skipProb)
 	}
 	bw.putBit(!i4, 145)
 	if i4 {
 		for n, m := range modes {
-			above, left := up.pred[n&3], e.left.pred[n>>2]
+			above, toLeft := up.pred[n&3], left.pred[n>>2]
 			if n >= 4 {
 				above = modes[n-4]
 			}
 			if n&3 != 0 {
-				left = modes[n-1]
+				toLeft = modes[n-1]
 			}
-			walkMode4(m, &predProb[above][left], put)
+			walkMode4(m, &predProb[above][toLeft], put)
 		}
 	} else {
 		m := modes[0]
@@ -353,91 +320,147 @@ func (e *encoder) putModes(bw *boolEnc, put func(bool, uint8), up *mbCtx, skip, 
 	}
 }
 
-// replay decodes the spool and appends token partition part to e.coded: the
-// coefficients of every e.nParts-th macroblock row, coded with the final
-// probabilities of the frame. The pass for partition 0 also produces the
-// first partition (frame header and modes) in e.part0.
-func (e *encoder) replay(part int) error {
-	var d boolDec
-	d.init(e.spool, e.readBuf)
-	var bw, mw boolEnc
-	bw.init(e.coded, e.ioBuf)
-	withModes := part == 0
-	if withModes {
-		mw.init(e.part0, e.ioBuf0)
-		e.putHeader(&mw)
-	}
-	putMode := mw.putBit
+// writeModes codes the first partition: the frame header and the modes.
+func (e *encoder) writeModes(ioBuf, readBuf []byte) error {
+	var mw boolEnc
+	mw.init(e.part0, ioBuf)
+	e.putHeader(&mw)
 	for i := range e.up {
 		e.up[i] = mbCtx{}
 	}
-	var (
-		modes [16]uint8
-		lv    [16]int16
-	)
-	for mby := 0; mby < e.mbh; mby++ {
-		e.left = mbCtx{}
-		code := mby%e.nParts == part
-		for mbx := 0; mbx < e.mbw; mbx++ {
-			up := &e.up[mbx]
-			skip := d.readBit(128)
-			i4 := d.readBit(128)
-			if i4 {
-				for i := range modes {
-					modes[i] = d.readUint(4)
-				}
-			} else {
-				modes[0] = d.readUint(2)
-			}
-			uvMode := d.readUint(2)
-			if withModes {
-				e.putModes(&mw, putMode, up, skip, i4, &modes, uvMode)
-			}
-			if i4 {
-				for i := 0; i < 4; i++ {
-					up.pred[i] = modes[12+i]
-					e.left.pred[i] = modes[4*i+3]
-				}
-			} else {
-				for i := 0; i < 4; i++ {
-					up.pred[i], e.left.pred[i] = modes[0], modes[0]
-				}
-			}
-			walkBlocks(i4, up, &e.left, func(plane, first, ctx, n int) bool {
-				if skip {
-					// Without the skip flag an empty macroblock is
-					// an "end of block" for each of its blocks.
-					if code && !e.useSkip {
-						bw.putBit(false, e.probs[plane][bands[first]][ctx][0])
-					}
-					return false
-				}
-				last := getCoeffs(&d, &defaultTokenProb[plane], first, ctx, &lv)
-				if code {
-					putCoeffs(&bw, &e.probs[plane], first, ctx, last, &lv)
-				}
-				return last >= 0
-			})
+	var modes [16]uint8
+	for r := range e.rows {
+		var d boolDec
+		d.init(e.spool, e.rows[r].modes, e.rows[r].coeffs, readBuf)
+		var left mbCtx
+		for x := range e.up {
+			up := &e.up[x]
+			skip, i4, uvMode := readModes(&d, &modes)
+			e.putModes(&mw, mw.putBit, up, &left, skip, i4, &modes, uvMode)
+			setPreds(up, &left, i4, &modes)
 		}
 		if d.err != nil {
 			return d.err
 		}
 	}
 	var err error
-	if withModes {
-		if e.p0Len, err = mw.finish(); err != nil {
+	e.p0Len, err = mw.finish()
+	return err
+}
+
+// writeTokens codes token partition part: the coefficients of every
+// nParts-th macroblock row from row part on.
+func (e *encoder) writeTokens(part int, ioBuf []byte, readBufs [2][]byte, ctxs []byte) error {
+	var bw boolEnc
+	e.partOff[part] = e.parts[part].Size()
+	bw.init(e.parts[part], ioBuf)
+	var (
+		modes [16]uint8
+		lv    [16]int16
+	)
+	for r := part; r < e.mbh; r += e.nParts {
+		sp := e.rows[r]
+		if _, err := e.spool.ReadAt(ctxs, sp.ctxs); err != nil {
 			return err
 		}
+		var md, cd boolDec
+		md.init(e.spool, sp.modes, sp.coeffs, readBufs[0])
+		cd.init(e.spool, sp.coeffs, sp.end, readBufs[1])
+		var left mbCtx
+		for x := 0; x < e.mbw; x++ {
+			skip, i4, _ := readModes(&md, &modes)
+			up := mbCtx{nzMask: ctxs[2*x], nzY16: ctxs[2*x+1]}
+			walkBlocks(i4, &up, &left, func(plane, first, ctx, n int) bool {
+				if skip {
+					// Without the skip flag an empty macroblock is an
+					// "end of block" for each of its blocks.
+					if !e.useSkip {
+						bw.putBit(false, e.probs[plane][bands[first]][ctx][0])
+					}
+					return false
+				}
+				last := getCoeffs(&cd, &defaultTokenProb[plane], first, ctx, &lv)
+				putCoeffs(&bw, &e.probs[plane], first, ctx, last, &lv)
+				return last >= 0
+			})
+		}
+		if md.err != nil {
+			return md.err
+		}
+		if cd.err != nil {
+			return cd.err
+		}
 	}
+	var err error
 	e.partLen[part], err = bw.finish()
 	return err
 }
 
-// write arithmetic codes the spooled frame and writes the file.
-func (e *encoder) write(w io.Writer) error {
-	if _, err := e.sw.finish(); err != nil {
+// passReadBuf is the size of each read buffer a partition's coding uses.
+const passReadBuf = 16 << 10
+
+// spillBuf is the buffer a store takes once it moves to a temporary file.
+const spillBuf = 256 << 10
+
+// passBytes is the memory one partition's coding takes besides its store.
+func (e *encoder) passBytes() int64 { return ioBufSize + 2*passReadBuf + 2*int64(e.mbw) }
+
+// code codes the first partition and the token partitions: at the same
+// time, each into a store of its own, when there are helpers and room for
+// that; else one after the other into one store, as a small budget needs
+// (a store that moves to a temporary file takes a 256KB buffer).
+func (e *encoder) code() error {
+	e.part0.Close()
+	e.part0 = newStore(e.env)
+	for p := range e.parts {
+		e.parts[p].Close()
+		e.parts[p] = nil
+	}
+	jobs := e.nParts + 1
+	at := min(jobs, 1+e.env.Helpers())
+	b := e.env.Budget
+	if at > 1 && b.Limit()-b.Used() < int64(jobs)*(e.passBytes()+2*spillBuf) {
+		at = 1
+	}
+	need := e.passBytes() * int64(at)
+	if err := b.Reserve(need, "webp partitions"); err != nil {
 		return err
 	}
+	defer b.Release(need)
+	for p := 0; p < e.nParts; p++ {
+		if at > 1 || p == 0 {
+			e.parts[p] = newStore(e.env)
+		} else {
+			e.parts[p] = e.parts[0]
+		}
+	}
+	errs := make([]error, jobs)
+	job := func(j int) {
+		ioBuf := make([]byte, ioBufSize)
+		bufs := [2][]byte{make([]byte, passReadBuf), make([]byte, passReadBuf)}
+		if j == e.nParts {
+			errs[j] = e.writeModes(ioBuf, bufs[0])
+			return
+		}
+		errs[j] = e.writeTokens(j, ioBuf, bufs, make([]byte, 2*e.mbw))
+	}
+	if at == 1 {
+		for j := 0; j < jobs; j++ {
+			job(j)
+		}
+	} else {
+		e.env.Parallel(jobs, job)
+	}
+	for _, err := range errs {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// write arithmetic codes the spooled frame and writes the file.
+func (e *encoder) write(w io.Writer) error {
 	// The skip flag costs every macroblock a bit in the first partition;
 	// use it when some macroblocks are empty and there is room for it.
 	total := int64(e.mbw) * int64(e.mbh)
@@ -459,24 +482,29 @@ func (e *encoder) write(w io.Writer) error {
 	}
 	e.stats.finalize(&e.probs)
 
-	// A token partition is limited to 16MB; large frames are split over
-	// several (macroblock row y goes to partition y mod n). The spool is a
-	// little larger than the partitions together will be.
+	// The rows are spread over several token partitions (macroblock row y
+	// goes to partition y mod n) so that the partitions can be coded at the
+	// same time: up to 8, each of at least 8 rows (each costs a few bytes).
+	// A partition is also limited to 16MB; the spool is a little larger
+	// than the partitions together will be.
 	e.nParts = 1
-	for e.nParts < 8 && e.spool.Size()/int64(e.nParts) > 12<<20 {
+	for e.nParts < 8 && (e.mbh >= 16*e.nParts || e.spool.Size()/int64(e.nParts) > 12<<20) {
 		e.nParts *= 2
 	}
 	if e.dbg != nil && e.dbg.forceParts != 0 {
 		e.nParts = e.dbg.forceParts
 	}
+	// From here on several goroutines read the spool.
+	if err := e.spool.settle(); err != nil {
+		return err
+	}
 	for {
-		e.coded, e.part0 = newStore(e.env), newStore(e.env)
+		if err := e.code(); err != nil {
+			return err
+		}
 		fits := true
-		for part := 0; part < e.nParts && fits; part++ {
-			if err := e.replay(part); err != nil {
-				return err
-			}
-			fits = e.partLen[part] < 1<<24
+		for _, n := range e.partLen[:e.nParts] {
+			fits = fits && n < 1<<24
 		}
 		if fits {
 			break
@@ -484,8 +512,6 @@ func (e *encoder) write(w io.Writer) error {
 		if e.nParts == 8 {
 			return errors.New("goimgtools: webp: image too large to encode at this quality")
 		}
-		e.coded.Close()
-		e.part0.Close()
 		e.nParts *= 2
 	}
 	if e.p0Len > maxPartition0 {
@@ -603,8 +629,10 @@ func (e *encoder) write(w io.Writer) error {
 	if _, err := w.Write(hdr); err != nil {
 		return err
 	}
-	if err := e.copyOut(w, e.coded, 0, e.coded.Size()); err != nil {
-		return err
+	for p, s := range e.parts[:e.nParts] {
+		if err := e.copyOut(w, s, e.partOff[p], e.partLen[p]); err != nil {
+			return err
+		}
 	}
 	if vp8Size&1 != 0 {
 		if _, err := w.Write([]byte{0}); err != nil {

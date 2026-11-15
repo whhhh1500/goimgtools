@@ -1101,3 +1101,36 @@ func TestBoolEncoder(t *testing.T) {
 		}
 	}
 }
+
+// TestThreads: the file is the same whatever the number of helpers coding
+// rows and partitions at once, and with a budget too small for them to
+// keep their partitions apart; nothing is left reserved or on disk.
+func TestThreads(t *testing.T) {
+	r := rand.New(rand.NewSource(9))
+	imgs := []image.Image{photoLike(1000, 700), photoLike(37, 900), photoLike(900, 23)}
+	noisy := image.NewNRGBA(image.Rect(0, 0, 640, 480))
+	for i := range noisy.Pix {
+		noisy.Pix[i] = uint8(r.Intn(256))
+	}
+	imgs = append(imgs, noisy, testutil.Images(333, 211)["nrgba"])
+	for n, m := range imgs {
+		for _, q := range []int{20, 75, 100} {
+			ref := mustEncode(t, testutil.Chopped(m, 16), q, nil)
+			for _, c := range []struct {
+				helpers int
+				limit   int64
+			}{{1, 0}, {3, 0}, {7, 0}, {7, 3 << 20}} {
+				dir := t.TempDir()
+				env := pipeline.NewEnv(c.limit, dir)
+				env.SetHelpers(c.helpers)
+				got := mustEncode(t, testutil.ChoppedEnv(m, 13, env), q, nil)
+				if !bytes.Equal(got, ref) {
+					t.Errorf("image %d q%d with %d helpers, limit %d: another file", n, q, c.helpers, c.limit)
+				}
+				if env.Budget.Used() != 0 || tempFiles(t, dir) != 0 {
+					t.Errorf("image %d q%d with %d helpers: %d bytes reserved, %d temporary files", n, q, c.helpers, env.Budget.Used(), tempFiles(t, dir))
+				}
+			}
+		}
+	}
+}

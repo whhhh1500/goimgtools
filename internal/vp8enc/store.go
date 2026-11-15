@@ -83,6 +83,54 @@ func (s *store) ReadAt(p []byte, off int64) (int, error) {
 	return copy(p, s.mem[off:]), nil
 }
 
+// settle makes the store safe to read from several goroutines at once:
+// a store that moved to a temporary file still holds buffered data, which
+// the first read writes out.
+func (s *store) settle() error {
+	if s.sp == nil || s.sp.Size() == 0 {
+		return nil
+	}
+	var b [1]byte
+	_, err := s.sp.ReadAt(b[:], 0)
+	return err
+}
+
+// rowBuf holds one macroblock row's stream in memory, which is counted in
+// the budget: a row's coded size, small next to the image.
+type rowBuf struct {
+	env      *pipeline.Env
+	b        []byte
+	reserved int64
+	err      error
+}
+
+func (r *rowBuf) Write(p []byte) (int, error) {
+	if r.err != nil {
+		return 0, r.err
+	}
+	if n := len(r.b) + len(p); n > cap(r.b) {
+		c := max(4<<10, 2*cap(r.b), n)
+		if err := r.env.Budget.Reserve(int64(c)-r.reserved, "webp row stream"); err != nil {
+			r.err = err
+			return 0, err
+		}
+		r.reserved = int64(c)
+		b := make([]byte, len(r.b), c)
+		copy(b, r.b)
+		r.b = b
+	}
+	r.b = append(r.b, p...)
+	return len(p), nil
+}
+
+// reset empties the buffer, keeping its memory.
+func (r *rowBuf) reset() { r.b, r.err = r.b[:0], nil }
+
+func (r *rowBuf) release() {
+	r.env.Budget.Release(r.reserved)
+	r.b, r.reserved = nil, 0
+}
+
 // Close frees the memory and deletes the temporary file, if any.
 func (s *store) Close() {
 	if s == nil {

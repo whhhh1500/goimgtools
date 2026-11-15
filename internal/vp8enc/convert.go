@@ -37,7 +37,8 @@ func init() {
 }
 
 // converter turns rows of the source into one macroblock row of Y, U and V
-// samples, padded to whole macroblocks by repeating the edges.
+// samples, padded to whole macroblocks by repeating the edges. The samples
+// go to the buffers of the row's mbCoder (see into).
 type converter struct {
 	b      image.Rectangle
 	w      int // image width
@@ -52,8 +53,8 @@ type converter struct {
 	palSrc color.Palette
 }
 
-func converterBytes(w, w16 int, alpha bool) int64 {
-	n := int64(w16)*16 + int64(w16/2)*8*2 + 2*int64(w+1)*4 + 2*int64(w+1)
+func converterBytes(w int, alpha bool) int64 {
+	n := 2*int64(w+1)*4 + 2*int64(w+1)
 	if alpha {
 		n += int64(w) + alphaSpoolBytes(w)
 	}
@@ -63,9 +64,6 @@ func converterBytes(w, w16 int, alpha bool) int64 {
 func newConverter(b image.Rectangle, w16 int, alpha *alphaSpool) *converter {
 	w := b.Dx()
 	c := &converter{b: b, w: w, w16: w16, alpha: alpha}
-	c.y = make([]uint8, w16*16)
-	c.u = make([]uint8, w16/2*8)
-	c.v = make([]uint8, w16/2*8)
 	c.rows[0] = make([]uint8, (w+1)*4)
 	c.rows[1] = make([]uint8, (w+1)*4)
 	if alpha != nil {
@@ -73,6 +71,9 @@ func newConverter(b image.Rectangle, w16 int, alpha *alphaSpool) *converter {
 	}
 	return c
 }
+
+// into makes the next macroblock row go to y, u and v.
+func (c *converter) into(y, u, v []uint8) { c.y, c.u, c.v = y, u, v }
 
 // row converts row y of the image, which is row k (0..15) of the current
 // macroblock row and lies in strip m. last tells that y is the image's

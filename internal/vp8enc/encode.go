@@ -5,6 +5,9 @@
 // The image is read from a pipeline.Source one macroblock row (16 pixel rows) at
 // a time. Besides that row the encoder keeps only the bottom row of its own
 // reconstruction of the macroblock row above, which intra prediction needs.
+// With helpers (pipeline.Env.SetHelpers) several rows are coded at once,
+// and the partitions of the file too; the file is the same either way
+// (rows.go, replay.go).
 //
 // A VP8 frame cannot be written straight through: its header, which comes
 // first, holds the token probabilities and the size of the mode partition,
@@ -94,7 +97,7 @@ func encode(w io.Writer, src pipeline.Source, o *Options, dbg *debug) error {
 	if err := e.init(quality, rr, src); err != nil {
 		return err
 	}
-	if err := e.analyse(rr); err != nil {
+	if err := e.firstPass(); err != nil {
 		return err
 	}
 	return e.write(w)
