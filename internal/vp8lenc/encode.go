@@ -20,6 +20,11 @@
 //     The colour cache is applied here too: its best size is only known
 //     when pass one is over.
 //
+// With helpers (pipeline.Env.SetHelpers) the predictors of a band's block
+// rows are chosen, and its residuals made, at the same time; the cost model
+// they follow is the one at the start of the band, with or without helpers,
+// so the file is the same. LZ77 and pass two stay on one goroutine.
+//
 // Memory is bounded by a few block rows of pixels, the LZ77 windows and
 // what is kept per block (a predictor mode, a group index), whatever the
 // image size.

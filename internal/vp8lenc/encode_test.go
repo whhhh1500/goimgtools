@@ -733,3 +733,39 @@ func TestCodeLengths(t *testing.T) {
 }
 
 func (s *mixedSource) Env() *pipeline.Env { return nil }
+
+// TestThreads: the file is the same whatever the number of helpers
+// choosing predictors and making residuals at once, and decodes to the
+// image.
+func TestThreads(t *testing.T) {
+	r := rand.New(rand.NewSource(4))
+	photo := image.NewNRGBA(image.Rect(0, 0, 700, 523))
+	for y := 0; y < 523; y++ {
+		for x := 0; x < 700; x++ {
+			n := uint8(r.Intn(12))
+			photo.SetNRGBA(x, y, color.NRGBA{uint8(x/3) + n, uint8(y/3) + n, uint8((x+y)/5) + n, 255})
+		}
+	}
+	imgs := map[string]image.Image{"photo": photo}
+	for name, m := range testutil.Images(301, 207) {
+		imgs[name] = m
+	}
+	for name, m := range imgs {
+		for _, effort := range []int{1, 5, 9} {
+			o := &Options{Effort: effort}
+			ref := encodeBytes(t, testutil.Chopped(m, 16), o)
+			for _, helpers := range []int{1, 3, 7} {
+				env := pipeline.NewEnv(0, t.TempDir())
+				env.SetHelpers(helpers)
+				got := encodeBytes(t, testutil.ChoppedEnv(m, 11, env), o)
+				if !bytes.Equal(got, ref) {
+					t.Errorf("%s effort %d with %d helpers: another file", name, effort, helpers)
+				}
+				if env.Budget.Used() != 0 {
+					t.Errorf("%s: %d bytes reserved", name, env.Budget.Used())
+				}
+			}
+			checkFile(t, name, ref, m)
+		}
+	}
+}

@@ -46,7 +46,10 @@ type frontend struct {
 	sgKnown bool
 	modeSet []uint8 // the predictors tried
 	res     []uint32
-	tmp     []uint32
+	// With the predictor: the band's residuals, and a row of scratch for
+	// each of its block rows (see flush).
+	resBand []uint32
+	tmps    [][]uint32
 
 	// colour indexing
 	palette []uint32
@@ -82,7 +85,7 @@ func (f *frontend) close() {
 		f.tokens.Close()
 		f.tokens = nil
 	}
-	f.band, f.res, f.tmp, f.modes, f.tok = nil, nil, nil, nil, nil
+	f.band, f.res, f.resBand, f.tmps, f.modes, f.tok = nil, nil, nil, nil, nil, nil
 	f.e.unreserve(f.mem)
 	f.mem = 0
 }
@@ -163,9 +166,14 @@ func (f *frontend) init(palette []uint32, sg int, share int64) error {
 				least = 3 // single-channel residuals are cheap; modes weigh more
 			}
 			bits := predictorBits(sw, h, least)
-			// The band holds whole block rows.
+			// The band holds whole block rows; its residuals are held
+			// too, and a row of scratch for each block row.
 			rowsFor := func(b uint) int64 { return min(h, (bandRows(sw, h)+1<<b-1)>>b<<b) }
-			for bits > 2 && (rowsFor(bits)+1)*sw*4 > e.avail()/(4*share) {
+			bandMem := func(b uint) int64 {
+				r := rowsFor(b)
+				return (2*r + 1 + (r+1<<b-1)>>b) * sw * 4
+			}
+			for bits > 2 && bandMem(bits) > e.avail()/(4*share) {
 				bits--
 			}
 			// Pass two holds the modes as pixels while it codes them.
@@ -175,7 +183,7 @@ func (f *frontend) init(palette []uint32, sg int, share int64) error {
 			f.bits = bits
 			f.tw, f.th = int((sw+1<<bits-1)>>bits), int((h+1<<bits-1)>>bits)
 			f.maxRows = int(rowsFor(bits))
-			rows += sw*4 + tiles(bits)
+			rows += bandMem(bits) - (int64(f.maxRows)+1)*sw*4 + tiles(bits)
 		}
 		rows += int64(f.maxRows+1) * sw * 4
 	}
@@ -188,7 +196,11 @@ func (f *frontend) init(palette []uint32, sg int, share int64) error {
 		f.band = make([]uint32, (f.maxRows+1)*f.sw)
 	}
 	if f.pred {
-		f.tmp = make([]uint32, f.sw)
+		f.resBand = make([]uint32, f.maxRows*f.sw)
+		f.tmps = make([][]uint32, (f.maxRows+1<<f.bits-1)>>f.bits)
+		for i := range f.tmps {
+			f.tmps[i] = make([]uint32, f.sw)
+		}
 		f.modes = make([]uint8, f.tw*f.th)
 		f.passOne -= int64(len(f.modes))
 	}
@@ -330,9 +342,8 @@ const modeBias = 16 * 3
 
 // chooseModes picks, for every block of the block row made of band rows
 // r0 to r1-1, the predictor that makes its residuals cheapest under the
-// current cost model.
-func (f *frontend) chooseModes(r0, r1 int) {
-	cm := &f.tok.cm
+// cost model cm. tmp is a row of scratch.
+func (f *frontend) chooseModes(r0, r1 int, cm *costModel, tmp []uint32) {
 	w := f.sw
 	row := ((f.y0 + r0 - 1) >> f.bits) * f.tw
 	left := uint8(255)
@@ -348,8 +359,8 @@ func (f *frontend) chooseModes(r0, r1 int) {
 				if f.y0+r-1 == 0 {
 					continue
 				}
-				residuals(m, f.band[r*w:(r+1)*w], f.band[(r-1)*w:r*w+1], x0, x1, f.tmp)
-				for _, d := range f.tmp[x0:x1] {
+				residuals(m, f.band[r*w:(r+1)*w], f.band[(r-1)*w:r*w+1], x0, x1, tmp)
+				for _, d := range tmp[x0:x1] {
 					c += cm.pixel(d)
 				}
 			}
@@ -377,28 +388,37 @@ func (f *frontend) flush() error {
 		f.nrows = 0
 		return nil
 	}
-	res := f.res
-	var modes []uint8
-	for r := 1; r <= f.nrows; r++ {
-		if y := f.y0 + r - 1; r == 1 || y&(1<<f.bits-1) == 0 {
-			// A new block row starts here.
-			f.chooseModes(r, min(r+1<<f.bits, f.nrows+1))
-			modes = f.modes[(y>>f.bits)*f.tw:][:f.tw]
-		}
+	// The predictors of the band's block rows are chosen with the cost
+	// model as the band starts, each block row on its own, and the
+	// residuals of its rows are made each on its own too: at the same
+	// time, with helpers. Then the rows go to the tokenizer, in order.
+	cm := f.tok.cm
+	env := f.e.env
+	blocks := (f.nrows + 1<<f.bits - 1) >> f.bits
+	env.Parallel(blocks, func(i int) {
+		r0 := 1 + i<<f.bits
+		f.chooseModes(r0, min(r0+1<<f.bits, f.nrows+1), &cm, f.tmps[i])
+	})
+	env.Parallel(f.nrows, func(i int) {
+		r := i + 1
+		res := f.resBand[i*w : (i+1)*w]
 		cur := f.band[r*w : (r+1)*w]
 		if f.y0+r-1 == 0 {
 			// The first row is predicted from the left, its first pixel
 			// from opaque black.
 			res[0] = subPixels(cur[0], 0xff000000)
 			residuals(1, cur, nil, 1, w, res)
-		} else {
-			up := f.band[(r-1)*w : r*w+1]
-			res[0] = subPixels(cur[0], up[0]) // the first column is predicted from above
-			for tx, m := range modes {
-				residuals(m, cur, up, max(tx<<f.bits, 1), min(w, (tx+1)<<f.bits), res)
-			}
+			return
 		}
-		if err := f.tok.push(res); err != nil {
+		up := f.band[(r-1)*w : r*w+1]
+		res[0] = subPixels(cur[0], up[0]) // the first column is predicted from above
+		y := f.y0 + r - 1
+		for tx, m := range f.modes[(y>>f.bits)*f.tw:][:f.tw] {
+			residuals(m, cur, up, max(tx<<f.bits, 1), min(w, (tx+1)<<f.bits), res)
+		}
+	})
+	for i := 0; i < f.nrows; i++ {
+		if err := f.tok.push(f.resBand[i*w : (i+1)*w]); err != nil {
 			return err
 		}
 	}
@@ -417,7 +437,7 @@ func (f *frontend) finish() error {
 	if err := f.tok.finish(); err != nil {
 		return err
 	}
-	f.band, f.res, f.tmp = nil, nil, nil
+	f.band, f.res, f.resBand, f.tmps = nil, nil, nil, nil
 	f.tok.head, f.tok.prev, f.tok.obuf = nil, nil, nil
 	f.e.unreserve(f.passOne)
 	f.mem -= f.passOne
