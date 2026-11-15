@@ -2,27 +2,27 @@ English | [中文](zh-CN/extending.md)
 
 # Extending
 
-The library is built so that you can add features without changing its code. Every stage has an opening for this, and the library's own features use the same opening: the six formats sit in the same table as the formats you register, and built-in operations are the same kind of thing as the operations you write.
+One of the library's design goals is that functionality can be extended without modifying its source. Every stage of processing provides an extension point, and the built-in features use the same extension points: the six built-in formats are held in the same table as registered formats, and built-in operations are of the same kind as custom operations.
 
-| What you want to do | What to use |
+| Purpose | API |
 |---|---|
-| An operation that only changes pixel values (modulate, grayscale, invert, per-pixel filters) | `Pixels(fn)` |
-| Any operation (change the size, add a border, statistics, progress…) | `Pipe(op)`; an operation is a stage on a `pipeline.Source` |
-| Give a group of steps a name and use it in the middle of a chain | `Apply(steps...)` |
-| Your own type, with all the methods of `Image` plus new ones (the equivalent of inheritance) | Embed `*goimgtools.Image` |
-| Your own input (an image in memory, a computed image, pixels read from elsewhere) | `FromImage(img)`, `FromSource(open)` |
-| Your own file format; or override how the library reads / writes one of its formats | `RegisterFormat(codec)`, `CodecByName(name)`, `ToFormat(name, options)` |
-| Your own resize filter | `ResizeOptions{Filter: &goimgtools.Filter{...}}` |
-| Hand the result to your own code instead of writing a file | `Stream(env)` (pixel stream), `ToImage()` (a whole `image.Image`) |
-| Give your own operation a name and call it by name like a built-in operation (`Do`, command line `-op`) | `RegisterOperation(def)`, `Do(name, args...)`, `Operations()` |
-| Override the behaviour of built-in operations: add your own processing before and after each step, or replace a whole step with your own approach (the equivalent of overriding a method) | `Around(hook)` |
-| A command-line program that carries your own operations | `cli` package: register, then call `cli.Main()` |
+| An operation that changes pixel values only (colour modulation, grayscale, inversion, per-pixel filters) | `Pixels(fn)` |
+| An arbitrary operation (resizing, adding a border, statistics, progress reporting…) | `Pipe(op)`; an operation is a stage over a `pipeline.Source` |
+| Name a group of steps and use it within a chain | `Apply(steps...)` |
+| A custom type with all the methods of `Image` plus new ones (equivalent to inheritance) | Embed `*goimgtools.Image` |
+| A custom input (an image in memory, a computed image, pixels read from another source) | `FromImage(img)`, `FromSource(open)` |
+| A custom file format, or overriding how the library reads or writes one of its formats | `RegisterFormat(codec)`, `CodecByName(name)`, `ToFormat(name, options)` |
+| A custom resize filter | `ResizeOptions{Filter: &goimgtools.Filter{...}}` |
+| Pass the result to the calling code instead of writing a file | `Stream(env)` (pixel stream), `ToImage()` (a complete `image.Image`) |
+| Name a custom operation and call it by name like a built-in operation (`Do`, command-line `-op`) | `RegisterOperation(def)`, `Do(name, args...)`, `Operations()` |
+| Override the behaviour of built-in operations: add custom processing before and after each step, or replace an entire step with a custom implementation (equivalent to overriding a method) | `Around(hook)` |
+| A command-line program that includes custom operations | `cli` package: register the operations, then call `cli.Main()` |
 
-The examples below use only public packages. [example_test.go](../example_test.go) has complete versions you can run directly (`go test -run Example`).
+The examples below use public packages only. Complete, runnable versions are in [example_test.go](../example_test.go) (`go test -run Example`).
 
-## Changing pixel values only: `Pixels`
+## Pixel values only: `Pixels`
 
-Whatever the image's own storage (JPEG's YCbCr, a palette, 16-bit…), the function always receives 8-bit NRGBA, one strip at a time. Modify it in place:
+Regardless of how the image is stored (YCbCr in JPEG, a palette, 16-bit…), the function always receives 8-bit NRGBA, one strip at a time, and modifies it in place:
 
 ```go
 grey := func(strip *image.NRGBA) error {
@@ -36,11 +36,11 @@ grey := func(strip *image.NRGBA) error {
 goimgtools.Open("in.jpg").Resize(1200, 0).Pixels(grey).ToFile("out.jpg")
 ```
 
-This adds only one strip of memory (about 256KB), counted within the memory limit.
+The additional memory is a single strip (about 256KB), which counts against the memory limit.
 
-## Any operation: `Pipe` and the pixel stream
+## Arbitrary operations: `Pipe` and the pixel stream
 
-Inside the library, an image travels from decoding to encoding as a pixel stream: a few rows at a time, from top to bottom. An operation is a stage that reads one stream and gives out another. The interface is in the public package `github.com/whhhh1500/goimgtools/pipeline`:
+Within the library, an image passes from decoder to encoder as a pixel stream, delivered a few rows at a time from top to bottom. An operation is a stage that reads one stream and produces another. The interface is defined in the public package `github.com/whhhh1500/goimgtools/pipeline`:
 
 ```go
 type Source interface {
@@ -48,16 +48,16 @@ type Source interface {
     ColorModel() color.Model
     Next() (image.Image, error)   // next strip; returns io.EOF at the end
     Close() error
-    Env() *Env                    // memory budget and temporary directory for this run
+    Env() *Env                    // memory budget and temporary directory of this run
 }
 ```
 
-When you write your own stage, **embed** the stream it reads. Methods you do not change carry over automatically; override only the ones you need. This is the same as inheriting from a class and overriding a few methods:
+A custom stage should **embed** the stream it reads: methods that are not overridden carry over automatically, and only those that need to change are overridden. This is equivalent to inheriting from a class and overriding some of its methods:
 
 ```go
-// counts how many rows pass through
+// counts the rows that pass through
 type rowCounter struct {
-    pipeline.Source // Bounds, ColorModel and Env all come from here
+    pipeline.Source // supplies Bounds, ColorModel and Env
     rows int
 }
 
@@ -75,15 +75,15 @@ count := goimgtools.OperationFunc(func(src pipeline.Source) (pipeline.Source, er
 goimgtools.Open("in.jpg").Resize(800, 0).Pipe(count).ToFile("out.jpg")
 ```
 
-An operation can change the size (`OutputSize()` reports the size it gives) and can sit anywhere in the chain. The tests have a complete "add a border" operation (`border` in [tests/extend_test.go](../tests/extend_test.go)) that you can follow.
+An operation may change the image size (`OutputSize()` reports the size it produces) and may be placed anywhere in the chain. The tests include a complete border operation (`border` in [tests/extend_test.go](../tests/extend_test.go)) that can serve as a reference.
 
-The `pipeline` package also has parts that help when you write a stage: `Map` (what `Pixels` is built on), `RowReader` / `Rechunk` (re-cut strips to the number of rows you want), `NewBand` / `CopyRows` (allocate and copy by pixel type), `Spill` / `Scratch` (storage that moves to a temporary file automatically once it exceeds its share of memory), `env.Parallel(n, fn)` (spreads a batch of independent pieces of work over this chain's idle cores; this only happens from `Threads(4)` up. When no core is idle, the work runs in turn on the current thread, so the total number of cores is never exceeded and nothing stalls).
+The `pipeline` package also provides components for writing stages: `Map` (the basis of `Pixels`), `RowReader` / `Rechunk` (re-split strips into a chosen number of rows), `NewBand` / `CopyRows` (allocation and copying by pixel type), `Spill` / `Scratch` (storage that moves to a temporary file automatically once it exceeds its share of memory), and `env.Parallel(n, fn)` (distributes a batch of independent tasks across the idle cores of this chain, from `Threads(4)` upwards only; when no core is idle, the tasks run sequentially on the current thread, so the total number of cores is never exceeded and execution never blocks).
 
 ```go
 env := pipeline.EnvOf(src)
 return pipeline.Map(src, func(strip *image.NRGBA) error {
     rows := strip.Rect.Dy()
-    env.Parallel(4, func(k int) { // each part is a quarter of the rows
+    env.Parallel(4, func(k int) { // each task covers a quarter of the rows
         for y := k * rows / 4; y < (k+1)*rows/4; y++ {
             invert(strip.Pix[y*strip.Stride:][:4*strip.Rect.Dx()])
         }
@@ -92,17 +92,17 @@ return pipeline.Map(src, func(strip *image.NRGBA) error {
 }), nil
 ```
 
-**Rules a stage must follow** (every stage in the library relies on them):
+**Rules for stages** (every stage in the library depends on them):
 
-- Strips are given in increasing row order, each spans the full width, and together they cover the image exactly once; after that, return `io.EOF`.
-- A strip is valid only until the next `Next` or `Close`. If you need to keep it, copy it yourself.
-- Do not read pixels when the stage is created (creation must be cheap and the size known at once); start reading at the first `Next`.
-- `Close` must close the stream the stage reads and return the memory budget it holds. It is called only once, and it is called after an error too.
-- For buffers that grow with the image (a strip, a full row, data that must be kept until the end), call `Env().Budget.Reserve` before allocating and `Release` when freeing. Put anything that may be large into `Spill` or `Scratch`. This rule is what holds the memory limit.
+- Strips are delivered in increasing row order, each spans the full width, and together they cover the image exactly once; after that, `io.EOF` is returned.
+- A strip remains valid only until the next call to `Next` or `Close`; a stage that needs to retain it must copy it.
+- Do not read pixels when the stage is created (creation must be inexpensive and the size known immediately); reading begins at the first `Next`.
+- `Close` must close the stream the stage reads and return the memory budget it holds. It is called only once, and is also called after an error.
+- For buffers that grow with the image (a strip, a full row, data retained until the end), call `Env().Budget.Reserve` before allocation and `Release` when freeing; data that may be large belongs in `Spill` or `Scratch`. The memory limit is enforced by this rule.
 
-## Your own type: embedding `*Image`
+## Custom types: embedding `*Image`
 
-The chain methods modify the same `Image`, so once you embed it in your own struct, the existing methods work as before and you add your own:
+Chain methods modify the same `Image`, so after it is embedded in a custom struct, the existing methods work unchanged and new methods can be added:
 
 ```go
 type Product struct {
@@ -114,7 +114,7 @@ func OpenProduct(path, sku string) Product {
     return Product{goimgtools.Open(path).Rotate(), sku}
 }
 
-// Listing adds the shop's standard steps
+// Listing appends the shop's standard steps
 func (p Product) Listing() Product {
     p.Resize(300, 300, goimgtools.ResizeOptions{Fit: goimgtools.FitContain, Background: color.White}).
         Composite(goimgtools.Text(p.SKU, goimgtools.TextOptions{Size: 14}),
@@ -127,7 +127,7 @@ p.Flatten(color.White)            // a method of Image itself
 err := p.Listing().JPEG(85).ToFile("out.jpg")
 ```
 
-If you only want to reuse a group of steps and do not need a new type, write it as a function and use `Apply`:
+To reuse a group of steps without defining a new type, write them as a function and apply it with `Apply`:
 
 ```go
 func Thumbnail(size int) func(*goimgtools.Image) *goimgtools.Image {
@@ -138,21 +138,21 @@ func Thumbnail(size int) func(*goimgtools.Image) *goimgtools.Image {
 goimgtools.Open("in.jpg").Apply(Thumbnail(200)).JPEG(80).ToFile("out.jpg")
 ```
 
-## Your own input
+## Custom inputs
 
 ```go
-// an image already in memory (decoded by another library, drawn by your program)
+// an image already in memory (decoded by another library or drawn by the program)
 goimgtools.FromImage(img).Resize(400, 0).ToFile("out.png")
 
-// computed pixels, or pixels read from elsewhere: give a function that "builds a stream on each run"
+// computed pixels or pixels from another source: supply a function that builds a stream on each run
 board := goimgtools.FromSource(func(env *pipeline.Env) (pipeline.Source, error) {
     return &checker{size: 800, cell: 100, env: env}, nil
 })
 ```
 
-## Your own format, or overriding a built-in format
+## Custom formats and overriding built-in formats
 
-Once registered, files in this format are recognised by `Open` / `FromBytes` / `FromReader`, `Metadata()` reports its name, `ToFile` writes it by extension, and all operations and the memory limit work as usual. If you give a `Quality` function, `MaxFileSize` works too.
+Once a format is registered, its files are recognised by `Open` / `FromBytes` / `FromReader`, `Metadata()` reports its name, `ToFile` writes it by extension, and all operations and the memory limit apply as usual. If a `Quality` function is supplied, `MaxFileSize` is also supported.
 
 ```go
 goimgtools.RegisterFormat(goimgtools.Codec{
@@ -166,9 +166,9 @@ goimgtools.Open("in.jpg").Resize(800, 0).ToFile("out.ppm")
 goimgtools.Open("in.ppm").Rotate(90).JPEG(80).ToFile("out.jpg")
 ```
 
-You can give only `Decode` (read only) or only `Encode` (write only). A complete PPM reader and writer takes under a hundred lines; see [example_test.go](../example_test.go).
+Either `Decode` alone (read-only) or `Encode` alone (write-only) may be supplied. A complete PPM reader and writer takes fewer than a hundred lines; see [example_test.go](../example_test.go).
 
-**Adding your own behaviour to a built-in format**: take its `Codec`, wrap the function you want to change, and register it again (the same name replaces it). Inside, you can call the original function, the same as overriding a method and then calling the parent class's version:
+**Adding custom behaviour to a built-in format**: obtain its `Codec`, wrap the function to be changed, and register it again (registering under the same name replaces the original). The wrapper may call the original function, which is equivalent to overriding a method and calling the parent class's implementation:
 
 ```go
 jpeg, _ := goimgtools.CodecByName("jpeg")
@@ -181,18 +181,18 @@ jpeg.Encode = func(w io.Writer, src pipeline.Source, o goimgtools.EncodeOptions)
 goimgtools.RegisterFormat(jpeg)
 ```
 
-## Getting the result, and using the library's operations inside your own stage
+## Retrieving results, and using library operations within a custom stage
 
 ```go
-// the whole image in memory (the only place that holds a whole image; counted within the memory limit; returns ErrMemoryLimit if it does not fit)
+// the whole image in memory (the only case that holds a whole image; counts against the memory limit; returns ErrMemoryLimit if it does not fit)
 img, err := goimgtools.Open("in.jpg").Resize(400, 0).ToImage()
 
-// pixel stream: hand it to your own encoder, display or analysis
+// pixel stream: for a custom encoder, display or analysis
 src, err := goimgtools.Open("in.jpg").Resize(400, 0).Stream(nil)
 defer src.Close()
 ```
 
-The other way round: if you already have a stream and want to apply the library's operations to it (for example, shrinking first inside your own stage), use it as an input, take a stream again, and pass in the same `Env`. That way the whole run still counts against a single memory budget:
+Conversely, to apply the library's operations to an existing stream (for example, to shrink the image first within a custom stage), use the stream as an input, obtain a stream from it again, and pass the same `Env`, so that the entire run still counts against a single memory budget:
 
 ```go
 small, err := goimgtools.FromSource(func(*pipeline.Env) (pipeline.Source, error) {
@@ -202,24 +202,24 @@ small, err := goimgtools.FromSource(func(*pipeline.Env) (pipeline.Source, error)
 
 ## Registering operations by name: `RegisterOperation`, `Do`
 
-Just as `RegisterFormat` registers formats, operations can be registered by name. Once registered, `Do("name", args...)` works, the command line (see the `cli` package below) can call it with `-op name:args`, and `goimgtools ops` lists it. Built-in operations have names too (`resize`, `blur`, `rotate`…; `Operations()` lists them all), so `Do("blur", "2")` is `Blur(2)`.
+As `RegisterFormat` registers formats, operations can be registered by name. A registered operation can be invoked with `Do("name", args...)`, called from the command line (see the `cli` package below) with `-op name:args`, and is listed by `goimgtools ops`. Built-in operations also have names (`resize`, `blur`, `rotate`…; `Operations()` lists them all), so `Do("blur", "2")` is equivalent to `Blur(2)`.
 
 ```go
 goimgtools.RegisterOperation(goimgtools.OperationDef{
-    Name: "sepia", Usage: "[STRENGTH]", Help: "an old sepia photograph look",
+    Name: "sepia", Usage: "[STRENGTH]", Help: "sepia-toned vintage photograph effect",
     New: func(args ...string) (goimgtools.Operation, error) { /* build the operation from the arguments */ },
 })
 goimgtools.Open("in.jpg").Do("resize", "800", "0").Do("sepia", "0.8").ToFile("out.jpg")
 ```
 
-Registering under a built-in name (for example `blur`) replaces it: `Do("blur", ...)` and the command line `-op blur:...` use yours instead. The `Blur()` method itself does not change (to change it, see hooks below). `UnregisterOperation` undoes this and restores the built-in one. To build your own idea on top of a built-in operation, first take the built-in definition with `LookupOperation("blur")`, then call its `New` inside your own `New` (for example, limit the argument range, then blur as usual).
+Registering under a built-in name (for example `blur`) replaces the built-in operation: `Do("blur", ...)` and the command-line `-op blur:...` then use the custom one. The `Blur()` method itself is unaffected (to change it, see hooks below). `UnregisterOperation` reverts this and restores the built-in operation. To build on a built-in operation, first obtain its definition with `LookupOperation("blur")`, then call its `New` from within the custom `New` (for example, to restrict the argument range and then blur as usual).
 
 ## Overriding built-in behaviour: the `Around` hook
 
-A hook wraps every step of the recipe, built-in steps and your own alike. It receives the step's name and arguments (the same as `Do` takes), the step's input, and a `run` that performs the step. It can change the input before, change the result after, or skip `run` and do the whole step its own way:
+A hook wraps every step of the recipe, both built-in and custom. It receives the step's name and arguments (the same as those accepted by `Do`), the step's input, and a `run` function that performs the step. It may modify the input beforehand or the result afterwards, or skip `run` and implement the entire step itself:
 
 ```go
-// replace every blur with your own implementation; other steps run as usual
+// replaces every blur with a custom implementation; other steps run as usual
 myBlur := func(step goimgtools.Step, in pipeline.Source, run func(pipeline.Source) (pipeline.Source, error)) (pipeline.Source, error) {
     if step.Name == "blur" {
         sigma, _ := strconv.ParseFloat(step.Args[0], 64)
@@ -230,15 +230,15 @@ myBlur := func(step goimgtools.Step, in pipeline.Source, run func(pipeline.Sourc
 goimgtools.Open("in.jpg").Resize(800, 0).Blur(2).Around(myBlur).ToFile("out.jpg")
 ```
 
-Combined with embedding `*Image`, this is a subclass overriding a parent-class method: your own type installs the hook in its constructor, and every recipe made with it then carries the overridden behaviour. `Example_overriding` in [example_test.go](../example_test.go) applies a mild sharpen automatically after every shrink.
+Combined with embedding `*Image`, this is equivalent to a subclass overriding a parent-class method: the custom type installs the hook in its constructor, and every recipe built from it then carries the overridden behaviour. `Example_overriding` in [example_test.go](../example_test.go) automatically applies a mild sharpen after every shrink.
 
-- The hook added first is the outermost. With hooks, the steps run strictly one by one in the order written (without hooks, "a rotation directly followed by a resize" is merged into resize first, then rotate, to save memory). When a recipe starts with a resize, shrinking during JPEG decoding still applies.
-- An error or panic in a hook, `run` called twice, or a nil return are all errors of this run. Whatever the step has already built is closed by the library, the whole memory budget is returned, and no temporary files are left behind (covered by tests).
-- `OutputSize` and every frame of an animated GIF also pass through hooks.
+- The hook added first is the outermost. When hooks are present, steps run strictly one at a time in the order written (without hooks, an orientation change (rotation by a multiple of 90° or a flip) immediately followed by a resize is merged into a resize followed by the orientation change, to save memory). When a recipe begins with a resize, shrinking during JPEG decoding still applies.
+- An error or panic in a hook, calling `run` twice, or returning nil is treated as an error of the current run. Anything the step has already built is closed by the library, the entire memory budget is returned, and no temporary files remain (covered by tests).
+- `OutputSize` and every frame of an animated GIF also pass through the hooks.
 
-## A command-line program with your own operations: the `cli` package
+## Command-line programs with custom operations: the `cli` package
 
-The command-line program is itself the `cli` package; `cmd/goimgtools` is just one line, `cli.Main()`. If your own program registers its operations and then hands over to it, you get a goimgtools that carries those operations:
+The command-line program is itself the `cli` package; `cmd/goimgtools` consists of a single line, `cli.Main()`. A program that registers its operations and then hands control to `cli.Main()` becomes a goimgtools that includes those operations:
 
 ```go
 package main
@@ -249,13 +249,13 @@ import (
 )
 
 func main() {
-    goimgtools.RegisterOperation(sepiaDef) // a definition like the one above
-    cli.Main()                             // now -op sepia:0.8 exists, and goimgtools ops lists it too
+    goimgtools.RegisterOperation(sepiaDef) // a definition such as the one above
+    cli.Main()                             // -op sepia:0.8 is now available and listed by goimgtools ops
 }
 ```
 
-`cli.Run(args, stdout, stderr)` does the same but does not exit the process, which makes it easy to test or to embed in another program.
+`cli.Run(args, stdout, stderr)` behaves the same but does not exit the process, which makes it suitable for testing or for embedding in another program.
 
-## When extension code fails
+## Errors in extension code
 
-Errors returned by your own operations and formats come back unchanged from `ToFile` and the other methods. If extension code (or the library itself) panics while processing an input, the run returns `*goimgtools.PanicError` (with the cause and the stack trace) instead of bringing the whole program down. Temporary files and unfinished output are cleaned up as usual, and the same holds with multiple threads.
+Errors returned by custom operations and formats are returned unchanged by `ToFile` and the other methods. If extension code (or the library itself) panics while processing an input, the run returns `*goimgtools.PanicError` (containing the cause and the stack trace) instead of terminating the whole program. Temporary files and incomplete output are cleaned up as usual, including with multiple threads.

@@ -6,31 +6,31 @@ English | [中文](zh-CN/CHANGELOG.md)
 
 ### Added
 
-- Image adjustments: `Grayscale`, `Modulate`, `Blur`, `Sharpen` (mild, or an unsharp mask), `Extend`, `Trim` and `RotateBy` (any angle).
-- `inspect.Stats`, `inspect.Hash` (a perceptual hash) and `inspect.ReadExif` / `ParseExif`; the commands `stats`, `hash` and `exif`.
+- Image adjustments: `Grayscale`, `Modulate`, `Blur`, `Sharpen` (mild sharpening or unsharp masking), `Extend`, `Trim` and `RotateBy` (arbitrary angle).
+- `inspect.Stats`, `inspect.Hash` (perceptual hash) and `inspect.ReadExif` / `ParseExif`; the `stats`, `hash` and `exif` commands.
 - Operations by name: `RegisterOperation`, `UnregisterOperation`, `LookupOperation`, `Operations` and `Image.Do`. Hooks around every step: `Image.Around`. `ParseColor`.
-- Package `cli`: the command line as a library (`cli.Main`, `cli.Run`), so that a program can add its own operations to it; the flag `-op NAME[:ARGS]` and the command `ops`.
-- `ToSRGB()` / `-srgb`: converts the colours to sRGB from the colour profile. GIF and BMP output, which cannot hold a profile, is converted automatically.
-- Colour profiles in WebP and TIFF files (read and written); EXIF in WebP files.
-- `JPEGOptions.Trellis` / `-jpeg-trellis`: trellis quantization, as mozjpeg does it.
-- `CompositeOptions.WidthRatio` / `HeightRatio`: a watermark sized as a fraction of the image; `-watermark-width N%`.
-- Lossy WebP: segments with quantizers of their own (spatial noise shaping, ported from libwebp).
-- `pipeline.Env.SetHelpers`, `Helpers`, `Parallel` and `Go`, for stages that share their work between cores.
+- Package `cli`: the command line as a library (`cli.Main`, `cli.Run`), allowing programs to add their own operations; the `-op NAME[:ARGS]` flag and the `ops` command.
+- `ToSRGB()` / `-srgb`: converts colours to sRGB using the colour profile. GIF and BMP output, which cannot carry a profile, is converted automatically.
+- Colour profiles in WebP and TIFF files (read and write); EXIF in WebP files.
+- `JPEGOptions.Trellis` / `-jpeg-trellis`: trellis quantization, following mozjpeg.
+- `CompositeOptions.WidthRatio` / `HeightRatio`: watermark size as a fraction of the base image; `-watermark-width N%`.
+- Lossy WebP: segments with individual quantizers (spatial noise shaping, ported from libwebp).
+- `pipeline.Env.SetHelpers`, `Helpers`, `Parallel` and `Go`, allowing stages to distribute their work across cores.
 
 ### Changed
 
-- `Threads(n)` goes up to the number of CPUs (it was capped at 3). From 4 threads on, resizing, blurring, sharpening, modulating, rotating, and JPEG, PNG and lossy WebP encoding share their work between cores. The output is byte-for-byte the same for any number of threads.
-- PNG's default compression level is 7 (it was 6, the standard library's): Go's level 6 finds few repeats, and level 7 makes gradients and icons about 5 times smaller and photographs 4–25% smaller.
-- PNG data is compressed in blocks of 256KB (as pigz does), so that several cores can share the work. While the image data fits in one block the file is the same as before.
-- Animated GIF output: one palette chosen for all frames (`GIFOptions.Colors` and `NoDither` now apply to animations), and the frames after the first hold only the rectangle that changed. `GIFOptions{FixedPalette: true}` keeps writing whole frames with the fixed palette, frame by frame. The pixel limit is checked before any frame is processed. `NoDither` also applies with `FixedPalette`.
-- Lossy WebP files are about 15% smaller at the same quality setting (segments); against libwebp 1.6 at equal SSIM they are 2.4% smaller.
-- Lossless WebP chooses each band's predictors with the cost model as the band starts, so that they can be chosen in parallel; files differ slightly.
-- The command-line code moved from `cmd/goimgtools` to package `cli`; `cmd/goimgtools` builds the same program.
+- `Threads(n)` now extends to the number of CPUs (previously capped at 3). From 4 threads upwards, resizing, blurring, sharpening, modulation, rotation, and JPEG, PNG and lossy WebP encoding distribute their work across cores. Output is byte-for-byte identical for any number of threads.
+- The default PNG compression level is now 7 (previously 6, the standard library's default): Go's level 6 finds few repeated sequences, whereas level 7 produces files about 5 times smaller for gradients and icons and 4–25% smaller for photographs.
+- PNG data is compressed in 256KB blocks (as in pigz), allowing multiple cores to share the work. When the image data fits within a single block, the file is identical to that of previous versions.
+- Animated GIF output: a single palette is chosen for all frames (`GIFOptions.Colors` and `NoDither` now apply to animations), and frames after the first store only the changed rectangle. `GIFOptions{FixedPalette: true}` continues to write full frames with the fixed palette, frame by frame. The pixel limit is checked before any frame is processed. `NoDither` also applies with `FixedPalette`.
+- Lossy WebP files are about 15% smaller at the same quality setting (segments); at equal SSIM they are 2.4% smaller than libwebp 1.6.
+- Lossless WebP selects each band's predictors using the cost model as it stands at the start of that band, so that they can be selected in parallel; output files differ slightly.
+- The command-line code has moved from `cmd/goimgtools` to package `cli`; `cmd/goimgtools` builds the same program.
 
 ### Fixed
 
-- A panic in an operation could leave the input of the chain open, holding memory budget and temporary files.
+- A panic in an operation could leave the chain's input open, retaining memory budget and temporary files.
 
 ## 0.1.0 (2026-11-14)
 
-The first public release: reading and writing PNG, JPEG, WebP, GIF (animated too), BMP and TIFF a few rows at a time within a memory limit; resizing (six kernels, five fits), cropping, rotating by multiples of 90°, flipping, flattening, compositing and watermarks, text; JPEG with optimized tables and progressive coding, PNG colour reduction, `MaxFileSize`; batch processing; extension interfaces (`Pipe`, `Pixels`, `Apply`, `FromImage`, `FromSource`, `RegisterFormat`, `Stream`, `ToImage`, package `pipeline`); the commands `info`, `check`, `compare` and `formats`, and package `inspect`; limits on input and output pixels, cancellation, and panics returned as errors.
+Initial public release: reading and writing PNG, JPEG, WebP, GIF (including animation), BMP and TIFF a few rows at a time within a memory limit; resizing (six kernels, five fit modes), cropping, rotation by multiples of 90°, flipping, flattening, compositing and watermarks, text; JPEG with optimized coding tables and progressive encoding, PNG colour reduction, `MaxFileSize`; batch processing; extension interfaces (`Pipe`, `Pixels`, `Apply`, `FromImage`, `FromSource`, `RegisterFormat`, `Stream`, `ToImage`, package `pipeline`); the `info`, `check`, `compare` and `formats` commands, and package `inspect`; input and output pixel limits, cancellation, and panics returned as errors.
