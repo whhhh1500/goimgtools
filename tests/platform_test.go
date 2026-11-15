@@ -76,7 +76,7 @@ func TestSameOnEveryProcessor(t *testing.T) {
 		}, "1e6064dbc5840d3a"},
 		{"png", func() ([]byte, error) { return clear.Clone().PNG().ToBytes() }, "7d6848e3147d24ec"},
 		{"png 40 colours", func() ([]byte, error) { return photo.Clone().PNG(PNGOptions{Colors: 40}).ToBytes() }, "844bdcb3467662a1"},
-		{"webp", func() ([]byte, error) { return photo.Clone().WebP(WebPOptions{Quality: 70}).ToBytes() }, "f2a3ccecb1a36df6"},
+		{"webp", func() ([]byte, error) { return photo.Clone().WebP(WebPOptions{Quality: 70}).ToBytes() }, "ee1381f7db2666f2"},
 		{"webp lossless", func() ([]byte, error) { return clear.Clone().WebP(WebPOptions{Lossless: true}).ToBytes() }, "998880f023e64fd8"},
 		{"gif", func() ([]byte, error) { return photo.Clone().GIF().ToBytes() }, "55ae5c4b96926b04"},
 		{"gif animation", func() ([]byte, error) {

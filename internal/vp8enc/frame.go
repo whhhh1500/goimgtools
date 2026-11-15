@@ -141,14 +141,15 @@ type encoder struct {
 
 	fixed int64 // budget reserved for the buffers below
 
-	// Quantization, the same for the whole frame.
-	baseQ       int
-	uvDQ        int // chroma quantizer index minus baseQ
-	qY1         quantizer
-	qY2         quantizer
-	qUV         quantizer
-	lamY, lamUV int64
-	filterLevel int
+	// Quantization: the segments (see analysis.go) and which one each
+	// macroblock belongs to.
+	baseQ     int
+	uvDQ      int // chroma quantizer index minus the luma one
+	segs      [numSegments]segment
+	nSegs     int
+	segMap    []uint8
+	segProb   [3]uint8 // the probabilities the map is coded with
+	updateMap bool     // whether the map is coded (more than one segment)
 
 	// The bottom edge of the reconstruction above and the contexts the
 	// macroblocks below need. The rows being coded at a time share them;
@@ -158,10 +159,11 @@ type encoder struct {
 	topV []uint8
 	up   []mbCtx
 
-	// The source's rows and their conversion to Y, U and V, used by one
-	// row at a time, in order.
+	// The source's rows, their conversion to Y, U and V, and the converted
+	// macroblock rows (see readAll).
 	rr   *pipeline.RowReader
 	conv *converter
+	yuv  *store
 
 	// What the first pass decided: per macroblock row, its contexts, modes
 	// and coefficients in the spool (see rows.go), and the totals.
@@ -232,6 +234,7 @@ func (e *encoder) init(quality int, rr *pipeline.RowReader, src pipeline.Source)
 		return err
 	}
 	e.rr = rr
+	e.yuv = newStore(e.env)
 	e.spool = newStore(e.env)
 	if wantAlpha {
 		e.alphaStore = newStore(e.env)
@@ -251,20 +254,13 @@ func (e *encoder) init(quality int, rr *pipeline.RowReader, src pipeline.Source)
 		e.dbg.v = make([]uint8, w16/2*8*e.mbh)
 	}
 
+	// The quantizer of the quality; the segments' are set around it
+	// once the macroblocks are measured.
 	q := int(qualityToIndex[quality])
 	e.baseQ = q
-	dc, ac := int(dequantTableDC[q]), int(dequantTableAC[q])
-	e.qY1.set(dc, ac, biasY1)
-	e.qY2.set(dc*2, max(ac*155/100, 8), biasY2)
 	e.uvDQ = -min(15, (uvDeltaQ*q+5)/10)
-	uvq := q + e.uvDQ
-	e.qUV.set(int(dequantTableDC[min(uvq, 117)]), int(dequantTableAC[min(uvq, 127)]), biasUV)
-	e.lamY = lambdaScale * int64(ac*ac)
-	e.lamUV = lambdaScaleUV * int64(e.qUV.q[1]*e.qUV.q[1])
-	e.filterLevel = min(ac*filterScale/64, 63)
-	if e.dbg != nil && e.dbg.noFilter {
-		e.filterLevel = 0
-	}
+	e.segs[0].q, e.nSegs = q, 1
+	e.setQuant(&e.segs[0])
 
 	e.modeMax = modeBudget
 	if e.dbg != nil && e.dbg.modeBudget != 0 {
@@ -274,10 +270,20 @@ func (e *encoder) init(quality int, rr *pipeline.RowReader, src pipeline.Source)
 	return nil
 }
 
+// hold reserves n bytes of the budget until the encoder is released.
+func (e *encoder) hold(n int64, what string) error {
+	if err := e.env.Budget.Reserve(n, what); err != nil {
+		return err
+	}
+	e.fixed += n
+	return nil
+}
+
 func (e *encoder) release() {
-	for _, s := range []*store{e.spool, e.alphaStore, e.part0} {
+	for _, s := range []*store{e.yuv, e.spool, e.alphaStore, e.part0} {
 		s.Close()
 	}
+	e.yuv = nil
 	for i, s := range e.parts {
 		s.Close() // (closing a store twice does nothing)
 		e.parts[i] = nil

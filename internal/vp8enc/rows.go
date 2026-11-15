@@ -28,8 +28,9 @@ import (
 //   - Each row writes its decisions to streams of its own, which go into
 //     the spool in row order.
 //
-// So up to rowLag+1 rows are coded at a time. The source is read by one
-// row at a time, in order, and what fails anywhere stops all of them.
+// So up to rowLag+1 rows are coded at a time. They read their samples from
+// the converted image (see analysis.go), in order, and what fails anywhere
+// stops all of them.
 const rowLag = 7
 
 // rowSpan is where a macroblock row's decisions are in the spool: the
@@ -131,9 +132,12 @@ func (e *encoder) firstPass() error {
 	}
 	if e.dbg != nil {
 		e.dbg.usedI4 = e.usedI4
+		e.dbg.segments = e.nSegs
+		for k := range e.dbg.segQ {
+			e.dbg.segQ[k] = e.segs[min(k, e.nSegs-1)].q
+		}
 	}
-	// Let the source finish verifying its input.
-	return e.rr.Drain()
+	return nil
 }
 
 // work codes rows, taking the next one free, until there are none left or
@@ -185,27 +189,14 @@ func (p *pass1) version(r int) int {
 	return done / p.every * p.every
 }
 
-// load reads macroblock row r from the source into c and sets its room for
-// modes: its share of all rows up to it, less what the rows rowLag and more
-// above used and what the rows in between were given.
+// load reads macroblock row r into c and sets its room for modes: its
+// share of all rows up to it, less what the rows rowLag and more above used
+// and what the rows in between were given. Rows load in order.
 func (p *pass1) load(c *mbCoder, r int) error {
 	e := p.e
-	e.conv.into(c.y, c.u, c.v)
-	n := min(16, e.h-r*16)
-	for k := 0; k < n; k++ {
-		y := e.b.Min.Y + r*16 + k
-		m, err := e.rr.Row(y)
-		if err != nil {
-			return err
-		}
-		if mb := m.Bounds(); mb.Min.X != e.b.Min.X || mb.Max.X != e.b.Max.X {
-			return errors.New("goimgtools: webp: strip does not span the image width")
-		}
-		if err := e.conv.row(m, y, k, y == e.b.Max.Y-1); err != nil {
-			return err
-		}
+	if err := e.readRow(r, c.buf); err != nil {
+		return err
 	}
-	e.conv.pad(n)
 	d := max(0, r-rowLag)
 	g := e.mbShare*int64(e.mbw)*int64(r+1) - p.usedSum[d]
 	for j := d; j < r; j++ {

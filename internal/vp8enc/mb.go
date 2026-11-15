@@ -6,8 +6,10 @@ package vp8enc
 type mbCoder struct {
 	e     *encoder
 	costs *costTables // the bit costs this row is decided with
+	seg   *segment    // the segment of the macroblock being coded
 
 	// The row's Y, U and V samples, padded to whole macroblocks.
+	buf     []uint8
 	y, u, v []uint8
 
 	left mbCtx
@@ -48,11 +50,13 @@ func mbCoderBytes(w16 int) int64 {
 
 func newMBCoder(e *encoder) *mbCoder {
 	w16 := e.mbw * 16
+	buf := make([]uint8, e.yuvRowBytes())
 	return &mbCoder{
 		e:      e,
-		y:      make([]uint8, w16*16),
-		u:      make([]uint8, w16/2*8),
-		v:      make([]uint8, w16/2*8),
+		buf:    buf,
+		y:      buf[:w16*16],
+		u:      buf[w16*16 : w16*20],
+		v:      buf[w16*20:],
 		modes:  rowBuf{env: e.env},
 		coeffs: rowBuf{env: e.env},
 		ctxs:   make([]byte, 2*e.mbw),
@@ -140,6 +144,7 @@ func (c *mbCoder) prepare(mbx, mby int) {
 // row above must be done to mbx+1.
 func (c *mbCoder) encodeMB(mbx, mby int) {
 	e := c.e
+	c.seg = &e.segs[e.segMap[mby*e.mbw+mbx]]
 	c.prepare(mbx, mby)
 	w16 := e.mbw * 16
 	for j := 0; j < 16; j++ {
@@ -256,7 +261,6 @@ func (c *mbCoder) left4(n int) uint8 {
 
 // evalI16 codes the luma with 16x16 predictor mode into cd and scores it.
 func (c *mbCoder) evalI16(cd *cand16, mode uint8, mbx, mby int, up *mbCtx) {
-	e := c.e
 	pred := &c.pred16
 	predLarge(&c.ws, wsY, 16, mode, mbx, mby, pred[:])
 	var (
@@ -272,7 +276,7 @@ func (c *mbCoder) evalI16(cd *cand16, mode uint8, mbx, mby int, up *mbCtx) {
 	// The DC coefficients go through a second transform of their own.
 	fwht(&dcs, &y2c)
 	cd.mode = mode
-	cd.y2last = e.qY2.quantize(&y2c, 0, &cd.y2, &deq)
+	cd.y2last = c.seg.qY2.quantize(&y2c, 0, &cd.y2, &deq)
 	iwht(&deq, &dcs)
 	rate := int(costI16[mode]) + c.costs.blockCost(planeY2, 0, int(c.left.nzY16+up.nzY16), cd.y2last, &cd.y2)
 
@@ -281,7 +285,7 @@ func (c *mbCoder) evalI16(cd *cand16, mode uint8, mbx, mby int, up *mbCtx) {
 	for n := 0; n < 16; n++ {
 		bx, by := uint(n&3), uint(n>>2)
 		off := (n>>2)*64 + (n&3)*4
-		last := e.qY1.quantize(&coef[n], 1, &cd.lv[n], &deq)
+		last := c.seg.qY1.quantize(&coef[n], 1, &cd.lv[n], &deq)
 		cd.last[n] = int8(last)
 		ctx := int(unz>>bx&1 + lnz>>by&1)
 		rate += c.costs.blockCost(planeY1WithY2, 1, ctx, last, &cd.lv[n])
@@ -302,17 +306,17 @@ func (c *mbCoder) evalI16(cd *cand16, mode uint8, mbx, mby int, up *mbCtx) {
 		}
 		dist += sse4(c.ysrc[off:], 16, cd.rec[off:], 16)
 	}
-	cd.score = int64(dist)<<16 + int64(rate)*e.lamY
+	cd.score = int64(dist)<<16 + int64(rate)*c.seg.lamY
 }
 
 // searchI4 codes the luma with a predictor per 4x4 block, giving up as soon
 // as that is certain to score worse than limit. It reports whether 4x4
 // prediction won; if so the reconstruction is in the workspace.
 func (c *mbCoder) searchI4(up *mbCtx, limit int64) bool {
-	e := c.e
+	sg := c.seg
 	c4 := &c.c4
 	ws := &c.ws
-	total := int64(costI4) * e.lamY
+	total := int64(costI4) * sg.lamY
 	if total >= limit {
 		return false
 	}
@@ -336,7 +340,7 @@ func (c *mbCoder) searchI4(up *mbCtx, limit int64) bool {
 		// Rank the modes by prediction error plus the cost of the mode.
 		for m := range order {
 			order[m] = uint8(m)
-			perr[m] = int64(sse4(src, 16, c.pred4[m][:], 4))<<16 + int64(mc[m])*e.lamY
+			perr[m] = int64(sse4(src, 16, c.pred4[m][:], 4))<<16 + int64(mc[m])*sg.lamY
 		}
 		tries := min(i4Tries, nPred)
 		for i := 0; i < tries; i++ {
@@ -353,7 +357,7 @@ func (c *mbCoder) searchI4(up *mbCtx, limit int64) bool {
 		for _, m := range order[:tries] {
 			p := c.pred4[m][:]
 			fdct(src, 16, p, 4, &coef)
-			last := e.qY1.quantize(&coef, 0, &lv, &deq)
+			last := sg.qY1.quantize(&coef, 0, &lv, &deq)
 			rate := int(mc[m]) + c.costs.blockCost(planeY1SansY2, 0, ctx, last, &lv)
 			var dist int
 			if last >= 0 {
@@ -362,7 +366,7 @@ func (c *mbCoder) searchI4(up *mbCtx, limit int64) bool {
 			} else {
 				dist = sse4(src, 16, p, 4)
 			}
-			score := int64(dist)<<16 + int64(rate)*e.lamY
+			score := int64(dist)<<16 + int64(rate)*sg.lamY
 			if best < 0 || score < best {
 				best = score
 				c4.modes[n] = m
@@ -392,7 +396,6 @@ func (c *mbCoder) searchI4(up *mbCtx, limit int64) bool {
 
 // evalUV codes both chroma planes with predictor mode into cd and scores it.
 func (c *mbCoder) evalUV(cd *candUV, mode uint8, mbx, mby int, up *mbCtx) {
-	e := c.e
 	var coef, deq [16]int16
 	cd.mode = mode
 	rate := int(costUV[mode])
@@ -411,7 +414,7 @@ func (c *mbCoder) evalUV(cd *candUV, mode uint8, mbx, mby int, up *mbCtx) {
 			off := (n>>1)*32 + (n&1)*4
 			fdct(src[off:], 8, pred[off:], 8, &coef)
 			lv := &cd.lv[pl*4+n]
-			last := e.qUV.quantize(&coef, 0, lv, &deq)
+			last := c.seg.qUV.quantize(&coef, 0, lv, &deq)
 			cd.last[pl*4+n] = int8(last)
 			ctx := int(unz>>bx&1 + lnz>>by&1)
 			rate += c.costs.blockCost(planeUV, 0, ctx, last, lv)
@@ -427,7 +430,7 @@ func (c *mbCoder) evalUV(cd *candUV, mode uint8, mbx, mby int, up *mbCtx) {
 			dist += sse4(src[off:], 8, rec[off:], 8)
 		}
 	}
-	cd.score = int64(dist)<<16 + int64(rate)*e.lamUV
+	cd.score = int64(dist)<<16 + int64(rate)*c.seg.lamUV
 }
 
 // emitMB records the final coding of macroblock mbx: it counts its tokens,

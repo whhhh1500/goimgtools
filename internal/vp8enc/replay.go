@@ -241,9 +241,36 @@ func getCoeffs(d *boolDec, pr *[nBand][nContext][nProb]uint8, first, ctx int, lv
 func (e *encoder) putHeader(bw *boolEnc) {
 	bw.putBit(false, 128) // colour space: YUV as in BT.601
 	bw.putBit(false, 128) // decoder must clamp pixel values
-	bw.putBit(false, 128) // no segmentation
+	bw.putBit(e.updateMap, 128)
+	if e.updateMap {
+		// The map, and each segment's quantizer and filter level as
+		// absolute values (section 9.3). Unused segments repeat the last.
+		bw.putBit(true, 128) // update the map
+		bw.putBit(true, 128) // update the segments' values
+		bw.putBit(true, 128) // absolute values
+		seg := func(k int) *segment { return &e.segs[min(k, e.nSegs-1)] }
+		signed := func(v, n int) {
+			bw.putBit(v != 0, 128)
+			if v != 0 {
+				bw.putUint(uint32(max(v, -v)), n)
+				bw.putBit(v < 0, 128)
+			}
+		}
+		for k := 0; k < numSegments; k++ {
+			signed(seg(k).q, 7)
+		}
+		for k := 0; k < numSegments; k++ {
+			signed(seg(k).filter, 6)
+		}
+		for _, p := range e.segProb {
+			bw.putBit(p != 255, 128)
+			if p != 255 {
+				bw.putUint(uint32(p), 8)
+			}
+		}
+	}
 	bw.putBit(false, 128) // normal (not simple) loop filter
-	bw.putUint(uint32(e.filterLevel), 6)
+	bw.putUint(uint32(e.segs[0].filter), 6)
 	bw.putUint(0, 3)      // filter sharpness
 	bw.putBit(false, 128) // no filter level adjustments
 	log2Parts := uint32(0)
@@ -251,7 +278,7 @@ func (e *encoder) putHeader(bw *boolEnc) {
 		log2Parts++
 	}
 	bw.putUint(log2Parts, 2)
-	bw.putUint(uint32(e.baseQ), 7)
+	bw.putUint(uint32(e.segs[0].q), 7)
 	for i := 0; i < 3; i++ {
 		bw.putBit(false, 128) // no quantizer delta for luma DC and Y2
 	}
@@ -336,6 +363,14 @@ func (e *encoder) writeModes(ioBuf, readBuf []byte) error {
 		for x := range e.up {
 			up := &e.up[x]
 			skip, i4, uvMode := readModes(&d, &modes)
+			if e.updateMap {
+				s := e.segMap[r*e.mbw+x]
+				if mw.putBit(s >= 2, e.segProb[0]); s >= 2 {
+					mw.putBit(s == 3, e.segProb[2])
+				} else {
+					mw.putBit(s == 1, e.segProb[1])
+				}
+			}
 			e.putModes(&mw, mw.putBit, up, &left, skip, i4, &modes, uvMode)
 			setPreds(up, &left, i4, &modes)
 		}

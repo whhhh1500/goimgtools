@@ -2,12 +2,15 @@
 // RIFF container, with the alpha channel in an ALPH chunk when the image has
 // transparent pixels.
 //
-// The image is read from a pipeline.Source one macroblock row (16 pixel rows) at
-// a time. Besides that row the encoder keeps only the bottom row of its own
-// reconstruction of the macroblock row above, which intra prediction needs.
-// With helpers (pipeline.Env.SetHelpers) several rows are coded at once,
-// and the partitions of the file too; the file is the same either way
-// (rows.go, replay.go).
+// The source is read and converted to Y, U and V once, into a store of
+// macroblock rows (in memory while small, else a temporary file), and its
+// macroblocks are measured; then they are sorted into segments, each coded
+// with a quantizer of its own (analysis.go). The coding works on a
+// macroblock row at a time: besides that row it keeps only the bottom row
+// of its own reconstruction of the row above, which intra prediction
+// needs. With helpers (pipeline.Env.SetHelpers) the measuring, several
+// rows and the partitions of the file are done at once; the file is the
+// same either way (rows.go, replay.go).
 //
 // A VP8 frame cannot be written straight through: its header, which comes
 // first, holds the token probabilities and the size of the mode partition,
@@ -20,11 +23,14 @@
 // pipeline.Spill, and with it to a temporary file when the budget says so.
 //
 // What the encoder does for compression: 16x16 and 4x4 luma prediction and
-// chroma prediction chosen by rate-distortion cost, token probabilities
-// adapted to the image, the macroblock skip flag, a finer quantizer for
-// chroma than for luma, and a loop filter level that follows the quantizer.
-// It does not use segments (one quantizer for the whole frame) and does not
-// optimize quantized coefficients (no trellis).
+// chroma prediction chosen by rate-distortion cost, segments that spend
+// the bits where errors show (flat areas finer, texture coarser, as
+// libwebp's spatial noise shaping), token probabilities adapted to the
+// image, the macroblock skip flag, a finer quantizer for chroma than for
+// luma, and loop filter levels that follow the quantizers. Trellis
+// quantization of the coefficients was tried (as libwebp's) and left out:
+// on photographs it gained nothing at the same SSIM or PSNR, the quantizer
+// already rounding towards zero.
 package vp8enc
 
 import (
@@ -63,6 +69,8 @@ type debug struct {
 	modeBits   int64 // what the modes were estimated to take, in 1/256 bit
 	p0Len      int64 // size of the first partition
 	spool      int64 // size of the spool
+	segments   int   // segments used
+	segQ       [4]int
 }
 
 // Encode writes src as a lossy WebP file: a RIFF container with a VP8 chunk,
@@ -95,6 +103,12 @@ func encode(w io.Writer, src pipeline.Source, o *Options, dbg *debug) error {
 	// of the source comes back as io.ErrUnexpectedEOF.
 	rr := pipeline.NewRowReader(src)
 	if err := e.init(quality, rr, src); err != nil {
+		return err
+	}
+	if err := e.readAll(); err != nil {
+		return err
+	}
+	if err := e.analyse(quality); err != nil {
 		return err
 	}
 	if err := e.firstPass(); err != nil {
