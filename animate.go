@@ -338,7 +338,7 @@ func (m *Image) writeFrame(w io.Writer, cv *canvas, aw **gifstream.AnimWriter, s
 		src = cancelable{src, m.ctx}
 	}
 	defer func() { src.Close() }()
-	if src, err = applyOps(m.chain, src, &run{exifOrient: 1, maxPixels: m.outputLimit()}, preShrunk{}); err != nil {
+	if src, err = applyOps(m.chain, src, &run{exifOrient: 1, maxPixels: m.outputLimit(), hooks: m.hooks}, preShrunk{}); err != nil {
 		return err
 	}
 	b := src.Bounds()

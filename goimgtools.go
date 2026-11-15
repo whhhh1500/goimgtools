@@ -105,8 +105,9 @@ type Image struct {
 	maxPixels  int64
 	maxOutput  int64
 	threads    int
-	toSRGB     bool // see ToSRGB
-	autoOrient bool // Rotate() was asked to follow the EXIF orientation
+	toSRGB     bool   // see ToSRGB
+	hooks      []Hook // see Around
+	autoOrient bool   // Rotate() was asked to follow the EXIF orientation
 	keepExif   bool
 	stripICC   bool
 	err        error

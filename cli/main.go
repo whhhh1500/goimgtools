@@ -1,0 +1,791 @@
+// Package cli is the goimgtools command line, as a package: the program
+// in cmd/goimgtools is nothing but cli.Main.
+//
+//	goimgtools [options] input output
+//	goimgtools batch [options] input-dir output-dir
+//	goimgtools info input...
+//	goimgtools ops
+//
+// It is a package so that a program of your own can be the same command
+// line with your own operations in it: register them and hand over.
+//
+//	func main() {
+//		goimgtools.RegisterOperation(goimgtools.OperationDef{
+//			Name: "sepia", Help: "brown and old", New: newSepia,
+//		})
+//		cli.Main()
+//	}
+//
+// "-op sepia" then applies it, "goimgtools ops" lists it, and Run (for
+// tests, or another front end) does the same without ending the process.
+package cli
+
+import (
+	"errors"
+	"flag"
+	"fmt"
+	"image/color"
+	"io"
+	"math"
+	"math/rand/v2"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync/atomic"
+
+	"github.com/whhhh1500/goimgtools"
+)
+
+const usage = `usage:
+  goimgtools [options] input output     convert / process one image
+  goimgtools batch [options] in-dir out-dir
+                                        process every image of a directory
+                                        (see: goimgtools batch -h)
+  goimgtools info [-json] file...       what each file is: format, size,
+                                        colours, metadata, frames
+  goimgtools check file...              decode each file completely and report
+                                        the damaged ones
+  goimgtools compare a b                how much two images differ (PSNR)
+  goimgtools stats file...              the colours of each image: average,
+                                        dominant, greyscale or not
+  goimgtools hash file...               a fingerprint of each image, for
+                                        finding duplicates (-similar bits)
+  goimgtools exif file...               camera, time and place from the EXIF
+                                        block
+  goimgtools formats                    the formats that are read and written
+  goimgtools fonts [-all]               list the fonts text is drawn with by
+                                        default (-all: every installed font)
+  goimgtools ops                        the operations -op takes, with their
+                                        arguments
+
+With -text and no input file, the text itself is the image:
+  goimgtools -text "Hello" -font-size 64 out.png
+
+The output format follows the extension of output (.jpg, .png, .webp, .gif,
+.bmp, .tif) unless -format is given. Operations are applied in this order:
+rotate, flip, flop, trim, crop, resize, extend, grayscale, modulate, blur,
+sharpen, the -op steps (in the order given), flatten, watermark.
+
+options:
+`
+
+// Main runs the command line with the arguments of the process and ends
+// it: with status 1 and the error on standard error when there is one.
+func Main() {
+	if err := Run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
+		msg := err.Error()
+		if !strings.HasPrefix(msg, "goimgtools:") {
+			msg = "goimgtools: " + msg
+		}
+		fmt.Fprintln(os.Stderr, msg)
+		os.Exit(1)
+	}
+}
+
+// Run runs the command line with args (without the program's name),
+// writing what it prints to stdout and stderr.
+func Run(args []string, stdout, stderr io.Writer) error { return run(args, stdout, stderr) }
+
+// options are the settings shared by the single-file and the batch mode:
+// what to do to an image and how to write it.
+type options struct {
+	resize, rotate, fit, bg, kernel, crop, flatten *string
+	flip, flop, noEnlarge, fast                    *bool
+	watermark, wmText, gravity, offset, wmGap      *string
+	wmRatio, wmAnchor, wmPivot                     *string
+	wmWidth                                        *string
+	wmAngle, wmOpacity                             *float64
+	wmTile                                         *bool
+	text, fontList, textColor, textBg              *string
+	strokeCol, shadowCol, shadowOff                *string
+	fontSize, strokeW                              *float64
+	textWidth, shadowBlr                           *int
+	format, maxSize, tiffComp                      *string
+	quality, pngLevel, pngColors, gifColors        *int
+	gifFixed                                       *bool
+	lossless, jpegOpt, jpegProg, noDither          *bool
+	jpegTrellis                                    *bool
+	animated, keepExif, stripICC, toSRGB           *bool
+	mem, threads, maxPixels                        *int
+	skipLarger                                     *bool
+	tmp                                            *string
+	trim, extend, modulate, sharpen                *string
+	ops                                            []string // -op, in order
+	grayscale                                      *bool
+	blur                                           *float64
+}
+
+// register defines the shared options on fs.
+func register(fs *flag.FlagSet) *options {
+	o := &options{
+		resize:      fs.String("resize", "", "target size `WxH`; either side may be left out (1536x or x1024) to keep proportions"),
+		rotate:      fs.String("rotate", "", "turn the image first: auto (follow the EXIF orientation), or any number of `degrees` clockwise (90, 180, 270 exactly; other angles enlarge the canvas, with -background in the corners)"),
+		flip:        fs.Bool("flip", false, "mirror top to bottom"),
+		flop:        fs.Bool("flop", false, "mirror left to right"),
+		fit:         fs.String("fit", "inside", "how -resize WxH fits: inside (shrink in proportion), cover (fill and crop), contain (shrink in proportion, pad with -background), outside, fill (stretch)"),
+		bg:          fs.String("background", "black", "`color` of the bars -fit contain adds, the border of -extend and the corners -rotate leaves at other angles: white, black, transparent, #rrggbb or #rrggbbaa"),
+		trim:        fs.String("trim", "", "cut away the edges that are the colour of the top-left pixel, allowing this `difference` 0-255 (10 also catches JPEG noise)"),
+		extend:      fs.String("extend", "", "add a border of `T,R,B,L` pixels in -background"),
+		grayscale:   fs.Bool("grayscale", false, "turn the image into shades of grey"),
+		modulate:    fs.String("modulate", "", "change `B,S,H`: brightness and saturation factors and hue degrees (1.2,0.8,0 is brighter and less vivid)"),
+		blur:        fs.Float64("blur", 0, "Gaussian blur of this `sigma` in pixels (as Pillow's GaussianBlur)"),
+		sharpen:     fs.String("sharpen", "", "sharpen: mild (a quick 3x3 sharpen, good after shrinking), or an unsharp mask `SIGMA[,AMOUNT[,THRESHOLD]]` as Pillow's (amount 1.5, threshold 0 by default)"),
+		kernel:      fs.String("kernel", "cubic", "resize filter: nearest, linear, cubic, mitchell, lanczos2, lanczos3"),
+		noEnlarge:   fs.Bool("no-enlarge", false, "never make the image larger than it is"),
+		fast:        fs.Bool("fast-shrink", false, "let a JPEG reduced to half size or less be shrunk while it is decoded: faster, pixels differ slightly"),
+		crop:        fs.String("crop", "", "keep the region `X,Y,W,H` (pixels, before resizing)"),
+		flatten:     fs.String("flatten", "", "replace transparency with a background `color`: white, black or #rrggbb"),
+		watermark:   fs.String("watermark", "", "image `file` to draw on top"),
+		wmText:      fs.String("watermark-text", "", "`text` to draw on top instead of an image (use \\n for a new line)"),
+		text:        fs.String("text", "", "make an image of this `text`; give only an output file"),
+		fontList:    fs.String("font", "", "fonts for -text and -watermark-text: `files` or installed font names, comma separated, tried in order (see: goimgtools fonts)"),
+		fontSize:    fs.Float64("font-size", 32, "text height in `pixels`"),
+		textColor:   fs.String("text-color", "black", "`color` of the text: white, black, #rrggbb or #rrggbbaa"),
+		textBg:      fs.String("text-background", "", "`color` behind the text (default: transparent)"),
+		textWidth:   fs.Int("text-width", 0, "wrap the text at this many `pixels`"),
+		strokeW:     fs.Float64("stroke-width", 0, "outline the text, this many `pixels` wide"),
+		strokeCol:   fs.String("stroke-color", "black", "`color` of the text outline"),
+		shadowCol:   fs.String("shadow-color", "", "draw a shadow of the text in this `color`"),
+		shadowOff:   fs.String("shadow-offset", "2,2", "move the shadow `X,Y` pixels (0,0 with -shadow-blur gives a glow)"),
+		shadowBlr:   fs.Int("shadow-blur", 0, "soften the shadow over this many `pixels`"),
+		wmOpacity:   fs.Float64("watermark-opacity", 1, "how much of the watermark shows, 0 to 1"),
+		wmTile:      fs.Bool("watermark-tile", false, "repeat the watermark over the whole image"),
+		wmGap:       fs.String("watermark-gap", "0,0", "space between repeated watermarks, `X,Y` pixels"),
+		wmWidth:     fs.String("watermark-width", "", "scale the watermark to this `width`: pixels (300), or a share of the image's width (20%), which keeps it the same to the eye on images of any size"),
+		gravity:     fs.String("gravity", "southeast", "watermark anchor: northwest, north, northeast, west, center, east, southwest, south, southeast"),
+		wmRatio:     fs.String("watermark-ratio", "", "move the watermark `X,Y` shares of the image width and height from its gravity point (0.333,0.333 is a third across and down); without -offset there is no margin"),
+		wmAnchor:    fs.String("watermark-anchor", "", "the `point` of the watermark put on that position: northwest ... center ... southeast, or X,Y pixels from its top-left corner (default: the one named like -gravity)"),
+		wmAngle:     fs.Float64("watermark-angle", 0, "turn the watermark clockwise by this many `degrees`"),
+		wmPivot:     fs.String("watermark-pivot", "", "the `point` of the watermark it turns around, given like -watermark-anchor (default: the anchor)"),
+		offset:      fs.String("offset", "", "move the watermark `X,Y` pixels from its anchor (negative moves left / up); default is a 24 pixel margin"),
+		quality:     fs.Int("quality", 0, "JPEG or lossy WebP quality 1-100 (default 80 for JPEG, 75 for WebP)"),
+		jpegOpt:     fs.Bool("jpeg-optimize", false, "JPEG: build the coding tables for this image (a smaller file, the same pixels)"),
+		jpegProg:    fs.Bool("jpeg-progressive", false, "JPEG: write a progressive file (smaller still, the same pixels)"),
+		jpegTrellis: fs.Bool("jpeg-trellis", false, "JPEG: trellis quantization as mozjpeg does it (smaller at about the same look; other pixels)"),
+		pngColors:   fs.Int("png-colors", 0, "PNG: reduce to this many colours, 2-256, chosen for the image (a much smaller, lossy file)"),
+		noDither:    fs.Bool("no-dither", false, "no dithering when colours are reduced (-png-colors, GIF output)"),
+		pngLevel:    fs.Int("png-level", 0, "PNG compression 1 (fastest) to 9 (smallest); default 7 (6 is the standard library's: faster, larger)"),
+		format:      fs.String("format", "", "output format: "+formatNames()+" (default: from the output file name)"),
+		skipLarger:  fs.Bool("skip-larger", false, "when the result is not smaller than the input file (same format), keep the input file as it is; for runs that only compress"),
+		maxSize:     fs.String("max-size", "", "make the file at most this `size` by lowering the quality (JPEG, lossy WebP): 200KB, 1.5MB, or a number of bytes"),
+		lossless:    fs.Bool("webp-lossless", false, "WebP: write without loss"),
+		gifColors:   fs.Int("gif-colors", 0, "largest number of colours in a GIF, 1-256 (default 256)"),
+		gifFixed:    fs.Bool("gif-fixed-palette", false, "GIF: use the standard fixed palette instead of colours chosen for the image (faster, a much worse picture)"),
+		tiffComp:    fs.String("tiff-compression", "none", "TIFF compression: none or deflate"),
+		animated:    fs.Bool("animated", false, "process every frame of an animated GIF (GIF to GIF)"),
+		keepExif:    fs.Bool("keep-exif", false, "copy the EXIF block (camera, date, GPS) to the output"),
+		stripICC:    fs.Bool("strip-icc", false, "drop the ICC colour profile instead of copying it"),
+		toSRGB:      fs.Bool("srgb", false, "convert the colours to sRGB from the image's ICC profile (Display P3, Adobe RGB...) and leave the profile out; GIF and BMP output always are"),
+		mem:         fs.Int("mem", 64, "working memory limit in `MB` for one image; beyond it data goes to temporary files"),
+		threads:     fs.Int("threads", 1, "CPU cores to use for one image, at most the number of CPUs: 2 decodes on a core of its own, 3 encodes on another, more go to resizing, -blur, -sharpen, -modulate, -rotate and JPEG and PNG encoding"),
+		maxPixels:   fs.Int("max-pixels", 0, "largest image accepted or made, in `megapixels` (default 268: 16383 x 16383); all frames together for -animated"),
+		tmp:         fs.String("tmp", "", "`directory` for temporary files (default: the system one)"),
+	}
+	fs.Func("op", "apply an operation by name, `NAME[:ARG,ARG...]`, as goimgtools ops lists them (built-in or added by the program); may be given more than once, done in that order after -sharpen", func(v string) error {
+		name, _, _ := strings.Cut(v, ":")
+		if _, ok := goimgtools.LookupOperation(name); !ok {
+			return fmt.Errorf("no operation %q (goimgtools ops lists them)", name)
+		}
+		o.ops = append(o.ops, v)
+		return nil
+	})
+	return o
+}
+
+func run(args []string, stdout, stderr io.Writer) error {
+	if len(args) > 0 {
+		switch args[0] {
+		case "info":
+			return info(args[1:], stdout, stderr)
+		case "check":
+			return check(args[1:], stdout, stderr)
+		case "compare":
+			return compare(args[1:], stdout, stderr)
+		case "stats":
+			return stats(args[1:], stdout, stderr)
+		case "hash":
+			return hash(args[1:], stdout, stderr)
+		case "exif":
+			return exifInfo(args[1:], stdout, stderr)
+		case "formats":
+			return formatTable(args[1:], stdout)
+		case "fonts":
+			return fonts(args[1:], stdout)
+		case "ops":
+			return opList(args[1:], stdout)
+		case "batch":
+			return batch(args[1:], stdout, stderr)
+		}
+	}
+	fs := flag.NewFlagSet("goimgtools", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	o := register(fs)
+	fs.Usage = func() {
+		fmt.Fprint(stderr, usage)
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	var in, out string
+	switch {
+	case *o.text != "" && fs.NArg() == 1:
+		out = fs.Arg(0)
+	case *o.text == "" && fs.NArg() == 2:
+		in, out = fs.Arg(0), fs.Arg(1)
+	default:
+		fs.Usage()
+		return errors.New("need an input and an output file (or -text and an output file)")
+	}
+	im, err := o.image(in, out)
+	if err != nil {
+		return err
+	}
+	kept, err := o.finish(im, in, out)
+	if kept {
+		fmt.Fprintf(stdout, "kept %s as it is: the result would not be smaller\n", in)
+	}
+	return err
+}
+
+// formatOf names the format a file name stands for ("" when unknown). The
+// library knows the formats, their names and their extensions.
+func formatOf(path string) string {
+	f, _ := goimgtools.FormatByName(filepath.Ext(path))
+	return f.Name
+}
+
+// outputKind names the format that will be written: -format when given,
+// else what the extension of out stands for, else "" (the library decides).
+func (o *options) outputKind(out string) (string, error) {
+	if *o.format == "" {
+		return formatOf(out), nil
+	}
+	f, ok := goimgtools.FormatByName(*o.format)
+	if !ok {
+		return "", fmt.Errorf("-format: cannot write %q (%s)", *o.format, formatNames())
+	}
+	return f.Name, nil
+}
+
+// formatNames lists the formats for messages: "jpeg, png, ... or tiff".
+func formatNames() string {
+	var names []string
+	for _, f := range goimgtools.Formats() {
+		names = append(names, f.Name)
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " or " + names[len(names)-1]
+}
+
+var tempCount atomic.Int64
+
+// finish writes the image to out. With -skip-larger, a result of the input's
+// own format that is not smaller than the input file is dropped and the
+// input kept instead (the idea of pngquant's --skip-if-larger): copied to
+// out, or simply left alone when out is the input file itself. Colour
+// reduction and re-encoding can both make a file larger than it was, for a
+// picture that was already small.
+func (o *options) finish(im *goimgtools.Image, in, out string) (kept bool, err error) {
+	kind, _ := o.outputKind(out) // a wrong -format was reported when the chain was made
+	before, statErr := os.Stat(in)
+	if !*o.skipLarger || in == "" || statErr != nil || kind == "" || kind != formatOf(in) {
+		return false, im.ToFile(out)
+	}
+	// Written next to out under another name, so that the input is still
+	// there to keep when out is the input.
+	tmp := filepath.Join(filepath.Dir(out), fmt.Sprintf(".goimgtools-%d-%d%s", os.Getpid(), tempCount.Add(1), filepath.Ext(out)))
+	if err := im.ToFile(tmp); err != nil {
+		return false, err
+	}
+	if after, err := os.Stat(tmp); err == nil && after.Size() < before.Size() {
+		if err := os.Rename(tmp, out); err != nil {
+			os.Remove(tmp)
+			return false, err
+		}
+		return false, nil
+	}
+	os.Remove(tmp)
+	if existing, err := os.Stat(out); err == nil && os.SameFile(before, existing) {
+		return true, nil
+	}
+	return true, copyFile(in, out)
+}
+
+// copyFile copies a file; out appears only when the copy is complete.
+func copyFile(in, out string) error {
+	src, err := os.Open(in)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	// Created like any new file, not like a temporary one, which only its
+	// owner could read (as the library does for its results).
+	mode := os.FileMode(0o666)
+	if st, err := src.Stat(); err == nil {
+		mode = st.Mode().Perm() | 0o200
+	}
+	var tmp *os.File
+	for try := 0; ; try++ {
+		name := filepath.Join(filepath.Dir(out), ".goimgtools-"+strconv.FormatUint(rand.Uint64(), 36))
+		if tmp, err = os.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL, mode); err == nil || !os.IsExist(err) || try == 100 {
+			break
+		}
+	}
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(tmp, src)
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(tmp.Name(), out)
+	}
+	if err != nil {
+		os.Remove(tmp.Name())
+	}
+	return err
+}
+
+// textImage makes the image of a piece of text with the text options.
+func (o *options) textImage(t string) (*goimgtools.Image, error) {
+	to := goimgtools.TextOptions{Size: *o.fontSize, Width: *o.textWidth}
+	if *o.fontList != "" {
+		for _, f := range strings.Split(*o.fontList, ",") {
+			to.Fonts = append(to.Fonts, strings.TrimSpace(f))
+		}
+	}
+	var err error
+	if to.Color, err = parseColor(*o.textColor); err != nil {
+		return nil, fmt.Errorf("-text-color: %w", err)
+	}
+	if to.StrokeWidth = *o.strokeW; to.StrokeWidth != 0 {
+		if to.StrokeColor, err = parseColor(*o.strokeCol); err != nil {
+			return nil, fmt.Errorf("-stroke-color: %w", err)
+		}
+	}
+	if *o.shadowCol != "" {
+		if to.ShadowColor, err = parseColor(*o.shadowCol); err != nil {
+			return nil, fmt.Errorf("-shadow-color: %w", err)
+		}
+		v, err := ints(*o.shadowOff, 2)
+		if err != nil {
+			return nil, fmt.Errorf("-shadow-offset: %w", err)
+		}
+		to.ShadowX, to.ShadowY, to.ShadowBlur = v[0], v[1], *o.shadowBlr
+	}
+	if *o.textBg != "" {
+		if to.Background, err = parseColor(*o.textBg); err != nil {
+			return nil, fmt.Errorf("-text-background: %w", err)
+		}
+	}
+	return goimgtools.Text(strings.ReplaceAll(t, `\n`, "\n"), to), nil
+}
+
+// image builds the whole chain for one input file (or for -text, when in
+// is not used) that is going to be written to out. Nothing is read yet.
+func (o *options) image(in, out string) (*goimgtools.Image, error) {
+	if *o.mem <= 0 {
+		return nil, errors.New("-mem must be positive")
+	}
+	im := goimgtools.Open(in)
+	if *o.text != "" {
+		var err error
+		if im, err = o.textImage(*o.text); err != nil {
+			return nil, err
+		}
+	}
+	im.MemoryLimit(int64(*o.mem) << 20).Threads(*o.threads)
+	if *o.maxPixels < 0 {
+		return nil, errors.New("-max-pixels must be positive")
+	}
+	if *o.maxPixels > 0 {
+		im.LimitInputPixels(int64(*o.maxPixels) * 1e6).LimitOutputPixels(int64(*o.maxPixels) * 1e6)
+	}
+	if *o.tmp != "" {
+		im.TempDir(*o.tmp)
+	}
+	if *o.animated {
+		im.Animated()
+	}
+	if *o.keepExif {
+		im.KeepExif()
+	}
+	if *o.stripICC {
+		im.StripICC()
+	}
+	if *o.toSRGB {
+		im.ToSRGB()
+	}
+	bg, err := parseColor(*o.bg)
+	if err != nil {
+		return nil, fmt.Errorf("-background: %w", err)
+	}
+	switch strings.ToLower(*o.rotate) {
+	case "":
+	case "auto":
+		im.Rotate()
+	default:
+		deg, err := strconv.ParseFloat(*o.rotate, 64)
+		if err != nil || math.IsNaN(deg) || math.IsInf(deg, 0) {
+			return nil, fmt.Errorf("-rotate: want auto or a number of degrees, got %q", *o.rotate)
+		}
+		im.RotateBy(deg, bg)
+	}
+	if *o.flip {
+		im.Flip()
+	}
+	if *o.flop {
+		im.Flop()
+	}
+	if *o.trim != "" {
+		v, err := strconv.ParseFloat(*o.trim, 64)
+		if err != nil || !(v >= 0 && v <= 255) {
+			return nil, fmt.Errorf("-trim: want a difference of 0 to 255, got %q", *o.trim)
+		}
+		im.Trim(v)
+	}
+	if *o.crop != "" {
+		v, err := ints(*o.crop, 4)
+		if err != nil {
+			return nil, fmt.Errorf("-crop: %w", err)
+		}
+		im.Extract(v[0], v[1], v[2], v[3])
+	}
+	if *o.resize != "" {
+		w, h, err := size(*o.resize)
+		if err != nil {
+			return nil, fmt.Errorf("-resize: %w", err)
+		}
+		f, ok := map[string]goimgtools.Fit{
+			"inside": goimgtools.FitInside, "cover": goimgtools.FitCover,
+			"outside": goimgtools.FitOutside, "fill": goimgtools.FitFill, "contain": goimgtools.FitContain,
+		}[strings.ToLower(*o.fit)]
+		if !ok {
+			return nil, fmt.Errorf("-fit: unknown mode %q", *o.fit)
+		}
+		k, ok := map[string]goimgtools.Kernel{
+			"nearest": goimgtools.KernelNearest, "linear": goimgtools.KernelLinear, "cubic": goimgtools.KernelCubic,
+			"mitchell": goimgtools.KernelMitchell, "lanczos2": goimgtools.KernelLanczos2, "lanczos3": goimgtools.KernelLanczos3,
+		}[strings.ToLower(*o.kernel)]
+		if !ok {
+			return nil, fmt.Errorf("-kernel: unknown filter %q", *o.kernel)
+		}
+		im.Resize(w, h, goimgtools.ResizeOptions{Fit: f, WithoutEnlargement: *o.noEnlarge, FastShrinkOnLoad: *o.fast,
+			Background: bg, Kernel: k})
+	}
+	if *o.extend != "" {
+		v, err := ints(*o.extend, 4)
+		if err != nil {
+			return nil, fmt.Errorf("-extend: %w", err)
+		}
+		im.Extend(v[0], v[1], v[2], v[3], bg)
+	}
+	if *o.grayscale {
+		im.Grayscale()
+	}
+	if *o.modulate != "" {
+		v, err := floats(*o.modulate, 3)
+		if err != nil {
+			return nil, fmt.Errorf("-modulate: %w", err)
+		}
+		im.Modulate(v[0], v[1], v[2])
+	}
+	if *o.blur != 0 {
+		im.Blur(*o.blur)
+	}
+	if *o.sharpen != "" {
+		if strings.EqualFold(*o.sharpen, "mild") {
+			im.Sharpen()
+		} else {
+			parts := strings.Split(*o.sharpen, ",")
+			if len(parts) > 3 {
+				return nil, fmt.Errorf("-sharpen: want mild or SIGMA[,AMOUNT[,THRESHOLD]], got %q", *o.sharpen)
+			}
+			v, err := floats(*o.sharpen, len(parts))
+			if err != nil {
+				return nil, fmt.Errorf("-sharpen: %w", err)
+			}
+			so := goimgtools.SharpenOptions{Sigma: v[0], Amount: 1.5}
+			if len(v) > 1 {
+				so.Amount = v[1]
+			}
+			if len(v) > 2 {
+				if v[2] != math.Trunc(v[2]) {
+					return nil, fmt.Errorf("-sharpen: the threshold is a whole number, got %v", v[2])
+				}
+				so.Threshold = int(v[2])
+			}
+			if so.Sigma == 0 {
+				return nil, errors.New("-sharpen: the sigma must be above 0 (or use -sharpen mild)")
+			}
+			im.Sharpen(so)
+		}
+	}
+	for _, v := range o.ops {
+		name, rest, _ := strings.Cut(v, ":")
+		var args []string
+		if rest != "" {
+			args = strings.Split(rest, ",")
+		}
+		im.Do(name, args...)
+	}
+	if *o.flatten != "" {
+		c, err := parseColor(*o.flatten)
+		if err != nil {
+			return nil, fmt.Errorf("-flatten: %w", err)
+		}
+		im.Flatten(c)
+	}
+	if *o.watermark != "" && *o.wmText != "" {
+		return nil, errors.New("give -watermark or -watermark-text, not both")
+	}
+	if *o.watermark != "" || *o.wmText != "" {
+		g, ok := map[string]goimgtools.Position{
+			"northwest": goimgtools.NorthWest, "north": goimgtools.North, "northeast": goimgtools.NorthEast,
+			"west": goimgtools.West, "center": goimgtools.Center, "centre": goimgtools.Center, "east": goimgtools.East,
+			"southwest": goimgtools.SouthWest, "south": goimgtools.South, "southeast": goimgtools.SouthEast,
+		}[strings.ToLower(*o.gravity)]
+		if !ok {
+			return nil, fmt.Errorf("-gravity: unknown anchor %q", *o.gravity)
+		}
+		// Default: a 24 pixel margin away from whichever edges the anchor
+		// touches. The nine positions are numbered row by row.
+		i := int(g - goimgtools.NorthWest)
+		dx := []int{24, 0, -24}[i%3]
+		dy := []int{24, 0, -24}[i/3]
+		if *o.offset != "" {
+			v, err := ints(*o.offset, 2)
+			if err != nil {
+				return nil, fmt.Errorf("-offset: %w", err)
+			}
+			dx, dy = v[0], v[1]
+		}
+		wm := goimgtools.Open(*o.watermark)
+		if *o.wmText != "" {
+			var err error
+			if wm, err = o.textImage(*o.wmText); err != nil {
+				return nil, err
+			}
+		}
+		co := goimgtools.CompositeOptions{Gravity: g, Left: dx, Top: dy, Angle: *o.wmAngle, Opacity: *o.wmOpacity, Tile: *o.wmTile}
+		if v := *o.wmWidth; v != "" {
+			if pct, ok := strings.CutSuffix(v, "%"); ok {
+				f, err := strconv.ParseFloat(pct, 64)
+				if err != nil || !(f > 0 && f <= 1000) {
+					return nil, fmt.Errorf("-watermark-width: want pixels or a percentage above 0, got %q", v)
+				}
+				co.WidthRatio = f / 100
+			} else {
+				n, err := strconv.Atoi(v)
+				if err != nil || n <= 0 {
+					return nil, fmt.Errorf("-watermark-width: want pixels or a percentage above 0, got %q", v)
+				}
+				wm.Resize(n, 0)
+			}
+		}
+		gap, err := ints(*o.wmGap, 2)
+		if err != nil {
+			return nil, fmt.Errorf("-watermark-gap: %w", err)
+		}
+		co.TileGapX, co.TileGapY = gap[0], gap[1]
+		if (*o.wmRatio != "" || *o.wmAnchor != "") && *o.offset == "" {
+			co.Left, co.Top = 0, 0 // the margin only suits the plain corner placement
+		}
+		if *o.wmRatio != "" {
+			v, err := floats(*o.wmRatio, 2)
+			if err != nil {
+				return nil, fmt.Errorf("-watermark-ratio: %w", err)
+			}
+			co.LeftRatio, co.TopRatio = v[0], v[1]
+		}
+		if co.Anchor, co.AnchorX, co.AnchorY, err = parseAnchor(*o.wmAnchor); err != nil {
+			return nil, fmt.Errorf("-watermark-anchor: %w", err)
+		}
+		if co.Pivot, co.PivotX, co.PivotY, err = parseAnchor(*o.wmPivot); err != nil {
+			return nil, fmt.Errorf("-watermark-pivot: %w", err)
+		}
+		im.Composite(wm, co)
+	}
+	if *o.maxSize != "" {
+		n, err := parseSize(*o.maxSize)
+		if err != nil {
+			return nil, fmt.Errorf("-max-size: %w", err)
+		}
+		im.MaxFileSize(n)
+	}
+	kind, err := o.outputKind(out)
+	if err != nil {
+		return nil, err
+	}
+	switch kind {
+	case "jpeg":
+		im.JPEG(*o.quality, goimgtools.JPEGOptions{Optimize: *o.jpegOpt, Progressive: *o.jpegProg, Trellis: *o.jpegTrellis})
+	case "png":
+		im.PNG(goimgtools.PNGOptions{CompressionLevel: *o.pngLevel, Colors: *o.pngColors, NoDither: *o.noDither})
+	case "webp":
+		im.WebP(goimgtools.WebPOptions{Quality: *o.quality, Lossless: *o.lossless})
+	case "gif":
+		im.GIF(goimgtools.GIFOptions{Colors: *o.gifColors, NoDither: *o.noDither, FixedPalette: *o.gifFixed})
+	case "bmp":
+		im.BMP()
+	case "tiff":
+		c, ok := map[string]goimgtools.TIFFCompression{"none": goimgtools.TIFFNone, "deflate": goimgtools.TIFFDeflate}[strings.ToLower(*o.tiffComp)]
+		if !ok {
+			return nil, fmt.Errorf("-tiff-compression: want none or deflate, got %q", *o.tiffComp)
+		}
+		im.TIFF(goimgtools.TIFFOptions{Compression: c})
+	}
+	// (A name without a known extension: the library reports it.)
+	return im, nil
+}
+
+func ints(s string, n int) ([]int, error) {
+	parts := strings.Split(s, ",")
+	if len(parts) != n {
+		return nil, fmt.Errorf("want %d numbers separated by commas, got %q", n, s)
+	}
+	out := make([]int, n)
+	for i, p := range parts {
+		v, err := strconv.Atoi(strings.TrimSpace(p))
+		if err != nil {
+			return nil, fmt.Errorf("%q is not a number", p)
+		}
+		out[i] = v
+	}
+	return out, nil
+}
+
+// size parses "WxH", "Wx" or "xH".
+func size(s string) (w, h int, err error) {
+	a, b, ok := strings.Cut(strings.ToLower(s), "x")
+	if !ok {
+		return 0, 0, fmt.Errorf("want WxH, Wx or xH, got %q", s)
+	}
+	if a != "" {
+		if w, err = strconv.Atoi(a); err != nil || w <= 0 {
+			return 0, 0, fmt.Errorf("bad width %q", a)
+		}
+	}
+	if b != "" {
+		if h, err = strconv.Atoi(b); err != nil || h <= 0 {
+			return 0, 0, fmt.Errorf("bad height %q", b)
+		}
+	}
+	if w == 0 && h == 0 {
+		return 0, 0, errors.New("need a width or a height")
+	}
+	return w, h, nil
+}
+
+// fonts lists the fonts text is drawn with.
+func fonts(args []string, stdout io.Writer) error {
+	list := goimgtools.DefaultFonts()
+	switch {
+	case len(args) == 1 && args[0] == "-all":
+		list = goimgtools.SystemFonts()
+	case len(args) != 0:
+		return errors.New("fonts: the only option is -all")
+	default:
+		fmt.Fprintln(stdout, "Fonts used when -font is not given, in the order they are tried for each character:")
+	}
+	for _, f := range list {
+		zh, file := "", f.File
+		if f.Chinese {
+			zh = "  [Chinese]"
+		}
+		if file == "" {
+			file = "(built in)"
+		}
+		fmt.Fprintf(stdout, "%s%s\n    %s\n", f.Name, zh, file)
+	}
+	return nil
+}
+
+// parseColor is goimgtools.ParseColor without the package prefix on the error.
+func parseColor(s string) (color.Color, error) {
+	c, err := goimgtools.ParseColor(s)
+	if err != nil {
+		return nil, errors.New(strings.TrimPrefix(err.Error(), "goimgtools: "))
+	}
+	return c, nil
+}
+
+func floats(s string, n int) ([]float64, error) {
+	parts := strings.Split(s, ",")
+	if len(parts) != n {
+		return nil, fmt.Errorf("want %d numbers separated by commas, got %q", n, s)
+	}
+	out := make([]float64, n)
+	for i, p := range parts {
+		v, err := strconv.ParseFloat(strings.TrimSpace(p), 64)
+		if err != nil {
+			return nil, fmt.Errorf("%q is not a number", p)
+		}
+		out[i] = v
+	}
+	return out, nil
+}
+
+// parseAnchor reads a point of the watermark: a name, or X,Y in pixels.
+// The empty string is the default.
+func parseAnchor(s string) (goimgtools.Position, float64, float64, error) {
+	if s == "" {
+		return goimgtools.DefaultPosition, 0, 0, nil
+	}
+	if a, ok := map[string]goimgtools.Position{
+		"northwest": goimgtools.NorthWest, "north": goimgtools.North, "northeast": goimgtools.NorthEast,
+		"west": goimgtools.West, "center": goimgtools.Center, "centre": goimgtools.Center, "east": goimgtools.East,
+		"southwest": goimgtools.SouthWest, "south": goimgtools.South, "southeast": goimgtools.SouthEast,
+	}[strings.ToLower(s)]; ok {
+		return a, 0, 0, nil
+	}
+	v, err := floats(s, 2)
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("want a name (northwest ... center ... southeast) or X,Y, got %q", s)
+	}
+	return goimgtools.CustomPosition, v[0], v[1], nil
+}
+
+// parseSize reads a file size: bytes, or a number followed by KB or MB.
+func parseSize(s string) (int64, error) {
+	t := strings.ToUpper(strings.TrimSpace(s))
+	unit := 1.0
+	switch {
+	case strings.HasSuffix(t, "KB"):
+		t, unit = strings.TrimSuffix(t, "KB"), 1<<10
+	case strings.HasSuffix(t, "MB"):
+		t, unit = strings.TrimSuffix(t, "MB"), 1<<20
+	case strings.HasSuffix(t, "K"):
+		t, unit = strings.TrimSuffix(t, "K"), 1<<10
+	case strings.HasSuffix(t, "M"):
+		t, unit = strings.TrimSuffix(t, "M"), 1<<20
+	case strings.HasSuffix(t, "B"):
+		t = strings.TrimSuffix(t, "B")
+	}
+	v, err := strconv.ParseFloat(strings.TrimSpace(t), 64)
+	if err != nil || v <= 0 || v*unit > 1<<50 {
+		return 0, fmt.Errorf("want a size such as 200KB or 1.5MB, got %q", s)
+	}
+	return int64(v * unit), nil
+}
+
+// opList prints the operations -op takes: the built-in ones and those the
+// program registered.
+func opList(args []string, stdout io.Writer) error {
+	if len(args) != 0 {
+		return errors.New("ops takes no arguments")
+	}
+	for _, d := range goimgtools.Operations() {
+		use := d.Name
+		if d.Usage != "" {
+			use += ":" + d.Usage
+		}
+		fmt.Fprintf(stdout, "%-44s %s\n", use, d.Help)
+	}
+	return nil
+}

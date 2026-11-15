@@ -189,6 +189,9 @@ func handle(ctx context.Context, in io.Reader, out io.Writer) error {
 | 自己的文件格式；或者改写库里某种格式的读 / 写 | `RegisterFormat(codec)`、`CodecByName(name)`、`ToFormat(name, 选项)` |
 | 自己的缩放滤镜 | `ResizeOptions{Filter: &goimgtools.Filter{...}}` |
 | 结果不写文件，交给自己的代码 | `Stream(env)`（像素流）、`ToImage()`（整张 `image.Image`） |
+| 给自己的操作起名字，像内置操作一样用名字调用（`Do`、命令行 `-op`） | `RegisterOperation(def)`、`Do(name, 参数...)`、`Operations()` |
+| 改写内置操作的行为：在每一步前后加自己的处理，或者整步换成自己的做法（相当于「重写方法」） | `Around(hook)` |
+| 带上自己操作的命令行程序 | `cli` 包：注册后调用 `cli.Main()` |
 
 下面的例子都只用公开的包，[example_test.go](example_test.go) 里有能直接运行的完整版本（`go test -run Example`）。
 
@@ -372,6 +375,62 @@ small, err := goimgtools.FromSource(func(*pipeline.Env) (pipeline.Source, error)
 }).Resize(200, 0).Stream(src.Env())
 ```
 
+### 按名字注册操作：`RegisterOperation`、`Do`
+
+和 `RegisterFormat` 注册格式一样，操作也可以按名字注册。注册后 `Do("名字", 参数...)` 就能用，命令行（见下面的 `cli` 包）也能用 `-op 名字:参数` 调用，`goimgtools ops` 会列出来。内置操作也都有名字（`resize`、`blur`、`rotate`……，`Operations()` 列出全部），所以 `Do("blur", "2")` 就是 `Blur(2)`。
+
+```go
+goimgtools.RegisterOperation(goimgtools.OperationDef{
+    Name: "sepia", Usage: "[STRENGTH]", Help: "棕色老照片效果",
+    New: func(args ...string) (goimgtools.Operation, error) { /* 按参数做出操作 */ },
+})
+goimgtools.Open("in.jpg").Do("resize", "800", "0").Do("sepia", "0.8").ToFile("out.jpg")
+```
+
+用内置的名字注册（比如 `blur`）就替换掉它：`Do("blur", ...)` 和命令行 `-op blur:...` 改用你的；`Blur()` 方法本身不变（要改它见下面的钩子）。`UnregisterOperation` 撤销后恢复内置。
+
+### 改写内置行为：`Around` 钩子
+
+钩子包在配方的每一步外面，内置的和自己的都算。它拿到这一步的名字和参数（和 `Do` 收的一样）、这一步的输入，和一个执行这一步的 `run`；可以在前面改输入、在后面改结果，也可以不调用 `run`、整步用自己的做法：
+
+```go
+// 所有模糊都换成自己的实现，其余步骤照常
+myBlur := func(step goimgtools.Step, in pipeline.Source, run func(pipeline.Source) (pipeline.Source, error)) (pipeline.Source, error) {
+    if step.Name == "blur" {
+        sigma, _ := strconv.ParseFloat(step.Args[0], 64)
+        return gpuBlur(in, sigma), nil
+    }
+    return run(in)
+}
+goimgtools.Open("in.jpg").Resize(800, 0).Blur(2).Around(myBlur).ToFile("out.jpg")
+```
+
+配合嵌入 `*Image`，就是「子类重写父类方法」：自己的类型在构造函数里装上钩子，之后用它做的每个配方都带着改写过的行为。[example_test.go](example_test.go) 里的 `Example_overriding` 让每次缩小之后自动轻度锐化。
+
+- 先加的钩子在最外层。有钩子时各步严格按写的顺序一步步做（没有钩子时「转向后紧跟缩放」会合并成先缩放再转向，省内存）；配方以缩放开头时 JPEG 解码时缩小仍然有效。
+- 钩子里出错、panic、`run` 调了两次、返回空，都是这次执行的错误；这一步已经做出来的东西由库关闭，内存预算全部归还、不留临时文件（测试覆盖）。
+- `OutputSize` 和动图的每一帧也会经过钩子。
+
+### 带上自己操作的命令行程序：`cli` 包
+
+命令行程序本身就是 `cli` 包，`cmd/goimgtools` 只有一行 `cli.Main()`。自己的程序注册好操作再交给它，就是一个带着这些操作的 goimgtools：
+
+```go
+package main
+
+import (
+    "github.com/whhhh1500/goimgtools"
+    "github.com/whhhh1500/goimgtools/cli"
+)
+
+func main() {
+    goimgtools.RegisterOperation(sepiaDef) // 上面那样的定义
+    cli.Main()                             // 现在有 -op sepia:0.8，goimgtools ops 也会列出它
+}
+```
+
+`cli.Run(args, stdout, stderr)` 做同样的事但不退出进程，方便测试或嵌进别的程序。
+
 ### 扩展代码出错时
 
 自己的操作、格式返回的错误会原样从 `ToFile` 等方法返回。如果扩展代码（或库本身）在处理某个输入时 panic，这次执行返回 `*goimgtools.PanicError`（带原因和堆栈），不会让整个程序退出，临时文件和未写完的输出照常清理——开了多线程也一样。
@@ -539,6 +598,7 @@ goimgtools hash [-similar 位数] 文件...
 goimgtools exif [-json] 文件...
 goimgtools formats
 goimgtools fonts [-all]
+goimgtools ops
 ```
 
 ```bash
@@ -563,7 +623,7 @@ goimgtools -watermark-text "© 示例" -font-size 40 -text-color white -stroke-w
 goimgtools -trim 10 -resize 1200x -extend 20,20,20,20 -background white -sharpen mild in.jpg out.jpg
 ```
 
-执行顺序固定为：旋转 → 翻转 → 去边 → 裁剪 → 缩放 → 加边 → 灰度 → 调色 → 模糊 → 锐化 → 铺底色 → 水印。
+执行顺序固定为：旋转 → 翻转 → 去边 → 裁剪 → 缩放 → 加边 → 灰度 → 调色 → 模糊 → 锐化 → `-op` 各步（按给的顺序）→ 铺底色 → 水印。
 
 | 选项 | 说明 |
 |---|---|
@@ -605,6 +665,7 @@ goimgtools -trim 10 -resize 1200x -extend 20,20,20,20 -background white -sharpen
 | `-webp-lossless` | 无损 WebP |
 | `-png-level N`、`-gif-colors N`、`-gif-fixed-palette`、`-tiff-compression none\|deflate` | 各格式的选项 |
 | `-animated` | 处理动图 GIF 的每一帧 |
+| `-op NAME[:ARG,ARG...]` | 按名字执行操作（`goimgtools ops` 列出全部：内置的和程序注册的），可以给多个，按给的顺序在锐化之后执行 |
 | `-keep-exif`、`-strip-icc` | 元数据 |
 | `-srgb` | 按色彩配置把颜色换算成 sRGB，输出不带配置（转 GIF、BMP 时自动） |
 | `-mem MB`、`-threads N`、`-tmp 目录` | 内存上限（默认 64）、线程数（默认 1，最多到 CPU 核数，4 起分给模糊、锐化、调色、旋转）、临时目录 |
@@ -868,6 +929,7 @@ goimgtools/
 ├── chain.go         操作列表和执行顺序的规划
 ├── formats.go       格式表：内置和注册的格式都在这一张表里；RegisterFormat
 ├── extend.go        扩展入口：Pipe、Pixels、Apply、FromImage、FromSource、ToFormat、Stream、ToImage
+├── steps.go         按名字注册操作（RegisterOperation、Do）、钩子（Around）、ParseColor
 ├── input.go         输入的打开、读取出错的记录、错误分类
 ├── text.go          文字输入
 ├── animate.go       动图
@@ -876,7 +938,8 @@ goimgtools/
 ├── pipeline/        公开包：像素流接口 Source、内存预算、暂存区，以及写扩展用的零件
 ├── inspect/         公开包：校验、比较、颜色统计、感知指纹、EXIF 明细
 ├── internal/        各格式的解码和编码、缩放、基本操作、文字渲染、减色（见下表）
-├── cmd/             命令行程序 goimgtools，实测程序 memprobe
+├── cli/             公开包：命令行（goimgtools 程序就是 cli.Main），可带上自己注册的操作
+├── cmd/             命令行程序 goimgtools（一行 cli.Main），实测程序 memprobe
 ├── tests/           库的行为测试：只通过公开接口使用这个库，和使用者的程序一样
 ├── licenses/        第三方代码的许可和来源说明
 └── docs/            文档用的图片
@@ -884,7 +947,8 @@ goimgtools/
 
 | 路径 | 内容 |
 |---|---|
-| `cmd/goimgtools` | 命令行 |
+| `cli` | 命令行的全部代码：选项、批量、info / check / compare 等小工具、`-op` |
+| `cmd/goimgtools` | 命令行程序的入口 |
 | `cmd/memprobe` | 内存 / CPU / 耗时实测程序（Windows、Linux、macOS、BSD 上读取进程自身的峰值内存和 CPU 时间） |
 | `internal/pngstream`、`jpegstream`、`gifstream`、`bmpstream`、`tiffstream` | 各格式的流式解码和编码 |
 | `internal/webpstream` | WebP 流式解码 |

@@ -10,6 +10,7 @@ import (
 	"io"
 	"runtime/debug"
 
+	"github.com/whhhh1500/goimgtools/internal/ops"
 	"github.com/whhhh1500/goimgtools/internal/resize"
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
@@ -132,12 +133,14 @@ func (m *Image) buildFrom(env *pipeline.Env, f *input, format string, sizeOnly b
 		return nil, nil, "", none, err
 	}
 	meta := pipeline.MetaOf(src)
-	r := &run{exifOrient: pipeline.ExifOrientation(meta.Exif), sizeOnly: sizeOnly, maxPixels: m.outputLimit()}
+	r := &run{exifOrient: pipeline.ExifOrientation(meta.Exif), sizeOnly: sizeOnly, maxPixels: m.outputLimit(), hooks: m.hooks}
 	// A JPEG that the chain starts by reducing to half its size or less
 	// can be made smaller while it is decoded, when the resize allows it.
 	var pre preShrunk
 	if format == "jpeg" && !sizeOnly {
-		if z, turn, ok := firstResize(m.chain, r); ok && z.spec.o.FastShrinkOnLoad {
+		// With hooks the steps are done as written: only a resize that
+		// comes first can have the decoder's help.
+		if z, turn, ok := firstResize(m.chain, r); ok && z.spec.o.FastShrinkOnLoad && (len(m.hooks) == 0 || turn == ops.Upright && len(m.chain) > 0 && isResize(m.chain[0])) {
 			if k := shrinkFactor(src, z.spec, turn); k > 1 {
 				small, err := resize.Shrink(src, k)
 				if err != nil {
@@ -156,7 +159,16 @@ func (m *Image) buildFrom(env *pipeline.Env, f *input, format string, sizeOnly b
 	if top && m.threadCount() >= 2 {
 		src = pipeline.Async(src)
 	}
-	src, err = applyOps(m.chain, src, r, pre)
+	func() {
+		// On a panic the chain closes itself (applyOps); the input too.
+		defer func() {
+			if v := recover(); v != nil {
+				f.Close()
+				panic(v)
+			}
+		}()
+		src, err = applyOps(m.chain, src, r, pre)
+	}()
 	if err != nil {
 		src.Close()
 		f.Close()

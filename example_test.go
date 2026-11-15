@@ -338,3 +338,121 @@ func ExampleFilter() {
 	fmt.Println(w, h, err)
 	// Output: 64 48 <nil>
 }
+
+// An operation of your own, made available by name: to Do, and to the
+// command line of a program built with package cli (-op sepia:0.8), next
+// to the built-in ones.
+func ExampleRegisterOperation() {
+	err := goimgtools.RegisterOperation(goimgtools.OperationDef{
+		Name:  "sepia",
+		Usage: "[STRENGTH]",
+		Help:  "warm brown tones, 0 to 1 (default 1)",
+		New: func(args ...string) (goimgtools.Operation, error) {
+			k := 1.0
+			if len(args) == 1 {
+				if _, err := fmt.Sscan(args[0], &k); err != nil || k < 0 || k > 1 {
+					return nil, fmt.Errorf("strength 0 to 1, got %q", args[0])
+				}
+			}
+			return goimgtools.OperationFunc(func(src pipeline.Source) (pipeline.Source, error) {
+				return pipeline.Map(src, func(s *image.NRGBA) error {
+					for i := 0; i+3 < len(s.Pix); i += 4 {
+						r, g, b := float64(s.Pix[i]), float64(s.Pix[i+1]), float64(s.Pix[i+2])
+						y := 0.299*r + 0.587*g + 0.114*b
+						s.Pix[i] = uint8(min(255, r+k*(y*1.07-r)))
+						s.Pix[i+1] = uint8(min(255, g+k*(y*0.74-g)))
+						s.Pix[i+2] = uint8(min(255, b+k*(y*0.43-b)))
+					}
+					return nil
+				}), nil
+			}), nil
+		},
+	})
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer goimgtools.UnregisterOperation("sepia")
+
+	out, err := goimgtools.FromBytes(picture(64, 48)).Do("resize", "32", "0").Do("sepia", "0.8").PNG().ToBytes()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	m, _ := png.Decode(bytes.NewReader(out))
+	fmt.Println(m.Bounds().Size())
+	// Output: (32,24)
+}
+
+// A hook goes around every step of a recipe. This one replaces the
+// built-in blur with a box blur of its own and lets the other steps be.
+func ExampleImage_Around() {
+	ownBlur := func(step goimgtools.Step, in pipeline.Source, run func(pipeline.Source) (pipeline.Source, error)) (pipeline.Source, error) {
+		fmt.Println("step", step)
+		if step.Name != "blur" {
+			return run(in)
+		}
+		return boxBlur(in), nil // in is ours now: boxBlur closes it with its result
+	}
+	_, err := goimgtools.FromBytes(picture(64, 48)).
+		Resize(32, 0).Blur(2).Flip().
+		Around(ownBlur).
+		PNG().ToBytes()
+	if err != nil {
+		fmt.Println(err)
+	}
+	// Output:
+	// step resize:32,0,inside,cubic
+	// step blur:2
+	// step flip
+}
+
+// boxBlur averages each pixel with its left and right neighbours.
+func boxBlur(src pipeline.Source) pipeline.Source {
+	return pipeline.Map(src, func(s *image.NRGBA) error {
+		w := s.Rect.Dx()
+		for y := 0; y < s.Rect.Dy(); y++ {
+			row := s.Pix[y*s.Stride : y*s.Stride+4*w]
+			prev := [4]int{int(row[0]), int(row[1]), int(row[2]), int(row[3])}
+			for x := 0; x < w; x++ {
+				r := min(x+1, w-1)
+				cur := [4]int{int(row[4*x]), int(row[4*x+1]), int(row[4*x+2]), int(row[4*x+3])}
+				for c := 0; c < 4; c++ {
+					row[4*x+c] = uint8((prev[c] + cur[c] + int(row[4*r+c])) / 3)
+				}
+				prev = cur
+			}
+		}
+		return nil
+	})
+}
+
+// Behaviour changed the way a subclass overrides a method: a type of your
+// own embeds *Image (so it has all its methods) and puts a hook around the
+// recipes it makes. Here every Resize also sharpens a little, which
+// shrunk photographs usually want.
+type Photo struct{ *goimgtools.Image }
+
+func OpenPhoto(data []byte) Photo {
+	sharpenAfterResize := func(step goimgtools.Step, in pipeline.Source, run func(pipeline.Source) (pipeline.Source, error)) (pipeline.Source, error) {
+		out, err := run(in)
+		if err != nil || step.Name != "resize" {
+			return out, err
+		}
+		// The built-in sharpen, as an operation of its own: a recipe on the
+		// stream out.
+		return goimgtools.FromSource(func(*pipeline.Env) (pipeline.Source, error) { return out, nil }).
+			Sharpen().Stream(out.Env())
+	}
+	return Photo{goimgtools.FromBytes(data).Around(sharpenAfterResize)}
+}
+
+func Example_overriding() {
+	out, err := OpenPhoto(picture(640, 480)).Resize(320, 0).JPEG(85).ToBytes()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println(len(out) > 0)
+	// Output: true
+}

@@ -37,6 +37,8 @@ type run struct {
 	// maxPixels is the largest image a step may make (LimitOutputPixels);
 	// zero for no limit.
 	maxPixels int64
+	// hooks go around every step (see Around).
+	hooks []Hook
 }
 
 // fits holds the size of what a step makes against the limit.
@@ -310,7 +312,20 @@ func firstResize(list []operation, r *run) (resizeOp, ops.Orientation, bool) {
 //
 // It returns the last source it made also when it fails, so that the
 // caller can close what there is.
-func applyOps(list []operation, src pipeline.Source, r *run, pre preShrunk) (pipeline.Source, error) {
+func applyOps(list []operation, src pipeline.Source, r *run, pre preShrunk) (_ pipeline.Source, err error) {
+	if len(r.hooks) > 0 {
+		return applyHooked(list, src, r, pre)
+	}
+	// A panic in a step (an operation of the caller's, or a bug) leaves the
+	// chain so far: it is closed before the panic goes on to become the
+	// run's error, so that what it holds (memory, temporary files) is given
+	// back.
+	defer func() {
+		if v := recover(); v != nil {
+			src.Close()
+			panic(v)
+		}
+	}()
 	for i := 0; i < len(list); {
 		var next pipeline.Source
 		var err error

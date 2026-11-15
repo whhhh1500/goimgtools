@@ -14,7 +14,7 @@ adb shell "chmod 755 $dev/ci/bin/*"
 adb shell getprop ro.build.version.release
 adb shell uname -a
 failed=0
-for p in tests pipeline inspect internal/resize internal/ops cmd/goimgtools; do
+for p in tests pipeline inspect internal/resize internal/ops cli; do
   bin=$(echo "$p" | tr / _).test
   echo "=== $p"
   out=$(adb shell "mkdir -p $dev/repo/$p && cd $dev/repo/$p && GOROOT=$dev/ci/goroot GOMODCACHE=$dev/ci/mod TMPDIR=$dev/tmp $dev/ci/bin/$bin -test.timeout 40m; echo EXIT=\$?" 2>&1)

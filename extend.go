@@ -52,7 +52,7 @@ func (m *Image) Pipe(op Operation) *Image {
 	if op == nil {
 		return m.fail(errors.New("goimgtools: Pipe needs an operation"))
 	}
-	return m.add(customOp{op})
+	return m.add(customOp{op: op})
 }
 
 // Pixels adds an operation that changes pixel values and nothing else: a
@@ -80,13 +80,16 @@ func (m *Image) Pixels(fn func(strip *image.NRGBA) error) *Image {
 	if fn == nil {
 		return m.fail(errors.New("goimgtools: Pixels needs a function"))
 	}
-	return m.add(customOp{OperationFunc(func(src pipeline.Source) (pipeline.Source, error) {
+	return m.add(customOp{op: OperationFunc(func(src pipeline.Source) (pipeline.Source, error) {
 		return pipeline.Map(src, fn), nil
-	})})
+	}), pixels: true})
 }
 
 // customOp is an Operation as a step of the chain.
-type customOp struct{ op Operation }
+type customOp struct {
+	op     Operation
+	pixels bool // made by Pixels
+}
 
 func (c customOp) apply(src pipeline.Source, _ *run) (pipeline.Source, error) {
 	out, err := c.op.Apply(src)

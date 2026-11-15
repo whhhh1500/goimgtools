@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"bytes"
@@ -14,6 +14,7 @@ import (
 
 	"github.com/whhhh1500/goimgtools"
 	"github.com/whhhh1500/goimgtools/internal/testutil"
+	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
 // animation writes a GIF of n small frames, each shown for delay
@@ -288,7 +289,7 @@ func TestStatsHashExif(t *testing.T) {
 	}
 
 	// exif: a file written by another program, one without EXIF.
-	withExif := filepath.Join("..", "..", "tests", "testdata", "exif-pillow.jpg")
+	withExif := filepath.Join("..", "tests", "testdata", "exif-pillow.jpg")
 	out, _, err = cli("exif", withExif, a)
 	if err != nil {
 		t.Fatal(err)
@@ -354,5 +355,73 @@ func TestAdjustOptions(t *testing.T) {
 		if !bytes.Equal(got, want) {
 			t.Errorf("%v: another file than the library's", c.args)
 		}
+	}
+}
+
+// TestOp: -op applies operations by name, built-in or registered by the
+// program, in the order given; ops lists them; batch takes -op too.
+func TestOp(t *testing.T) {
+	dir := t.TempDir()
+	in := filepath.Join(dir, "in.png")
+	writePNG(t, in, testutil.Images(120, 80)["nrgba"])
+	out := filepath.Join(dir, "out.png")
+	if _, _, err := cli("-op", "blur:2", "-op", "resize:60,0", in, out); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(out)
+	want, err := goimgtools.Open(in).Blur(2).Resize(60, 0).PNG().ToBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Error("-op blur:2 -op resize:60,0: another file than the library's")
+	}
+	if _, _, err := cli("-op", "no-such:1", in, out); err == nil || !strings.Contains(err.Error(), "goimgtools ops") {
+		t.Errorf("unknown -op: %v", err)
+	}
+	if _, _, err := cli("-op", "blur:x", in, out); err == nil {
+		t.Error("-op blur:x accepted")
+	}
+
+	// A program that registers an operation of its own has it on its
+	// command line.
+	err = goimgtools.RegisterOperation(goimgtools.OperationDef{Name: "test-swap", Usage: "", Help: "swap red and blue",
+		New: func(args ...string) (goimgtools.Operation, error) {
+			return goimgtools.OperationFunc(func(src pipeline.Source) (pipeline.Source, error) {
+				return pipeline.Map(src, func(s *image.NRGBA) error {
+					for i := 0; i < len(s.Pix); i += 4 {
+						s.Pix[i], s.Pix[i+2] = s.Pix[i+2], s.Pix[i]
+					}
+					return nil
+				}), nil
+			}), nil
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer goimgtools.UnregisterOperation("test-swap")
+	list, _, err := cli("ops")
+	if err != nil || !strings.Contains(list, "test-swap") || !strings.Contains(list, "blur:SIGMA") {
+		t.Errorf("ops: %v\n%s", err, list)
+	}
+	if _, _, err := cli("-op", "test-swap", "-op", "test-swap", in, out); err != nil {
+		t.Fatal(err)
+	}
+	twice, _ := os.ReadFile(out)
+	plain, _ := goimgtools.Open(in).PNG().ToBytes()
+	if !bytes.Equal(twice, plain) {
+		t.Error("swapping twice changed the image")
+	}
+	// Batch.
+	src, dst := filepath.Join(dir, "src"), filepath.Join(dir, "dst")
+	os.Mkdir(src, 0o755)
+	writePNG(t, filepath.Join(src, "a.png"), testutil.Images(40, 30)["nrgba"])
+	if _, _, err := cli("batch", "-quiet", "-op", "flip", src, dst); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(dst, "a.png"))
+	w, _ := goimgtools.Open(filepath.Join(src, "a.png")).Flip().PNG().ToBytes()
+	if !bytes.Equal(b, w) {
+		t.Error("batch -op flip: another file than the library's")
 	}
 }

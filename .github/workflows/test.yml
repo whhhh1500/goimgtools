@@ -145,7 +145,7 @@ jobs:
       - name: Build the tests for ${{ matrix.os }}
         run: |
           mkdir -p ci/bin ci/goroot/src/image ci/mod/golang.org/x
-          for p in tests pipeline inspect internal/resize internal/ops cmd/goimgtools; do
+          for p in tests pipeline inspect internal/resize internal/ops cli; do
             GOOS=${{ matrix.goos }} GOARCH=amd64 go test -c -o "ci/bin/$(echo $p | tr / _).test" "./$p"
           done
           # The test images the tests read: those of Go and of x/image.
@@ -157,7 +157,7 @@ jobs:
           root="$PWD"
           export GOROOT="$root/ci/goroot" GOMODCACHE="$root/ci/mod"
           uname -a
-          for p in tests pipeline inspect internal/resize internal/ops cmd/goimgtools; do
+          for p in tests pipeline inspect internal/resize internal/ops cli; do
             cd "$root/$p"
             "$root/ci/bin/$(echo $p | tr / _).test" -test.timeout 40m
           done
@@ -207,7 +207,7 @@ jobs:
         run: |
           mkdir -p ci/bin ci/goroot/src/image ci/mod/golang.org/x
           cc="$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android24-clang"
-          for p in tests pipeline inspect internal/resize internal/ops cmd/goimgtools; do
+          for p in tests pipeline inspect internal/resize internal/ops cli; do
             GOOS=android GOARCH=amd64 CGO_ENABLED=1 CC="$cc" go test -c -o "ci/bin/$(echo $p | tr / _).test" "./$p"
           done
           cp -r "$(go env GOROOT)/src/image/testdata" ci/goroot/src/image/
@@ -286,3 +286,4 @@ jobs:
       - run: go test -run '^$' -fuzz '^FuzzChain$' -fuzztime 60s ./tests
       - run: go test -run '^$' -fuzz '^FuzzText$' -fuzztime 30s ./tests
       - run: go test -run '^$' -fuzz '^FuzzExif$' -fuzztime 30s ./tests
+      - run: go test -run '^$' -fuzz '^FuzzParse$' -fuzztime 30s ./internal/iccprof
