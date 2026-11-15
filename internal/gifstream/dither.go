@@ -27,6 +27,9 @@ type ditherer struct {
 	// last is the palette index of the pixel before, where the search for
 	// the next one starts.
 	last int
+	// plain turns the error diffusion off: every pixel gets the nearest
+	// entry, as draw.Src gives it.
+	plain bool
 	// byGreen lists the palette indexes in order of their green value.
 	byGreen []int
 }
@@ -136,6 +139,9 @@ func (d *ditherer) row(pxRGBA func(x, y int) (r, g, b, a uint32), x0, y int, pix
 		}
 		d.last = bestIndex
 		pix[x] = byte(bestIndex)
+		if d.plain {
+			continue
+		}
 
 		er -= palette[bestIndex][0]
 		eg -= palette[bestIndex][1]

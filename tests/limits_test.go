@@ -721,15 +721,22 @@ func TestAnimationPixelLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	// (Counted in frames that went through the chain, not in seconds: a
-	// slow machine is not a failure.)
-	var made, closed, rows atomic.Int64
-	_, err = FromBytes(buf.Bytes()).Animated().LimitInputPixels(2000 * 2000 * 3).
-		Pipe(closeCounter{&made, &closed, &rows}).GIF().ToBytes()
-	if !errors.Is(err, ErrPixelLimit) {
-		t.Errorf("400 frames of 2000x2000 in %d bytes with a limit of three: %v", buf.Len(), err)
-	}
-	if made.Load() != 3 || closed.Load() != 3 {
-		t.Errorf("%d frames were processed (%d closed) before the limit of three stopped the run", made.Load(), closed.Load())
+	// slow machine is not a failure.) With a palette chosen for all frames
+	// they are counted first, so none is; with the fixed palette, those the
+	// limit allows.
+	for _, c := range []struct {
+		opts GIFOptions
+		want int64
+	}{{GIFOptions{}, 0}, {GIFOptions{FixedPalette: true}, 3}} {
+		var made, closed, rows atomic.Int64
+		_, err = FromBytes(buf.Bytes()).Animated().LimitInputPixels(2000 * 2000 * 3).
+			Pipe(closeCounter{&made, &closed, &rows}).GIF(c.opts).ToBytes()
+		if !errors.Is(err, ErrPixelLimit) {
+			t.Errorf("%+v: 400 frames of 2000x2000 in %d bytes with a limit of three: %v", c.opts, buf.Len(), err)
+		}
+		if made.Load() != c.want || closed.Load() != c.want {
+			t.Errorf("%+v: %d frames were processed (%d closed) before the limit of three stopped the run, want %d", c.opts, made.Load(), closed.Load(), c.want)
+		}
 	}
 }
 

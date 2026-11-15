@@ -115,6 +115,18 @@ func TestGIFOutput(t *testing.T) {
 			if !bytes.Equal(got, want.Bytes()) {
 				t.Errorf("%s %d colours: with the fixed palette the file differs from gif.Encode", name, colors)
 			}
+			// Without dithering: gif.Encode drawing with draw.Src.
+			got, err = FromBytes(in).GIF(GIFOptions{Colors: colors, FixedPalette: true, NoDither: true}).ToBytes()
+			if err != nil {
+				t.Fatal(err)
+			}
+			want.Reset()
+			if err := gif.Encode(&want, dec, &gif.Options{NumColors: colors, Drawer: stddraw.Src}); err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(got, want.Bytes()) {
+				t.Errorf("%s %d colours: with the fixed palette and no dithering the file differs from gif.Encode with draw.Src", name, colors)
+			}
 		}
 	}
 	// By default the colours are chosen for the image: far closer to it.

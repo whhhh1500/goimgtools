@@ -274,7 +274,7 @@ var builtin = []*formatDef{
 				defer q.Close()
 				src = q
 			}
-			return gifstream.Encode(w, src, &gifstream.Options{NumColors: g.Colors})
+			return gifstream.Encode(w, src, &gifstream.Options{NumColors: g.Colors, NoDither: g.NoDither})
 		},
 		check: checks[GIFOptions]("gif"),
 	},

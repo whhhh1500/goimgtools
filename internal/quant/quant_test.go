@@ -697,3 +697,30 @@ func TestNearestIsExact(t *testing.T) {
 		}
 	}
 }
+
+// TestFrameRows: frames one under the other are dithered each on its own,
+// so two frames alike come out alike, whatever the other rows hold;
+// without FrameRows the error of one runs into the next.
+func TestFrameRows(t *testing.T) {
+	g := gradient(120, 90)
+	tall := image.NewNRGBA(image.Rect(0, 0, 120, 270))
+	for y := 0; y < 270; y++ {
+		for x := 0; x < 120; x++ {
+			c := nrgbaAt(g, x, y%90)
+			if y >= 180 { // a third frame of its own, after two alike
+				c.R, c.B = c.B, c.R
+			}
+			tall.SetNRGBA(x, y, c)
+		}
+	}
+	for _, rows := range []int{90, 0} {
+		q := quantizeImage(t, tall, &Options{Colors: 32, FrameRows: rows})
+		same := bytes.Equal(q.Pix[:90*q.Stride], q.Pix[90*q.Stride:180*q.Stride])
+		if same != (rows != 0) {
+			t.Errorf("FrameRows %d: the two frames alike came out alike: %v", rows, same)
+		}
+	}
+	if _, err := Quantize(pipeline.FromImage(tall, pipeline.NewEnv(0, "")), &Options{FrameRows: -1}); err == nil {
+		t.Error("FrameRows -1 accepted")
+	}
+}

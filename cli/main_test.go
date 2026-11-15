@@ -555,3 +555,55 @@ func TestSkipLarger(t *testing.T) {
 		t.Error("batch with -skip-larger: wrong files written")
 	}
 }
+
+// TestAnimatedColours: -animated takes -gif-colors and -no-dither, and the
+// file is the library's.
+func TestAnimatedColours(t *testing.T) {
+	dir := t.TempDir()
+	in, out := filepath.Join(dir, "in.gif"), filepath.Join(dir, "out.gif")
+	g := &gif.GIF{}
+	for k := 0; k < 4; k++ {
+		pal := color.Palette{}
+		for i := 0; i < 200; i++ {
+			pal = append(pal, color.RGBA{uint8(i), uint8(40 * k), uint8(255 - i), 255})
+		}
+		m := image.NewPaletted(image.Rect(0, 0, 60, 40), pal)
+		for i := range m.Pix {
+			m.Pix[i] = uint8((i + 7*k) % 200)
+		}
+		g.Image, g.Delay = append(g.Image, m), append(g.Delay, 3)
+	}
+	var buf bytes.Buffer
+	if err := gif.EncodeAll(&buf, g); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(in, buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := cli("-animated", "-gif-colors", "24", "-no-dither", in, out); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(out)
+	want, err := goimgtools.FromBytes(buf.Bytes()).Animated().GIF(goimgtools.GIFOptions{Colors: 24, NoDither: true}).ToBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Error("command output differs from the library")
+	}
+	o, err := gif.DecodeAll(bytes.NewReader(got))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The colour table is padded to a power of two; the pixels use at most
+	// 24 entries.
+	used := map[uint8]bool{}
+	for _, f := range o.Image {
+		for _, v := range f.Pix {
+			used[v] = true
+		}
+	}
+	if len(o.Image) != 4 || len(used) > 24 {
+		t.Errorf("%d frames, %d colours", len(o.Image), len(used))
+	}
+}

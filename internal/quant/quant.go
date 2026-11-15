@@ -48,6 +48,11 @@ type Options struct {
 	// NoDither turns Floyd-Steinberg error diffusion off: every pixel then
 	// simply gets the nearest palette colour. The zero value dithers.
 	NoDither bool
+	// FrameRows, when not zero, says that the image is frames of this many
+	// rows one under the other (the frames of an animation, which share
+	// one palette): dithering starts afresh at the top of each, so that no
+	// frame's pixels depend on another's.
+	FrameRows int
 }
 
 // Quantize returns src as *image.Paletted strips over a palette of at most
@@ -66,12 +71,15 @@ type Options struct {
 // Nothing is read until the first Next, which reads all of src. Closing the
 // result closes src.
 func Quantize(src pipeline.Source, o *Options) (pipeline.Source, error) {
-	colors, dither := 256, true
+	colors, dither, frame := 256, true, 0
 	if o != nil {
 		if o.Colors != 0 {
 			colors = o.Colors
 		}
-		dither = !o.NoDither
+		dither, frame = !o.NoDither, o.FrameRows
+	}
+	if frame < 0 {
+		return nil, fmt.Errorf("goimgtools: FrameRows must not be negative, not %d", frame)
 	}
 	if colors < 2 || colors > 256 {
 		return nil, fmt.Errorf("goimgtools: palette size must be 2 to 256, not %d", colors)
@@ -83,7 +91,10 @@ func Quantize(src pipeline.Source, o *Options) (pipeline.Source, error) {
 	if int64(b.Dx()) > (1<<31-1)/16 {
 		return nil, fmt.Errorf("goimgtools: image too wide to quantize (%d)", b.Dx())
 	}
-	return &quantized{src: src, env: pipeline.EnvOf(src), bounds: b, colors: colors, dither: dither}, nil
+	if frame == 0 {
+		frame = b.Dy()
+	}
+	return &quantized{src: src, env: pipeline.EnvOf(src), bounds: b, colors: colors, dither: dither, frame: frame}, nil
 }
 
 const (
@@ -102,6 +113,7 @@ type quantized struct {
 	bounds image.Rectangle
 	colors int
 	dither bool
+	frame  int // rows per frame
 
 	state  int
 	err    error
@@ -217,16 +229,23 @@ func (q *quantized) Next() (image.Image, error) {
 				q.above, q.row, q.below = q.row, q.below, q.above
 			}
 			above, below := q.above, q.below
-			if y == 0 {
-				above = q.row
+			if y < h-1 {
+				if err := q.rd.ReadFull(below); err != nil {
+					return q.fail(err)
+				}
 			}
-			if y == h-1 {
+			// The rows next to it are those of its frame: a frame's
+			// first row has none above, its last none below.
+			fy := y % q.frame
+			if fy == 0 {
+				above = q.row
+				q.m.restart()
+			}
+			if fy == q.frame-1 || y == h-1 {
 				below = q.row
-			} else if err := q.rd.ReadFull(below); err != nil {
-				return q.fail(err)
 			}
 			activity(q.act, above, q.row, below)
-			q.m.row(q.row, dst, q.act, y)
+			q.m.row(q.row, dst, q.act, fy)
 			continue
 		}
 		if err := q.rd.ReadFull(q.row); err != nil {

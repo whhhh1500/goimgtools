@@ -288,6 +288,13 @@ func newMapper(pal []color.NRGBA, w int, dither bool, budget *pipeline.Budget) *
 	return m
 }
 
+// restart forgets the error carried to the next rows, for a row that
+// starts a new frame.
+func (m *mapper) restart() {
+	clear(m.cur)
+	clear(m.nxt)
+}
+
 func (m *mapper) release() {
 	m.s.release()
 	if m.solid != nil {

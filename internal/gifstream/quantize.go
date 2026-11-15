@@ -8,12 +8,16 @@ import (
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
-// AnimPalette returns the palette animation frames are reduced to and the
-// index of its transparent entry: the Plan 9 palette, the one gif.Encode
-// uses, with the entry that has the closest neighbour given up for
-// transparency.
-func AnimPalette() (color.Palette, byte) {
-	pal := append(color.Palette(nil), palette.Plan9...)
+// AnimPalette returns the fixed palette of n entries (1 to 256) animation
+// frames are reduced to, and the index of its transparent entry: the first
+// n entries of the Plan 9 palette, the one gif.Encode uses, with the entry
+// that has the closest neighbour given up for transparency. A palette of
+// one entry has no transparent entry (ok is false).
+func AnimPalette(n int) (pal color.Palette, transparent byte, ok bool) {
+	pal = append(color.Palette(nil), palette.Plan9[:n]...)
+	if n < 2 {
+		return pal, 0, false
+	}
 	best, bestDist := 0, uint32(1<<32-1)
 	for i := range pal {
 		ri, gi, bi, _ := pal[i].RGBA()
@@ -30,14 +34,14 @@ func AnimPalette() (color.Palette, byte) {
 		}
 	}
 	pal[best] = color.RGBA{}
-	return pal, byte(best)
+	return pal, byte(best), true
 }
 
 // Quantize returns src as *image.Paletted strips over pal, reduced with
-// Floyd-Steinberg dithering one row at a time (the arithmetic Encode uses).
-// Its working memory is two rows of quantization error and one strip of
-// colour indexes.
-func Quantize(src pipeline.Source, pal color.Palette) (pipeline.Source, error) {
+// Floyd-Steinberg dithering one row at a time (the arithmetic Encode uses),
+// or to the nearest entries when dither is false. Its working memory is two
+// rows of quantization error and one strip of colour indexes.
+func Quantize(src pipeline.Source, pal color.Palette, dither bool) (pipeline.Source, error) {
 	if err := checkPalette(pal); err != nil {
 		return nil, err
 	}
@@ -47,7 +51,9 @@ func Quantize(src pipeline.Source, pal color.Palette) (pipeline.Source, error) {
 	if err := env.Budget.Reserve(need, "gif dithering rows"); err != nil {
 		return nil, err
 	}
-	return &quantized{src: src, env: env, pal: pal, d: newDitherer(pal, b.Dx()), reserved: need}, nil
+	d := newDitherer(pal, b.Dx())
+	d.plain = !dither
+	return &quantized{src: src, env: env, pal: pal, d: d, reserved: need}, nil
 }
 
 type quantized struct {

@@ -115,13 +115,19 @@ func (m *Image) WebP(opts ...WebPOptions) *Image {
 // GIFOptions are the optional settings of GIF.
 type GIFOptions struct {
 	// Colors is the largest number of colours used, 1 to 256; 0 means 256.
+	// In an animation one of them is the transparent entry that frames
+	// written as what changed use for "as before".
 	Colors int
-	// NoDither turns off the dithering that hides the missing colours.
+	// NoDither turns off the dithering that hides the missing colours:
+	// every pixel gets the nearest colour.
 	NoDither bool
-	// FixedPalette uses the fixed palette of the standard library (Plan 9)
-	// instead of colours chosen for the image. The file is then the one
-	// gif.Encode writes and needs no second look at the pixels, but it is
-	// a much worse picture: a photograph comes out some 14 dB lower.
+	// FixedPalette uses the fixed palette of the standard library (Plan 9;
+	// its first Colors entries) instead of colours chosen for the image.
+	// The file is then the one gif.Encode writes (with NoDither, with
+	// draw.Src as its Drawer) and needs no second look at the pixels, but
+	// it is a much worse picture: a photograph comes out some 14 dB lower.
+	// An animation is then written frame by frame as it is read, each
+	// frame whole (see Animated).
 	FixedPalette bool
 }
 

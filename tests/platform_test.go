@@ -79,6 +79,9 @@ func TestSameOnEveryProcessor(t *testing.T) {
 		{"webp", func() ([]byte, error) { return photo.Clone().WebP(WebPOptions{Quality: 70}).ToBytes() }, "6ce2fe0efc34b6e7"},
 		{"webp lossless", func() ([]byte, error) { return clear.Clone().WebP(WebPOptions{Lossless: true}).ToBytes() }, "998880f023e64fd8"},
 		{"gif", func() ([]byte, error) { return photo.Clone().GIF().ToBytes() }, "55ae5c4b96926b04"},
+		{"gif animation", func() ([]byte, error) {
+			return FromBytes(animationBytes(t)).Animated().Resize(90, 0).GIF(GIFOptions{Colors: 50}).ToBytes()
+		}, "12fc9505fd4a347d"},
 		{"display p3 to srgb", func() ([]byte, error) {
 			return FromBytes(withPNGProfile(t, iccData(t, "wheel.png"), iccData(t, "p3-para.icc"))).BMP().ToBytes()
 		}, "fbab28fd9e3fd62a"},
@@ -92,4 +95,9 @@ func TestSameOnEveryProcessor(t *testing.T) {
 			t.Errorf("%s: file %s, want %s", f.name, got, f.want)
 		}
 	}
+}
+
+// animationBytes is an animation with more colours than a GIF palette holds.
+func animationBytes(t *testing.T) []byte {
+	return encodeAll(t, movingAnimation(120, 90, 5, true))
 }

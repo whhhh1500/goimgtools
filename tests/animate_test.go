@@ -2,11 +2,13 @@ package tests
 
 import (
 	"bytes"
+	"fmt"
 	"image"
 	"image/color"
 	"image/color/palette"
 	"image/draw"
 	"image/gif"
+	"math"
 	"path/filepath"
 	"testing"
 
@@ -96,16 +98,21 @@ func TestAnimated(t *testing.T) {
 		}
 	}
 
-	// No operations: the same animation, frame for frame.
-	for _, limit := range []int64{0, 400 << 10} {
+	// No operations: the same animation, frame for frame, with the
+	// palette chosen for it and with the fixed one (which needs less
+	// memory: choosing a palette takes some 3MB).
+	for _, c := range []struct {
+		limit int64
+		opts  GIFOptions
+	}{{0, GIFOptions{}}, {4 << 20, GIFOptions{}}, {0, GIFOptions{FixedPalette: true}}, {400 << 10, GIFOptions{FixedPalette: true}}} {
 		dir := t.TempDir()
-		got, err := FromBytes(in).MemoryLimit(limit).TempDir(dir).Animated().ToBytes()
+		got, err := FromBytes(in).MemoryLimit(c.limit).TempDir(dir).Animated().GIF(c.opts).ToBytes()
 		if err != nil {
-			t.Fatalf("limit %d: %v", limit, err)
+			t.Fatalf("limit %d %+v: %v", c.limit, c.opts, err)
 		}
 		check("copy", got, func(i int) image.Image { return want[i] })
 		if left, _ := filepath.Glob(filepath.Join(dir, "*")); len(left) != 0 {
-			t.Errorf("limit %d: temp files left: %v", limit, left)
+			t.Errorf("limit %d: temp files left: %v", c.limit, left)
 		}
 	}
 	// Operations that move pixels without changing colours stay exact.
@@ -130,7 +137,7 @@ func TestAnimated(t *testing.T) {
 		t.Fatalf("resized: %d frames, %dx%d", len(out.Image), out.Config.Width, out.Config.Height)
 	}
 	for i, f := range out.Image {
-		if f.Bounds() != image.Rect(0, 0, 32, 24) {
+		if !f.Bounds().In(image.Rect(0, 0, 32, 24)) {
 			t.Fatalf("resized frame %d: %v", i, f.Bounds())
 		}
 	}
@@ -158,5 +165,288 @@ func TestAnimated(t *testing.T) {
 	// Truncated input fails.
 	if _, err := FromBytes(in[:len(in)*2/3]).Animated().ToBytes(); err == nil {
 		t.Error("truncated animation accepted")
+	}
+}
+
+// movingAnimation makes an opaque animation of n full frames over a smooth
+// background of many colours, in which only a small square moves (the
+// frames are not optimized: each is the whole picture). With local, the
+// background's colours shift from frame to frame, each frame with its own
+// palette, so that the frames together have far more than 256 colours.
+func movingAnimation(w, h, n int, local bool) *gif.GIF {
+	g := &gif.GIF{Config: image.Config{Width: w, Height: h}}
+	shared := make(color.Palette, 0, 256)
+	for i := 0; i < 250; i++ {
+		shared = append(shared, color.RGBA{uint8(i), uint8(255 - i), uint8(i / 2), 255})
+	}
+	shared = append(shared, color.RGBA{255, 0, 0, 255}, color.RGBA{0, 0, 255, 255})
+	g.Config.ColorModel = shared
+	for k := 0; k < n; k++ {
+		pal := shared
+		if local {
+			pal = make(color.Palette, 0, 256)
+			for i := 0; i < 254; i++ {
+				pal = append(pal, color.RGBA{uint8(i), uint8(255 - i), uint8((i + 37*k) % 256), 255})
+			}
+			pal = append(pal, color.RGBA{255, 0, 0, 255}, color.RGBA{0, 0, 255, 255})
+		}
+		m := image.NewPaletted(image.Rect(0, 0, w, h), pal)
+		for y := 0; y < h; y++ {
+			for x := 0; x < w; x++ {
+				m.Pix[y*m.Stride+x] = uint8((x + y) * 249 / (w + h))
+			}
+		}
+		sq := image.Rect(4+3*k, h/2, 14+3*k, h/2+10)
+		for y := sq.Min.Y; y < sq.Max.Y; y++ {
+			for x := sq.Min.X; x < sq.Max.X; x++ {
+				m.Pix[y*m.Stride+x] = uint8(len(pal) - 2 + (x/3)%2)
+			}
+		}
+		g.Image = append(g.Image, m)
+		g.Delay = append(g.Delay, 4+k)
+		g.Disposal = append(g.Disposal, gif.DisposalNone)
+	}
+	return g
+}
+
+func encodeAll(t *testing.T, g *gif.GIF) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := gif.EncodeAll(&buf, g); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func decodeGIF(t *testing.T, b []byte) *gif.GIF {
+	t.Helper()
+	g, err := gif.DecodeAll(bytes.NewReader(b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return g
+}
+
+// TestAnimatedChangedParts: an animation is written with one palette, and
+// the frames after the first as the part that changed; no colour is lost
+// when there are few enough, and the file is smaller than the frames whole.
+func TestAnimatedChangedParts(t *testing.T) {
+	g := movingAnimation(160, 120, 8, false)
+	in := encodeAll(t, g)
+	want := coalesce(g)
+	out, err := FromBytes(in).Animated().ToBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := decodeGIF(t, out)
+	if len(o.Image) != len(g.Image) {
+		t.Fatalf("%d frames, want %d", len(o.Image), len(g.Image))
+	}
+	for i, f := range coalesce(o) {
+		sameImage(t, fmt.Sprintf("frame %d", i), f, want[i])
+		if o.Delay[i] != g.Delay[i] {
+			t.Errorf("frame %d: delay %d, want %d", i, o.Delay[i], g.Delay[i])
+		}
+	}
+	global := o.Config.ColorModel.(color.Palette)
+	for i, f := range o.Image {
+		if len(f.Palette) != len(global) {
+			t.Errorf("frame %d has a palette of its own", i)
+		}
+		if i == 0 {
+			continue
+		}
+		// The square moves 3 pixels a frame: what changed is where it was
+		// and where it is.
+		changed := image.Rect(4+3*(i-1), 60, 14+3*i, 70)
+		if f.Bounds() != changed {
+			t.Errorf("frame %d written as %v, want %v", i, f.Bounds(), changed)
+		}
+	}
+	fixed, err := FromBytes(in).Animated().GIF(GIFOptions{FixedPalette: true}).ToBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) >= len(in) || len(out)*3 >= len(fixed) {
+		t.Errorf("%d bytes, from %d bytes in and %d with the fixed palette", len(out), len(in), len(fixed))
+	}
+}
+
+// nearestDist is the squared distance from c to the nearest entry of pal.
+func nearestDist(c color.RGBA, pal color.Palette) int {
+	best := -1
+	for _, p := range pal {
+		q := color.RGBAModel.Convert(p).(color.RGBA)
+		if q.A != 255 {
+			continue
+		}
+		d := sqd(c.R, q.R) + sqd(c.G, q.G) + sqd(c.B, q.B)
+		if best < 0 || d < best {
+			best = d
+		}
+	}
+	return best
+}
+
+func sqd(a, b uint8) int { d := int(a) - int(b); return d * d }
+
+// TestAnimatedColours: frames with more colours together than a GIF holds
+// get one palette of at most the colours asked for; without dithering
+// every pixel is the nearest of them; with dithering the frames still are
+// written as what changed; the fixed palette honours both options too.
+func TestAnimatedColours(t *testing.T) {
+	g := movingAnimation(120, 90, 6, true)
+	in := encodeAll(t, g)
+	want := coalesce(g)
+	for _, c := range []GIFOptions{{}, {Colors: 64}, {Colors: 20, NoDither: true}, {Colors: 2}, {FixedPalette: true, Colors: 32},
+		{FixedPalette: true, NoDither: true}} {
+		out, err := FromBytes(in).Animated().GIF(c).ToBytes()
+		if err != nil {
+			t.Fatalf("%+v: %v", c, err)
+		}
+		o := decodeGIF(t, out)
+		global := o.Config.ColorModel.(color.Palette)
+		n := c.Colors
+		if n == 0 {
+			n = 256
+		}
+		// The table is padded to a power of two: count what the pixels use.
+		used := map[uint8]bool{}
+		for _, f := range o.Image {
+			for _, v := range f.Pix {
+				used[v] = true
+			}
+		}
+		if len(used) > n || len(global) > 256 {
+			t.Errorf("%+v: %d colours used, table of %d", c, len(used), len(global))
+		}
+		// The entries in use (the padding is not the quantizer's).
+		var real color.Palette
+		for v := range used {
+			real = append(real, global[v])
+		}
+		shown := coalesce(o)
+		for i, f := range o.Image {
+			if len(f.Palette) != len(global) {
+				t.Errorf("%+v: frame %d has a palette of its own", c, i)
+			}
+			if c.NoDither {
+				for p := 0; p < len(shown[i].Pix); p += 4 {
+					src := color.RGBA{want[i].Pix[p], want[i].Pix[p+1], want[i].Pix[p+2], 255}
+					got := color.RGBA{shown[i].Pix[p], shown[i].Pix[p+1], shown[i].Pix[p+2], shown[i].Pix[p+3]}
+					if got.A != 255 || sqd(src.R, got.R)+sqd(src.G, got.G)+sqd(src.B, got.B) != nearestDist(src, real) {
+						t.Fatalf("%+v: frame %d pixel %d is %v for %v, not the nearest colour", c, i, p/4, got, src)
+					}
+				}
+			}
+			// The background's colours change every frame, so only the
+			// fixed palette's whole frames and the first are full; the
+			// others are full too, as everything changed. What matters is
+			// that no frame is left with stale pixels: the picture shown
+			// is close to the source.
+			if psnr := framePSNR(shown[i], want[i]); psnr < 20 && c.Colors != 2 && !(c.FixedPalette && c.Colors != 0) {
+				t.Errorf("%+v: frame %d at %.1f dB", c, i, psnr)
+			}
+		}
+	}
+	// Dithering does not spoil finding what changed: frames that differ in
+	// a square are written as that square.
+	g = movingAnimation(120, 90, 6, false)
+	for i := range g.Image { // more colours than the palette asked for
+		g.Image[i].Palette = append(color.Palette(nil), g.Image[i].Palette...)
+	}
+	out, err := FromBytes(encodeAll(t, g)).Animated().GIF(GIFOptions{Colors: 16}).ToBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := decodeGIF(t, out)
+	for i, f := range o.Image[1:] {
+		if changed := image.Rect(4+3*i, 45, 14+3*(i+1), 55); f.Bounds() != changed {
+			t.Errorf("16 colours, dithered: frame %d written as %v, want %v", i+1, f.Bounds(), changed)
+		}
+	}
+	if _, err := FromBytes(in).Animated().GIF(GIFOptions{Colors: 300}).ToBytes(); err == nil {
+		t.Error("300 colours accepted")
+	}
+}
+
+func framePSNR(a, b *image.RGBA) float64 {
+	var se float64
+	for i := range a.Pix {
+		d := float64(a.Pix[i]) - float64(b.Pix[i])
+		se += d * d
+	}
+	if se == 0 {
+		return math.Inf(1)
+	}
+	return 10 * math.Log10(255*255*float64(len(a.Pix))/se)
+}
+
+// TestAnimatedTransparency: a frame in which pixels turn transparent is
+// written whole on a cleared picture, and an animation whose first frame
+// has transparent pixels clears the picture after its last, before it
+// starts again.
+func TestAnimatedTransparency(t *testing.T) {
+	pal := color.Palette{color.RGBA{}, color.RGBA{200, 30, 30, 255}, color.RGBA{30, 200, 30, 255}}
+	g := &gif.GIF{Config: image.Config{Width: 40, Height: 30, ColorModel: pal}}
+	add := func(f func(x, y int) uint8) {
+		m := image.NewPaletted(image.Rect(0, 0, 40, 30), pal)
+		for y := 0; y < 30; y++ {
+			for x := 0; x < 40; x++ {
+				m.Pix[y*m.Stride+x] = f(x, y)
+			}
+		}
+		g.Image = append(g.Image, m)
+		g.Delay = append(g.Delay, 5)
+		g.Disposal = append(g.Disposal, gif.DisposalBackground)
+	}
+	add(func(x, y int) uint8 { return uint8(min(x/10, 2)) }) // transparent on the left
+	add(func(x, y int) uint8 { return 1 })                   // all opaque
+	add(func(x, y int) uint8 { return uint8(1 + (x+y)%2) })  // opaque, changed
+	add(func(x, y int) uint8 { return uint8((x / 5) % 3) })  // turns transparent in places
+	add(func(x, y int) uint8 { return uint8(1 + (x/5)%2) })  // opaque again
+	want := coalesce(g)
+	out, err := FromBytes(encodeAll(t, g)).Animated().ToBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := decodeGIF(t, out)
+	for i, f := range coalesce(o) {
+		sameImage(t, fmt.Sprintf("frame %d", i), f, want[i])
+	}
+	full := image.Rect(0, 0, 40, 30)
+	// Frame 3 turns pixels transparent: frame 2 clears the picture.
+	if o.Image[3].Bounds() != full || o.Disposal[2] != gif.DisposalBackground || o.Image[2].Bounds() != full {
+		t.Errorf("frame 3 %v after frame 2 %v disposal %d", o.Image[3].Bounds(), o.Image[2].Bounds(), o.Disposal[2])
+	}
+	if last := len(o.Image) - 1; o.Disposal[last] != gif.DisposalBackground || o.Image[last].Bounds() != full {
+		t.Errorf("last frame %v disposal %d: the first frame has transparent pixels", o.Image[last].Bounds(), o.Disposal[last])
+	}
+}
+
+// TestAnimatedEverywhere: the file is the same whatever the memory limit
+// (frames kept in temporary files) and the number of threads, and nothing
+// is left behind.
+func TestAnimatedEverywhere(t *testing.T) {
+	in := encodeAll(t, movingAnimation(400, 300, 8, true))
+	ref, err := FromBytes(in).Animated().Blur(1).GIF(GIFOptions{Colors: 100}).ToBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		limit   int64
+		threads int
+	}{{6 << 20, 1}, {0, 6}, {8 << 20, 4}} {
+		dir := t.TempDir()
+		got, err := FromBytes(in).MemoryLimit(c.limit).TempDir(dir).Threads(c.threads).Animated().Blur(1).GIF(GIFOptions{Colors: 100}).ToBytes()
+		if err != nil {
+			t.Fatalf("%+v: %v", c, err)
+		}
+		if !bytes.Equal(got, ref) {
+			t.Errorf("%+v: another file", c)
+		}
+		if left, _ := filepath.Glob(filepath.Join(dir, "*")); len(left) != 0 {
+			t.Errorf("%+v: temp files left: %v", c, left)
+		}
 	}
 }

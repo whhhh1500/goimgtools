@@ -382,6 +382,10 @@ type Options struct {
 	// NumColors is the maximum number of colors used in the image, 1 to
 	// 256. Zero means 256.
 	NumColors int
+	// NoDither maps an image that is not paletted to the nearest entries
+	// of the Plan 9 palette instead of dithering it (gif.Encode with
+	// draw.Src as its Drawer).
+	NoDither bool
 }
 
 // checkPalette rejects what cannot be written or looked up without a panic.
@@ -531,6 +535,7 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 		row = make([]byte, dx)
 		if mode == dither {
 			fs = newDitherer(pal, dx)
+			fs.plain = o != nil && o.NoDither
 		}
 	}
 

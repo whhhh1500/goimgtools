@@ -1,6 +1,7 @@
 package goimgtools
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"image"
@@ -19,15 +20,27 @@ import (
 //
 // Each frame is drawn onto the full picture first (GIF frames often hold
 // only the part that changed), then goes through the chain as a complete
-// image, and is written as a full frame reduced to a fixed 256-colour
-// palette with dithering. The picture between frames is kept in working
-// storage: a temporary file when it does not fit in the memory limit.
-// Memory does not grow with the number of frames.
+// image. The frames are written with one palette chosen for all of them
+// together (GIFOptions.Colors and NoDither apply; an animation of no more
+// colours than that keeps them exactly), and every frame after the first
+// as the rectangle that changed, with the pixels that stay as they were
+// left transparent: the file holds only what moves. A frame in which
+// pixels turn transparent is written whole, on a cleared picture.
 //
-// Time does: every frame costs as much as a still image of that size. So
-// LimitInputPixels counts the pixels of all frames together (width x
-// height x frames), and an animation with more is refused with an
-// ErrPixelLimit once that many have been processed.
+// For that every frame is processed before the first is written. The
+// frames are kept in working storage (a temporary file beyond the memory
+// share), and the input is read twice (a plain reader is copied to working
+// storage first): once to count the frames, once to process them. Memory
+// does not grow with the number of frames; choosing the palette takes
+// some 4 to 5MB of it. GIFOptions{FixedPalette: true} writes every frame
+// whole with the fixed palette instead, as it goes: nothing is stored but
+// the picture so far.
+//
+// Time grows with the frames: every frame costs as much as a still image
+// of that size. So LimitInputPixels counts the pixels of all frames
+// together (width x height x frames), and an animation with more is
+// refused with an ErrPixelLimit once the frames are counted, before any
+// is processed (with FixedPalette, once that many have been).
 func (m *Image) Animated() *Image { m.animated = true; return m }
 
 // Frames is what Image.Frames reports about an input that may be an
@@ -258,7 +271,30 @@ func (s *canvasSource) Next() (image.Image, error) {
 
 // writeAnimated runs the chain over every frame of the animated GIF in f.
 func (m *Image) writeAnimated(w io.Writer, f *input, env *pipeline.Env) error {
-	anim, err := gifstream.OpenAnimation(f.br, env)
+	g, err := optionsOf[GIFOptions](m.options, "gif")
+	if err != nil {
+		return err
+	}
+	if g.Colors < 0 || g.Colors > 256 {
+		return errors.New("goimgtools: GIF colours must be 1 to 256")
+	}
+	// One colour is no choice to make; the fixed palette handles it.
+	fixed := g.FixedPalette || g.Colors == 1
+	r := io.Reader(f.br)
+	frames := 0
+	if !fixed {
+		// The palette is chosen for all frames, so their number is needed
+		// before the first is read: the input is read twice.
+		ra, size, err := f.readerAt(env)
+		if err != nil {
+			return f.classify(err)
+		}
+		if frames, err = m.countFrames(f, io.NewSectionReader(ra, 0, size), env); err != nil {
+			return err
+		}
+		r = bufio.NewReaderSize(io.NewSectionReader(ra, 0, size), 64<<10)
+	}
+	anim, err := gifstream.OpenAnimation(r, env)
 	if err != nil {
 		return f.classify(err)
 	}
@@ -275,94 +311,190 @@ func (m *Image) writeAnimated(w io.Writer, f *input, env *pipeline.Env) error {
 		return err
 	}
 	defer cv.close()
-	pal, transparent := gifstream.AnimPalette()
-	var aw *gifstream.AnimWriter
-	var size image.Point
+	seq := &frameSeq{m: m, f: f, anim: anim, cv: cv, env: env, w: cfg.Width, h: cfg.Height}
+	defer seq.close()
+	if fixed {
+		return m.writeFixedFrames(w, seq, cfg.LoopCount, g)
+	}
+	return gifstream.EncodeAnimation(w, env, gifstream.AnimOptions{
+		Frames: frames, LoopCount: cfg.LoopCount, Colors: g.Colors, NoDither: g.NoDither,
+	}, seq.next)
+}
+
+// countFrames counts the frames of the animated GIF r, against the limit
+// on pixels.
+func (m *Image) countFrames(f *input, r io.Reader, env *pipeline.Env) (int, error) {
+	anim, err := gifstream.OpenAnimation(bufio.NewReaderSize(r, 64<<10), env)
+	if err != nil {
+		return 0, f.classify(err)
+	}
+	defer anim.Close()
+	cfg := anim.Config()
 	for n := 0; ; n++ {
 		if m.ctx != nil {
 			if err := m.ctx.Err(); err != nil {
-				return err
+				return 0, err
 			}
 		}
-		fr, info, err := anim.NextFrame()
+		fr, _, err := anim.NextFrame()
+		if err == io.EOF {
+			return n, nil
+		}
+		if err != nil {
+			return 0, f.classify(err)
+		}
+		fr.Close() // unread: its data is stepped over
+		if err := m.framesFit(n+1, cfg.Width, cfg.Height); err != nil {
+			return 0, err
+		}
+	}
+}
+
+// framesFit holds n frames of w x h against the limit on pixels, which
+// counts all the frames together: every frame is a whole picture's worth
+// of work, and a small file can hold thousands of them.
+func (m *Image) framesFit(n, w, h int) error {
+	if limit := m.pixelLimit(); int64(n)*int64(w)*int64(h) > limit {
+		return fmt.Errorf("%w: the animation has more than %d frames of %dx%d, in all more than the limit of %d pixels (see LimitInputPixels)",
+			ErrPixelLimit, n-1, w, h, limit)
+	}
+	return nil
+}
+
+// frameSeq hands out the frames of an animation one by one, each drawn on
+// the picture so far and sent through the chain.
+type frameSeq struct {
+	m    *Image
+	f    *input
+	anim *gifstream.Animation
+	cv   *canvas
+	env  *pipeline.Env
+	w, h int
+	n    int // frames handed out
+
+	// The frame last drawn, to be undone as its disposal says before the
+	// next is drawn (by then the chain has read the picture).
+	shown    bool
+	rect     image.Rectangle
+	disposal byte
+	saved    *pipeline.Spill
+}
+
+func (s *frameSeq) close() {
+	if s.saved != nil {
+		s.saved.Close()
+		s.saved = nil
+	}
+}
+
+// next returns the next frame after the chain, with its delay; io.EOF
+// after the last. The caller closes the frame before it asks for the next.
+func (s *frameSeq) next() (pipeline.Source, int, error) {
+	if s.shown {
+		s.shown = false
+		err := s.cv.dispose(s.rect, s.disposal, s.saved)
+		s.close()
+		if err != nil {
+			return nil, 0, fmt.Errorf("frame %d: %w", s.n, err)
+		}
+	}
+	if s.m.ctx != nil {
+		if err := s.m.ctx.Err(); err != nil {
+			return nil, 0, err
+		}
+	}
+	fr, info, err := s.anim.NextFrame()
+	if err == io.EOF {
+		return nil, 0, io.EOF
+	}
+	if err != nil {
+		return nil, 0, s.f.classify(err)
+	}
+	if err := s.m.framesFit(s.n+1, s.w, s.h); err != nil {
+		return nil, 0, err
+	}
+	s.n++
+	var saved *pipeline.Spill
+	if info.Disposal == disposalPrevious {
+		saved = pipeline.NewSpill(s.env)
+	}
+	// What goes wrong while a frame is drawn is its data being bad,
+	// unless the working storage failed.
+	if err := s.f.classify(s.cv.draw(fr, info, saved)); err != nil {
+		if saved != nil {
+			saved.Close()
+		}
+		return nil, 0, fmt.Errorf("frame %d: %w", s.n, err)
+	}
+	s.shown, s.rect, s.disposal, s.saved = true, fr.Bounds(), info.Disposal, saved
+	cs, err := s.cv.source()
+	if err != nil {
+		return nil, 0, fmt.Errorf("frame %d: %w", s.n, err)
+	}
+	var src pipeline.Source = cs
+	if s.m.ctx != nil {
+		src = cancelable{src, s.m.ctx}
+	}
+	m := s.m
+	out, err := applyOps(m.chain, src, &run{exifOrient: 1, maxPixels: m.outputLimit(), hooks: m.hooks}, preShrunk{})
+	if err != nil {
+		out.Close()
+		return nil, 0, fmt.Errorf("frame %d: %w", s.n, err)
+	}
+	return originAtZero{out}, info.Delay, nil
+}
+
+// writeFixedFrames writes every frame whole, reduced to the fixed palette.
+// Nothing is kept from one frame to the next but the picture so far.
+func (m *Image) writeFixedFrames(w io.Writer, seq *frameSeq, loop int, g GIFOptions) error {
+	n := g.Colors
+	if n == 0 {
+		n = 256
+	}
+	pal, transparent, hasTransparent := gifstream.AnimPalette(n)
+	var aw *gifstream.AnimWriter
+	var size image.Point
+	for {
+		src, delay, err := seq.next()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return f.classify(err)
+			return err
 		}
-		// The limit on pixels holds for all the frames together: every
-		// frame is a whole picture's worth of work, and a small file can
-		// hold thousands of them.
-		if limit := m.pixelLimit(); int64(n+1)*int64(cfg.Width)*int64(cfg.Height) > limit {
-			return fmt.Errorf("%w: the animation has more than %d frames of %dx%d, in all more than the limit of %d pixels (see LimitInputPixels)",
-				ErrPixelLimit, n, cfg.Width, cfg.Height, limit)
-		}
-		rect := fr.Bounds()
-		var saved *pipeline.Spill
-		if info.Disposal == disposalPrevious {
-			saved = pipeline.NewSpill(env)
-		}
-		// What goes wrong while a frame is drawn is its data being bad,
-		// unless the working storage failed.
-		err = f.classify(cv.draw(fr, info, saved))
-		if err == nil {
-			err = m.writeFrame(w, cv, &aw, &size, pal, transparent, cfg.LoopCount, info.Delay)
-		}
-		if err == nil {
-			err = cv.dispose(rect, info.Disposal, saved)
-		}
-		if saved != nil {
-			saved.Close()
-		}
+		err = func() error {
+			defer func() { src.Close() }()
+			b := src.Bounds()
+			if aw == nil {
+				size = b.Size()
+				if aw, err = gifstream.NewAnimWriter(w, gifstream.AnimConfig{
+					Width: b.Dx(), Height: b.Dy(), LoopCount: loop, BackgroundIndex: transparent, GlobalPalette: pal,
+				}); err != nil {
+					return err
+				}
+			} else if b.Size() != size {
+				return errors.New("goimgtools: the chain gave frames of different sizes")
+			}
+			q, err := gifstream.Quantize(src, pal, !g.NoDither)
+			if err != nil {
+				return err
+			}
+			src = q
+			// Every frame written is the whole picture, so the viewer is
+			// told to clear it before the next: transparent areas must not
+			// show through.
+			return aw.WriteFrame(q, gifstream.FrameInfo{
+				Delay: delay, Disposal: disposalBackground, Transparent: hasTransparent, TransparentIndex: transparent,
+			})
+		}()
 		if err != nil {
-			return fmt.Errorf("frame %d: %w", n+1, err)
+			return fmt.Errorf("frame %d: %w", seq.n, err)
 		}
 	}
 	if aw == nil {
 		return errors.New("goimgtools: the animation has no frames")
 	}
 	return aw.Close()
-}
-
-// writeFrame sends the canvas through the chain and writes the result as
-// one full frame.
-func (m *Image) writeFrame(w io.Writer, cv *canvas, aw **gifstream.AnimWriter, size *image.Point,
-	pal color.Palette, transparent byte, loop, delay int) error {
-	cs, err := cv.source()
-	if err != nil {
-		return err
-	}
-	var src pipeline.Source = cs
-	if m.ctx != nil {
-		src = cancelable{src, m.ctx}
-	}
-	defer func() { src.Close() }()
-	if src, err = applyOps(m.chain, src, &run{exifOrient: 1, maxPixels: m.outputLimit(), hooks: m.hooks}, preShrunk{}); err != nil {
-		return err
-	}
-	b := src.Bounds()
-	if *aw == nil {
-		*size = b.Size()
-		*aw, err = gifstream.NewAnimWriter(w, gifstream.AnimConfig{
-			Width: b.Dx(), Height: b.Dy(), LoopCount: loop, BackgroundIndex: transparent, GlobalPalette: pal,
-		})
-		if err != nil {
-			return err
-		}
-	} else if b.Size() != *size {
-		return errors.New("goimgtools: the chain gave frames of different sizes")
-	}
-	q, err := gifstream.Quantize(originAtZero{src}, pal)
-	if err != nil {
-		return err
-	}
-	src = q
-	// Every frame written is the whole picture, so the viewer is told to
-	// clear it before the next: transparent areas must not show through.
-	return (*aw).WriteFrame(q, gifstream.FrameInfo{
-		Delay: delay, Disposal: disposalBackground, Transparent: true, TransparentIndex: transparent,
-	})
 }
 
 // originAtZero moves a source whose bounds do not start at (0, 0) (after
