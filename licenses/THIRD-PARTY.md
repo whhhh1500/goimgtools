@@ -86,13 +86,31 @@ of the original files is included unchanged.
 The reference images in `tests/testdata/pillow` were made with Pillow from
 `video-001.png` of the Go image test data.
 
+## libwebp
+
+BSD 3-Clause License, copyright (c) 2010 Google Inc. The full text, as
+libwebp 1.5.0 distributes it, is in `LICENSE-LIBWEBP`, next to this file.
+
+`internal/vp8enc/analysis.go` follows the segmentation of libwebp's lossy
+encoder (`src/enc/analysis_enc.c`, and `VP8SetSegmentParams` and
+`SimplifySegments` in `src/enc/quant_enc.c`): how a macroblock's
+susceptibility is measured from the histogram of its DCT coefficients
+under the DC and TrueMotion predictions, the clustering of the
+susceptibilities into four segments, and the mapping of a segment to its
+quantizer ("spatial noise shaping", at libwebp's default strength), its
+filter level following the segment's beta, and the merging of segments that
+come out alike. It was rewritten in Go for this encoder (which converts and
+measures the image a macroblock row at a time, on several goroutines);
+nothing of the original files is included unchanged.
+
+The rest of the WebP encoders in `internal/vp8enc` and `internal/vp8lenc`
+is written from the format specifications (RFC 6386, RFC 9649). It uses
+libwebp's colour conversion constants and its mapping from quality to
+quantizer, so that files look the same in either decoder, and was checked
+against libwebp's output.
+
 ## Acknowledgements (no code taken)
 
-- **libwebp** (Google): the WebP encoders in `internal/vp8enc` and
-  `internal/vp8lenc` are written from the format specifications (RFC 6386,
-  RFC 9649). They use libwebp's colour conversion constants and its mapping
-  from quality to quantizer, so that files look the same in either decoder,
-  and were checked against libwebp's output.
 - **pngquant / libimagequant**: the colour quantizer in `internal/quant`
   uses ideas described for pngquant (working on premultiplied colours,
   weighting by how visible an error would be, a dither map). No code of
