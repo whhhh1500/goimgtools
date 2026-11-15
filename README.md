@@ -39,7 +39,7 @@ Command-line tool:
 go install github.com/whhhh1500/goimgtools/cmd/goimgtools@latest
 ```
 
-Requires Go 1.27 or later.
+Requires Go 1.26 or later. Go 1.27 rewrote the standard library's `compress/flate`, so PNG files (not their pixels) differ between the two; the measurements in these documents were made with Go 1.27.
 
 ## Quick start
 

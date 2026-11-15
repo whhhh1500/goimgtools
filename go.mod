@@ -1,6 +1,6 @@
 module github.com/whhhh1500/goimgtools
 
-go 1.27
+go 1.26.0
 
 require (
 	github.com/klauspost/compress v1.19.2

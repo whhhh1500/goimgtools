@@ -28,7 +28,7 @@ The behaviour tests of the library itself are all located in `tests/` and use th
 
 BSD, Solaris, Android, iOS, the emulated processors and WebAssembly run only the packages listed above, not the format decoders' and encoders' own tests (which are too slow under emulation); the behaviour tests themselves, however, read and write all six formats. The same image produces byte-for-byte identical output files on Linux and Windows.
 
-The CI configuration is in [.github/workflows/test.yml](../.github/workflows/test.yml). Every push runs the tests in the table above, together with race detection, short runs of the four fuzz tests, and builds and static checks for the remaining targets.
+The CI configuration is in [.github/workflows/test.yml](../.github/workflows/test.yml). Every push runs the tests in the table above with the latest Go 1.27, and the full suite with the oldest supported Go (the version in `go.mod`, 1.26), together with race detection, short runs of the four fuzz tests, and builds and static checks for the remaining targets.
 
 Built and statically checked only, **not actually run**: AIX and Plan 9 (no test machines available).
 

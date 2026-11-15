@@ -6,7 +6,7 @@ Questions, bug reports and pull requests are welcome. Issues may be written in E
 
 ## Building and testing
 
-Requires Go 1.27 or later; cgo is not used.
+Requires Go 1.26 or later; cgo is not used.
 
 ```bash
 go vet ./...
@@ -77,7 +77,7 @@ goimgtools/
 
 欢迎提出问题、报告缺陷与提交 Pull Request；可使用中文或英文撰写。
 
-- **编译与测试**：须 Go 1.27 及以上版本，不依赖 cgo。`go vet ./...`、`go test ./...`（全量测试耗时 3–5 分钟；与 libwebp 的交叉验证需要安装了 Pillow 的 Python，缺失时跳过）；竞态检测：`go test -race -timeout 45m ./...`；模糊测试及自动测试所覆盖的平台见 [docs/zh-CN/testing.md](../docs/zh-CN/testing.md)。
+- **编译与测试**：须 Go 1.26 及以上版本，不依赖 cgo。`go vet ./...`、`go test ./...`（全量测试耗时 3–5 分钟；与 libwebp 的交叉验证需要安装了 Pillow 的 Python，缺失时跳过）；竞态检测：`go test -race -timeout 45m ./...`；模糊测试及自动测试所覆盖的平台见 [docs/zh-CN/testing.md](../docs/zh-CN/testing.md)。
 - **内存**：随图像尺寸增长的缓冲在分配前均须向内存预算申请（`Env().Budget.Reserve`），需等待全图的数据暂存于 `pipeline.Spill` 或 `pipeline.Scratch`。导致峰值内存增加的改动须加以说明并附实测数据。
 - **输出处处一致**：输出不得随线程数、内存上限、条带划分方式或处理器而变化，测试会对此进行比较。
 - **返回错误而非 panic**：执行期间的 panic 转为 `*PanicError`；无论成功、出错还是 panic，内存预算与临时文件均须归还。

@@ -12,7 +12,7 @@ go get github.com/whhhh1500/goimgtools
 import "github.com/whhhh1500/goimgtools"
 ```
 
-需要 Go 1.27（依赖的 `golang.org/x/image` 要求 1.26 及以上版本）。编写扩展时另须引入 `github.com/whhhh1500/goimgtools/pipeline`。
+需要 Go 1.26 及以上版本（依赖的 `golang.org/x/image` 的最低要求）。Go 1.27 重写了 `compress/flate`，因此 Go 1.26 与 Go 1.27 写出的 PNG 文件字节不同，像素相同。编写扩展时另须引入 `github.com/whhhh1500/goimgtools/pipeline`。
 
 API 采用与 [sharp](https://sharp.pixelplumbing.com/) 类似的链式调用：打开输入、追加操作、选择输出格式、写出。操作按调用顺序执行，错误由最后一步统一返回。
 

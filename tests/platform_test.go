@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"image/color"
+	"runtime"
 	"testing"
 
 	. "github.com/whhhh1500/goimgtools"
@@ -74,8 +75,8 @@ func TestSameOnEveryProcessor(t *testing.T) {
 		{"jpeg trellis", func() ([]byte, error) {
 			return photo.Clone().JPEG(77, JPEGOptions{Optimize: true, Trellis: true}).ToBytes()
 		}, "1e6064dbc5840d3a"},
-		{"png", func() ([]byte, error) { return clear.Clone().PNG().ToBytes() }, "7d6848e3147d24ec"},
-		{"png 40 colours", func() ([]byte, error) { return photo.Clone().PNG(PNGOptions{Colors: 40}).ToBytes() }, "844bdcb3467662a1"},
+		{"png", func() ([]byte, error) { return clear.Clone().PNG().ToBytes() }, byFlate("7d6848e3147d24ec", "df8dc31e65c30671")},
+		{"png 40 colours", func() ([]byte, error) { return photo.Clone().PNG(PNGOptions{Colors: 40}).ToBytes() }, byFlate("844bdcb3467662a1", "abe24ab1b50ef311")},
 		{"webp", func() ([]byte, error) { return photo.Clone().WebP(WebPOptions{Quality: 70}).ToBytes() }, "ee1381f7db2666f2"},
 		{"webp lossless", func() ([]byte, error) { return clear.Clone().WebP(WebPOptions{Lossless: true}).ToBytes() }, "c090f32b061d1cc5"},
 		{"gif", func() ([]byte, error) { return photo.Clone().GIF().ToBytes() }, "55ae5c4b96926b04"},
@@ -100,4 +101,15 @@ func TestSameOnEveryProcessor(t *testing.T) {
 // animationBytes is an animation with more colours than a GIF palette holds.
 func animationBytes(t *testing.T) []byte {
 	return encodeAll(t, movingAnimation(120, 90, 5, true))
+}
+
+// byFlate picks the checksum of a PNG file by the standard library's
+// compress/flate, which Go 1.27 rewrote: the same pixels compress to other
+// bytes with Go 1.26. (A development version counts as the newer one.)
+func byFlate(go127, go126 string) string {
+	var minor int
+	if _, err := fmt.Sscanf(runtime.Version(), "go1.%d", &minor); err == nil && minor < 27 {
+		return go126
+	}
+	return go127
 }

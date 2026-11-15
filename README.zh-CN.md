@@ -39,7 +39,7 @@ go get github.com/whhhh1500/goimgtools
 go install github.com/whhhh1500/goimgtools/cmd/goimgtools@latest
 ```
 
-需要 Go 1.27 及以上版本。
+需要 Go 1.26 及以上版本。Go 1.27 重写了标准库的 `compress/flate`，因此两者生成的 PNG 文件字节不同（像素相同）；本文档中的实测数据均使用 Go 1.27。
 
 ## 快速开始
 

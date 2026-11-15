@@ -20,6 +20,19 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
+          go-version: "1.27.x"
+      - run: go vet ./...
+      - run: go test ./...
+
+  oldest-go:
+    # The oldest Go the module supports, the go line of go.mod. Its
+    # compress/flate is the one before Go 1.27 rewrote it, so PNG files
+    # (not their pixels) differ; the checksum test knows both.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
           go-version-file: go.mod
       - run: go vet ./...
       - run: go test ./...
@@ -30,7 +43,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: "1.27.x"
       # The race detector makes the tests several times slower: on a small
       # machine the main package alone takes more than the ten minutes a
       # test run is given by default.
@@ -42,7 +55,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: "1.27.x"
       - run: GOARCH=386 go test ./...
 
   emulated:
@@ -71,7 +84,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: "1.27.x"
       - run: sudo apt-get update && sudo apt-get install -y qemu-user
       - run: GOARCH=${{ matrix.arch }} go test -exec ${{ matrix.qemu }} -timeout 120m ./tests ./pipeline ./inspect ./internal/resize ./internal/ops
 
@@ -82,7 +95,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: "1.27.x"
       - uses: bytecodealliance/actions/wasmtime/setup@v1
       - run: |
           export PATH="$(go env GOROOT)/lib/wasm:$PATH"
@@ -106,7 +119,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: "1.27.x"
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
@@ -141,7 +154,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: "1.27.x"
       - name: Build the tests for ${{ matrix.os }}
         run: |
           mkdir -p ci/bin ci/goroot/src/image ci/mod/golang.org/x
@@ -202,7 +215,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: "1.27.x"
       - name: Build the tests for Android
         run: |
           mkdir -p ci/bin ci/goroot/src/image ci/mod/golang.org/x
@@ -241,7 +254,7 @@ jobs:
           path: gopath/src/github.com/whhhh1500/goimgtools
       - uses: actions/setup-go@v5
         with:
-          go-version-file: gopath/src/github.com/whhhh1500/goimgtools/go.mod
+          go-version: "1.27.x"
           cache: false
       - name: Start a simulator
         run: |
@@ -267,7 +280,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: "1.27.x"
       - run: |
           for t in freebsd/arm64 windows/arm64 android/arm64 aix/ppc64 plan9/amd64; do
             echo "$t"
@@ -281,7 +294,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: "1.27.x"
       - run: go test -run '^$' -fuzz '^FuzzDecode$' -fuzztime 60s ./tests
       - run: go test -run '^$' -fuzz '^FuzzChain$' -fuzztime 60s ./tests
       - run: go test -run '^$' -fuzz '^FuzzText$' -fuzztime 30s ./tests
