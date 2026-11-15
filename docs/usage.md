@@ -56,7 +56,7 @@ err := goimgtools.Open("in.jpg").
 | `Sharpen(SharpenOptions{Sigma, Amount, Threshold})` | Unsharp mask (Pillow's `UnsharpMask`); `Amount` defaults to 1.5 |
 | `Flatten(color)` | Removes transparency by flattening onto a background colour |
 | `Composite(overlay, CompositeOptions{...})` | Composites an overlay or watermark (see [Watermarks](#watermarks)) |
-| `Animated()` | Processes every frame of an animated GIF and writes an animated GIF (effective when both input and output are GIF). All frames share a single palette chosen from the image content (`Colors` and `NoDither` in `GIFOptions` still apply; if the image has no more colours than that, the colours are kept unchanged), and from the second frame onwards only the changed region is stored (see [Compression](compression.md)) |
+| `Animated()` | Processes every frame of an animated GIF and writes an animated GIF or WebP. A still image passes unchanged; an animation that cannot be kept (a GIF to another format; an animated WebP or APNG, whose frames are not processed one by one) is an error wrapping `errors.ErrUnsupported`. A WebP stores the first frame whole and later frames as the changed rectangle. In a GIF, all frames share a single palette chosen from the image content (`Colors` and `NoDither` in `GIFOptions` still apply; if the image has no more colours than that, the colours are kept unchanged), and from the second frame onwards only the changed region is stored (see [Compression](compression.md)) |
 | `Pixels(fn)` | A custom per-pixel operation: `fn` receives 8-bit NRGBA data strip by strip and modifies it in place (see [Extending](extending.md)) |
 | `Pipe(op)` | Inserts an arbitrary custom operation at this point in the chain (see [Extending](extending.md)) |
 | `Apply(steps...)` | Calls a group of steps, defined as a function, in the middle of the chain |
@@ -77,7 +77,7 @@ Blur, sharpening, modulation and extension are streamed row by row and require o
 
 | Method | Description |
 |---|---|
-| `JPEG(quality, JPEGOptions{Optimize, Progressive})` | Quality 1–100; 0 means 80. Both options reduce file size without changing pixels (see [Compression](compression.md)) |
+| `JPEG(quality, JPEGOptions{Optimize, Progressive, Trellis, QuantTable})` | Quality 1–100; 0 means 80. `Optimize` and `Progressive` reduce file size without changing pixels; `Trellis` and `QuantTable` (0–8, as mozjpeg's `-quant-table`) change pixels (see [Compression](compression.md)) |
 | `PNG(PNGOptions{CompressionLevel, Colors, NoDither})` | Compression level from 1 (fastest) to 9 (smallest); `Colors` reduces the image to at most 256 colours (see [Compression](compression.md)) |
 | `WebP(WebPOptions{Quality, Lossless, Effort})` | Lossy (quality 1–100, default 75) or lossless (`Effort` from 1, fastest, to 9, smallest; default 5) |
 | `GIF(GIFOptions{Colors, NoDither, FixedPalette})` | Up to 256 colours, selected from the image content; `FixedPalette` uses the standard library's fixed palette instead |
@@ -234,7 +234,7 @@ Tools that examine images without modifying them. On the command line they are s
 
 | Command line | Library | Description |
 |---|---|---|
-| `goimgtools info file...` | `img.Metadata()`, `img.Frames()` | One line per file: format, width and height, colour type and bit depth, pixel count, file size, frame count and duration of animated GIFs, EXIF orientation, presence of ICC / EXIF data. With `-json`, one line of JSON per file |
+| `goimgtools info file...` | `img.Metadata()`, `img.Frames()` | One line per file: format, width and height, colour type and bit depth, pixel count, file size, frame count and duration of animations (GIF, WebP, APNG), EXIF orientation, presence of ICC / EXIF data. With `-json`, one line of JSON per file |
 | `goimgtools check file...` | `inspect.Verify(img)` | Fully decodes the image once and reports files that are corrupt, truncated or not images. `info` reads only the file header and therefore cannot detect damage in the latter part of a file |
 | `goimgtools compare a b` | `inspect.Compare(a, b)` | Compares two images pixel by pixel, including images in different formats: reports whether they are identical and, if not, the PSNR (higher means closer; above 40, differences are barely perceptible), the largest difference, and the number of differing pixels. `-min-psnr 35` serves as a quality gate: if the threshold is not met, the command exits with a non-zero status |
 | `goimgtools stats file...` | `inspect.Stats(img)` | Examines every pixel: average colour, brightness, the few colours covering the largest area, whether the image is in fact grayscale, whether it actually contains transparent pixels, and the number of colours (when there are no more than 256). Used to choose a placeholder colour, to decide between dark and light text, or to determine whether the image can be stored as grayscale or with a palette |

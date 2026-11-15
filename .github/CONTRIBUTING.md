@@ -47,7 +47,7 @@ goimgtools/
 ├── steps.go         operations by name (RegisterOperation, Do), hooks (Around), ParseColor
 ├── input.go         opening and reading inputs, error classification
 ├── text.go          text input
-├── animate.go       animated GIF
+├── animate.go       animations: GIF to GIF or WebP, frame counts
 ├── example_test.go  runnable examples for the documentation
 │
 ├── pipeline/        public package: the pixel stream (Source), memory budget, working storage, components for extensions
@@ -65,6 +65,7 @@ goimgtools/
 | `internal/pngstream`, `jpegstream`, `gifstream`, `bmpstream`, `tiffstream` | streaming decoders and encoders |
 | `internal/webpstream` | streaming WebP decoder |
 | `internal/vp8enc`, `internal/vp8lenc` | lossy and lossless WebP encoders |
+| `internal/webpanim` | animated WebP writer |
 | `internal/resize` | streaming resize, block-average shrinking, kernels |
 | `internal/ops` | crop, flatten, composite, rotate and flip, extend, trim, rotate by any angle, grayscale, modulate, blur, sharpen |
 | `internal/textsrc` | text layout and rendering, font lookup |

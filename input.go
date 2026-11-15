@@ -170,6 +170,18 @@ func (in *input) readerAtAfter(env *pipeline.Env, head []byte) (io.ReaderAt, int
 	return in.ra, in.size, nil
 }
 
+// rewind gives random access to the input (as readerAt) and starts its
+// front-to-back reading over from the beginning, for an input of which
+// nothing has been read front to back but what was peeked at.
+func (in *input) rewind(env *pipeline.Env) (io.ReaderAt, int64, error) {
+	ra, size, err := in.readerAt(env)
+	if err != nil {
+		return nil, 0, err
+	}
+	in.br = bufio.NewReaderSize(io.NewSectionReader(ra, 0, size), 64<<10)
+	return ra, size, nil
+}
+
 func (in *input) Close() error {
 	if in.spill != nil {
 		in.spill.Close()

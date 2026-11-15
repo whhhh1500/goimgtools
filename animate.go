@@ -7,34 +7,53 @@ import (
 	"image"
 	"image/color"
 	"io"
+	"math"
 	"time"
 
 	"github.com/whhhh1500/goimgtools/internal/gifstream"
+	"github.com/whhhh1500/goimgtools/internal/pngstream"
+	"github.com/whhhh1500/goimgtools/internal/webpanim"
+	"github.com/whhhh1500/goimgtools/internal/webpstream"
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
 // Animated makes the chain apply to every frame of an animated GIF and
-// write an animated GIF. Without it only the first frame is used. It takes
-// effect when the input is a GIF and the output is a GIF; otherwise it is
-// ignored.
+// write an animated GIF or WebP. Without it only the first frame is used.
+// A still image passes unchanged. An animation that cannot be kept fails
+// with an error wrapping errors.ErrUnsupported: a GIF to another output
+// format, and an animated WebP or PNG (APNG), whose frames are not
+// processed one by one (without Animated their first frame is used).
 //
 // Each frame is drawn onto the full picture first (GIF frames often hold
 // only the part that changed), then goes through the chain as a complete
-// image. The frames are written with one palette chosen for all of them
-// together (GIFOptions.Colors and NoDither apply; an animation of no more
-// colours than that keeps them exactly), and every frame after the first
-// as the rectangle that changed, with the pixels that stay as they were
-// left transparent: the file holds only what moves. A frame in which
-// pixels turn transparent is written whole, on a cleared picture.
+// image.
 //
-// For that every frame is processed before the first is written. The
-// frames are kept in working storage (a temporary file beyond the memory
-// share), and the input is read twice (a plain reader is copied to working
-// storage first): once to count the frames, once to process them. Memory
-// does not grow with the number of frames; choosing the palette takes
-// some 4 to 5MB of it. GIFOptions{FixedPalette: true} writes every frame
-// whole with the fixed palette instead, as it goes: nothing is stored but
-// the picture so far.
+// A WebP holds the first frame whole and every later one as the rectangle
+// that changed; a frame that changes nothing lengthens the one before.
+// WebPOptions apply to every frame (lossy or lossless, Quality, Effort);
+// lossless frames without transparency leave the unchanged pixels of their
+// rectangle transparent, blended onto the picture. The frames are encoded
+// as they come: what is kept is the frame before and this one (in working
+// storage) and the frames written so far (in a spill buffer). Frames shown
+// for 10ms or less are written as 100ms, as browsers show them, and the
+// GIF's loop count becomes a WebP's (a GIF says how often it repeats, a
+// WebP how often it plays), as gif2webp converts them.
+//
+// A GIF is written with one palette chosen for all the frames together
+// (GIFOptions.Colors and NoDither apply; an animation of no more colours
+// than that keeps them exactly), and every frame after the first as the
+// rectangle that changed, with the pixels that stay as they were left
+// transparent: the file holds only what moves. A frame in which pixels
+// turn transparent is written whole, on a cleared picture.
+//
+// For that every frame is processed before the first GIF frame is
+// written. The frames are kept in working storage (a temporary file beyond
+// the memory share), and the input is read twice (a plain reader is copied
+// to working storage first): once to count the frames, once to process
+// them. Memory does not grow with the number of frames; choosing the
+// palette takes some 4 to 5MB of it. GIFOptions{FixedPalette: true} writes
+// every frame whole with the fixed palette instead, as it goes: nothing is
+// stored but the picture so far.
 //
 // Time grows with the frames: every frame costs as much as a still image
 // of that size. So LimitInputPixels counts the pixels of all frames
@@ -53,14 +72,17 @@ type Frames struct {
 	Duration time.Duration
 	// LoopCount is how often an animation plays: 0 for ever, n > 0 for n
 	// times, -1 when the file does not say (viewers then play it once).
+	// A GIF states how often it repeats after the first time through:
+	// LoopCount is one more.
 	LoopCount int
 }
 
 // Frames goes through the input and reports how many frames it has and how
-// long they play. Only a GIF can have more than one.
+// long they play. A GIF, a WebP and a PNG (APNG) can have more than one.
 //
 // Unlike Metadata it reads the whole file, since a GIF does not say in its
-// header how many frames follow; the pixels are stepped over, not decoded,
+// header how many frames follow, and an APNG and a WebP state the length
+// of each frame with the frame; the pixels are stepped over, not decoded,
 // so it costs the reading and little else. It does not depend on Animated.
 func (m *Image) Frames() (fr Frames, err error) {
 	defer guard(&err)
@@ -72,13 +94,23 @@ func (m *Image) Frames() (fr Frames, err error) {
 		return Frames{}, err
 	}
 	if format != "gif" {
-		// A still image, once its header says that it is an image at all.
-		src, err := m.decode(m.newEnv(), f, format)
+		env := m.newEnv()
+		fr, err := f.otherFrames(format, env)
+		if err != nil {
+			f.Close()
+			return Frames{}, err
+		}
+		// A still image, or the first frame, once its header says that it
+		// is an image at all.
+		src, err := m.decode(env, f, format)
 		if err != nil {
 			return Frames{}, err
 		}
 		src.Close()
 		f.Close()
+		if fr.Count > 1 {
+			return fr, nil
+		}
 		return Frames{Count: 1}, nil
 	}
 	defer f.Close()
@@ -88,6 +120,9 @@ func (m *Image) Frames() (fr Frames, err error) {
 	}
 	defer anim.Close()
 	fr.LoopCount = anim.Config().LoopCount
+	if fr.LoopCount > 0 {
+		fr.LoopCount++ // the first time through and the repeats
+	}
 	for {
 		if m.ctx != nil {
 			if err := m.ctx.Err(); err != nil {
@@ -109,6 +144,87 @@ func (m *Image) Frames() (fr Frames, err error) {
 		return Frames{}, fmt.Errorf("%w: the GIF has no frames", ErrFormat)
 	}
 	return fr, nil
+}
+
+// otherFrames reads what an animated WebP or PNG (APNG) says of its
+// frames: a Count of 0 for a still image or another format. It leaves the
+// input to be read again from the start.
+func (in *input) otherFrames(format string, env *pipeline.Env) (Frames, error) {
+	if format != "webp" && format != "png" {
+		return Frames{}, nil
+	}
+	ra, size, err := in.rewind(env)
+	if err != nil {
+		return Frames{}, in.classify(err)
+	}
+	if format == "webp" {
+		a, err := webpstream.ReadAnimation(ra, size)
+		return Frames{Count: a.Frames, Duration: a.Duration, LoopCount: a.LoopCount}, in.classify(err)
+	}
+	a, err := pngstream.ReadAnimation(ra, size)
+	return Frames{Count: a.Frames, Duration: a.Duration, LoopCount: a.LoopCount}, in.classify(err)
+}
+
+// keepsAnimation reports whether Animated can run the chain over the
+// frames of input format into output format.
+func keepsAnimation(input, output string) bool {
+	return input == "gif" && (output == "gif" || output == "webp")
+}
+
+// refuseAnimation fails when Animated asks for the frames of input format
+// in output format and the input really is an animation, which then
+// could not be kept: a still image passes, and so its first frame would.
+// It leaves the input to be read again from the start.
+func (m *Image) refuseAnimation(f *input, input, output string, env *pipeline.Env) error {
+	var n int
+	switch input {
+	case "gif":
+		ra, size, err := f.rewind(env)
+		if err != nil {
+			return f.classify(err)
+		}
+		if n, err = gifFrames(io.NewSectionReader(ra, 0, size), env, 2); err != nil {
+			return f.classify(err)
+		}
+	case "webp", "png":
+		fr, err := f.otherFrames(input, env)
+		if err != nil {
+			return err
+		}
+		n = fr.Count
+	}
+	if n <= 1 {
+		return nil
+	}
+	name := map[string]string{"gif": "an animated GIF", "webp": "an animated WebP", "png": "an animated PNG (APNG)"}[input]
+	if input == "gif" {
+		return fmt.Errorf("goimgtools: the input is %s and %s output cannot hold an animation (GIF and WebP output can); without Animated its first frame is used: %w",
+			name, output, errors.ErrUnsupported)
+	}
+	return fmt.Errorf("goimgtools: the input is %s, whose frames cannot be processed one by one (only an animated GIF's can); without Animated its first frame is used: %w",
+		name, errors.ErrUnsupported)
+}
+
+// gifFrames counts the frames of the GIF r, stopping at most.
+func gifFrames(r io.Reader, env *pipeline.Env, most int) (int, error) {
+	anim, err := gifstream.OpenAnimation(bufio.NewReaderSize(r, 64<<10), env)
+	if err != nil {
+		return 0, err
+	}
+	defer anim.Close()
+	n := 0
+	for n < most {
+		fr, _, err := anim.NextFrame()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return 0, err
+		}
+		fr.Close() // unread: its data is stepped over
+		n++
+	}
+	return n, nil
 }
 
 // GIF disposal methods.
@@ -269,20 +385,30 @@ func (s *canvasSource) Next() (image.Image, error) {
 	return &out, nil
 }
 
-// writeAnimated runs the chain over every frame of the animated GIF in f.
-func (m *Image) writeAnimated(w io.Writer, f *input, env *pipeline.Env) error {
-	g, err := optionsOf[GIFOptions](m.options, "gif")
-	if err != nil {
-		return err
+// writeAnimated runs the chain over every frame of the animated GIF in f
+// and writes them as an animated GIF or WebP (format).
+func (m *Image) writeAnimated(w io.Writer, f *input, env *pipeline.Env, format string) error {
+	var g GIFOptions
+	var wo WebPOptions
+	var err error
+	fixed := false
+	if format == "webp" {
+		if wo, err = optionsOf[WebPOptions](m.options, "webp"); err != nil {
+			return err
+		}
+	} else {
+		if g, err = optionsOf[GIFOptions](m.options, "gif"); err != nil {
+			return err
+		}
+		if g.Colors < 0 || g.Colors > 256 {
+			return errors.New("goimgtools: GIF colours must be 1 to 256")
+		}
+		// One colour is no choice to make; the fixed palette handles it.
+		fixed = g.FixedPalette || g.Colors == 1
 	}
-	if g.Colors < 0 || g.Colors > 256 {
-		return errors.New("goimgtools: GIF colours must be 1 to 256")
-	}
-	// One colour is no choice to make; the fixed palette handles it.
-	fixed := g.FixedPalette || g.Colors == 1
 	r := io.Reader(f.br)
 	frames := 0
-	if !fixed {
+	if format == "gif" && !fixed {
 		// The palette is chosen for all frames, so their number is needed
 		// before the first is read: the input is read twice.
 		ra, size, err := f.readerAt(env)
@@ -313,12 +439,34 @@ func (m *Image) writeAnimated(w io.Writer, f *input, env *pipeline.Env) error {
 	defer cv.close()
 	seq := &frameSeq{m: m, f: f, anim: anim, cv: cv, env: env, w: cfg.Width, h: cfg.Height}
 	defer seq.close()
+	if format == "webp" {
+		return webpanim.Encode(w, env, webpanim.Options{
+			LoopCount: webpLoopCount(cfg.LoopCount), Lossless: wo.Lossless, Quality: wo.Quality, Effort: wo.Effort,
+		}, func() (pipeline.Source, int, error) {
+			src, delay, err := seq.next()
+			return src, 10 * delay, err // hundredths of a second to milliseconds
+		})
+	}
 	if fixed {
 		return m.writeFixedFrames(w, seq, cfg.LoopCount, g)
 	}
 	return gifstream.EncodeAnimation(w, env, gifstream.AnimOptions{
 		Frames: frames, LoopCount: cfg.LoopCount, Colors: g.Colors, NoDither: g.NoDither,
 	}, seq.next)
+}
+
+// webpLoopCount is how often a WebP animation plays that is to play as a
+// GIF does whose looping extension says n (-1 when it has none): a GIF
+// states how often it repeats after the first time through, a WebP how
+// often it plays, as gif2webp converts it.
+func webpLoopCount(n int) int {
+	switch {
+	case n < 0:
+		return 1
+	case n == 0:
+		return 0
+	}
+	return min(n+1, math.MaxUint16)
 }
 
 // countFrames counts the frames of the animated GIF r, against the limit

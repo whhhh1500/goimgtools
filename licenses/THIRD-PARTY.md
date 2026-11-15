@@ -66,6 +66,11 @@ see the section above and `LICENSE-LIBJPEG-TURBO`). The port works on this
 package's blocks and reads its bit costs from the standard Huffman tables;
 nothing of the original file is included unchanged.
 
+`internal/jpegstream/qtables.go` holds the nine quantization tables of
+mozjpeg's `jcparam.c` (`std_luminance_quant_tbl`,
+`std_chrominance_quant_tbl`), generated from that file, under the same
+licences.
+
 ## Pillow
 
 `internal/ops/blur.go` contains Go ports of two routines of Pillow 12.1.1,
@@ -108,6 +113,12 @@ is written from the format specifications (RFC 6386, RFC 9649). It uses
 libwebp's colour conversion constants and its mapping from quality to
 quantizer, so that files look the same in either decoder, and was checked
 against libwebp's output.
+
+`internal/webpanim` writes animated WebP files from the container
+specification. How a GIF's frame delays and loop count become a WebP's
+(10ms or less shown as 100ms; a finite loop count plus one; no looping
+extension as one play) follows libwebp's `examples/gif2webp.c`; no code
+of it is included.
 
 ## Acknowledgements (no code taken)
 

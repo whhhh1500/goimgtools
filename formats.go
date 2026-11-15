@@ -165,7 +165,7 @@ var builtin = []*formatDef{
 				return fmt.Errorf("goimgtools: JPEG quality must be 1 to 100, got %d", q)
 			}
 			return jpegstream.Encode(w, src, &jpegstream.Options{Quality: q, Exif: o.Exif, ICC: o.ICC,
-				Optimize: jo.Optimize, Progressive: jo.Progressive, Trellis: jo.Trellis})
+				Optimize: jo.Optimize, Progressive: jo.Progressive, Trellis: jo.Trellis, QuantTable: jo.QuantTable})
 		},
 		quality: func(options any) (int, bool) {
 			jo, _ := optionsOf[JPEGOptions](options, "jpeg")

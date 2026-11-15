@@ -15,6 +15,7 @@ import (
 
 	"github.com/whhhh1500/goimgtools/internal/iccprof"
 	"github.com/whhhh1500/goimgtools/internal/ops"
+	"github.com/whhhh1500/goimgtools/internal/pngstream"
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
@@ -187,6 +188,19 @@ type JPEGOptions struct {
 	// changes the pixels (plain rounding is the most faithful choice, not
 	// the smallest). It goes with either of them.
 	Trellis bool
+	// QuantTable picks the quantization tables, 0 to 8, numbered as in
+	// mozjpeg's -quant-table. 0 (the default) is the tables of the JPEG
+	// standard, which the standard library uses. 3, mozjpeg's default
+	// (N. Robidoux's, from ImageMagick), quantizes the finest detail more
+	// coarsely and colour more finely: on photographs, at the same file
+	// size, colour comes out closer to the original (the file is 2 to 15%
+	// smaller at the same PSNR) and fine detail in brightness about as
+	// close (0 to 2% larger at the same luma SSIM). A JPEG saved again at
+	// the quality it was made with keeps closest to itself with 0, since
+	// that is most likely what it was made with. The others: 1 flat, 2
+	// tuned for MS-SSIM, 4 tuned for PSNR-HVS, 5 to 8 from studies of
+	// human vision.
+	QuantTable int
 }
 
 // JPEG selects JPEG output. quality is 1–100; 0 means the default, 80.
@@ -202,13 +216,16 @@ func (m *Image) JPEG(quality int, opts ...JPEGOptions) *Image {
 }
 
 // DefaultPNGLevel is the compression level of PNG output when PNGOptions
-// does not set one. It is 7, not the 6 of the standard library, because
-// Go's level 6 finds far fewer repeats than zlib's: at 7 smooth images
-// (gradients, skies, graphics) come out about five times smaller and
-// photos 4 to 25% smaller, in a similar time for small images and up to
-// 70% longer for large photos (24 megapixels). Level 6 or below gives the
-// standard library's speed.
-const DefaultPNGLevel = 7
+// does not set one: 7 in a program built with Go 1.27 or later, 6 (the
+// standard library's) with Go 1.26.
+//
+// Go 1.27 rewrote compress/flate; its level 6 finds far fewer repeats than
+// zlib's: at 7 smooth images (gradients, skies, graphics) come out about
+// five times smaller and photos 4 to 25% smaller, in a similar time for
+// small images and up to 70% longer for large photos (24 megapixels).
+// Level 6 or below gives the standard library's speed. With Go 1.26 level
+// 7 is only 1 to 1.5% smaller than 6 and takes half as long again.
+const DefaultPNGLevel = pngstream.DefaultLevel
 
 // PNGOptions are the optional settings of PNG.
 type PNGOptions struct {
@@ -297,11 +314,19 @@ func (m *Image) write(w io.Writer, ext string) (err error) {
 		f.Close()
 		return err
 	}
-	if m.animated && inFormat == "gif" && format == "gif" {
+	if m.animated && keepsAnimation(inFormat, format) {
 		defer f.Close()
-		return m.writeAnimated(w, f, m.newEnv())
+		return m.writeAnimated(w, f, m.newEnv(), format)
 	}
-	src, closer, inFormat, meta, err := m.buildFrom(nil, f, inFormat, false)
+	var env *pipeline.Env
+	if m.animated {
+		env = m.newEnv()
+		if err := m.refuseAnimation(f, inFormat, format, env); err != nil {
+			f.Close()
+			return err
+		}
+	}
+	src, closer, inFormat, meta, err := m.buildFrom(env, true, f, inFormat, false)
 	if err != nil {
 		return err
 	}

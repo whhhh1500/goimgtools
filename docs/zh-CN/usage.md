@@ -56,7 +56,7 @@ err := goimgtools.Open("in.jpg").
 | `Sharpen(SharpenOptions{Sigma, Amount, Threshold})` | 反锐化掩模（Pillow 的 `UnsharpMask`），`Amount` 默认为 1.5 |
 | `Flatten(color)` | 去除透明，铺底色 |
 | `Composite(overlay, CompositeOptions{...})` | 图像叠加 / 水印（见[水印](#水印)） |
-| `Animated()` | 处理 GIF 动画的每一帧并输出动画（输入与输出均为 GIF 时生效）。所有帧共用一套按画面内容选取的调色板（`GIFOptions` 的 `Colors`、`NoDither` 依然有效；颜色数不超过该值时原样保留），自第二帧起仅存储变化的部分（见[压缩](compression.md)） |
+| `Animated()` | 处理 GIF 动画的每一帧并输出 GIF 或 WebP 动画。静态图像不受影响；无法保留的动画（GIF 输出为其他格式；WebP 动画与 APNG 不逐帧处理）返回包装了 `errors.ErrUnsupported` 的错误。WebP 第一帧完整存储，之后各帧仅存储变化的矩形区域。GIF 的所有帧共用一套按画面内容选取的调色板（`GIFOptions` 的 `Colors`、`NoDither` 依然有效；颜色数不超过该值时原样保留），自第二帧起仅存储变化的部分（见[压缩](compression.md)） |
 | `Pixels(fn)` | 自定义逐像素操作：`fn` 逐条带接收 8 位 NRGBA 数据并原地修改（见[扩展](extending.md)） |
 | `Pipe(op)` | 在链的当前位置插入任意自定义操作（见[扩展](extending.md)） |
 | `Apply(steps...)` | 将一组步骤写为函数，在链的中间调用 |
@@ -77,7 +77,7 @@ err := goimgtools.Open("in.jpg").
 
 | 方法 | 说明 |
 |---|---|
-| `JPEG(quality, JPEGOptions{Optimize, Progressive})` | 质量 1–100，0 表示 80。两个选项可在像素不变的前提下减小文件（见[压缩](compression.md)） |
+| `JPEG(quality, JPEGOptions{Optimize, Progressive, Trellis, QuantTable})` | 质量 1–100，0 表示 80。`Optimize`、`Progressive` 在像素不变的前提下减小文件；`Trellis`、`QuantTable`（0–8，编号同 mozjpeg 的 `-quant-table`）会改变像素（见[压缩](compression.md)） |
 | `PNG(PNGOptions{CompressionLevel, Colors, NoDither})` | 压缩级别 1（最快）至 9（最小）；`Colors` 将颜色减至最多 256 色（见[压缩](compression.md)） |
 | `WebP(WebPOptions{Quality, Lossless, Effort})` | 有损（质量 1–100，默认 75）或无损（`Effort` 1 最快至 9 最小，默认 5） |
 | `GIF(GIFOptions{Colors, NoDither, FixedPalette})` | 最多 256 色，按图像内容选取；`FixedPalette` 改用标准库的固定调色板 |
@@ -234,7 +234,7 @@ goimgtools.Text("第一行\n第二行 Mixed", goimgtools.TextOptions{
 
 | 命令行 | 库 | 说明 |
 |---|---|---|
-| `goimgtools info 文件...` | `img.Metadata()`、`img.Frames()` | 每个文件输出一行：格式、宽高、颜色类型与位深、像素数、文件大小、GIF 动画的帧数与时长、EXIF 方向、是否含 ICC / EXIF。加 `-json` 时每个文件输出一行 JSON |
+| `goimgtools info 文件...` | `img.Metadata()`、`img.Frames()` | 每个文件输出一行：格式、宽高、颜色类型与位深、像素数、文件大小、动画（GIF、WebP、APNG）的帧数与时长、EXIF 方向、是否含 ICC / EXIF。加 `-json` 时每个文件输出一行 JSON |
 | `goimgtools check 文件...` | `inspect.Verify(img)` | 完整解码一遍，报告损坏、截断或并非图像的文件。`info` 仅读取文件头，无法发现文件后半部分的损坏 |
 | `goimgtools compare a b` | `inspect.Compare(a, b)` | 逐像素比较两幅图像，格式不同亦可：给出是否完全相同；若不同，则给出 PSNR（越高越接近，40 以上肉眼难以分辨）、最大差值及差异像素数。`-min-psnr 35` 可用作质量门槛：未达到时以非零状态退出 |
 | `goimgtools stats 文件...` | `inspect.Stats(img)` | 遍历全部像素：平均色、亮度、面积占比最大的几种颜色、是否实为灰度图像、是否确有透明像素、颜色数（不超过 256 种时）。可用于选取占位色、决定使用深色或浅色文字、判断能否存储为灰度或调色板图像 |

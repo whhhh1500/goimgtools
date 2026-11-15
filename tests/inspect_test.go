@@ -197,8 +197,9 @@ func TestFrames(t *testing.T) {
 	}
 	anim := buf.Bytes()
 	fr, err := FromBytes(anim).Frames()
-	// Six frames with delays of 10, 20, 5, 7, 30 and 1 hundredths.
-	if err != nil || fr.Count != 6 || fr.Duration != 730*time.Millisecond || fr.LoopCount != 3 {
+	// Six frames with delays of 10, 20, 5, 7, 30 and 1 hundredths; the
+	// file repeats it 3 times, so it plays 4 times.
+	if err != nil || fr.Count != 6 || fr.Duration != 730*time.Millisecond || fr.LoopCount != 4 {
 		t.Errorf("animation: %+v, %v", fr, err)
 	}
 	// With or without Animated, and the recipe plays no part.

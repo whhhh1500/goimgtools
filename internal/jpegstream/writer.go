@@ -68,35 +68,6 @@ const (
 	nQuantIndex
 )
 
-// unscaledQuant are the unscaled quantization tables in zig-zag order. Each
-// encoder copies and scales the tables according to its quality parameter.
-// The values are derived from section K.1 of the spec, after converting from
-// natural to zig-zag order.
-var unscaledQuant = [nQuantIndex][blockSize]byte{
-	// Luminance.
-	{
-		16, 11, 12, 14, 12, 10, 16, 14,
-		13, 14, 18, 17, 16, 19, 24, 40,
-		26, 24, 22, 22, 24, 49, 35, 37,
-		29, 40, 58, 51, 61, 60, 57, 51,
-		56, 55, 64, 72, 92, 78, 64, 68,
-		87, 69, 55, 56, 80, 109, 81, 87,
-		95, 98, 103, 104, 103, 62, 77, 113,
-		121, 112, 100, 120, 92, 101, 103, 99,
-	},
-	// Chrominance.
-	{
-		17, 18, 18, 24, 21, 24, 47, 26,
-		26, 47, 99, 66, 56, 66, 99, 99,
-		99, 99, 99, 99, 99, 99, 99, 99,
-		99, 99, 99, 99, 99, 99, 99, 99,
-		99, 99, 99, 99, 99, 99, 99, 99,
-		99, 99, 99, 99, 99, 99, 99, 99,
-		99, 99, 99, 99, 99, 99, 99, 99,
-		99, 99, 99, 99, 99, 99, 99, 99,
-	},
-}
-
 type huffIndex int
 
 const (
@@ -899,6 +870,10 @@ type Options struct {
 	// smaller file at about the same look, with other pixels than plain
 	// rounding.
 	Trellis bool
+	// QuantTable picks the quantization tables, 0 to NQuantTables-1, as
+	// mozjpeg's -quant-table does (see qtables.go). 0, the tables of the
+	// JPEG standard, is what the standard library uses.
+	QuantTable int
 }
 
 // Encode writes src to w in JPEG 4:2:0 baseline format, producing the same
@@ -944,6 +919,13 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 			quality = 100
 		}
 	}
+	table := 0
+	if o != nil {
+		table = o.QuantTable
+	}
+	if table < 0 || table >= NQuantTables {
+		return fmt.Errorf("goimgtools: JPEG quantization table must be 0 to %d, got %d", NQuantTables-1, table)
+	}
 	// Convert from a quality rating to a scaling factor.
 	var scale int
 	if quality < 50 {
@@ -954,7 +936,7 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 	// Initialize the quantization tables.
 	for i := range e.quant {
 		for j := range e.quant[i] {
-			x := int(unscaledQuant[i][j])
+			x := int(baseQuant[table][i][unzig[j]])
 			x = (x*scale + 50) / 100
 			if x < 1 {
 				x = 1

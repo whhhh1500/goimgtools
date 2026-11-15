@@ -20,8 +20,8 @@ English | [中文](README.zh-CN.md)
 
 - **Bounded memory**: a 64MB limit by default, configurable with `MemoryLimit`. Steps that depend on the whole image (rotation, progressive JPEG, colour reduction and others) move staged data to temporary files when it exceeds its share; every buffer that grows with image size counts against the limit, and exceeding it returns `ErrMemoryLimit`. Suited to memory-constrained servers and containers and to high-concurrency image services.
 - **Operations**: resize (6 interpolation kernels, 5 fit modes), crop, rotation by any angle, flip, trim and extend, flatten, grayscale, colour modulation, Gaussian blur, sharpening (including unsharp masking); image and text watermarks (nine-point positioning, proportional scaling, rotation, tiling, opacity); text rendering (per-character font fallback, stroke, shadow).
-- **Formats**: reading and writing JPEG, PNG, WebP (lossy and lossless), GIF (including animation), BMP and TIFF; ICC colour profiles are preserved by default or converted to sRGB; EXIF is optionally preserved.
-- **Compression**: JPEG Huffman table optimization, progressive encoding and trellis quantization; PNG colour reduction with an adaptive palette; lossy WebP with spatial noise shaping (2.4% smaller than libwebp's default settings at equal SSIM on 7 photographs); quality selection for a target file size; inter-frame differencing for animated GIFs.
+- **Formats**: reading and writing JPEG, PNG, WebP (lossy and lossless), GIF, BMP and TIFF; animated GIF to animated GIF or WebP, and the first frame of an animated WebP or PNG (APNG); ICC colour profiles are preserved by default or converted to sRGB; EXIF is optionally preserved.
+- **Compression**: JPEG Huffman table optimization, progressive encoding, trellis quantization and mozjpeg's quantization tables; PNG colour reduction with an adaptive palette; lossy WebP with spatial noise shaping (2.4% smaller than libwebp's default settings at equal SSIM on 7 photographs); quality selection for a target file size; inter-frame differencing for animated GIF and WebP (a photographic animated GIF as lossy WebP: 33% smaller than with libwebp's animation encoder at equal PSNR).
 - **Parallelism**: `Threads(n)` enables multi-core processing, with output byte-for-byte identical to a single thread.
 - **Robustness**: panics during a run are returned as errors; input and output pixel counts are bounded; `context` cancellation is supported; continuously fuzz-tested.
 - **Extensibility**: custom operations, input sources, file formats and interpolation filters; operations registered by name; hooks that modify built-in behaviour; command-line programs that include custom operations.
@@ -85,9 +85,9 @@ goimgtools batch -resize 1920x1920 -no-enlarge -quality 80 -format jpeg in_dir o
 
 | Format | Read | Write | Reading method |
 |---|---|---|---|
-| PNG | ✓ | ✓ | Row-by-row streaming; interlaced (Adam7) images are staged pass by pass, then emitted row by row |
+| PNG | ✓ (APNG: the default image) | ✓ | Row-by-row streaming; interlaced (Adam7) images are staged pass by pass, then emitted row by row |
 | JPEG | ✓ | ✓ | Baseline: row-by-row streaming; progressive: DCT coefficients are staged and rows reconstructed after the final scan |
-| WebP | ✓ | ✓ (lossy, lossless) | Lossy: streaming by macroblock row; lossless: only the maximum back-reference window defined by the format (about 4.2MB) is retained |
+| WebP | ✓ (animation: the first frame) | ✓ (lossy, lossless, animation) | Lossy: streaming by macroblock row; lossless: only the maximum back-reference window defined by the format (about 4.2MB) is retained |
 | GIF | ✓ (including animation) | ✓ (including animation) | Row-by-row streaming; interlaced images handled as for PNG |
 | BMP | ✓ | ✓ | Rows read by file offset |
 | TIFF | ✓ | ✓ | Row-by-row streaming decompression |
@@ -100,7 +100,7 @@ Staged data is kept in memory up to 1/8 of the memory limit (8MB by default); be
 - EXIF in TIFF files is neither read nor written (ICC profiles are).
 - Lookup-table (A2B0 and similar) and grayscale colour profiles are not converted to sRGB; they are written unchanged, including to GIF and BMP.
 - Entropy decoding in JPEG is sequential, and the IDCT and colour conversion are not yet parallelized; with many threads this is the slowest stage when shrinking JPEGs.
-- Animation is supported for GIF only. Identical consecutive frames are not merged (each is still stored, at a few dozen bytes); gifsicle's lossy LZW (`--lossy`) is not implemented.
+- Animations are processed from animated GIF input only (written as GIF or WebP); the frames of an animated WebP or APNG are not processed one by one (`Animated()` reports `errors.ErrUnsupported`; without it the first frame is read). In GIF output, identical consecutive frames are not merged (each is still stored, at a few dozen bytes); gifsicle's lossy LZW (`--lossy`) is not implemented.
 - Contrast, gamma, levels and inversion are not built in; each takes a few lines with `Pixels` (see the grayscale example in [Extending](docs/extending.md)). Filters that depend on neighbouring pixels (median, emboss, edge detection and others) are implemented as `Pipe` stages.
 - GIF, BMP and TIFF encoding is single-threaded; LZ77 matching and the second pass of lossless WebP are sequential, so multiple threads speed it up by only 10–20%.
 - JPEG trellis quantization estimates code lengths from the standard Huffman tables (mozjpeg first collects statistics for the whole image): this library processes strips as a stream and does not retain the coefficients of the whole image for this purpose.

@@ -85,6 +85,9 @@ type source struct {
 	started  bool
 	closed   bool
 	err      error
+	// frame is where the image lies on the canvas, for the first frame of
+	// an animation.
+	frame image.Rectangle
 
 	// A lossy image.
 	lossy bool
@@ -111,8 +114,9 @@ type source struct {
 // call to Next.
 //
 // It fails wherever golang.org/x/image/webp.Decode fails (some failures only
-// show up in Next), and for animated images, which have no still-image chunk,
-// with the same "webp: invalid format" error.
+// show up in Next). An animated image, which golang.org/x/image/webp does
+// not read, gives its first frame as it appears on the canvas: the frame at
+// its place, the rest of the canvas transparent.
 func Open(r io.ReaderAt, size int64, env *pipeline.Env) (pipeline.Source, error) {
 	if env == nil {
 		env = pipeline.NewEnv(0, "")
@@ -179,65 +183,23 @@ func Open(r io.ReaderAt, size int64, env *pipeline.Env) (pipeline.Source, error)
 				return nil, errInvalidFormat
 			}
 			wantAlpha = false
-			// Read the Pre-processing | Filter | Compression byte.
-			if avail == 0 {
-				return nil, errInvalidFormat
-			}
-			if _, err := r.ReadAt(buf[:1], pos); err != nil {
+			if err := s.alph(r, pos, chunkLen, avail, int(widthMinusOne)+1, int(heightMinusOne)+1); err != nil {
 				return nil, err
 			}
-			w, h := int64(widthMinusOne)+1, int64(heightMinusOne)+1
-			switch buf[0] & 0x03 {
-			case 0:
-				if avail-1 < w*h {
-					return nil, io.ErrUnexpectedEOF
-				}
-			case 1:
-				if widthMinusOne > 0x3fff || heightMinusOne > 0x3fff {
-					return nil, errInvalidFormat
-				}
-			default:
-				return nil, errInvalidFormat
-			}
-			// golang.org/x/image/webp skips to the end of the chunk next,
-			// which fails if the input ends inside it.
-			if avail < int64(chunkLen) {
-				return nil, errShortChunkData
-			}
-			s.hasAlpha = true
-			s.alphaFlags = buf[0]
-			s.alphaOff, s.alphaEnd = pos+1, pos+int64(chunkLen)
 
 		case "VP8 ":
-			if wantAlpha || int32(chunkLen) < 0 {
+			if wantAlpha {
 				return nil, errInvalidFormat
 			}
-			vd := vp8.NewDecoder(r, pos, int(min(avail, int64(chunkLen))))
-			fh, err := vd.DecodeFrameHeader()
-			if err != nil {
+			var want image.Point
+			if seenVP8X {
+				want = image.Pt(int(widthMinusOne)+1, int(heightMinusOne)+1)
+			}
+			if err := s.vp8(r, pos, chunkLen, avail, want); err != nil {
 				return nil, err
-			}
-			if seenVP8X && (fh.Width != int(widthMinusOne)+1 || fh.Height != int(heightMinusOne)+1) {
-				return nil, errInvalidFormat
-			}
-			// The decoder reads the whole chunk.
-			if avail < int64(chunkLen) {
-				return nil, io.ErrUnexpectedEOF
-			}
-			if !fh.KeyFrame {
-				return nil, errors.New("vp8: Golden / AltRef frames are not implemented")
-			}
-			if fh.Width == 0 || fh.Height == 0 {
-				return nil, errEmpty
 			}
 			if seenVP8X && vp8xFlags&(flagEXIF|flagICC) != 0 {
 				s.scanMeta(r, pos+int64(chunkLen)+int64(chunkLen&1), min(size, pos+int64(totalLen)))
-			}
-			s.vd, s.lossy = vd, true
-			s.bounds = image.Rect(0, 0, fh.Width, fh.Height)
-			s.model = color.YCbCrModel
-			if s.hasAlpha {
-				s.model = color.NYCbCrAModel
 			}
 			return s, nil
 
@@ -245,25 +207,35 @@ func Open(r io.ReaderAt, size int64, env *pipeline.Env) (pipeline.Source, error)
 			if s.hasAlpha {
 				return nil, errInvalidFormat
 			}
-			ld := vp8l.NewDecoder(r, pos, pos+avail, env)
-			w, h, err := ld.DecodeHeader()
-			if err != nil {
-				if seenVP8X && err == io.ErrUnexpectedEOF {
-					err = errInvalidFormat
-				}
-				return nil, err
+			var want image.Point
+			if seenVP8X {
+				want = image.Pt(int(widthMinusOne)+1, int(heightMinusOne)+1)
 			}
-			if seenVP8X && (w != int(widthMinusOne)+1 || h != int(heightMinusOne)+1) {
-				// A small VP8X header followed by a huge VP8L chunk.
-				return nil, errInvalidFormat
+			if err := s.vp8l(r, pos, avail, want); err != nil {
+				return nil, err
 			}
 			if seenVP8X && vp8xFlags&(flagEXIF|flagICC) != 0 {
 				s.scanMeta(r, pos+int64(chunkLen)+int64(chunkLen&1), min(size, pos+int64(totalLen)))
 			}
-			s.ld = ld
-			s.bounds = image.Rect(0, 0, w, h)
-			s.model = color.NRGBAModel
 			return s, nil
+
+		case "ANMF":
+			if avail < int64(chunkLen) {
+				return nil, errShortChunkData
+			}
+			if !seenVP8X || vp8xFlags&flagAnim == 0 {
+				// Not an animation: skipped, as any unknown chunk.
+				break
+			}
+			// The first frame of an animation, shown as the still image.
+			canvas := image.Rect(0, 0, int(widthMinusOne)+1, int(heightMinusOne)+1)
+			if err := s.openFrame(r, pos, chunkLen, canvas); err != nil {
+				return nil, err
+			}
+			if vp8xFlags&(flagEXIF|flagICC) != 0 {
+				s.scanMeta(r, pos+int64(chunkLen)+int64(chunkLen&1), min(size, pos+int64(totalLen)))
+			}
+			return s.onCanvas(canvas), nil
 
 		case "VP8X":
 			if seenVP8X {
@@ -324,6 +296,94 @@ func Open(r io.ReaderAt, size int64, env *pipeline.Env) (pipeline.Source, error)
 func (s *source) Bounds() image.Rectangle { return s.bounds }
 func (s *source) ColorModel() color.Model { return s.model }
 func (s *source) Env() *pipeline.Env      { return s.env }
+
+// alph records the ALPH chunk at pos (chunkLen bytes, avail of them in the
+// input): the alpha plane of the w x h lossy image that follows.
+func (s *source) alph(r io.ReaderAt, pos int64, chunkLen uint32, avail int64, w, h int) error {
+	// Read the Pre-processing | Filter | Compression byte.
+	if avail == 0 {
+		return errInvalidFormat
+	}
+	var b [1]byte
+	if _, err := r.ReadAt(b[:], pos); err != nil {
+		return err
+	}
+	switch b[0] & 0x03 {
+	case 0:
+		if avail-1 < int64(w)*int64(h) {
+			return io.ErrUnexpectedEOF
+		}
+	case 1:
+		if w > 0x4000 || h > 0x4000 {
+			return errInvalidFormat
+		}
+	default:
+		return errInvalidFormat
+	}
+	// golang.org/x/image/webp skips to the end of the chunk next, which
+	// fails if the input ends inside it.
+	if avail < int64(chunkLen) {
+		return errShortChunkData
+	}
+	s.hasAlpha = true
+	s.alphaFlags = b[0]
+	s.alphaOff, s.alphaEnd = pos+1, pos+int64(chunkLen)
+	return nil
+}
+
+// vp8 takes the VP8 chunk at pos as the image. want is the size it must
+// have (from a VP8X or ANMF header); zero when nothing says.
+func (s *source) vp8(r io.ReaderAt, pos int64, chunkLen uint32, avail int64, want image.Point) error {
+	if int32(chunkLen) < 0 {
+		return errInvalidFormat
+	}
+	vd := vp8.NewDecoder(r, pos, int(min(avail, int64(chunkLen))))
+	fh, err := vd.DecodeFrameHeader()
+	if err != nil {
+		return err
+	}
+	if want != (image.Point{}) && (fh.Width != want.X || fh.Height != want.Y) {
+		return errInvalidFormat
+	}
+	// The decoder reads the whole chunk.
+	if avail < int64(chunkLen) {
+		return io.ErrUnexpectedEOF
+	}
+	if !fh.KeyFrame {
+		return errors.New("vp8: Golden / AltRef frames are not implemented")
+	}
+	if fh.Width == 0 || fh.Height == 0 {
+		return errEmpty
+	}
+	s.vd, s.lossy = vd, true
+	s.bounds = image.Rect(0, 0, fh.Width, fh.Height)
+	s.model = color.YCbCrModel
+	if s.hasAlpha {
+		s.model = color.NYCbCrAModel
+	}
+	return nil
+}
+
+// vp8l takes the VP8L chunk at pos (avail bytes of it in the input) as the
+// image; want is as for vp8.
+func (s *source) vp8l(r io.ReaderAt, pos, avail int64, want image.Point) error {
+	ld := vp8l.NewDecoder(r, pos, pos+avail, s.env)
+	w, h, err := ld.DecodeHeader()
+	if err != nil {
+		if want != (image.Point{}) && err == io.ErrUnexpectedEOF {
+			err = errInvalidFormat
+		}
+		return err
+	}
+	if want != (image.Point{}) && (w != want.X || h != want.Y) {
+		// A small header followed by a huge VP8L chunk.
+		return errInvalidFormat
+	}
+	s.ld = ld
+	s.bounds = image.Rect(0, 0, w, h)
+	s.model = color.NRGBAModel
+	return nil
+}
 
 // Opaque reports whether the image is known to have no transparency: a
 // lossy image without an alpha chunk.

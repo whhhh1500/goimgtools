@@ -79,12 +79,13 @@ goimgtools -trim 10 -resize 1200x -extend 20,20,20,20 -background white -sharpen
 | `-quality N` | JPEG 或有损 WebP 的质量 |
 | `-jpeg-optimize`、`-jpeg-progressive` | JPEG：优化编码表；渐进式编码（文件更小，像素不变） |
 | `-jpeg-trellis` | JPEG：网格量化（同等观感下文件更小，像素会改变；可与上述两项同时使用） |
+| `-jpeg-quant-table N` | JPEG：量化表 0–8，编号与 mozjpeg 的 `-quant-table` 一致；默认 0 为标准表，3 为 mozjpeg 的默认表（见[压缩](compression.md)） |
 | `-png-colors N`、`-no-dither` | PNG：减至 N 色（2–256）；关闭抖动 |
 | `-max-size 大小` | 文件大小不超过此值（`200KB`、`1.5MB` 或字节数），自动降低质量 |
 | `-skip-larger` | 结果不小于原文件（同格式）时保留原文件；适用于仅做压缩的任务 |
 | `-webp-lossless` | 无损 WebP |
 | `-png-level N`、`-gif-colors N`、`-gif-fixed-palette`、`-tiff-compression none\|deflate` | 各格式专用选项 |
-| `-animated` | 处理 GIF 动画的每一帧；`-gif-colors`、`-no-dither` 同样适用 |
+| `-animated` | 处理 GIF 动画的每一帧，按输出格式写为 GIF 或 WebP 动画；`-gif-colors`、`-no-dither` 适用于 GIF，WebP 的选项适用于 WebP。输出为其他格式，或输入为 WebP 动画、APNG 时报错 |
 | `-op NAME[:ARG,ARG...]` | 按名称执行操作（`goimgtools ops` 列出全部操作，包括内置操作与程序注册的操作）；可多次指定，按指定顺序在锐化之后执行 |
 | `-keep-exif`、`-strip-icc` | 元数据 |
 | `-srgb` | 依据色彩配置将颜色转换至 sRGB，输出不含配置（转为 GIF、BMP 时自动执行） |

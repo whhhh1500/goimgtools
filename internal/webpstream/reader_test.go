@@ -289,27 +289,143 @@ func chunk(id string, data []byte) []byte {
 	return b
 }
 
-// TestAnimated checks that an animated file fails as it does in
-// golang.org/x/image/webp.
+// animated builds an animated WebP of a canvas w x h whose frames are the
+// image chunks of the still files (their ALPH, VP8 and VP8L chunks), at
+// the given places, each shown for 70ms; then an EXIF chunk.
+func animated(t testing.TB, w, h, loop int, stills [][]byte, at []image.Point) []byte {
+	vp8x := make([]byte, 10)
+	vp8x[0] = flagAnim | flagEXIF
+	put24 := func(b []byte, v int) { b[0], b[1], b[2] = byte(v), byte(v>>8), byte(v>>16) }
+	put24(vp8x[4:], w-1)
+	put24(vp8x[7:], h-1)
+	anim := make([]byte, 6)
+	binary.LittleEndian.PutUint16(anim[4:], uint16(loop))
+	body := append([]byte("WEBP"), chunk("VP8X", vp8x)...)
+	body = append(body, chunk("ANIM", anim)...)
+	for i, still := range stills {
+		cfg, err := webp.DecodeConfig(bytes.NewReader(still))
+		if err != nil {
+			t.Fatal(err)
+		}
+		hdr := make([]byte, 16)
+		put24(hdr[0:], at[i].X/2)
+		put24(hdr[3:], at[i].Y/2)
+		put24(hdr[6:], cfg.Width-1)
+		put24(hdr[9:], cfg.Height-1)
+		put24(hdr[12:], 70)
+		hdr[15] = 2 // no blending
+		ids, bodies := chunks(t, still)
+		for j, id := range ids {
+			if id == "ALPH" || id == "VP8 " || id == "VP8L" {
+				hdr = append(hdr, chunk(id, bodies[j])...)
+			}
+		}
+		body = append(body, chunk("ANMF", hdr)...)
+	}
+	body = append(body, chunk("EXIF", []byte("II*\x00\x08\x00\x00\x00\x00\x00"))...)
+	return chunk("RIFF", body)
+}
+
+// TestAnimated: an animated file gives its first frame, as the canvas shows
+// it: a frame covering the canvas decodes as the still file does, a smaller
+// one is put at its place on a transparent canvas.
 func TestAnimated(t *testing.T) {
 	files := testFiles(t)
-	frame := files["blue-purple-pink.lossy.webp"][12:] // The "VP8 " chunk.
-	vp8x := make([]byte, 10)
-	vp8x[0] = 1 << 1 // The animation flag.
-	vp8x[4], vp8x[7] = 151, 199
-	anmf := append(make([]byte, 16), frame...)
-	body := append([]byte("WEBP"), chunk("VP8X", vp8x)...)
-	body = append(body, chunk("ANIM", make([]byte, 6))...)
-	body = append(body, chunk("ANMF", anmf)...)
-	data := chunk("RIFF", body)
+	setBandRows(t, 16)
+	for _, name := range []string{"blue-purple-pink.lossy.webp", "yellow_rose.lossy-with-alpha.webp", "gopher-doc.with-alpha.lossless.webp"} {
+		still := files[name]
+		want, err, _ := reference(still)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b := want.Bounds()
+		second := files["tux.lossless.webp"]
 
-	_, werr := webp.Decode(bytes.NewReader(data))
-	if werr == nil {
-		t.Fatal("golang.org/x/image/webp decodes the animated file")
+		// The whole canvas: the same pixels, of the same kind.
+		data := animated(t, b.Dx(), b.Dy(), 3, [][]byte{still, still}, []image.Point{{}, {}})
+		got, err := stream(t, data, pipeline.NewEnv(0, t.TempDir()))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if d := diff(got, want); d != "" {
+			t.Errorf("%s on its own canvas: %s", name, d)
+		}
+		a, err := ReadAnimation(bytes.NewReader(data), int64(len(data)))
+		if err != nil || a != (Animation{Frames: 2, Duration: 140 * time.Millisecond, LoopCount: 3, Width: b.Dx(), Height: b.Dy()}) {
+			t.Errorf("%s: ReadAnimation %+v, %v", name, a, err)
+		}
+
+		// On a larger canvas, followed by a frame that is not shown.
+		at := image.Pt(6, 34)
+		data = animated(t, b.Dx()+10, b.Dy()+60, 0, [][]byte{still, second}, []image.Point{at, {}})
+		src, err := Open(bytes.NewReader(data), int64(len(data)), pipeline.NewEnv(0, t.TempDir()))
+		if err != nil {
+			t.Fatalf("%s at %v: %v", name, at, err)
+		}
+		if pipeline.MetaOf(src).Exif == nil {
+			t.Errorf("%s: the EXIF chunk after the frames is not read", name)
+		}
+		if pipeline.IsOpaque(src) {
+			t.Errorf("%s: a canvas with transparent borders counts as opaque", name)
+		}
+		got, err = pipeline.Collect(src)
+		src.Close()
+		if err != nil {
+			t.Fatalf("%s at %v: %v", name, at, err)
+		}
+		ref, err := Open(bytes.NewReader(still), int64(len(still)), pipeline.NewEnv(0, t.TempDir()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		frame, err := pipeline.Collect(pipeline.Map(FullRange(ref), func(*image.NRGBA) error { return nil }))
+		ref.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		g, ok := got.(*image.NRGBA)
+		if !ok || g.Rect != image.Rect(0, 0, b.Dx()+10, b.Dy()+60) {
+			t.Fatalf("%s at %v: %T %v", name, at, got, got.Bounds())
+		}
+		f := frame.(*image.NRGBA)
+		for y := 0; y < g.Rect.Dy(); y++ {
+			for x := 0; x < g.Rect.Dx(); x++ {
+				var want [4]byte
+				if p := image.Pt(x, y).Sub(at); p.In(f.Rect) {
+					copy(want[:], f.Pix[f.PixOffset(p.X, p.Y):])
+				}
+				if px := g.Pix[g.PixOffset(x, y):][:4]; !bytes.Equal(px, want[:]) {
+					t.Fatalf("%s at %v: pixel (%d, %d) is %v, want %v", name, at, x, y, px, want)
+				}
+			}
+		}
 	}
-	_, gerr := Open(bytes.NewReader(data), int64(len(data)), pipeline.NewEnv(0, t.TempDir()))
-	if gerr == nil || gerr.Error() != werr.Error() {
-		t.Errorf("Open: %v, want %v", gerr, werr)
+
+	// A frame that does not fit, and one that holds no image.
+	still := files["tux.lossless.webp"]
+	cfg, _ := webp.DecodeConfig(bytes.NewReader(still))
+	beyond := animated(t, cfg.Width, cfg.Height, 0, [][]byte{still}, []image.Point{{2, 0}})
+	if _, err := stream(t, beyond, pipeline.NewEnv(0, t.TempDir())); err != errInvalidFormat {
+		t.Errorf("frame beyond the canvas: %v, want %v", err, errInvalidFormat)
+	}
+	empty := animated(t, cfg.Width, cfg.Height, 0, nil, nil)
+	ids, bodies := chunks(t, empty)
+	body := []byte("WEBP")
+	for i, id := range ids {
+		body = append(body, chunk(id, bodies[i])...)
+		if id == "ANIM" {
+			body = append(body, chunk("ANMF", append(make([]byte, 16), chunk("XMP ", nil)...))...)
+		}
+	}
+	if _, err := stream(t, chunk("RIFF", body), pipeline.NewEnv(0, t.TempDir())); err != errInvalidFormat {
+		t.Errorf("frame without an image: %v, want %v", err, errInvalidFormat)
+	}
+	// Every truncation of the first frame fails cleanly. (The EXIF chunk
+	// after it, 18 bytes, is not needed.)
+	data := animated(t, cfg.Width, cfg.Height, 0, [][]byte{still}, []image.Point{{}})
+	for n := 0; n < len(data)-18; n += 7 {
+		if _, err := stream(t, data[:n], pipeline.NewEnv(0, t.TempDir())); err == nil {
+			t.Fatalf("truncated to %d bytes: no error", n)
+		}
 	}
 }
 

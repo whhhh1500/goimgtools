@@ -13,15 +13,19 @@ English | [中文](zh-CN/CHANGELOG.md)
 - `ToSRGB()` / `-srgb`: converts colours to sRGB using the colour profile. GIF and BMP output, which cannot carry a profile, is converted automatically.
 - Colour profiles in WebP and TIFF files (read and write); EXIF in WebP files.
 - `JPEGOptions.Trellis` / `-jpeg-trellis`: trellis quantization, following mozjpeg.
+- `JPEGOptions.QuantTable` / `-jpeg-quant-table`: mozjpeg's nine quantization tables, numbered as its `-quant-table`; 0, the default, is the JPEG standard's.
+- Animated WebP output: `Animated()` with WebP output writes an animated GIF as an animated WebP (lossy or lossless), storing only the rectangle that changed in each frame.
+- Animated WebP input: read as its first frame (previously rejected as an unreadable image). `Frames` counts the frames of animated WebP and PNG (APNG) files; `info` shows them.
 - `CompositeOptions.WidthRatio` / `HeightRatio`: watermark size as a fraction of the base image; `-watermark-width N%`.
 - Lossy WebP: segments with individual quantizers (spatial noise shaping, ported from libwebp).
 - `pipeline.Env.SetHelpers`, `Helpers`, `Parallel` and `Go`, allowing stages to distribute their work across cores.
 
 ### Changed
 
-- The minimum Go version is 1.26 (0.1.0 required 1.27). PNG files written with Go 1.26 and Go 1.27 differ in their bytes but not in their pixels, as Go 1.27 rewrote `compress/flate`.
+- The minimum Go version is 1.26 (0.1.0 required 1.27). PNG files written with Go 1.26 and Go 1.27 differ in their bytes but not in their pixels, as Go 1.27 rewrote `compress/flate`. With Go 1.26 the default PNG level is 6 (see below).
+- `Animated()` no longer ignores an animation it cannot keep: a GIF to an output format other than GIF and WebP, or an animated WebP or APNG input, returns an error wrapping `errors.ErrUnsupported` instead of writing the first frame. A still image passes as before.
 - `Threads(n)` now extends to the number of CPUs (previously capped at 3). From 4 threads upwards, resizing, blurring, sharpening, modulation, rotation, and JPEG, PNG and lossy WebP encoding distribute their work across cores. Output is byte-for-byte identical for any number of threads.
-- The default PNG compression level is now 7 (previously 6, the standard library's default): Go's level 6 finds few repeated sequences, whereas level 7 produces files about 5 times smaller for gradients and icons and 4–25% smaller for photographs.
+- The default PNG compression level is now 7 with Go 1.27 (previously 6, the standard library's default; with Go 1.26 it stays 6, where level 7 gains only 1–1.5% and takes half as long again): Go 1.27's level 6 finds few repeated sequences, whereas level 7 produces files about 5 times smaller for gradients and icons and 4–25% smaller for photographs.
 - PNG data is compressed in 256KB blocks (as in pigz), allowing multiple cores to share the work. When the image data fits within a single block, the file is identical to that of previous versions.
 - Animated GIF output: a single palette is chosen for all frames (`GIFOptions.Colors` and `NoDither` now apply to animations), and frames after the first store only the changed rectangle. `GIFOptions{FixedPalette: true}` continues to write full frames with the fixed palette, frame by frame. The pixel limit is checked before any frame is processed. `NoDither` also applies with `FixedPalette`.
 - Lossy WebP files are about 15% smaller at the same quality setting (segments); at equal SSIM they are 2.4% smaller than libwebp 1.6.
@@ -31,6 +35,7 @@ English | [中文](zh-CN/CHANGELOG.md)
 ### Fixed
 
 - A panic in an operation could leave the chain's input open, retaining memory budget and temporary files.
+- `Frames().LoopCount` of a GIF was its repeat count, one less than the number of times it plays, which is what the field documents.
 
 ## 0.1.0 (2026-11-14)
 

@@ -13,15 +13,19 @@
 - `ToSRGB()` / `-srgb`：依据色彩配置将颜色转换至 sRGB。GIF、BMP 无法附带色彩配置，输出时自动转换。
 - WebP、TIFF 支持读写色彩配置；WebP 支持读写 EXIF。
 - `JPEGOptions.Trellis` / `-jpeg-trellis`：网格量化（采用 mozjpeg 的方法）。
+- `JPEGOptions.QuantTable` / `-jpeg-quant-table`：mozjpeg 的 9 套量化表，编号与其 `-quant-table` 一致；默认 0 为 JPEG 标准表。
+- WebP 动画输出：`Animated()` 且输出为 WebP 时，将 GIF 动画写为 WebP 动画（有损或无损），每帧仅存储变化的矩形区域。
+- WebP 动画输入：读取其第一帧（此前作为无法读取的图像拒绝）。`Frames` 可统计 WebP 动画与 PNG 动画（APNG）的帧数，`info` 一并显示。
 - `CompositeOptions.WidthRatio` / `HeightRatio`：按底图的比例确定水印尺寸；`-watermark-width N%`。
 - 有损 WebP 分段量化：各段使用独立的量化级别（移植自 libwebp 的空间噪声整形）。
 - `pipeline.Env.SetHelpers`、`Helpers`、`Parallel`、`Go`：供处理环节将工作分摊至多个核。
 
 ### 变更
 
-- 最低 Go 版本降为 1.26（0.1.0 要求 1.27）。Go 1.27 重写了 `compress/flate`，因此 Go 1.26 与 Go 1.27 写出的 PNG 文件字节不同，像素相同。
+- 最低 Go 版本降为 1.26（0.1.0 要求 1.27）。Go 1.27 重写了 `compress/flate`，因此 Go 1.26 与 Go 1.27 写出的 PNG 文件字节不同，像素相同。Go 1.26 下 PNG 默认级别为 6（见下文）。
+- `Animated()` 不再忽略无法保留的动画：GIF 输出为 GIF、WebP 以外的格式，或输入为 WebP 动画、APNG 时，返回包装了 `errors.ErrUnsupported` 的错误，而不是写出第一帧。静态图像不受影响。
 - `Threads(n)` 的上限由 3 改为 CPU 核数。自 4 线程起，缩放、模糊、锐化、色彩调整、旋转以及 JPEG、PNG、有损 WebP 编码将工作分摊至多个核。输出与线程数无关，逐字节一致。
-- PNG 默认压缩级别由 6（标准库的默认值）改为 7：Go 的 6 级查找重复数据的能力较弱，7 级在渐变、图标类图像上约小 5 倍，照片小 4–25%。
+- Go 1.27 下 PNG 默认压缩级别由 6（标准库的默认值）改为 7（Go 1.26 下仍为 6：该版本 7 级仅小 1–1.5%，耗时多一半）：Go 1.27 的 6 级查找重复数据的能力较弱，7 级在渐变、图标类图像上约小 5 倍，照片小 4–25%。
 - PNG 按 256KB 分块压缩（与 pigz 的做法相同），因而可由多核分摊。图像数据不超过一块时，文件与此前版本相同。
 - GIF 动画输出：所有帧共用一套按画面内容选取的调色板（`GIFOptions` 的 `Colors`、`NoDither` 对动画生效），自第二帧起仅存储变化的矩形区域。`GIFOptions{FixedPalette: true}` 仍使用固定调色板逐帧写出整帧。在处理任何一帧之前即检查像素上限。`FixedPalette` 下亦可使用 `NoDither`。
 - 有损 WebP：同一质量设置下文件约小 15%（分段量化）；同等 SSIM 下比 libwebp 1.6 小 2.4%。
@@ -31,6 +35,7 @@
 ### 修复
 
 - 操作中发生 panic 时，处理链的输入可能未被关闭，继续占用内存预算与临时文件。
+- GIF 的 `Frames().LoopCount` 此前为其重复次数，比字段文档所述的播放次数少 1。
 
 ## 0.1.0（2026-11-14）
 

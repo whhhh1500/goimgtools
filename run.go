@@ -56,7 +56,7 @@ func (m *Image) build(env *pipeline.Env, sizeOnly bool) (pipeline.Source, io.Clo
 	if err != nil {
 		return nil, nil, "", pipeline.Meta{}, err
 	}
-	return m.buildFrom(env, f, format, sizeOnly)
+	return m.buildFrom(env, env == nil, f, format, sizeOnly)
 }
 
 // openInput opens the input and recognises its format.
@@ -121,11 +121,11 @@ func (m *Image) decode(env *pipeline.Env, f *input, format string) (pipeline.Sou
 }
 
 // buildFrom assembles the pipeline over an opened input, which it closes
-// when it fails.
-func (m *Image) buildFrom(env *pipeline.Env, f *input, format string, sizeOnly bool) (pipeline.Source, io.Closer, string, pipeline.Meta, error) {
+// when it fails. top is false for an overlay, whose env is the parent's; a
+// top-level image may be given its env too.
+func (m *Image) buildFrom(env *pipeline.Env, top bool, f *input, format string, sizeOnly bool) (pipeline.Source, io.Closer, string, pipeline.Meta, error) {
 	var none pipeline.Meta
-	top := env == nil
-	if top {
+	if env == nil {
 		env = m.newEnv()
 	}
 	src, err := m.decode(env, f, format)

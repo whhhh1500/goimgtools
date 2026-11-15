@@ -2,6 +2,7 @@ package tests
 
 import (
 	"bytes"
+	"errors"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -263,6 +264,85 @@ func TestPNGColors(t *testing.T) {
 	for _, bad := range []int{1, 257, -4} {
 		if _, err := FromBytes(in).PNG(PNGOptions{Colors: bad}).ToBytes(); err == nil {
 			t.Errorf("%d colours accepted", bad)
+		}
+	}
+}
+
+// dqt returns the quantization tables of a JPEG file, by table number, in
+// the zig-zag order they are stored in.
+func dqt(t *testing.T, b []byte) map[int][]byte {
+	tables := map[int][]byte{}
+	for i := 2; i+4 <= len(b) && b[i] == 0xff; {
+		marker, n := b[i+1], int(b[i+2])<<8|int(b[i+3])
+		if marker == 0xda {
+			break
+		}
+		if marker == 0xdb {
+			for seg := b[i+4 : i+2+n]; len(seg) >= 65; seg = seg[65:] {
+				if seg[0]>>4 != 0 {
+					t.Fatal("16-bit quantization table")
+				}
+				tables[int(seg[0]&15)] = seg[1:65]
+			}
+		}
+		i += 2 + n
+	}
+	return tables
+}
+
+// TestJPEGQuantTables: table 0 is the standard library's file, table 3
+// stores N. Robidoux's table (mozjpeg's default) scaled by the quality,
+// every table gives a readable file, and a table that does not exist is
+// refused.
+func TestJPEGQuantTables(t *testing.T) {
+	src := photoLike(200, 120)
+	std, err := FromImage(src).JPEG(75).ToBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if t0, err := FromImage(src).JPEG(75, JPEGOptions{QuantTable: 0}).ToBytes(); err != nil || !bytes.Equal(t0, std) {
+		t.Errorf("table 0 is not the default file: %v", err)
+	}
+	// Quality 50 scales the table by 100%, quality 75 by 50%; the values
+	// are stored in zig-zag order and limited to 255.
+	robidoux := []int{
+		16, 16, 16, 16, 17, 16, 18, 20, 20, 18, 25, 27, 24, 27, 25, 37,
+		34, 31, 31, 34, 37, 56, 40, 43, 40, 43, 40, 56, 85, 53, 62, 53,
+		53, 62, 53, 85, 75, 91, 74, 69, 74, 91, 75, 135, 106, 94, 94, 106,
+		135, 156, 131, 124, 131, 156, 189, 169, 169, 189, 238, 226, 238, 311, 311, 418,
+	}
+	for _, c := range []struct{ q, scale int }{{50, 100}, {75, 50}} {
+		b, err := FromImage(src).JPEG(c.q, JPEGOptions{QuantTable: 3}).ToBytes()
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := make([]byte, 64)
+		for i, v := range robidoux {
+			want[i] = byte(min((v*c.scale+50)/100, 255))
+		}
+		tables := dqt(t, b)
+		if !bytes.Equal(tables[0], want) || !bytes.Equal(tables[1], want) {
+			t.Errorf("table 3 at quality %d: luma %v, chroma %v, want %v", c.q, tables[0], tables[1], want)
+		}
+	}
+	for n := range 9 {
+		for _, o := range []JPEGOptions{{QuantTable: n}, {QuantTable: n, Progressive: true, Trellis: true}} {
+			b, err := FromImage(src).JPEG(80, o).ToBytes()
+			if err != nil {
+				t.Fatalf("table %d: %v", n, err)
+			}
+			m, err := jpeg.Decode(bytes.NewReader(b))
+			if err != nil {
+				t.Fatalf("table %d %+v: %v", n, o, err)
+			}
+			if p, _, _ := psnrOf(src, m); p < 30 {
+				t.Errorf("table %d %+v: PSNR %.1f", n, o, p)
+			}
+		}
+	}
+	for _, n := range []int{-1, 9} {
+		if _, err := FromImage(src).JPEG(80, JPEGOptions{QuantTable: n}).ToBytes(); err == nil || errors.Is(err, ErrFormat) {
+			t.Errorf("table %d: %v", n, err)
 		}
 	}
 }

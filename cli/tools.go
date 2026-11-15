@@ -59,7 +59,7 @@ func describe(file string) fileInfo {
 	if st, err := os.Stat(file); err == nil {
 		out.Bytes = st.Size()
 	}
-	if m.Format == "gif" { // the one format with frames: count them
+	if m.Format == "gif" || m.Format == "webp" || m.Format == "png" { // the formats with frames: count them
 		fr, err := img.Frames()
 		if err != nil {
 			out.Error = err.Error()

@@ -73,6 +73,15 @@ func seedFiles(tb testing.TB) [][]byte {
 	if err := gif.EncodeAll(&anim, testAnimation(20, 14)); err == nil {
 		out = append(out, anim.Bytes())
 	}
+	// An animated WebP (a lossless frame at an offset, then a lossy one
+	// with alpha) and an APNG.
+	m := testutil.Images(12, 8)["nrgba"]
+	lossless, err1 := FromImage(m).WebP(WebPOptions{Lossless: true}).ToBytes()
+	lossy, err2 := FromImage(testutil.Images(6, 4)["nrgba"]).WebP().ToBytes()
+	p, err3 := FromImage(m).PNG().ToBytes()
+	if err1 == nil && err2 == nil && err3 == nil {
+		out = append(out, webpAnimation(tb, 16, 12, 2, [][]byte{lossless, lossy}, []image.Point{{2, 2}, {0, 0}}, []int{50, 80}), apng(tb, p, 0))
+	}
 	return out
 }
 
@@ -107,6 +116,11 @@ func FuzzDecode(f *testing.F) {
 	dir := f.TempDir()
 	f.Fuzz(func(t *testing.T, data []byte) {
 		m := FromBytes(data).LimitInputPixels(1 << 20)
+		if fr, err := m.Frames(); err == nil && fr.Count < 1 {
+			t.Fatalf("Frames: %+v", fr)
+		} else {
+			fuzzFail(t, "Frames", err)
+		}
 		info, err := m.Metadata()
 		fuzzFail(t, "Metadata", err)
 		env := pipeline.NewEnv(8<<20, dir)
@@ -254,7 +268,7 @@ func FuzzChain(f *testing.F) {
 		}
 		switch pick(23, 12) {
 		case 0:
-			m.JPEG(1+int(w%100), JPEGOptions{Trellis: bit(12)})
+			m.JPEG(1+int(w%100), JPEGOptions{Trellis: bit(12), QuantTable: int(h % 9)})
 		case 1:
 			m.JPEG(1+int(w%100), JPEGOptions{Progressive: true})
 		case 2:
@@ -266,7 +280,11 @@ func FuzzChain(f *testing.F) {
 		case 5:
 			m.GIF(GIFOptions{Colors: 1 + int(h%256), NoDither: bit(27)})
 		case 6:
-			m.Animated().GIF()
+			if bit(26) {
+				m.Animated().WebP(WebPOptions{Lossless: bit(27), Quality: 1 + int(w%100)})
+			} else {
+				m.Animated().GIF()
+			}
 		case 7:
 			m.BMP()
 		case 8:

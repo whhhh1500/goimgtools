@@ -2,6 +2,7 @@ package tests
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -142,7 +143,8 @@ func TestAnimated(t *testing.T) {
 		}
 	}
 
-	// Without Animated, and for another output format, only the first frame.
+	// Without Animated, only the first frame. With it, an output format
+	// that holds a single picture is refused rather than given that.
 	first, err := FromBytes(in).GIF().ToBytes()
 	if err != nil {
 		t.Fatal(err)
@@ -150,11 +152,30 @@ func TestAnimated(t *testing.T) {
 	if n := len(decodeAll(first).Image); n != 1 {
 		t.Errorf("without Animated: %d frames", n)
 	}
-	p, err := FromBytes(in).Animated().PNG().ToBytes()
+	p, err := FromBytes(in).PNG().ToBytes()
 	if err != nil {
 		t.Fatal(err)
 	}
 	sameImage(t, "png of an animation", decodePNG(t, p), want[0])
+	for _, out := range []*Image{FromBytes(in).Animated().PNG(), FromBytes(in).Animated().JPEG(80), FromReader(bytes.NewReader(in)).Animated().BMP()} {
+		if _, err := out.ToBytes(); !errors.Is(err, errors.ErrUnsupported) || errors.Is(err, ErrFormat) {
+			t.Errorf("animation to a still format: %v", err)
+		}
+	}
+	// One frame is no animation: Animated passes it, from a file or a
+	// plain reader (which is read twice).
+	one := &gif.GIF{Image: g.Image[:1], Delay: g.Delay[:1], Config: g.Config}
+	var ob bytes.Buffer
+	if err := gif.EncodeAll(&ob, one); err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range []*Image{FromBytes(ob.Bytes()), FromReader(bytes.NewReader(ob.Bytes()))} {
+		p, err := m.Animated().PNG().ToBytes()
+		if err != nil {
+			t.Fatalf("one frame: %v", err)
+		}
+		sameImage(t, "one frame", decodePNG(t, p), want[0])
+	}
 	// Animated on a still image changes nothing.
 	still := pngBytes(t, want[0])
 	a, _ := FromBytes(still).Animated().PNG().ToBytes()
