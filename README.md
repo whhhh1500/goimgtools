@@ -1,6 +1,6 @@
 # goimgtools
 
-纯 Go 的图片处理工具：缩放、裁剪、旋转、铺底色、加水印（图片或文字）、转格式 / 压缩。图片按行流过处理链，不整张解到内存里，所以处理几千万像素的大图也只占十来 MB 内存。既是一个 Go 库，也带一个命令行程序。
+纯 Go 的图片处理工具：缩放、裁剪、旋转（任意角度）、去边 / 加边、铺底色、灰度和调色、模糊和锐化、加水印（图片或文字）、转格式 / 压缩。图片按行流过处理链，不整张解到内存里，所以处理几千万像素的大图也只占十来 MB 内存。既是一个 Go 库，也带一个命令行程序。
 
 可以在它上面加自己的东西而不用改它的代码：自己的操作、输入、文件格式、缩放滤镜都有接入口，也可以把 `Image` 嵌入自己的类型来扩充方法（见「扩展」）。
 
@@ -49,7 +49,15 @@ err := goimgtools.Open("in.jpg").
 | `Extract(left, top, w, h)` | 裁剪 |
 | `Rotate()` | 按 EXIF 方向自动转正（没有方向信息时不动） |
 | `Rotate(angle)` | 顺时针旋转，90 的倍数 |
+| `RotateBy(degrees, background)` | 顺时针旋转任意角度（负数逆时针），画布放大到装下整张图，四角填 `background`（`nil` 黑色，`color.Transparent` 透明）；双线性插值。90 的倍数时就是 `Rotate`，不插值 |
 | `Flip()` / `Flop()` | 上下镜像 / 左右镜像 |
+| `Trim(threshold)` | 去掉四周和左上角像素同色的边（红绿蓝透明任一通道差超过 `threshold` 才算不同；10 能吃掉 JPEG 的噪点，与 sharp 相同） |
+| `Extend(top, right, bottom, left, background)` | 四周加边，宽度按 CSS 的上右下左顺序 |
+| `Grayscale()` | 变灰度：Rec. 601 亮度，与 `color.GrayModel` 逐像素相同（Pillow 权重相同、舍入不同，最多差 1）；不透明的图输出单通道灰度文件 |
+| `Modulate(brightness, saturation, hue)` | 亮度、饱和度乘一个系数，色相转若干度，在 LCh 色彩空间里做（sharp 的做法）：`Modulate(1.2, 0.8, 0)` 亮两成、淡一些 |
+| `Blur(sigma)` | 高斯模糊，sigma 大于 0、不超过 1000 像素；Pillow 的 `GaussianBlur` 算法，耗时不随 sigma 变 |
+| `Sharpen()` | 轻度锐化（sharp 的 3×3 卷积核），适合缩小之后用 |
+| `Sharpen(SharpenOptions{Sigma, Amount, Threshold})` | 反锐化掩模（Pillow 的 `UnsharpMask`），`Amount` 默认 1.5 |
 | `Flatten(color)` | 去透明，铺底色 |
 | `Composite(overlay, CompositeOptions{...})` | 叠图 / 水印（见「水印」） |
 | `Animated()` | 处理动图 GIF 的每一帧并输出动图（GIF 进、GIF 出时生效） |
@@ -66,6 +74,8 @@ err := goimgtools.Open("in.jpg").
 - `FastShrinkOnLoad`：JPEG 解码时先缩小（见下文）。
 
 灰度图缩放后仍是灰度图（单通道），不会变成彩色。
+
+模糊、锐化、调色、加边都是一行一行流过去的，内存只多几行（模糊约多 6×sigma 行，反锐化掩模再多 3×sigma 行，超出内存份额时写临时文件）。`Trim` 和 `RotateBy` 要先看完整张图：像素先放进暂存区（超出内存份额时是临时文件），再读一遍；所以链里有 `Trim` 时 `OutputSize` 也要读一遍像素。带透明通道的图在模糊、锐化时按预乘透明度算，透明处的颜色不会渗到旁边。
 
 ### 输出
 
@@ -516,19 +526,29 @@ goimgtools -rotate auto -resize 1536x1536 -no-enlarge -flatten white -watermark 
 goimgtools -watermark-text "© 示例" -font-size 40 -text-color white -stroke-width 2 -watermark-tile -watermark-gap 80,60 -watermark-angle -30 -watermark-opacity 0.3 in.jpg out.webp
 ```
 
-执行顺序固定为：旋转 → 翻转 → 裁剪 → 缩放 → 铺底色 → 水印。
+```bash
+goimgtools -trim 10 -resize 1200x -extend 20,20,20,20 -background white -sharpen mild in.jpg out.jpg
+```
+
+执行顺序固定为：旋转 → 翻转 → 去边 → 裁剪 → 缩放 → 加边 → 灰度 → 调色 → 模糊 → 锐化 → 铺底色 → 水印。
 
 | 选项 | 说明 |
 |---|---|
-| `-rotate auto\|90\|180\|270` | `auto` 按 EXIF 转正 |
+| `-rotate auto\|度数` | `auto` 按 EXIF 转正；数字为顺时针度数，90 的倍数以外的角度画布变大，四角用 `-background` |
 | `-flip` / `-flop` | 上下 / 左右镜像 |
+| `-trim 差值` | 去掉和左上角同色的边，差值 0–255（10 能吃掉 JPEG 噪点） |
 | `-crop X,Y,W,H` | 裁剪 |
 | `-resize WxH` | 目标尺寸；可只写一边（`1536x`、`x1024`） |
 | `-fit` | `inside`（默认）、`cover`、`contain`、`outside`、`fill` |
-| `-background 颜色` | `-fit contain` 补边的颜色 |
+| `-background 颜色` | `-fit contain` 补边、`-extend` 的边、`-rotate` 斜转后四角的颜色：`white`、`black`、`transparent`、`#rrggbb`、`#rrggbbaa` |
 | `-kernel` | `nearest`、`linear`、`cubic`（默认）、`mitchell`、`lanczos2`、`lanczos3` |
 | `-no-enlarge` | 不放大 |
 | `-fast-shrink` | JPEG 缩到一半以下时在解码阶段先缩小 |
+| `-extend T,R,B,L` | 四周加边（像素），颜色用 `-background` |
+| `-grayscale` | 变灰度 |
+| `-modulate B,S,H` | 亮度系数、饱和度系数、色相度数，如 `1.2,0.8,0` |
+| `-blur sigma` | 高斯模糊 |
+| `-sharpen mild\|SIGMA[,AMOUNT[,THRESHOLD]]` | `mild` 轻度锐化；或反锐化掩模（`AMOUNT` 默认 1.5，`THRESHOLD` 默认 0） |
 | `-flatten 颜色` | 铺底色 |
 | `-watermark 文件` / `-watermark-text 文字` | 图片水印 / 文字水印（`\n` 换行） |
 | `-watermark-width N` | 把水印缩到 N 像素宽 |
@@ -669,6 +689,26 @@ Windows 10，Go 1.27.1。「标准库做法」指 `image.Decode` 整张解码 + 
 - 无损 WebP 对 PNG RGB 6000×4000（76.1MB）：输出 51.5MB，峰值 23.7MB，5.24s。
 - 不缩小转 GIF 要 2.0s（峰值 11.8MB）。用固定调色板（`FixedPalette`）时为 4.3s：那条路的找色顺序做了优化，结果与标准库逐字节相同，速度是逐个比较的 3 倍多。
 
+### 调整画面的操作（JPEG 基线 4:2:0 6000×4000，不缩小，输出 JPEG，单线程）
+
+本工具的耗时含解码和编码（什么都不做时 0.60s）；Pillow 一栏是同一台机器上 Pillow 12.1.1 只做这一步的耗时（图已解码在内存里），用来比较算法本身的快慢。
+
+| 操作 | 峰值内存 | 耗时 | 比什么都不做多出 | Pillow 只做这一步 |
+|---|---|---|---|---|
+| 什么都不做 | 6.6MB | 0.60s | — | — |
+| `Grayscale()` | 6.5MB | 0.47s | 反而更快（只编码一个通道） | 0.02s |
+| `Modulate(1.1, 1.3, 20)` | 7.0MB | 1.18s | 0.58s | — |
+| `Blur(2)` | 8.5MB | 1.03s | 0.43s | 0.38s |
+| `Blur(40)` | 15.4MB | 0.93s | 0.33s | 0.38s |
+| `Sharpen()`（轻度） | 7.7MB | 0.88s | 0.28s | 0.24s（Pillow 的 `SHARPEN`，同为 3×3） |
+| `Sharpen(SharpenOptions{Sigma: 2})` | 9.0MB | 1.36s | 0.76s | 0.48s |
+| `Trim(10)` | 7.5MB | 0.71s | 0.11s | — |
+| `Extend(50, 50, 50, 50, white)` | 7.3MB | 0.70s | 0.10s | 0.02s |
+| `RotateBy(30, white)`，输出 7197×6465 | 12.0MB | 1.84s | 1.24s（含多编码的 2200 万像素） | 0.57s |
+
+- 内存上限压到 16MB 时（暂存的行写进临时文件），模糊、锐化、旋转、去边的结果与不限内存时逐像素相同（输出 PNG 比对），耗时多 0–15%，峰值都在 13MB 以内。
+- 没有透明通道的图只算红绿蓝三个通道；模糊的横向一遍把窗口落在行内的部分和行两端分开算，省掉逐像素的边界判断。这两处让 `Blur(2)` 多出的时间从 0.95s 降到 0.43s，结果不变。
+
 ### 灰度图、带透明通道的图、PNG 输出（单线程）
 
 这几类原来多做了无用功，改过之后的前后对比。除灰度图外输出文件逐字节不变；灰度图的输出从彩色文件变成了灰度文件，像素值相同。
@@ -706,7 +746,7 @@ go build -o memprobe.exe ./cmd/memprobe
 ./memprobe.exe std in.png out.jpg 1536 1536 logo.png
 ```
 
-环境变量：`GOIMG_MEM`（上限，MB）、`GOIMG_THREADS`、`GOIMG_FAST=1`、`GOIMG_NORESIZE=1`（不缩小）、`GOIMG_ROTATE=1`（先转 90°）、`GOIMG_LOSSLESS=1`、`GOIMG_JPEG=opt|prog`、`GOIMG_COLORS=N`（PNG 减色）、`GOIMG_MAXSIZE=KB`、`GOIMG_ENLARGE=1`、`GOIMG_TEXT=文字`（平铺文字水印）、`GOIMG_PROF=文件名`（CPU 剖析）、`GOIMG_HEAP=文件名`（内存分配剖析）。
+环境变量：`GOIMG_MEM`（上限，MB）、`GOIMG_ADJUST=gray|modulate|blur:SIGMA|sharpen|usm:SIGMA|trim|extend|rotate:度数`（缩放后再做一项调整）、`GOIMG_THREADS`、`GOIMG_FAST=1`、`GOIMG_NORESIZE=1`（不缩小）、`GOIMG_ROTATE=1`（先转 90°）、`GOIMG_LOSSLESS=1`、`GOIMG_JPEG=opt|prog`、`GOIMG_COLORS=N`（PNG 减色）、`GOIMG_MAXSIZE=KB`、`GOIMG_ENLARGE=1`、`GOIMG_TEXT=文字`（平铺文字水印）、`GOIMG_PROF=文件名`（CPU 剖析）、`GOIMG_HEAP=文件名`（内存分配剖析）。
 
 ## 与标准库的一致性
 
@@ -715,6 +755,8 @@ PNG、JPEG、GIF、BMP、TIFF 的解码和编码，以及默认的缩放，都�
 - 解码：Go 和 `x/image` 自带的 164 个测试图（PNG 85、JPEG 31、TIFF 17、WebP 17、BMP 9、GIF 5）解出的像素与标准解码器相同（WebP 见下）；截断、单字节损坏的文件，标准解码器报错的这里也报错。
 - 缩放：默认算法与 `draw.CatmullRom.Scale` 逐字节相同。灰度图只算一个通道、输出灰度图，数值就是 `x/image` 给出的红绿蓝三个相等通道的值。
 - 编码：JPEG（不加选项时）、PNG（不减色时）、GIF（`FixedPalette` 时，以及动图）与标准库逐字节相同，BMP、TIFF 与 `x/image` 逐字节相同（不带元数据时）。
+- 模糊和反锐化掩模：没有透明通道的图，`Blur` 与 Pillow 12.1.1 的 `GaussianBlur`、`Sharpen(SharpenOptions{...})` 与它的 `UnsharpMask` 逐字节相同（测试里存了 Pillow 生成的参考图，sigma 0.7–40）。算法和定点运算是照 Pillow 的 C 代码移植的。
+- 灰度：与 `color.GrayModel` 逐像素相同。Pillow 的 `convert("L")` 权重相同但舍入不同，约五分之一的像素差 1。
 
 故意不同的地方：
 
@@ -726,6 +768,7 @@ PNG、JPEG、GIF、BMP、TIFF 的解码和编码，以及默认的缩放，都�
 - 尺寸为 0 的 GIF / BMP / WebP 被拒绝；标准库返回一张空图。
 - JPEG 质量超出 1–100 时报错；标准库会悄悄截到范围内。
 - 渐进式 JPEG 的系数按 16 位存，超出范围（只在损坏文件里出现）时报错。
+- **带透明通道的图的模糊、锐化**：按预乘透明度算，透明像素的颜色不会渗进旁边；Pillow 对 RGBA 四个通道各自模糊，透明处的颜色（常是黑色）会让边缘发暗。
 
 WebP 编码器是本模块自己写的，没有标准库可对照，用两种解码器验证：`x/image` 和 libwebp（通过 Python PIL）解出的结果一致，无损编码逐像素还原。与 libwebp 的对比（均为子任务在本机实测）：
 
@@ -737,8 +780,8 @@ WebP 编码器是本模块自己写的，没有标准库可对照，用两种解
 - AVIF、HEIC（决定不做）。
 - TIFF、WebP 输入的 EXIF / ICC 不读；元数据只写进 JPEG、PNG。
 - 动图只支持 GIF；动图输出统一用一套固定的 256 色加抖动，不保留原调色板，也还没用上按图选色。
-- 任意角度旋转整张图（水印可以任意角度）。
-- 颜色调整（灰度、亮度、对比度）没有内置方法，用 `Pixels` 几行就能写（「扩展」里有灰度的例子）；模糊、锐化这类要看相邻像素的滤镜没有内置，要自己写成 `Pipe` 的一环。
+- 对比度、伽马、色阶、反色这类调色没有内置方法，用 `Pixels` 几行就能写（「扩展」里有灰度的例子）；其他要看相邻像素的滤镜（中值、浮雕、边缘检测等）要自己写成 `Pipe` 的一环。
+- 模糊、锐化、调色、任意角度旋转只用一个线程（多线程只用在解码、缩放、编码上）。
 - JPEG 的网格量化（mozjpeg 的做法，同等观感下还能小 5%–10%，但会改变像素）。
 - `MaxFileSize` 只支持 JPEG 和有损 WebP（以及带 `Quality` 的注册格式）。
 
@@ -752,7 +795,7 @@ WebP 编码器是本模块自己写的，没有标准库可对照，用两种解
 
 ## 许可
 
-本项目用 MIT 许可（[LICENSE](LICENSE)）。其中从 Go 标准库和 `golang.org/x/image` 改写的代码沿用其 BSD 许可（[licenses/LICENSE-GO](licenses/LICENSE-GO)）；从 libjpeg 移植的两段沿用其许可（[licenses/LICENSE-LIBJPEG-TURBO](licenses/LICENSE-LIBJPEG-TURBO)）。[licenses/THIRD-PARTY.md](licenses/THIRD-PARTY.md) 逐项列了哪些文件来自哪里。
+本项目用 MIT 许可（[LICENSE](LICENSE)）。其中从 Go 标准库和 `golang.org/x/image` 改写的代码沿用其 BSD 许可（[licenses/LICENSE-GO](licenses/LICENSE-GO)）；从 libjpeg 移植的两段沿用其许可（[licenses/LICENSE-LIBJPEG-TURBO](licenses/LICENSE-LIBJPEG-TURBO)）；从 Pillow 移植的模糊和反锐化掩模沿用其 MIT-CMU 许可（[licenses/LICENSE-PILLOW](licenses/LICENSE-PILLOW)）。[licenses/THIRD-PARTY.md](licenses/THIRD-PARTY.md) 逐项列了哪些文件来自哪里。
 
 ## 目录
 
@@ -762,6 +805,7 @@ WebP 编码器是本模块自己写的，没有标准库可对照，用两种解
 goimgtools/
 ├── goimgtools.go    包说明、Image 类型、三种输入来源、内存 / 线程 / 上限等设置
 ├── operations.go    各个操作的方法和选项（缩放、旋转、裁剪、铺底、叠图）
+├── adjust.go        调整画面和画布的操作：灰度、调色、模糊、锐化、加边、去边、任意角度旋转
 ├── output.go        选输出格式及其选项、MaxFileSize、写出
 ├── run.go           一次执行：打开输入、搭起处理链、Metadata、OutputSize
 ├── chain.go         操作列表和执行顺序的规划
@@ -789,7 +833,7 @@ goimgtools/
 | `internal/webpstream` | WebP 流式解码 |
 | `internal/vp8enc`、`internal/vp8lenc` | WebP 有损、无损编码 |
 | `internal/resize` | 流式缩放、整数倍块平均缩小、缩放算法 |
-| `internal/ops` | 裁剪、铺底色、叠图、旋转翻转、补边 |
+| `internal/ops` | 裁剪、铺底色、叠图、旋转翻转、补边、去边、任意角度旋转、灰度、调色、模糊、锐化 |
 | `internal/textsrc` | 文字排版渲染、字体查找 |
 | `internal/quant` | 减色：按图选调色板、抖动 |
 

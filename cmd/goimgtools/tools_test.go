@@ -313,3 +313,43 @@ func TestStatsHashExif(t *testing.T) {
 		}
 	}
 }
+
+// TestAdjustOptions: the options of the new operations give the file the
+// library gives for the same steps.
+func TestAdjustOptions(t *testing.T) {
+	dir := t.TempDir()
+	in := filepath.Join(dir, "in.png")
+	writePNG(t, in, testutil.Images(120, 80)["nrgba"])
+	cases := []struct {
+		args []string
+		lib  func(*goimgtools.Image) *goimgtools.Image
+	}{
+		{[]string{"-rotate", "30", "-background", "transparent"}, func(m *goimgtools.Image) *goimgtools.Image { return m.RotateBy(30, color.Transparent) }},
+		{[]string{"-rotate", "-90"}, func(m *goimgtools.Image) *goimgtools.Image { return m.Rotate(270) }},
+		{[]string{"-trim", "10", "-extend", "1,2,3,4", "-background", "#ff000080"}, func(m *goimgtools.Image) *goimgtools.Image {
+			return m.Trim(10).Extend(1, 2, 3, 4, color.NRGBA{255, 0, 0, 128})
+		}},
+		{[]string{"-grayscale", "-modulate", "1.2,0.5,30"}, func(m *goimgtools.Image) *goimgtools.Image { return m.Grayscale().Modulate(1.2, 0.5, 30) }},
+		{[]string{"-blur", "2.5", "-sharpen", "mild"}, func(m *goimgtools.Image) *goimgtools.Image { return m.Blur(2.5).Sharpen() }},
+		{[]string{"-sharpen", "2"}, func(m *goimgtools.Image) *goimgtools.Image {
+			return m.Sharpen(goimgtools.SharpenOptions{Sigma: 2})
+		}},
+		{[]string{"-sharpen", "1.5,2,3", "-resize", "60x"}, func(m *goimgtools.Image) *goimgtools.Image {
+			return m.Resize(60, 0).Sharpen(goimgtools.SharpenOptions{Sigma: 1.5, Amount: 2, Threshold: 3})
+		}},
+	}
+	for _, c := range cases {
+		out := filepath.Join(dir, "out.png")
+		if _, _, err := cli(append(c.args, in, out)...); err != nil {
+			t.Fatalf("%v: %v", c.args, err)
+		}
+		got, _ := os.ReadFile(out)
+		want, err := c.lib(goimgtools.Open(in)).PNG().ToBytes()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(got, want) {
+			t.Errorf("%v: another file than the library's", c.args)
+		}
+	}
+}

@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"image/color"
 	"io"
+	"math"
 	"math/rand/v2"
 	"os"
 	"path/filepath"
@@ -49,7 +50,8 @@ With -text and no input file, the text itself is the image:
 
 The output format follows the extension of output (.jpg, .png, .webp, .gif,
 .bmp, .tif) unless -format is given. Operations are applied in this order:
-rotate, flip, flop, crop, resize, flatten, watermark.
+rotate, flip, flop, trim, crop, resize, extend, grayscale, modulate, blur,
+sharpen, flatten, watermark.
 
 options:
 `
@@ -87,17 +89,26 @@ type options struct {
 	mem, threads, maxPixels                        *int
 	skipLarger                                     *bool
 	tmp                                            *string
+	trim, extend, modulate, sharpen                *string
+	grayscale                                      *bool
+	blur                                           *float64
 }
 
 // register defines the shared options on fs.
 func register(fs *flag.FlagSet) *options {
 	return &options{
 		resize:     fs.String("resize", "", "target size `WxH`; either side may be left out (1536x or x1024) to keep proportions"),
-		rotate:     fs.String("rotate", "", "turn the image first: auto (follow the EXIF orientation), 90, 180 or 270 `degrees` clockwise"),
+		rotate:     fs.String("rotate", "", "turn the image first: auto (follow the EXIF orientation), or any number of `degrees` clockwise (90, 180, 270 exactly; other angles enlarge the canvas, with -background in the corners)"),
 		flip:       fs.Bool("flip", false, "mirror top to bottom"),
 		flop:       fs.Bool("flop", false, "mirror left to right"),
 		fit:        fs.String("fit", "inside", "how -resize WxH fits: inside (shrink in proportion), cover (fill and crop), contain (shrink in proportion, pad with -background), outside, fill (stretch)"),
-		bg:         fs.String("background", "black", "`color` of the bars -fit contain adds: white, black or #rrggbb"),
+		bg:         fs.String("background", "black", "`color` of the bars -fit contain adds, the border of -extend and the corners -rotate leaves at other angles: white, black, transparent, #rrggbb or #rrggbbaa"),
+		trim:       fs.String("trim", "", "cut away the edges that are the colour of the top-left pixel, allowing this `difference` 0-255 (10 also catches JPEG noise)"),
+		extend:     fs.String("extend", "", "add a border of `T,R,B,L` pixels in -background"),
+		grayscale:  fs.Bool("grayscale", false, "turn the image into shades of grey"),
+		modulate:   fs.String("modulate", "", "change `B,S,H`: brightness and saturation factors and hue degrees (1.2,0.8,0 is brighter and less vivid)"),
+		blur:       fs.Float64("blur", 0, "Gaussian blur of this `sigma` in pixels (as Pillow's GaussianBlur)"),
+		sharpen:    fs.String("sharpen", "", "sharpen: mild (a quick 3x3 sharpen, good after shrinking), or an unsharp mask `SIGMA[,AMOUNT[,THRESHOLD]]` as Pillow's (amount 1.5, threshold 0 by default)"),
 		kernel:     fs.String("kernel", "cubic", "resize filter: nearest, linear, cubic, mitchell, lanczos2, lanczos3"),
 		noEnlarge:  fs.Bool("no-enlarge", false, "never make the image larger than it is"),
 		fast:       fs.Bool("fast-shrink", false, "let a JPEG reduced to half size or less be shrunk while it is decoded: faster, pixels differ slightly"),
@@ -372,22 +383,33 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 	if *o.stripICC {
 		im.StripICC()
 	}
+	bg, err := parseColor(*o.bg)
+	if err != nil {
+		return nil, fmt.Errorf("-background: %w", err)
+	}
 	switch strings.ToLower(*o.rotate) {
 	case "":
 	case "auto":
 		im.Rotate()
 	default:
-		deg, err := strconv.Atoi(*o.rotate)
-		if err != nil || deg%90 != 0 {
-			return nil, fmt.Errorf("-rotate: want auto, 90, 180 or 270, got %q", *o.rotate)
+		deg, err := strconv.ParseFloat(*o.rotate, 64)
+		if err != nil || math.IsNaN(deg) || math.IsInf(deg, 0) {
+			return nil, fmt.Errorf("-rotate: want auto or a number of degrees, got %q", *o.rotate)
 		}
-		im.Rotate(deg)
+		im.RotateBy(deg, bg)
 	}
 	if *o.flip {
 		im.Flip()
 	}
 	if *o.flop {
 		im.Flop()
+	}
+	if *o.trim != "" {
+		v, err := strconv.ParseFloat(*o.trim, 64)
+		if err != nil || !(v >= 0 && v <= 255) {
+			return nil, fmt.Errorf("-trim: want a difference of 0 to 255, got %q", *o.trim)
+		}
+		im.Trim(v)
 	}
 	if *o.crop != "" {
 		v, err := ints(*o.crop, 4)
@@ -415,12 +437,56 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 		if !ok {
 			return nil, fmt.Errorf("-kernel: unknown filter %q", *o.kernel)
 		}
-		bar, err := parseColor(*o.bg)
-		if err != nil {
-			return nil, fmt.Errorf("-background: %w", err)
-		}
 		im.Resize(w, h, goimgtools.ResizeOptions{Fit: f, WithoutEnlargement: *o.noEnlarge, FastShrinkOnLoad: *o.fast,
-			Background: bar, Kernel: k})
+			Background: bg, Kernel: k})
+	}
+	if *o.extend != "" {
+		v, err := ints(*o.extend, 4)
+		if err != nil {
+			return nil, fmt.Errorf("-extend: %w", err)
+		}
+		im.Extend(v[0], v[1], v[2], v[3], bg)
+	}
+	if *o.grayscale {
+		im.Grayscale()
+	}
+	if *o.modulate != "" {
+		v, err := floats(*o.modulate, 3)
+		if err != nil {
+			return nil, fmt.Errorf("-modulate: %w", err)
+		}
+		im.Modulate(v[0], v[1], v[2])
+	}
+	if *o.blur != 0 {
+		im.Blur(*o.blur)
+	}
+	if *o.sharpen != "" {
+		if strings.EqualFold(*o.sharpen, "mild") {
+			im.Sharpen()
+		} else {
+			parts := strings.Split(*o.sharpen, ",")
+			if len(parts) > 3 {
+				return nil, fmt.Errorf("-sharpen: want mild or SIGMA[,AMOUNT[,THRESHOLD]], got %q", *o.sharpen)
+			}
+			v, err := floats(*o.sharpen, len(parts))
+			if err != nil {
+				return nil, fmt.Errorf("-sharpen: %w", err)
+			}
+			so := goimgtools.SharpenOptions{Sigma: v[0], Amount: 1.5}
+			if len(v) > 1 {
+				so.Amount = v[1]
+			}
+			if len(v) > 2 {
+				if v[2] != math.Trunc(v[2]) {
+					return nil, fmt.Errorf("-sharpen: the threshold is a whole number, got %v", v[2])
+				}
+				so.Threshold = int(v[2])
+			}
+			if so.Sigma == 0 {
+				return nil, errors.New("-sharpen: the sigma must be above 0 (or use -sharpen mild)")
+			}
+			im.Sharpen(so)
+		}
 	}
 	if *o.flatten != "" {
 		c, err := parseColor(*o.flatten)
@@ -588,6 +654,8 @@ func parseColor(s string) (color.Color, error) {
 		return color.White, nil
 	case "black":
 		return color.Black, nil
+	case "transparent", "none":
+		return color.Transparent, nil
 	}
 	h := strings.TrimPrefix(s, "#")
 	if len(h) == 3 {

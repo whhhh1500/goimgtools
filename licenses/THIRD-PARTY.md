@@ -54,6 +54,26 @@ The IJG licence asks, for source derived from the library, that the whole
 not here yet**: it is to be copied unchanged from libjpeg-turbo
 (https://github.com/libjpeg-turbo/libjpeg-turbo) into this directory.
 
+## Pillow
+
+`internal/ops/blur.go` contains Go ports of two routines of Pillow 12.1.1,
+so that the results are Pillow's to the byte:
+
+| Here | Ported from |
+|---|---|
+| `boxRadius`, `newBox`, `hbox`, `vbox`: the Gaussian blur as three box blurs of a fractional radius, in Pillow's fixed-point arithmetic | `src/libImaging/BoxBlur.c` |
+| `Sharpen` with a sigma: the unsharp mask on top of that blur | `src/libImaging/UnsharpMask.c` (by Kevin Cazabon, donated to PIL in 2009) |
+
+The PIL is copyright Secret Labs AB and Fredrik Lundh and contributors,
+Pillow copyright Jeffrey A. Clark and contributors, under the MIT-CMU
+licence. `LICENSE-PILLOW`, next to this file, holds the notice as Pillow
+12.1.1 distributes it, unchanged. The routines were rewritten in Go to work
+on this package's rows (a few at a time instead of a whole image); nothing
+of the original files is included unchanged.
+
+The reference images in `tests/testdata/pillow` were made with Pillow from
+`video-001.png` of the Go image test data.
+
 ## Acknowledgements (no code taken)
 
 - **libwebp** (Google): the WebP encoders in `internal/vp8enc` and
@@ -65,4 +85,6 @@ not here yet**: it is to be copied unchanged from libjpeg-turbo
   uses ideas described for pngquant (working on premultiplied colours,
   weighting by how visible an error would be, a dither map). No code of
   either was used.
-- **libvips / sharp**: the chained interface of the package follows sharp.
+- **libvips / sharp**: the chained interface of the package follows sharp;
+  so do the mild sharpen kernel, `Modulate` working in LCh, the limits of
+  sigma and the default threshold of `Trim`.

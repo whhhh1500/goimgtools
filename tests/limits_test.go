@@ -148,6 +148,18 @@ func TestSmallestThroughOperations(t *testing.T) {
 			return m.Composite(Text("Ag", TextOptions{Size: 9, StrokeWidth: 1, ShadowColor: color.Black, ShadowBlur: 2}), CompositeOptions{LeftRatio: 0.5, TopRatio: 0.5, Anchor: Center})
 		}, same},
 		{"own operation", func(m *Image, w, h int) *Image { return m.Pixels(func(*image.NRGBA) error { return nil }) }, same},
+		{"grayscale", func(m *Image, w, h int) *Image { return m.Grayscale() }, same},
+		{"modulate", func(m *Image, w, h int) *Image { return m.Modulate(1.3, 0.2, 77) }, same},
+		{"blur", func(m *Image, w, h int) *Image { return m.Blur(1.5) }, same},
+		{"blur wider than the image", func(m *Image, w, h int) *Image { return m.Blur(400) }, same},
+		{"mild sharpen", func(m *Image, w, h int) *Image { return m.Sharpen() }, same},
+		{"unsharp mask", func(m *Image, w, h int) *Image { return m.Sharpen(SharpenOptions{Sigma: 3, Amount: 2, Threshold: 2}) }, same},
+		{"extend", func(m *Image, w, h int) *Image { return m.Extend(1, 2, 3, 4, color.Transparent) }, func(w, h int) (int, int) { return w + 6, h + 4 }},
+		{"extend, trim", func(m *Image, w, h int) *Image { return m.Extend(1, 2, 3, 4, color.RGBA{1, 2, 3, 255}).Trim(0) }, nil},
+		{"turn 33 degrees", func(m *Image, w, h int) *Image { return m.RotateBy(33, nil) }, func(w, h int) (int, int) {
+			s, c := math.Sincos(33 * math.Pi / 180)
+			return int(math.Ceil(float64(w)*c + float64(h)*s - 1e-9)), int(math.Ceil(float64(w)*s + float64(h)*c - 1e-9))
+		}},
 	}
 	kernels := []Kernel{KernelCubic, KernelNearest, KernelLinear, KernelMitchell, KernelLanczos2, KernelLanczos3}
 	for _, size := range shapes {
@@ -161,6 +173,9 @@ func TestSmallestThroughOperations(t *testing.T) {
 					if err != nil {
 						t.Errorf("%s: %v", what, err)
 						continue
+					}
+					if o.size == nil {
+						continue // depends on the pixels
 					}
 					w, h := o.size(size.X, size.Y)
 					if got := decodePNG(t, b).Bounds().Size(); got != image.Pt(w, h) {
@@ -495,6 +510,28 @@ func TestArgumentExtremes(t *testing.T) {
 		{"text font that does not exist", func() *Image { return Text("x", TextOptions{Fonts: []string{"/no/such/font.ttf"}}) }, false},
 		{"text font data that is no font", func() *Image { return Text("x", TextOptions{FontData: [][]byte{[]byte("not a font")}}) }, false},
 		{"text two options", func() *Image { return Text("x", TextOptions{}, TextOptions{}) }, false},
+		{"blur 0.01", func() *Image { return base().Blur(0.01) }, true},
+		{"blur 1000", func() *Image { return base().Blur(1000) }, true},
+		{"blur 1000.1", func() *Image { return base().Blur(1000.1) }, false},
+		{"blur 0", func() *Image { return base().Blur(0) }, false},
+		{"blur NaN", func() *Image { return base().Blur(nan) }, false},
+		{"sharpen sigma 1000", func() *Image { return base().Sharpen(SharpenOptions{Sigma: 1000}) }, true},
+		{"sharpen amount 100", func() *Image { return base().Sharpen(SharpenOptions{Sigma: 1, Amount: 100}) }, true},
+		{"sharpen amount 101", func() *Image { return base().Sharpen(SharpenOptions{Sigma: 1, Amount: 101}) }, false},
+		{"sharpen amount Inf", func() *Image { return base().Sharpen(SharpenOptions{Sigma: 1, Amount: inf}) }, false},
+		{"sharpen threshold 255", func() *Image { return base().Sharpen(SharpenOptions{Sigma: 1, Threshold: 255}) }, true},
+		{"modulate 0, 0", func() *Image { return base().Modulate(0, 0, 0) }, true},
+		{"modulate 1e6", func() *Image { return base().Modulate(1e6, 1e6, 1e9) }, true},
+		{"modulate Inf", func() *Image { return base().Modulate(inf, 1, 0) }, false},
+		{"extend 0", func() *Image { return base().Extend(0, 0, 0, 0, nil) }, true},
+		{"extend MaxInt", func() *Image { return base().Extend(math.MaxInt, 0, 0, 0, nil) }, false},
+		{"extend MaxInt32 both", func() *Image { return base().Extend(0, math.MaxInt32, 0, math.MaxInt32, nil) }, false},
+		{"trim 255", func() *Image { return base().Trim(255) }, true},
+		{"trim Inf", func() *Image { return base().Trim(inf) }, false},
+		{"turn 1e300 degrees", func() *Image { return base().RotateBy(1e300, nil) }, true},
+		{"turn 1e-300 degrees", func() *Image { return base().RotateBy(1e-300, nil) }, true},
+		{"turn -0.0000001 degrees", func() *Image { return base().RotateBy(-1e-7, color.Transparent) }, true},
+		{"turn NaN", func() *Image { return base().RotateBy(nan, nil) }, false},
 	}
 	for _, c := range cases {
 		done := make(chan error, 1)

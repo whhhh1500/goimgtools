@@ -27,7 +27,8 @@ func TestMap(t *testing.T) {
 		}
 		return nil
 	})
-	if m.Bounds() != src.Bounds() || m.ColorModel() != color.NRGBAModel || m.Env() != env || IsOpaque(m) {
+	// The source has no transparency and says so; the result keeps that.
+	if m.Bounds() != src.Bounds() || m.ColorModel() != color.NRGBAModel || m.Env() != env || !IsOpaque(m) {
 		t.Fatalf("bounds %v, opaque %v", m.Bounds(), IsOpaque(m))
 	}
 	got, err := Collect(m)
@@ -62,6 +63,15 @@ func TestMap(t *testing.T) {
 	}
 	if IsOpaque(WithAlpha(grayOpaque{FromImage(opaque, env)})) {
 		t.Error("WithAlpha left the source opaque")
+	}
+	// FromImage asks the image: one translucent pixel, or an image type
+	// that cannot tell, is not opaque.
+	if !IsOpaque(FromImage(opaque, env)) {
+		t.Error("FromImage of a Gray image is not opaque")
+	}
+	src.Pix[len(src.Pix)-1] = 254
+	if IsOpaque(FromImage(src, env)) || IsOpaque(FromImage(struct{ image.Image }{opaque}, env)) {
+		t.Error("FromImage says a translucent image, or one that cannot tell, is opaque")
 	}
 
 	// The function's error ends the stream; a strip larger than the budget

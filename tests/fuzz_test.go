@@ -188,11 +188,12 @@ func typeName(m image.Image) string {
 func FuzzChain(f *testing.F) {
 	seeds := seedFiles(f)
 	for i, s := range seeds {
-		f.Add(s, uint16(i*37), uint16(i*91), uint32(i)*2654435761)
+		f.Add(s, uint16(i*37), uint16(i*91), uint32(i)*2654435761, uint16(i*40503))
 	}
 	dir := f.TempDir()
 	logo := FromImage(testutil.Images(9, 5)["nrgba"])
-	f.Fuzz(func(t *testing.T, data []byte, w, h uint16, flags uint32) {
+	f.Fuzz(func(t *testing.T, data []byte, w, h uint16, flags uint32, more uint16) {
+		has := func(n uint) bool { return more>>n&1 != 0 }
 		bit := func(n uint) bool { return flags>>n&1 != 0 }
 		pick := func(n, of uint) int { return int(flags >> n % uint32(of)) }
 		// Small images: the paths taken do not depend on the size, and
@@ -222,6 +223,30 @@ func FuzzChain(f *testing.F) {
 		if bit(16) {
 			m.Composite(logo, CompositeOptions{Gravity: Position(pick(17, 10)), Left: int(int16(w)), Top: int(int16(h)),
 				Angle: float64(int16(w)), Tile: bit(21), Opacity: float64(h%101) / 100})
+		}
+		if has(0) {
+			m.Grayscale()
+		}
+		if has(1) {
+			m.Modulate(float64(w%30)/10, float64(h%30)/10, float64(int16(w)))
+		}
+		if has(2) {
+			m.Blur(0.3 + float64(more>>9))
+		}
+		if has(3) {
+			m.Sharpen()
+		}
+		if has(4) {
+			m.Sharpen(SharpenOptions{Sigma: 0.5 + float64(more>>12), Amount: float64(h%40) / 10, Threshold: int(w % 20)})
+		}
+		if has(5) {
+			m.Extend(int(w%7), int(h%9), int(w%5), int(h%3), color.NRGBA{uint8(w), uint8(h), 9, uint8(more)})
+		}
+		if has(6) {
+			m.Trim(float64(h % 60))
+		}
+		if has(7) {
+			m.RotateBy(float64(int16(h))/7, color.Transparent)
 		}
 		if bit(22) {
 			m.KeepExif()

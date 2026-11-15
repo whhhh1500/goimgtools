@@ -394,12 +394,27 @@ func FromImage(m image.Image, env *Env) Source {
 }
 
 type imageSource struct {
-	m   image.Image
-	env *Env
-	y   int
+	m      image.Image
+	env    *Env
+	y      int
+	opaque int8 // 0 not known yet, 1 opaque, 2 not
 }
 
 func (s *imageSource) Bounds() image.Rectangle { return s.m.Bounds() }
+
+// Opaque reports what the image says of itself: the image types of the
+// standard library know whether they have a pixel that is not fully
+// opaque (it is looked up once, which for some types takes a pass over the
+// pixels).
+func (s *imageSource) Opaque() bool {
+	if s.opaque == 0 {
+		s.opaque = 2
+		if o, ok := s.m.(interface{ Opaque() bool }); ok && o.Opaque() {
+			s.opaque = 1
+		}
+	}
+	return s.opaque == 1
+}
 func (s *imageSource) ColorModel() color.Model { return s.m.ColorModel() }
 func (s *imageSource) Env() *Env               { return s.env }
 func (s *imageSource) Close() error            { s.m = nil; return nil }

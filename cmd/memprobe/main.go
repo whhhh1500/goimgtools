@@ -75,6 +75,33 @@ func main() {
 		}
 		im.Resize(bw, bh, goimgtools.ResizeOptions{Fit: goimgtools.FitInside, WithoutEnlargement: os.Getenv("GOIMG_ENLARGE") == "", FastShrinkOnLoad: os.Getenv("GOIMG_FAST") != ""}).
 			Flatten(color.White)
+		// One of the operations that change how the image looks, after the
+		// resize: gray, modulate, blur:SIGMA, sharpen, usm:SIGMA, trim,
+		// extend, rotate:DEGREES.
+		if op := os.Getenv("GOIMG_ADJUST"); op != "" {
+			name, arg, _ := strings.Cut(op, ":")
+			v, _ := strconv.ParseFloat(arg, 64)
+			switch name {
+			case "gray":
+				im.Grayscale()
+			case "modulate":
+				im.Modulate(1.1, 1.3, 20)
+			case "blur":
+				im.Blur(v)
+			case "sharpen":
+				im.Sharpen()
+			case "usm":
+				im.Sharpen(goimgtools.SharpenOptions{Sigma: v})
+			case "trim":
+				im.Trim(10)
+			case "extend":
+				im.Extend(50, 50, 50, 50, color.White)
+			case "rotate":
+				im.RotateBy(v, color.White)
+			default:
+				check(fmt.Errorf("GOIMG_ADJUST: unknown operation %q", op))
+			}
+		}
 		if v, err := strconv.Atoi(os.Getenv("GOIMG_MEM")); err == nil { // limit in MB
 			im.MemoryLimit(int64(v) << 20)
 		}
