@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/whhhh1500/goimgtools/internal/iccprof"
+	"github.com/whhhh1500/goimgtools/internal/ops"
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
@@ -26,8 +28,43 @@ func (m *Image) KeepExif() *Image { m.keepExif = true; return m }
 
 // StripICC drops the ICC colour profile of the input. By default it is
 // copied to the output, because the pixel values only mean the right
-// colours together with it.
+// colours together with it. Without it the values are taken for sRGB, as
+// they are; see ToSRGB for converting them.
 func (m *Image) StripICC() *Image { m.stripICC = true; return m }
+
+// ToSRGB converts the colours of an image with an ICC profile other than
+// sRGB (a Display P3 or Adobe RGB photograph) to sRGB at the end of the
+// recipe, and leaves the profile out of the output: the colours then look
+// right in programs that ignore profiles, and the file is smaller by the
+// profile. Colours sRGB cannot show are clipped (relative colorimetric
+// rendering, as LittleCMS does it, to within one level).
+//
+// GIF and BMP output, which cannot carry a profile, is converted this way
+// without being asked. Profiles described by primaries and tone curves
+// are converted (those of cameras, phones, Display P3, Adobe RGB,
+// ProPhoto); others (lookup tables) are left as they are, kept in the
+// output where the format can carry them.
+func (m *Image) ToSRGB() *Image { m.toSRGB = true; return m }
+
+// manageColour converts src to sRGB when its profile asks for it: on
+// ToSRGB, or for an output format that cannot carry the profile. It
+// returns the source to encode and the profile to write.
+func (m *Image) manageColour(src pipeline.Source, icc []byte, format string) (pipeline.Source, []byte) {
+	if len(icc) == 0 {
+		return src, icc
+	}
+	if def := formatNamed(format); !m.toSRGB && (def == nil || !def.noProfile) {
+		return src, icc
+	}
+	p, err := iccprof.Parse(icc)
+	if err != nil {
+		return src, icc // not one this package can convert from
+	}
+	if t := p.ToSRGB(); !t.Identity() {
+		src = ops.ToSRGB(src, t)
+	}
+	return src, nil
+}
 
 // BMP selects BMP output. The file is written bottom row first, so the rows
 // are kept in working storage (a temporary file when they do not fit in
@@ -264,6 +301,7 @@ func (m *Image) write(w io.Writer, ext string) (err error) {
 	}
 	exif, icc := m.outputMeta(meta)
 	defer closer.Close()
+	src, icc = m.manageColour(src, icc, format)
 	if m.threadCount() >= 3 {
 		src = pipeline.Async(src)
 	}

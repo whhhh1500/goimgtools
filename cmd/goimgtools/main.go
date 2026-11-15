@@ -86,7 +86,7 @@ type options struct {
 	gifFixed                                       *bool
 	lossless, jpegOpt, jpegProg, noDither          *bool
 	jpegTrellis                                    *bool
-	animated, keepExif, stripICC                   *bool
+	animated, keepExif, stripICC, toSRGB           *bool
 	mem, threads, maxPixels                        *int
 	skipLarger                                     *bool
 	tmp                                            *string
@@ -155,6 +155,7 @@ func register(fs *flag.FlagSet) *options {
 		animated:    fs.Bool("animated", false, "process every frame of an animated GIF (GIF to GIF)"),
 		keepExif:    fs.Bool("keep-exif", false, "copy the EXIF block (camera, date, GPS) to the output"),
 		stripICC:    fs.Bool("strip-icc", false, "drop the ICC colour profile instead of copying it"),
+		toSRGB:      fs.Bool("srgb", false, "convert the colours to sRGB from the image's ICC profile (Display P3, Adobe RGB...) and leave the profile out; GIF and BMP output always are"),
 		mem:         fs.Int("mem", 64, "working memory limit in `MB` for one image; beyond it data goes to temporary files"),
 		threads:     fs.Int("threads", 1, "CPU cores to use for one image, at most the number of CPUs: 2 decodes on a core of its own, 3 encodes on another, more go to resizing, -blur, -sharpen, -modulate, -rotate and JPEG and PNG encoding"),
 		maxPixels:   fs.Int("max-pixels", 0, "largest image accepted or made, in `megapixels` (default 268: 16383 x 16383); all frames together for -animated"),
@@ -384,6 +385,9 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 	}
 	if *o.stripICC {
 		im.StripICC()
+	}
+	if *o.toSRGB {
+		im.ToSRGB()
 	}
 	bg, err := parseColor(*o.bg)
 	if err != nil {

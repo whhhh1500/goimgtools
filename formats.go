@@ -115,6 +115,10 @@ type formatDef struct {
 	check func(options any) error
 	// codec is what RegisterFormat was given, for a format added by it.
 	codec *Codec
+	// noProfile is set for the formats of this package that cannot carry
+	// a colour profile: their pixels are converted to sRGB instead (see
+	// ToSRGB).
+	noProfile bool
 }
 
 // optionsOf returns the output options of one of this package's formats:
@@ -248,9 +252,10 @@ var builtin = []*formatDef{
 		check: checks[WebPOptions]("webp"),
 	},
 	{
-		Format: Format{"gif", []string{".gif"}},
-		magic:  func(h []byte) bool { return bytes.HasPrefix(h, []byte("GIF8")) },
-		open:   func(in *input, env *pipeline.Env) (pipeline.Source, error) { return gifstream.Open(in.br, env) },
+		Format:    Format{"gif", []string{".gif"}},
+		noProfile: true,
+		magic:     func(h []byte) bool { return bytes.HasPrefix(h, []byte("GIF8")) },
+		open:      func(in *input, env *pipeline.Env) (pipeline.Source, error) { return gifstream.Open(in.br, env) },
 		encode: func(w io.Writer, src pipeline.Source, o EncodeOptions) error {
 			g, err := optionsOf[GIFOptions](o.Options, "gif")
 			if err != nil {
@@ -274,8 +279,9 @@ var builtin = []*formatDef{
 		check: checks[GIFOptions]("gif"),
 	},
 	{
-		Format: Format{"bmp", []string{".bmp"}},
-		magic:  func(h []byte) bool { return bytes.HasPrefix(h, []byte("BM")) },
+		Format:    Format{"bmp", []string{".bmp"}},
+		noProfile: true,
+		magic:     func(h []byte) bool { return bytes.HasPrefix(h, []byte("BM")) },
 		open: func(in *input, env *pipeline.Env) (pipeline.Source, error) {
 			return in.openAt(env, bmpstream.Open)
 		},

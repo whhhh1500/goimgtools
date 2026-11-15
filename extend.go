@@ -226,8 +226,9 @@ func (m *Image) Stream(env *pipeline.Env) (src pipeline.Source, err error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &stream{Source: out, in: closer}
+	s := &stream{in: closer}
 	s.meta.Exif, s.meta.ICC = m.outputMeta(meta)
+	s.Source, s.meta.ICC = m.manageColour(out, s.meta.ICC, "")
 	return s, nil
 }
 

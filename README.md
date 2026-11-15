@@ -106,6 +106,7 @@ err := goimgtools.Open("in.jpg").
 |---|---|
 | `KeepExif()` | 把输入的 EXIF（相机、时间、GPS）带到输出。默认丢弃 |
 | `StripICC()` | 丢掉 ICC 色彩配置。默认保留，否则广色域照片会偏色 |
+| `ToSRGB()` | 按输入的色彩配置把颜色换算成 sRGB，输出不再带配置：不认配置的程序里颜色也对，文件也小一点。转成 GIF、BMP（带不了配置）时自动这样做 |
 | `MemoryLimit(bytes)` | 工作内存上限，默认 64MB |
 | `Threads(n)` | 一次处理最多用几个核，默认 1，最多到 CPU 核数（见「CPU 与线程」） |
 | `SetDefaultThreads(n)` | 整个程序的默认线程数（没有调用 `Threads` 的处理用它），不用在每个调用处都写一遍 |
@@ -115,7 +116,9 @@ err := goimgtools.Open("in.jpg").
 | `WithContext(ctx)` | `ctx` 取消或超时后中止处理，返回 `ctx.Err()` |
 | `Clone()` | 复制一份配方，用来从同一个起点派生多个结果 |
 
-色彩配置（ICC）在 JPEG、PNG、WebP、TIFF 之间读写；EXIF 在 JPEG、PNG、WebP 之间读写（TIFF 的 EXIF 在它自己的目录里，不读不写）。GIF、BMP 不带这两样。`Rotate()` 转正后保留的 EXIF 会把方向改成「正」。
+色彩配置（ICC）在 JPEG、PNG、WebP、TIFF 之间读写；EXIF 在 JPEG、PNG、WebP 之间读写（TIFF 的 EXIF 在它自己的目录里，不读不写）。GIF、BMP 带不了色彩配置，转成这两种格式时按输入的配置把颜色换算成 sRGB（实测 Display P3 的图不换算时色差最大 17.6，肉眼可见地偏淡）。`Rotate()` 转正后保留的 EXIF 会把方向改成「正」。
+
+换算支持由三原色加色调曲线描述的配置（相机、手机、Display P3、Adobe RGB、ProPhoto 都是这一类），与 LittleCMS（相对比色、超出 sRGB 的颜色截断）每个值相差不超过 1；查找表类的配置（少见，多为打印机）原样保留、不换算。
 
 ## 在服务里使用
 
@@ -603,6 +606,7 @@ goimgtools -trim 10 -resize 1200x -extend 20,20,20,20 -background white -sharpen
 | `-png-level N`、`-gif-colors N`、`-gif-fixed-palette`、`-tiff-compression none\|deflate` | 各格式的选项 |
 | `-animated` | 处理动图 GIF 的每一帧 |
 | `-keep-exif`、`-strip-icc` | 元数据 |
+| `-srgb` | 按色彩配置把颜色换算成 sRGB，输出不带配置（转 GIF、BMP 时自动） |
 | `-mem MB`、`-threads N`、`-tmp 目录` | 内存上限（默认 64）、线程数（默认 1，最多到 CPU 核数，4 起分给模糊、锐化、调色、旋转）、临时目录 |
 | `-max-pixels N` | 接受和产生的最大图片，单位百万像素（默认 268，即 16383×16383）；`-animated` 时按所有帧合计 |
 
@@ -805,6 +809,7 @@ PNG、JPEG、GIF、BMP、TIFF 的解码和编码，以及默认的缩放，都�
 - 模糊和反锐化掩模：没有透明通道的图，`Blur` 与 Pillow 12.1.1 的 `GaussianBlur`、`Sharpen(SharpenOptions{...})` 与它的 `UnsharpMask` 逐字节相同（测试里存了 Pillow 生成的参考图，sigma 0.7–40）。算法和定点运算是照 Pillow 的 C 代码移植的。
 - 灰度：与 Pillow 的 `convert("L")` 逐字节相同，也就是 `color.RGBToYCbCr` 的亮度；在全部 1677 万种颜色上与精确的 Rec. 601 亮度最多差 0.5 级。（`color.GrayModel` 先算到 16 位再截掉低 8 位，最多差 0.99 级、16% 的颜色不是最近的一级，所以没有跟它。）
 - 调色：与 sharp 0.35（libvips 8.18）的 `modulate` 每个像素相差不超过 1，平均 0.14。
+- 换算到 sRGB：Display P3（采样曲线、参数曲线两种写法）和 Adobe RGB（gamma 曲线）三种配置下，与 LittleCMS 每个值相差不超过 1，约 1.6% 的值差 1。
 - 任意角度旋转：离边 2 像素以上的部分与 Pillow 的双线性旋转（`expand=True`）每个像素相差不超过 1。边缘有意不同：本工具把最外一圈和背景按覆盖比例混合（与 libvips 一样），边是平滑的；Pillow 是硬边。画布取刚好装下整张图的最小尺寸，三家各不相同：30° 转 150×103 时本工具和 Pillow 是 182×165，sharp 四舍五入成 181×164（会切掉一点角）。
 - 所有新操作和各种编码器的输出在 x86-64、32 位 x86 上逐字节相同；ARM64、PowerPC、s390x、RISC-V、LoongArch、MIPS 由自动测试里的校验值测试核对（浮点运算里每个乘积先取整再相加，防止部分处理器把乘加合成一条指令后结果不同）。
 
@@ -828,7 +833,8 @@ WebP 编码器是本模块自己写的，没有标准库可对照，用两种解
 ## 没做的
 
 - AVIF、HEIC（决定不做）。
-- TIFF 的 EXIF 不读不写（ICC 读写）；GIF、BMP 不带色彩配置：广色域（Display P3 等）的图转成这两种格式时颜色会偏淡。根治要把像素换算到 sRGB 再写，还没做。
+- TIFF 的 EXIF 不读不写（ICC 读写）。
+- 查找表类（A2B0 等）和灰度的色彩配置不换算到 sRGB（转 GIF、BMP 时原样写出）。
 - JPEG 解码的熵解码只能按顺序，IDCT 和颜色换算也还没分摊到多个核：线程多时它是缩小 JPEG 最慢的一环。
 - 动图只支持 GIF；动图输出统一用一套固定的 256 色加抖动，不保留原调色板，也还没用上按图选色。
 - 对比度、伽马、色阶、反色这类调色没有内置方法，用 `Pixels` 几行就能写（「扩展」里有灰度的例子）；其他要看相邻像素的滤镜（中值、浮雕、边缘检测等）要自己写成 `Pipe` 的一环。
