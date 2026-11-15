@@ -222,7 +222,8 @@ func FuzzChain(f *testing.F) {
 		}
 		if bit(16) {
 			m.Composite(logo, CompositeOptions{Gravity: Position(pick(17, 10)), Left: int(int16(w)), Top: int(int16(h)),
-				Angle: float64(int16(w)), Tile: bit(21), Opacity: float64(h%101) / 100})
+				Angle: float64(int16(w)), Tile: bit(21), Opacity: float64(h%101) / 100,
+				WidthRatio: float64(more>>8%16) / 10, HeightRatio: float64(more>>12%4) / 3})
 		}
 		if has(0) {
 			m.Grayscale()
@@ -253,11 +254,11 @@ func FuzzChain(f *testing.F) {
 		}
 		switch pick(23, 12) {
 		case 0:
-			m.JPEG(1 + int(w%100))
+			m.JPEG(1+int(w%100), JPEGOptions{Trellis: bit(12)})
 		case 1:
 			m.JPEG(1+int(w%100), JPEGOptions{Progressive: true})
 		case 2:
-			m.JPEG(1+int(w%100), JPEGOptions{Optimize: true})
+			m.JPEG(1+int(w%100), JPEGOptions{Optimize: true, Trellis: bit(13)})
 		case 3:
 			m.PNG()
 		case 4:

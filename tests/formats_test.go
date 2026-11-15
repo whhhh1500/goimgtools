@@ -3,6 +3,7 @@ package tests
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	stddraw "image/draw"
@@ -69,7 +70,8 @@ func checkFile(t *testing.T, path string, ref func(io.Reader) (image.Image, erro
 		"reader": func() *Image { return FromReader(struct{ io.Reader }{bytes.NewReader(data)}) },
 	}
 	for how, in := range inputs {
-		got, gerr := in().StripICC().PNG().ToBytes() // the reference has no profile
+		// Level 6 is that of png.Encode; the reference has no profile.
+		got, gerr := in().StripICC().PNG(PNGOptions{CompressionLevel: 6}).ToBytes()
 		if werr != nil || want.Bounds().Empty() {
 			if gerr == nil {
 				t.Errorf("%s (%s): reference failed (%v) but the library produced output", name, how, werr)
@@ -80,9 +82,7 @@ func checkFile(t *testing.T, path string, ref func(io.Reader) (image.Image, erro
 			t.Errorf("%s (%s): %v", name, how, gerr)
 			continue
 		}
-		if !bytes.Equal(got, encodePNG(t, toPNGRef(want))) {
-			t.Errorf("%s (%s): PNG output differs from the reference", name, how)
-		}
+		pngLikeStdlib(t, name+" ("+how+")", got, encodePNG(t, toPNGRef(want)))
 		info, err := in().Metadata()
 		if err != nil {
 			t.Errorf("%s (%s): Metadata: %v", name, how, err)
@@ -195,13 +195,22 @@ func TestPNGOutput(t *testing.T) {
 	in := filepath.Join(dir, "in.png")
 	os.WriteFile(in, encodePNG(t, m), 0o644)
 
-	// Same format as the input when nothing says otherwise.
+	// Same format as the input when nothing says otherwise; at level 6 the
+	// bytes of png.Encode, at the default level the same pixels in a file
+	// no larger.
+	six, err := Open(in).PNG(PNGOptions{CompressionLevel: 6}).ToBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(six, encodePNG(t, m)) {
+		t.Error("PNG to PNG at level 6 differs from png.Encode")
+	}
 	got, err := Open(in).ToBytes()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(got, encodePNG(t, m)) {
-		t.Error("PNG to PNG differs from png.Encode")
+	if d, _, _ := channelDiff(t, decodePNG(t, got), m); d != 0 || len(got) > len(six) {
+		t.Errorf("PNG to PNG at the default level: pixels differ by %d, %d bytes against %d at level 6", d, len(got), len(six))
 	}
 	// The extension decides.
 	out := filepath.Join(dir, "out.PNG")
@@ -298,4 +307,40 @@ func webpFullRange(r io.Reader) (image.Image, error) {
 		return m, nil
 	}
 	return pipeline.Collect(webpstream.FullRange(pipeline.FromImage(m, nil)))
+}
+
+// pngLikeStdlib requires got to be want, png.Encode's file (at the same
+// level), byte for byte when the image data fits one compression block of
+// 256KB; beyond that the library compresses block by block (so that it can
+// use several cores): then the same pixels, in a file at most 1% and 64
+// bytes a block larger.
+func pngLikeStdlib(t *testing.T, what string, got, want []byte) {
+	t.Helper()
+	if bytes.Equal(got, want) {
+		return
+	}
+	w, err := png.Decode(bytes.NewReader(want))
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, err := png.Decode(bytes.NewReader(got))
+	if err != nil {
+		t.Errorf("%s: %v", what, err)
+		return
+	}
+	b := w.Bounds()
+	bpp := map[string]int{"*image.Gray": 1, "*image.Gray16": 2, "*image.RGBA": 4, "*image.NRGBA": 4,
+		"*image.RGBA64": 8, "*image.NRGBA64": 8, "*image.Paletted": 1}[fmt.Sprintf("%T", w)]
+	data := (1 + b.Dx()*bpp) * b.Dy()
+	if bpp == 4 && fmt.Sprintf("%T", g) == "*image.RGBA" {
+		data = (1 + b.Dx()*3) * b.Dy() // written as RGB when opaque
+	}
+	if bpp == 0 || data <= 256<<10 {
+		t.Errorf("%s: PNG output differs from the reference", what)
+		return
+	}
+	sameImage(t, what, g, w)
+	if blocks := (data + 256<<10 - 1) / (256 << 10); len(got) > len(want)+len(want)/100+64*blocks {
+		t.Errorf("%s: %d bytes, png.Encode %d", what, len(got), len(want))
+	}
 }

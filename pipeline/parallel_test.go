@@ -102,3 +102,53 @@ func TestParallel(t *testing.T) {
 	}
 	env.Parallel(0, func(int) { t.Error("called for n = 0") })
 }
+
+// TestGo: work handed to Go runs on a helper while one is free and on the
+// caller otherwise, never on more helpers than given; its panic comes back
+// from the wait function.
+func TestGo(t *testing.T) {
+	env := NewEnv(0, t.TempDir())
+	ran := false
+	env.Go(func() { ran = true })() // no helpers: at once
+	if !ran {
+		t.Fatal("without helpers fn did not run at once")
+	}
+	env.SetHelpers(2)
+	var busy, worst atomic.Int32
+	var waits []func()
+	for i := 0; i < 20; i++ {
+		waits = append(waits, env.Go(func() {
+			n := busy.Add(1)
+			for w := worst.Load(); n > w && !worst.CompareAndSwap(w, n); w = worst.Load() {
+			}
+			time.Sleep(time.Millisecond)
+			busy.Add(-1)
+		}))
+	}
+	for _, w := range waits {
+		w()
+	}
+	// Two helpers and the caller.
+	if w := worst.Load(); w > 3 {
+		t.Errorf("%d at once, at most 3 may", w)
+	}
+	if len(env.helpers) != 2 {
+		t.Errorf("%d of 2 helpers given back", len(env.helpers))
+	}
+	// A panic on a helper (both are free again) comes back from the wait.
+	wait := env.Go(func() { time.Sleep(time.Millisecond); panic("boom") })
+	func() {
+		defer func() {
+			v := recover()
+			var p *PanicError
+			if err, ok := v.(error); !ok || !errors.As(err, &p) || p.Value != "boom" {
+				t.Errorf("panic came back as %v", v)
+			}
+		}()
+		wait()
+		t.Error("panic not raised by wait")
+	}()
+	if len(env.helpers) != 2 {
+		t.Errorf("after the panic: %d of 2 helpers given back", len(env.helpers))
+	}
+}

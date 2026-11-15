@@ -266,6 +266,10 @@ func (s *stream) newImage(imgRect image.Rectangle) (img image.Image) {
 
 func (s *stream) Env() *pipeline.Env { return s.env }
 
+// Meta is the colour profile of the file. (EXIF, which TIFF keeps in a
+// directory of its own, is not read.)
+func (s *stream) Meta() pipeline.Meta { return pipeline.Meta{ICC: s.d.icc} }
+
 func (s *stream) Bounds() image.Rectangle {
 	return image.Rect(0, 0, s.d.config.Width, s.d.config.Height)
 }

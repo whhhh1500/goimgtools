@@ -206,9 +206,9 @@ func (m *Image) pixelLimit() int64 {
 // unless the program changed it. With 2 the input is decoded on one core
 // while the other does the rest; with 3 the encoder gets a core of its own
 // as well; from 4 on, the cores beyond those three are shared by the
-// operations that can split their work: Blur, Sharpen, Modulate and
-// RotateBy. However the work is split, no more than n cores are busy at a
-// time. Each extra thread costs a few strips of memory (under 1MB each),
+// steps that can split their work: Resize, Blur, Sharpen, Modulate,
+// RotateBy, JPEG encoding and PNG compression. However the work is split,
+// no more than n of the run's goroutines work at a time. Each extra thread costs a few strips of memory (under 1MB each),
 // counted in the memory limit. The output does not depend on it.
 func (m *Image) Threads(n int) *Image { m.threads = n; return m }
 

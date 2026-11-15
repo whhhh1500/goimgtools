@@ -176,6 +176,15 @@ type CompositeOptions struct {
 	// (spaced by the turned overlay's width and height).
 	Tile               bool
 	TileGapX, TileGapY int
+	// WidthRatio scales the overlay, before anything else, to this share
+	// of the image's width, keeping its proportions: 0.2 makes it a fifth
+	// as wide as the image, whatever size the image is, which keeps a
+	// watermark the same to the eye over images of different sizes.
+	// HeightRatio does the same by height; with both, the overlay fits
+	// inside both. Zero leaves the overlay its own size; otherwise above 0
+	// and at most 10. (The overlay is resized with Resize's default kernel,
+	// enlarged if need be.)
+	WidthRatio, HeightRatio float64
 }
 
 // point resolves p to pixels from the top-left corner of a w × h overlay.

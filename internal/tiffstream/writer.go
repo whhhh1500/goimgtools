@@ -36,9 +36,14 @@ type ifdEnt struct {
 	tag      int
 	datatype int
 	data     []uint32
+	raw      []byte // the bytes of a dtUndefined entry
 }
 
 func (e ifdEnt) putData(p []byte) {
+	if e.datatype == dtUndefined {
+		copy(p, e.raw)
+		return
+	}
 	for _, d := range e.data {
 		switch e.datatype {
 		case dtByte, dtASCII:
@@ -82,8 +87,13 @@ func writeIFD(w io.Writer, ifdOffset int64, d []ifdEnt) error {
 		if ent.datatype == dtRational {
 			count /= 2
 		}
+		datalen := 0
+		if ent.datatype == dtUndefined {
+			count, datalen = uint32(len(ent.raw)), len(ent.raw)
+		} else {
+			datalen = int(count * lengths[ent.datatype])
+		}
 		enc.PutUint32(buf[4:8], count)
-		datalen := int(count * lengths[ent.datatype])
 		if datalen <= 4 {
 			ent.putData(buf[8:12])
 		} else {
@@ -121,6 +131,9 @@ type Options struct {
 	// predictor only applies to LZW, which the encoder cannot write. It has
 	// no effect.
 	Predictor bool
+	// ICC is a colour profile to embed (tag 34675), at most
+	// pipeline.MaxMetaBytes.
+	ICC []byte
 }
 
 var (
@@ -284,8 +297,12 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 		return errZeroSize
 	}
 	compression := uint32(cNone)
+	var icc []byte
 	if o != nil {
 		compression = o.Compression.specValue()
+		if len(o.ICC) <= pipeline.MaxMetaBytes {
+			icc = o.ICC
+		}
 	}
 	if compression != cNone && compression != cDeflate {
 		return errors.New("tiff: unsupported compression")
@@ -307,7 +324,7 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 	// imageLen is the length of the pixel data in bytes.
 	// The offset of the IFD is imageLen + 8 header bytes.
 	imageLen := rowLen * int64(dy)
-	if rowLen > math.MaxInt32 || (compression == cNone && imageLen+8+maxIFD > math.MaxUint32) {
+	if rowLen > math.MaxInt32 || (compression == cNone && imageLen+8+maxIFD+int64(len(icc)) > math.MaxUint32) {
 		return errTooLarge
 	}
 
@@ -389,7 +406,7 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 			return err
 		}
 		imageLen = sp.Size()
-		if imageLen+8+maxIFD > math.MaxUint32 {
+		if imageLen+8+maxIFD+int64(len(icc)) > math.MaxUint32 {
 			return errTooLarge
 		}
 		var hdr [8]byte
@@ -467,26 +484,29 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 		return dtShort
 	}
 	ifd := []ifdEnt{
-		{tImageWidth, sizeType(dx), []uint32{uint32(dx)}},
-		{tImageLength, sizeType(dy), []uint32{uint32(dy)}},
-		{tBitsPerSample, dtShort, bitsPerSample},
-		{tCompression, dtShort, []uint32{compression}},
-		{tPhotometricInterpretation, dtShort, []uint32{photometricInterpretation}},
-		{tStripOffsets, dtLong, []uint32{8}},
-		{tSamplesPerPixel, dtShort, []uint32{samplesPerPixel}},
-		{tRowsPerStrip, sizeType(dy), []uint32{uint32(dy)}},
-		{tStripByteCounts, dtLong, []uint32{uint32(imageLen)}},
+		{tag: tImageWidth, datatype: sizeType(dx), data: []uint32{uint32(dx)}},
+		{tag: tImageLength, datatype: sizeType(dy), data: []uint32{uint32(dy)}},
+		{tag: tBitsPerSample, datatype: dtShort, data: bitsPerSample},
+		{tag: tCompression, datatype: dtShort, data: []uint32{compression}},
+		{tag: tPhotometricInterpretation, datatype: dtShort, data: []uint32{photometricInterpretation}},
+		{tag: tStripOffsets, datatype: dtLong, data: []uint32{8}},
+		{tag: tSamplesPerPixel, datatype: dtShort, data: []uint32{samplesPerPixel}},
+		{tag: tRowsPerStrip, datatype: sizeType(dy), data: []uint32{uint32(dy)}},
+		{tag: tStripByteCounts, datatype: dtLong, data: []uint32{uint32(imageLen)}},
 		// There is currently no support for storing the image
 		// resolution, so give a bogus value of 72x72 dpi.
-		{tXResolution, dtRational, []uint32{72, 1}},
-		{tYResolution, dtRational, []uint32{72, 1}},
-		{tResolutionUnit, dtShort, []uint32{resPerInch}},
+		{tag: tXResolution, datatype: dtRational, data: []uint32{72, 1}},
+		{tag: tYResolution, datatype: dtRational, data: []uint32{72, 1}},
+		{tag: tResolutionUnit, datatype: dtShort, data: []uint32{resPerInch}},
 	}
 	if len(colorMap) != 0 {
-		ifd = append(ifd, ifdEnt{tColorMap, dtShort, colorMap})
+		ifd = append(ifd, ifdEnt{tag: tColorMap, datatype: dtShort, data: colorMap})
 	}
 	if extraSamples > 0 {
-		ifd = append(ifd, ifdEnt{tExtraSamples, dtShort, []uint32{extraSamples}})
+		ifd = append(ifd, ifdEnt{tag: tExtraSamples, datatype: dtShort, data: []uint32{extraSamples}})
+	}
+	if len(icc) > 0 {
+		ifd = append(ifd, ifdEnt{tag: tICCProfile, datatype: dtUndefined, raw: icc})
 	}
 
 	return writeIFD(w, imageLen+8, ifd)

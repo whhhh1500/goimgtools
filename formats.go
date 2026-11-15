@@ -161,7 +161,7 @@ var builtin = []*formatDef{
 				return fmt.Errorf("goimgtools: JPEG quality must be 1 to 100, got %d", q)
 			}
 			return jpegstream.Encode(w, src, &jpegstream.Options{Quality: q, Exif: o.Exif, ICC: o.ICC,
-				Optimize: jo.Optimize, Progressive: jo.Progressive})
+				Optimize: jo.Optimize, Progressive: jo.Progressive, Trellis: jo.Trellis})
 		},
 		quality: func(options any) (int, bool) {
 			jo, _ := optionsOf[JPEGOptions](options, "jpeg")
@@ -187,7 +187,11 @@ var builtin = []*formatDef{
 				defer q.Close()
 				src = q
 			}
-			return pngstream.Encode(w, src, &pngstream.Options{Level: po.CompressionLevel, Exif: o.Exif, ICC: o.ICC})
+			level := po.CompressionLevel
+			if level == 0 {
+				level = DefaultPNGLevel
+			}
+			return pngstream.Encode(w, src, &pngstream.Options{Level: level, Exif: o.Exif, ICC: o.ICC})
 		},
 		check: checks[PNGOptions]("png"),
 	},
@@ -210,14 +214,26 @@ var builtin = []*formatDef{
 			if err != nil {
 				return err
 			}
+			// The colour profile and EXIF go into the extended format;
+			// without them the file stays in the simple one.
+			var mw *webpstream.MetaWriter
+			if len(o.ICC) > 0 || len(o.Exif) > 0 {
+				mw = webpstream.NewMetaWriter(w, pipeline.Meta{Exif: o.Exif, ICC: o.ICC})
+				w = mw
+			}
 			if wo.Lossless {
-				return vp8lenc.Encode(w, src, &vp8lenc.Options{Effort: wo.Effort})
+				err = vp8lenc.Encode(w, src, &vp8lenc.Options{Effort: wo.Effort})
+			} else {
+				q := o.Quality
+				if q == 0 {
+					q = wo.Quality
+				}
+				err = vp8enc.Encode(w, src, &vp8enc.Options{Quality: q})
 			}
-			q := o.Quality
-			if q == 0 {
-				q = wo.Quality
+			if err == nil && mw != nil {
+				err = mw.Finish()
 			}
-			return vp8enc.Encode(w, src, &vp8enc.Options{Quality: q})
+			return err
 		},
 		quality: func(options any) (int, bool) {
 			wo, _ := optionsOf[WebPOptions](options, "webp")
@@ -286,7 +302,7 @@ var builtin = []*formatDef{
 			if err != nil {
 				return err
 			}
-			out := &tiffstream.Options{}
+			out := &tiffstream.Options{ICC: o.ICC}
 			switch to.Compression {
 			case TIFFNone:
 			case TIFFDeflate:

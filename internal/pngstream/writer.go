@@ -13,23 +13,24 @@ import (
 	"image/color"
 	"io"
 	"strconv"
+
+	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
 type encoder struct {
-	w       io.Writer
-	bounds  image.Rectangle             // of the whole image
-	next    func() (image.Image, error) // the strips, top to bottom
-	level   int                         // zlib level
-	cb      int
-	err     error
-	header  [8]byte
-	footer  [4]byte
-	tmp     [4 * 256]byte
-	cr      [nFilter][]uint8
-	pr      []uint8
-	zw      *zlib.Writer
-	zwLevel int
-	bw      *bufio.Writer
+	env    *pipeline.Env // for the budget and the helpers of compression
+	w      io.Writer
+	bounds image.Rectangle             // of the whole image
+	next   func() (image.Image, error) // the strips, top to bottom
+	level  int                         // zlib level
+	cb     int
+	err    error
+	header [8]byte
+	footer [4]byte
+	tmp    [4 * 256]byte
+	cr     [nFilter][]uint8
+	pr     []uint8
+	bw     *bufio.Writer
 }
 
 // The absolute value of a byte interpreted as a signed int8. Without a
@@ -277,17 +278,15 @@ func filter(cr *[nFilter][]byte, pr []byte, bpp int) int {
 }
 
 func (e *encoder) writeImage(w io.Writer, cb int, level int) error {
-	if e.zw == nil || e.zwLevel != level {
-		zw, err := zlib.NewWriterLevel(w, level)
-		if err != nil {
-			return err
-		}
-		e.zw = zw
-		e.zwLevel = level
-	} else {
-		e.zw.Reset(w)
+	// Compressed in blocks, on the helpers of the pipeline where it has
+	// any; the same file either way (see zBlocks).
+	zw, err := newZBlocks(w, level, e.env)
+	if zw != nil {
+		defer zw.release()
 	}
-	defer e.zw.Close()
+	if err != nil {
+		return err
+	}
 
 	bitsPerPixel := 0
 
@@ -525,7 +524,7 @@ func (e *encoder) writeImage(w io.Writer, cb int, level int) error {
 			}
 
 			// Write the compressed bytes.
-			if _, err := e.zw.Write(cr[f]); err != nil {
+			if _, err := zw.Write(cr[f]); err != nil {
 				return err
 			}
 
@@ -533,7 +532,7 @@ func (e *encoder) writeImage(w io.Writer, cb int, level int) error {
 			pr, cr[0] = cr[0], pr
 		}
 	}
-	return nil
+	return zw.Close()
 }
 
 // Write the actual image data to one or more IDAT chunks.

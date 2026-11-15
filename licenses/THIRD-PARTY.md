@@ -54,6 +54,18 @@ The IJG licence asks, for source derived from the library, that the whole
 not here yet**: it is to be copied unchanged from libjpeg-turbo
 (https://github.com/libjpeg-turbo/libjpeg-turbo) into this directory.
 
+## mozjpeg
+
+`internal/jpegstream/writer_trellis.go` is a Go port of the trellis
+quantization of mozjpeg (`jcdctmgr.c`: `quantize_trellis`, the AC and the
+DC trellis, with mozjpeg's default parameters from `jcparam.c`), copyright
+(C) 2014 Mozilla Corporation, in a file that is otherwise libjpeg-turbo's
+and the Independent JPEG Group's. mozjpeg is distributed under the same
+licences as libjpeg-turbo (the IJG licence and the Modified BSD licence;
+see the section above and `LICENSE-LIBJPEG-TURBO`). The port works on this
+package's blocks and reads its bit costs from the standard Huffman tables;
+nothing of the original file is included unchanged.
+
 ## Pillow
 
 `internal/ops/blur.go` contains Go ports of two routines of Pillow 12.1.1,

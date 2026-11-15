@@ -23,6 +23,8 @@ import (
 	"math/bits"
 
 	"golang.org/x/image/ccitt"
+
+	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
 // A FormatError reports that the input is not a valid TIFF image.
@@ -100,6 +102,7 @@ type decoder struct {
 	features  map[int][]uint
 	ifd       map[int][ifdLen]byte
 	palette   []color.Color
+	icc       []byte // the colour profile, if the file has one
 
 	buf   []byte
 	off   int    // Current offset in buf.
@@ -250,6 +253,16 @@ func (d *decoder) parseIFD(p []byte) (int, error) {
 				uint16(val[i+numcolors]),
 				uint16(val[i+2*numcolors]),
 				0xffff,
+			}
+		}
+	case tICCProfile:
+		// Kept when it can be read and is not too large; a bad one only
+		// costs the profile, not the image.
+		dt := d.byteOrder.Uint16(p[2:4])
+		n := d.byteOrder.Uint32(p[4:8])
+		if (dt == dtUndefined || dt == dtByte) && n > 4 && n <= pipeline.MaxMetaBytes && d.icc == nil {
+			if b, err := safeReadAt(d.r, uint64(n), int64(d.byteOrder.Uint32(p[8:12]))); err == nil {
+				d.icc = b
 			}
 		}
 	case tSampleFormat:

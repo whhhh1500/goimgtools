@@ -115,7 +115,7 @@ err := goimgtools.Open("in.jpg").
 | `WithContext(ctx)` | `ctx` 取消或超时后中止处理，返回 `ctx.Err()` |
 | `Clone()` | 复制一份配方，用来从同一个起点派生多个结果 |
 
-元数据目前只在 JPEG、PNG 之间读写；`Rotate()` 转正后保留的 EXIF 会把方向改成「正」。
+色彩配置（ICC）在 JPEG、PNG、WebP、TIFF 之间读写；EXIF 在 JPEG、PNG、WebP 之间读写（TIFF 的 EXIF 在它自己的目录里，不读不写）。GIF、BMP 不带这两样。`Rotate()` 转正后保留的 EXIF 会把方向改成「正」。
 
 ## 在服务里使用
 
@@ -379,6 +379,8 @@ small, err := goimgtools.FromSource(func(*pipeline.Env) (pipeline.Source, error)
 |---|---|---|
 | JPEG 更小、画质不变 | `JPEG(q, JPEGOptions{Optimize: true})`：为这张图单独算编码表 | 质量 85：983KB → 965KB（小 1.9%），0.20s，7.3MB |
 | JPEG 再小一些、画质不变 | `JPEGOptions{Progressive: true}`：渐进式（含优化编码表） | 983KB → 905KB（小 7.9%），0.34s，6.6MB |
+| JPEG 同样观感下更小（改变像素） | `JPEGOptions{Trellis: true}`：网格量化（mozjpeg 的做法），可与上面两项合用 | 7 张真实照片：同等 SSIM 时小 2.7–10.6%（平均 6.9%），同等 PSNR 时平均小 6%；3300 万像素多 0.4s（单线程） |
+| PNG 默认就更小（无损） | 默认压缩级别是 7（标准库是 6）：Go 的 6 级找重复很弱，7 级在渐变、天空、图标这类图上小约 5 倍，照片小 4–25%；2400 万像素的大图慢 17–70%（单线程），多线程时分块压缩补回来。要标准库的速度写 `PNG(PNGOptions{CompressionLevel: 6})` / `-png-level 6` | 渐变 1200×800：21KB → 4.7KB；2400 万像素的 RGB PNG：70.7MB → 53.0MB |
 | PNG 大幅变小（有损） | `PNG(PNGOptions{Colors: 256})`：减到最多 256 色，颜色按图选，带抖动 | 6474KB → 2653KB（小 59%），与原图 39.1dB，0.90s，12.6MB |
 | PNG 减色、不抖动 | 再加 `NoDither: true`：文件更小，渐变处会有色带 | 2142KB，40.7dB |
 | 压到指定大小以内 | `MaxFileSize(n)`：自动找不超过 n 的最高质量 | 限 300KB：得到 297KB，0.66s，12MB |
@@ -413,6 +415,7 @@ small, err := goimgtools.FromSource(func(*pipeline.Env) (pipeline.Source, error)
 
 - `Opacity`：0–1，整体透明度，和水印自带的透明度相乘；不填为原样。
 - `Tile`、`TileGapX`、`TileGapY`：平铺到整张图，间隔可设。配合 `Angle` 时每个水印各自旋转，行列仍横平竖直。
+- `WidthRatio`、`HeightRatio`：先把水印缩放到大图宽（高）的这个比例，保持宽高比；两个都给时放进两者之内。批量处理大小不一的图时，水印在每张图上看起来一样大。命令行写 `-watermark-width 20%`。
 
 ```go
 // 整张图铺满半透明斜向文字水印
@@ -424,6 +427,9 @@ goimgtools.Open("in.jpg").
 
 // 水印中心对准大图宽 1/3、高 1/3 处
 Composite(logo, goimgtools.CompositeOptions{LeftRatio: 1.0 / 3, TopRatio: 1.0 / 3, Anchor: goimgtools.Center})
+
+// 右下角，宽度是大图的 15%，不管大图多大
+Composite(logo, goimgtools.CompositeOptions{Gravity: goimgtools.SouthEast, Left: -24, Top: -24, WidthRatio: 0.15})
 ```
 
 水印整张放在内存里（计入内存上限），所以应该用小图。样图见 [docs/sample-effects.png](docs/sample-effects.png)。
@@ -511,7 +517,7 @@ if e, ok, _ := inspect.ReadExif(goimgtools.Open("photo.jpg")); ok {
 几点说明：
 
 - 指纹看的是整幅画面的明暗布局，所以裁剪、旋转、镜像之后就认不出了；没有明暗布局的图（纯色、从一边到另一边的平滑渐变）在它看来都一样。
-- EXIF 目前只从 JPEG 和 PNG 里读。库写文件时默认丢掉 EXIF（包括位置），要保留得显式 `KeepExif()`。
+- EXIF 从 JPEG、PNG、WebP 里读。库写文件时默认丢掉 EXIF（包括位置），要保留得显式 `KeepExif()`。
 - 这些工具都按行读图、内存有上限；`stats` 只留一张约 100KB 的颜色表，与图片大小无关。
 
 `Compare` 比的是两个配方处理之后的像素，所以两种处理方式可以直接比，不用先写成文件，例如同一张图用两种缩放算法：`inspect.Compare(a.Resize(800, 0), b.Resize(800, 0, goimgtools.ResizeOptions{Kernel: goimgtools.KernelLinear}))`。输出格式（`JPEG()`、`WebP()` 这些）不参与比较；要比编码造成的损失，先 `ToBytes()` 再用 `FromBytes` 读回来比。
@@ -575,7 +581,7 @@ goimgtools -trim 10 -resize 1200x -extend 20,20,20,20 -background white -sharpen
 | `-sharpen mild\|SIGMA[,AMOUNT[,THRESHOLD]]` | `mild` 轻度锐化；或反锐化掩模（`AMOUNT` 默认 1.5，`THRESHOLD` 默认 0） |
 | `-flatten 颜色` | 铺底色 |
 | `-watermark 文件` / `-watermark-text 文字` | 图片水印 / 文字水印（`\n` 换行） |
-| `-watermark-width N` | 把水印缩到 N 像素宽 |
+| `-watermark-width N\|N%` | 把水印缩到 N 像素宽，或大图宽度的 N%（批量处理大小不一的图时水印一样大） |
 | `-gravity`、`-offset X,Y` | 九宫格位置和像素偏移；只用这两项时默认离边 24 像素 |
 | `-watermark-ratio X,Y` | 按大图宽高比例偏移 |
 | `-watermark-anchor`、`-watermark-pivot` | 锚点、旋转点：九宫格名或 `X,Y` |
@@ -589,6 +595,7 @@ goimgtools -trim 10 -resize 1200x -extend 20,20,20,20 -background white -sharpen
 | `-format` | `jpeg`、`png`、`webp`、`gif`、`bmp`、`tiff`；默认按扩展名 |
 | `-quality N` | JPEG 或有损 WebP 的质量 |
 | `-jpeg-optimize`、`-jpeg-progressive` | JPEG：优化编码表、渐进式（更小，像素不变） |
+| `-jpeg-trellis` | JPEG：网格量化（同样观感下更小，像素会变；可与上两项合用） |
 | `-png-colors N`、`-no-dither` | PNG：减到 N 色（2–256）；不抖动 |
 | `-max-size 大小` | 文件不超过这个大小（`200KB`、`1.5MB` 或字节数），自动降质量 |
 | `-skip-larger` | 结果不比原文件小（同格式）时保留原文件；用于只做压缩的场合 |
@@ -657,12 +664,23 @@ goimgtools batch -resize 1920x1920 -no-enlarge -quality 80 -format jpeg 输入�
 
 - `Threads(2)`：解码在一个线程，缩放、合成、编码在另一个线程。
 - `Threads(3)`：编码再单独占一个线程（输出很大、不缩小的转码才有用）。
-- `Threads(4)` 及以上：多出的核给能分摊工作的操作——模糊、两种锐化、调色、任意角度旋转——它们把每一批行或列分给空闲的核一起算。一条链里有几个这样的操作也不会超出：多出的核是整条链共用的一个池子，空闲才借，算完就还。
+- `Threads(4)` 及以上：多出的核给能分摊工作的环节——缩放、模糊、两种锐化、调色、任意角度旋转、JPEG 编码（颜色换算、DCT、量化；熵编码仍按顺序）、PNG 压缩（按 256KB 分块压缩，见下）——它们把每一批行、列或块分给空闲的核一起算。一条链里有几个这样的环节也不会超出：多出的核是整条链共用的一个池子，空闲才借，算完就还。
 - 任何时候在干活的线程不超过设定值；输出与单线程逐字节相同（测试里对每种操作比较了 0、1、3、7 个帮手的结果）。
 
 线程之间用固定 3 条带的缓冲交接，消费方跟不上时生产方停下等待；分摊工作的操作每批多几行缓冲。所以每多一个线程多占约 1–2MB，并计入内存上限。暂存的行写进了临时文件（内存上限很小）时，模糊和锐化退回一行一行地算，不分摊。
 
-线程多了以后，最慢的一环往往是编码：JPEG、PNG 编码器各自只用一个核（见「没做的」）。
+实测（6000×4000，结果在各线程数下逐字节相同）：
+
+| 场景 | 1 线程 | 3 线程 | 4 线程 | 8 线程 |
+|---|---|---|---|---|
+| JPEG 转 JPEG，不缩小 | 0.61s | 0.43s | 0.33s | 0.27s |
+| JPEG 转 PNG，不缩小（7 级） | 2.10s | 1.89s | 1.16s | 0.49s |
+| RGB PNG 转 PNG，不缩小（7 级） | 1.58s | 1.01s | 0.71s | 0.45s |
+| JPEG 缩到 1536 | 0.41s | 0.23s | 0.22s | 0.22s |
+| 1080p 放大到 4K | 0.24s | 0.13s | 0.13s | 0.11s |
+| 1080p 放大到 8K | 0.84s | 0.44s | 0.36s | 0.29s |
+
+**PNG 的分块压缩**：和 pigz 一样，过滤后的数据每 256KB 一块，每块以前 32KB 为字典单独压缩，块尾同步刷新后首尾相接成一条 zlib 流。块的划分与线程数无关，所以文件也与线程数无关；没有帮手时边来边压、直接写出，不多占内存。数据不超过一块（约 9 万像素的 RGB）时与 `compress/zlib` 逐字节相同；更大的图因为每块重新开始找重复，文件大一点点（2400 万像素实测 +0.005%）。
 
 ## JPEG 解码时缩小（可选）
 
@@ -775,7 +793,7 @@ go build -o memprobe.exe ./cmd/memprobe
 ./memprobe.exe std in.png out.jpg 1536 1536 logo.png
 ```
 
-环境变量：`GOIMG_MEM`（上限，MB）、`GOIMG_ADJUST=gray|modulate|blur:SIGMA|sharpen|usm:SIGMA|trim|extend|rotate:度数`（缩放后再做一项调整）、`GOIMG_THREADS`、`GOIMG_FAST=1`、`GOIMG_NORESIZE=1`（不缩小）、`GOIMG_ROTATE=1`（先转 90°）、`GOIMG_LOSSLESS=1`、`GOIMG_JPEG=opt|prog`、`GOIMG_COLORS=N`（PNG 减色）、`GOIMG_MAXSIZE=KB`、`GOIMG_ENLARGE=1`、`GOIMG_TEXT=文字`（平铺文字水印）、`GOIMG_PROF=文件名`（CPU 剖析）、`GOIMG_HEAP=文件名`（内存分配剖析）。
+环境变量：`GOIMG_MEM`（上限，MB）、`GOIMG_ADJUST=gray|modulate|blur:SIGMA|sharpen|usm:SIGMA|trim|extend|rotate:度数`（缩放后再做一项调整）、`GOIMG_THREADS`（线程数，可超过 3）、`GOIMG_FAST=1`、`GOIMG_NORESIZE=1`（不缩小）、`GOIMG_ROTATE=1`（先转 90°）、`GOIMG_LOSSLESS=1`、`GOIMG_JPEG=opt|prog`、`GOIMG_COLORS=N`（PNG 减色）、`GOIMG_MAXSIZE=KB`、`GOIMG_ENLARGE=1`、`GOIMG_TEXT=文字`（平铺文字水印）、`GOIMG_PROF=文件名`（CPU 剖析）、`GOIMG_HEAP=文件名`（内存分配剖析）。
 
 ## 与标准库的一致性
 
@@ -783,7 +801,7 @@ PNG、JPEG、GIF、BMP、TIFF 的解码和编码，以及默认的缩放，都�
 
 - 解码：Go 和 `x/image` 自带的 164 个测试图（PNG 85、JPEG 31、TIFF 17、WebP 17、BMP 9、GIF 5）解出的像素与标准解码器相同（WebP 见下）；截断、单字节损坏的文件，标准解码器报错的这里也报错。
 - 缩放：默认算法与 `draw.CatmullRom.Scale` 逐字节相同。灰度图只算一个通道、输出灰度图，数值就是 `x/image` 给出的红绿蓝三个相等通道的值。
-- 编码：JPEG（不加选项时）、PNG（不减色时）、GIF（`FixedPalette` 时，以及动图）与标准库逐字节相同，BMP、TIFF 与 `x/image` 逐字节相同（不带元数据时）。
+- 编码：JPEG（不加选项时）、GIF（`FixedPalette` 时，以及动图）与标准库逐字节相同，BMP、TIFF 与 `x/image` 逐字节相同（不带元数据时）。PNG（不减色时）指定 6 级、图像数据不超过一个压缩块（256KB）时与 `png.Encode` 逐字节相同；默认用 7 级（见「压缩」），更大的图分块压缩，像素相同。
 - 模糊和反锐化掩模：没有透明通道的图，`Blur` 与 Pillow 12.1.1 的 `GaussianBlur`、`Sharpen(SharpenOptions{...})` 与它的 `UnsharpMask` 逐字节相同（测试里存了 Pillow 生成的参考图，sigma 0.7–40）。算法和定点运算是照 Pillow 的 C 代码移植的。
 - 灰度：与 Pillow 的 `convert("L")` 逐字节相同，也就是 `color.RGBToYCbCr` 的亮度；在全部 1677 万种颜色上与精确的 Rec. 601 亮度最多差 0.5 级。（`color.GrayModel` 先算到 16 位再截掉低 8 位，最多差 0.99 级、16% 的颜色不是最近的一级，所以没有跟它。）
 - 调色：与 sharp 0.35（libvips 8.18）的 `modulate` 每个像素相差不超过 1，平均 0.14。
@@ -810,11 +828,12 @@ WebP 编码器是本模块自己写的，没有标准库可对照，用两种解
 ## 没做的
 
 - AVIF、HEIC（决定不做）。
-- TIFF、WebP 输入的 EXIF / ICC 不读；元数据只写进 JPEG、PNG。
+- TIFF 的 EXIF 不读不写（ICC 读写）；GIF、BMP 不带色彩配置：广色域（Display P3 等）的图转成这两种格式时颜色会偏淡。根治要把像素换算到 sRGB 再写，还没做。
+- JPEG 解码的熵解码只能按顺序，IDCT 和颜色换算也还没分摊到多个核：线程多时它是缩小 JPEG 最慢的一环。
 - 动图只支持 GIF；动图输出统一用一套固定的 256 色加抖动，不保留原调色板，也还没用上按图选色。
 - 对比度、伽马、色阶、反色这类调色没有内置方法，用 `Pixels` 几行就能写（「扩展」里有灰度的例子）；其他要看相邻像素的滤镜（中值、浮雕、边缘检测等）要自己写成 `Pipe` 的一环。
-- 编码器（JPEG、PNG、WebP 等）各自只用一个核，线程多时成为最慢的一环；缩放也还不分摊到多个核。
-- JPEG 的网格量化（mozjpeg 的做法，同等观感下还能小 5%–10%，但会改变像素）。
+- WebP、GIF、BMP、TIFF 的编码只用一个核（JPEG、PNG 的编码和缩放已经分摊）。
+- 网格量化的码长用的是标准哈夫曼表（mozjpeg 先扫一遍整张图统计、用优化后的表来估码长）：本库按条带流式处理，不为此多存一遍整图的系数。同等 SSIM 时比 mozjpeg 的做法少省一些（未直接对比，本机没有 mozjpeg）。
 - `MaxFileSize` 只支持 JPEG 和有损 WebP（以及带 `Quality` 的注册格式）。
 
 ## 发布状态
@@ -827,7 +846,7 @@ WebP 编码器是本模块自己写的，没有标准库可对照，用两种解
 
 ## 许可
 
-本项目用 MIT 许可（[LICENSE](LICENSE)）。其中从 Go 标准库和 `golang.org/x/image` 改写的代码沿用其 BSD 许可（[licenses/LICENSE-GO](licenses/LICENSE-GO)）；从 libjpeg 移植的两段沿用其许可（[licenses/LICENSE-LIBJPEG-TURBO](licenses/LICENSE-LIBJPEG-TURBO)）；从 Pillow 移植的模糊和反锐化掩模沿用其 MIT-CMU 许可（[licenses/LICENSE-PILLOW](licenses/LICENSE-PILLOW)）。[licenses/THIRD-PARTY.md](licenses/THIRD-PARTY.md) 逐项列了哪些文件来自哪里。
+本项目用 MIT 许可（[LICENSE](LICENSE)）。其中从 Go 标准库和 `golang.org/x/image` 改写的代码沿用其 BSD 许可（[licenses/LICENSE-GO](licenses/LICENSE-GO)）；从 libjpeg 移植的两段和从 mozjpeg 移植的网格量化沿用其许可（[licenses/LICENSE-LIBJPEG-TURBO](licenses/LICENSE-LIBJPEG-TURBO)）；从 Pillow 移植的模糊和反锐化掩模沿用其 MIT-CMU 许可（[licenses/LICENSE-PILLOW](licenses/LICENSE-PILLOW)）。[licenses/THIRD-PARTY.md](licenses/THIRD-PARTY.md) 逐项列了哪些文件来自哪里。
 
 ## 目录
 

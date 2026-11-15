@@ -77,6 +77,7 @@ func readAt(r io.ReaderAt, p []byte, off, size int64) (int, error) {
 // source is the Source of all three kinds of image.
 type source struct {
 	env      *pipeline.Env
+	meta     pipeline.Meta
 	ra       io.ReaderAt
 	bounds   image.Rectangle
 	model    color.Model
@@ -144,6 +145,7 @@ func Open(r io.ReaderAt, size int64, env *pipeline.Env) (pipeline.Source, error)
 	var (
 		wantAlpha      bool
 		seenVP8X       bool
+		vp8xFlags      byte
 		widthMinusOne  uint32
 		heightMinusOne uint32
 	)
@@ -228,6 +230,9 @@ func Open(r io.ReaderAt, size int64, env *pipeline.Env) (pipeline.Source, error)
 			if fh.Width == 0 || fh.Height == 0 {
 				return nil, errEmpty
 			}
+			if seenVP8X && vp8xFlags&(flagEXIF|flagICC) != 0 {
+				s.scanMeta(r, pos+int64(chunkLen)+int64(chunkLen&1), min(size, pos+int64(totalLen)))
+			}
 			s.vd, s.lossy = vd, true
 			s.bounds = image.Rect(0, 0, fh.Width, fh.Height)
 			s.model = color.YCbCrModel
@@ -252,6 +257,9 @@ func Open(r io.ReaderAt, size int64, env *pipeline.Env) (pipeline.Source, error)
 				// A small VP8X header followed by a huge VP8L chunk.
 				return nil, errInvalidFormat
 			}
+			if seenVP8X && vp8xFlags&(flagEXIF|flagICC) != 0 {
+				s.scanMeta(r, pos+int64(chunkLen)+int64(chunkLen&1), min(size, pos+int64(totalLen)))
+			}
 			s.ld = ld
 			s.bounds = image.Rect(0, 0, w, h)
 			s.model = color.NRGBAModel
@@ -273,6 +281,7 @@ func Open(r io.ReaderAt, size int64, env *pipeline.Env) (pipeline.Source, error)
 			}
 			const alphaBit = 1 << 4
 			wantAlpha = (buf[0] & alphaBit) != 0
+			vp8xFlags = buf[0]
 			widthMinusOne = uint32(buf[4]) | uint32(buf[5])<<8 | uint32(buf[6])<<16
 			heightMinusOne = uint32(buf[7]) | uint32(buf[8])<<8 | uint32(buf[9])<<16
 			w := uint64(widthMinusOne) + 1
@@ -285,9 +294,14 @@ func Open(r io.ReaderAt, size int64, env *pipeline.Env) (pipeline.Source, error)
 			}
 
 		default:
-			// Any other chunk (ICCP, EXIF, XMP, ANIM, ANMF, ...) is skipped.
+			// Any other chunk (XMP, ANIM, ANMF, ...) is skipped; the colour
+			// profile, and EXIF in the rare files that put it before the
+			// image, are kept.
 			if avail < int64(chunkLen) {
 				return nil, errShortChunkData
+			}
+			if name := string(buf[:4]); name == "ICCP" || name == "EXIF" {
+				s.readMeta(name, r, pos, chunkLen)
 			}
 		}
 

@@ -74,7 +74,7 @@ type options struct {
 	flip, flop, noEnlarge, fast                    *bool
 	watermark, wmText, gravity, offset, wmGap      *string
 	wmRatio, wmAnchor, wmPivot                     *string
-	wmWidth                                        *int
+	wmWidth                                        *string
 	wmAngle, wmOpacity                             *float64
 	wmTile                                         *bool
 	text, fontList, textColor, textBg              *string
@@ -85,6 +85,7 @@ type options struct {
 	quality, pngLevel, pngColors, gifColors        *int
 	gifFixed                                       *bool
 	lossless, jpegOpt, jpegProg, noDither          *bool
+	jpegTrellis                                    *bool
 	animated, keepExif, stripICC                   *bool
 	mem, threads, maxPixels                        *int
 	skipLarger                                     *bool
@@ -97,66 +98,67 @@ type options struct {
 // register defines the shared options on fs.
 func register(fs *flag.FlagSet) *options {
 	return &options{
-		resize:     fs.String("resize", "", "target size `WxH`; either side may be left out (1536x or x1024) to keep proportions"),
-		rotate:     fs.String("rotate", "", "turn the image first: auto (follow the EXIF orientation), or any number of `degrees` clockwise (90, 180, 270 exactly; other angles enlarge the canvas, with -background in the corners)"),
-		flip:       fs.Bool("flip", false, "mirror top to bottom"),
-		flop:       fs.Bool("flop", false, "mirror left to right"),
-		fit:        fs.String("fit", "inside", "how -resize WxH fits: inside (shrink in proportion), cover (fill and crop), contain (shrink in proportion, pad with -background), outside, fill (stretch)"),
-		bg:         fs.String("background", "black", "`color` of the bars -fit contain adds, the border of -extend and the corners -rotate leaves at other angles: white, black, transparent, #rrggbb or #rrggbbaa"),
-		trim:       fs.String("trim", "", "cut away the edges that are the colour of the top-left pixel, allowing this `difference` 0-255 (10 also catches JPEG noise)"),
-		extend:     fs.String("extend", "", "add a border of `T,R,B,L` pixels in -background"),
-		grayscale:  fs.Bool("grayscale", false, "turn the image into shades of grey"),
-		modulate:   fs.String("modulate", "", "change `B,S,H`: brightness and saturation factors and hue degrees (1.2,0.8,0 is brighter and less vivid)"),
-		blur:       fs.Float64("blur", 0, "Gaussian blur of this `sigma` in pixels (as Pillow's GaussianBlur)"),
-		sharpen:    fs.String("sharpen", "", "sharpen: mild (a quick 3x3 sharpen, good after shrinking), or an unsharp mask `SIGMA[,AMOUNT[,THRESHOLD]]` as Pillow's (amount 1.5, threshold 0 by default)"),
-		kernel:     fs.String("kernel", "cubic", "resize filter: nearest, linear, cubic, mitchell, lanczos2, lanczos3"),
-		noEnlarge:  fs.Bool("no-enlarge", false, "never make the image larger than it is"),
-		fast:       fs.Bool("fast-shrink", false, "let a JPEG reduced to half size or less be shrunk while it is decoded: faster, pixels differ slightly"),
-		crop:       fs.String("crop", "", "keep the region `X,Y,W,H` (pixels, before resizing)"),
-		flatten:    fs.String("flatten", "", "replace transparency with a background `color`: white, black or #rrggbb"),
-		watermark:  fs.String("watermark", "", "image `file` to draw on top"),
-		wmText:     fs.String("watermark-text", "", "`text` to draw on top instead of an image (use \\n for a new line)"),
-		text:       fs.String("text", "", "make an image of this `text`; give only an output file"),
-		fontList:   fs.String("font", "", "fonts for -text and -watermark-text: `files` or installed font names, comma separated, tried in order (see: goimgtools fonts)"),
-		fontSize:   fs.Float64("font-size", 32, "text height in `pixels`"),
-		textColor:  fs.String("text-color", "black", "`color` of the text: white, black, #rrggbb or #rrggbbaa"),
-		textBg:     fs.String("text-background", "", "`color` behind the text (default: transparent)"),
-		textWidth:  fs.Int("text-width", 0, "wrap the text at this many `pixels`"),
-		strokeW:    fs.Float64("stroke-width", 0, "outline the text, this many `pixels` wide"),
-		strokeCol:  fs.String("stroke-color", "black", "`color` of the text outline"),
-		shadowCol:  fs.String("shadow-color", "", "draw a shadow of the text in this `color`"),
-		shadowOff:  fs.String("shadow-offset", "2,2", "move the shadow `X,Y` pixels (0,0 with -shadow-blur gives a glow)"),
-		shadowBlr:  fs.Int("shadow-blur", 0, "soften the shadow over this many `pixels`"),
-		wmOpacity:  fs.Float64("watermark-opacity", 1, "how much of the watermark shows, 0 to 1"),
-		wmTile:     fs.Bool("watermark-tile", false, "repeat the watermark over the whole image"),
-		wmGap:      fs.String("watermark-gap", "0,0", "space between repeated watermarks, `X,Y` pixels"),
-		wmWidth:    fs.Int("watermark-width", 0, "scale the watermark to this width in `pixels`"),
-		gravity:    fs.String("gravity", "southeast", "watermark anchor: northwest, north, northeast, west, center, east, southwest, south, southeast"),
-		wmRatio:    fs.String("watermark-ratio", "", "move the watermark `X,Y` shares of the image width and height from its gravity point (0.333,0.333 is a third across and down); without -offset there is no margin"),
-		wmAnchor:   fs.String("watermark-anchor", "", "the `point` of the watermark put on that position: northwest ... center ... southeast, or X,Y pixels from its top-left corner (default: the one named like -gravity)"),
-		wmAngle:    fs.Float64("watermark-angle", 0, "turn the watermark clockwise by this many `degrees`"),
-		wmPivot:    fs.String("watermark-pivot", "", "the `point` of the watermark it turns around, given like -watermark-anchor (default: the anchor)"),
-		offset:     fs.String("offset", "", "move the watermark `X,Y` pixels from its anchor (negative moves left / up); default is a 24 pixel margin"),
-		quality:    fs.Int("quality", 0, "JPEG or lossy WebP quality 1-100 (default 80 for JPEG, 75 for WebP)"),
-		jpegOpt:    fs.Bool("jpeg-optimize", false, "JPEG: build the coding tables for this image (a smaller file, the same pixels)"),
-		jpegProg:   fs.Bool("jpeg-progressive", false, "JPEG: write a progressive file (smaller still, the same pixels)"),
-		pngColors:  fs.Int("png-colors", 0, "PNG: reduce to this many colours, 2-256, chosen for the image (a much smaller, lossy file)"),
-		noDither:   fs.Bool("no-dither", false, "no dithering when colours are reduced (-png-colors, GIF output)"),
-		pngLevel:   fs.Int("png-level", 0, "PNG compression 1 (fastest) to 9 (smallest); default is the standard level"),
-		format:     fs.String("format", "", "output format: "+formatNames()+" (default: from the output file name)"),
-		skipLarger: fs.Bool("skip-larger", false, "when the result is not smaller than the input file (same format), keep the input file as it is; for runs that only compress"),
-		maxSize:    fs.String("max-size", "", "make the file at most this `size` by lowering the quality (JPEG, lossy WebP): 200KB, 1.5MB, or a number of bytes"),
-		lossless:   fs.Bool("webp-lossless", false, "WebP: write without loss"),
-		gifColors:  fs.Int("gif-colors", 0, "largest number of colours in a GIF, 1-256 (default 256)"),
-		gifFixed:   fs.Bool("gif-fixed-palette", false, "GIF: use the standard fixed palette instead of colours chosen for the image (faster, a much worse picture)"),
-		tiffComp:   fs.String("tiff-compression", "none", "TIFF compression: none or deflate"),
-		animated:   fs.Bool("animated", false, "process every frame of an animated GIF (GIF to GIF)"),
-		keepExif:   fs.Bool("keep-exif", false, "copy the EXIF block (camera, date, GPS) to the output"),
-		stripICC:   fs.Bool("strip-icc", false, "drop the ICC colour profile instead of copying it"),
-		mem:        fs.Int("mem", 64, "working memory limit in `MB` for one image; beyond it data goes to temporary files"),
-		threads:    fs.Int("threads", 1, "CPU cores to use for one image, at most the number of CPUs: 2 decodes on a core of its own, 3 encodes on another, more go to -blur, -sharpen, -modulate and -rotate"),
-		maxPixels:  fs.Int("max-pixels", 0, "largest image accepted or made, in `megapixels` (default 268: 16383 x 16383); all frames together for -animated"),
-		tmp:        fs.String("tmp", "", "`directory` for temporary files (default: the system one)"),
+		resize:      fs.String("resize", "", "target size `WxH`; either side may be left out (1536x or x1024) to keep proportions"),
+		rotate:      fs.String("rotate", "", "turn the image first: auto (follow the EXIF orientation), or any number of `degrees` clockwise (90, 180, 270 exactly; other angles enlarge the canvas, with -background in the corners)"),
+		flip:        fs.Bool("flip", false, "mirror top to bottom"),
+		flop:        fs.Bool("flop", false, "mirror left to right"),
+		fit:         fs.String("fit", "inside", "how -resize WxH fits: inside (shrink in proportion), cover (fill and crop), contain (shrink in proportion, pad with -background), outside, fill (stretch)"),
+		bg:          fs.String("background", "black", "`color` of the bars -fit contain adds, the border of -extend and the corners -rotate leaves at other angles: white, black, transparent, #rrggbb or #rrggbbaa"),
+		trim:        fs.String("trim", "", "cut away the edges that are the colour of the top-left pixel, allowing this `difference` 0-255 (10 also catches JPEG noise)"),
+		extend:      fs.String("extend", "", "add a border of `T,R,B,L` pixels in -background"),
+		grayscale:   fs.Bool("grayscale", false, "turn the image into shades of grey"),
+		modulate:    fs.String("modulate", "", "change `B,S,H`: brightness and saturation factors and hue degrees (1.2,0.8,0 is brighter and less vivid)"),
+		blur:        fs.Float64("blur", 0, "Gaussian blur of this `sigma` in pixels (as Pillow's GaussianBlur)"),
+		sharpen:     fs.String("sharpen", "", "sharpen: mild (a quick 3x3 sharpen, good after shrinking), or an unsharp mask `SIGMA[,AMOUNT[,THRESHOLD]]` as Pillow's (amount 1.5, threshold 0 by default)"),
+		kernel:      fs.String("kernel", "cubic", "resize filter: nearest, linear, cubic, mitchell, lanczos2, lanczos3"),
+		noEnlarge:   fs.Bool("no-enlarge", false, "never make the image larger than it is"),
+		fast:        fs.Bool("fast-shrink", false, "let a JPEG reduced to half size or less be shrunk while it is decoded: faster, pixels differ slightly"),
+		crop:        fs.String("crop", "", "keep the region `X,Y,W,H` (pixels, before resizing)"),
+		flatten:     fs.String("flatten", "", "replace transparency with a background `color`: white, black or #rrggbb"),
+		watermark:   fs.String("watermark", "", "image `file` to draw on top"),
+		wmText:      fs.String("watermark-text", "", "`text` to draw on top instead of an image (use \\n for a new line)"),
+		text:        fs.String("text", "", "make an image of this `text`; give only an output file"),
+		fontList:    fs.String("font", "", "fonts for -text and -watermark-text: `files` or installed font names, comma separated, tried in order (see: goimgtools fonts)"),
+		fontSize:    fs.Float64("font-size", 32, "text height in `pixels`"),
+		textColor:   fs.String("text-color", "black", "`color` of the text: white, black, #rrggbb or #rrggbbaa"),
+		textBg:      fs.String("text-background", "", "`color` behind the text (default: transparent)"),
+		textWidth:   fs.Int("text-width", 0, "wrap the text at this many `pixels`"),
+		strokeW:     fs.Float64("stroke-width", 0, "outline the text, this many `pixels` wide"),
+		strokeCol:   fs.String("stroke-color", "black", "`color` of the text outline"),
+		shadowCol:   fs.String("shadow-color", "", "draw a shadow of the text in this `color`"),
+		shadowOff:   fs.String("shadow-offset", "2,2", "move the shadow `X,Y` pixels (0,0 with -shadow-blur gives a glow)"),
+		shadowBlr:   fs.Int("shadow-blur", 0, "soften the shadow over this many `pixels`"),
+		wmOpacity:   fs.Float64("watermark-opacity", 1, "how much of the watermark shows, 0 to 1"),
+		wmTile:      fs.Bool("watermark-tile", false, "repeat the watermark over the whole image"),
+		wmGap:       fs.String("watermark-gap", "0,0", "space between repeated watermarks, `X,Y` pixels"),
+		wmWidth:     fs.String("watermark-width", "", "scale the watermark to this `width`: pixels (300), or a share of the image's width (20%), which keeps it the same to the eye on images of any size"),
+		gravity:     fs.String("gravity", "southeast", "watermark anchor: northwest, north, northeast, west, center, east, southwest, south, southeast"),
+		wmRatio:     fs.String("watermark-ratio", "", "move the watermark `X,Y` shares of the image width and height from its gravity point (0.333,0.333 is a third across and down); without -offset there is no margin"),
+		wmAnchor:    fs.String("watermark-anchor", "", "the `point` of the watermark put on that position: northwest ... center ... southeast, or X,Y pixels from its top-left corner (default: the one named like -gravity)"),
+		wmAngle:     fs.Float64("watermark-angle", 0, "turn the watermark clockwise by this many `degrees`"),
+		wmPivot:     fs.String("watermark-pivot", "", "the `point` of the watermark it turns around, given like -watermark-anchor (default: the anchor)"),
+		offset:      fs.String("offset", "", "move the watermark `X,Y` pixels from its anchor (negative moves left / up); default is a 24 pixel margin"),
+		quality:     fs.Int("quality", 0, "JPEG or lossy WebP quality 1-100 (default 80 for JPEG, 75 for WebP)"),
+		jpegOpt:     fs.Bool("jpeg-optimize", false, "JPEG: build the coding tables for this image (a smaller file, the same pixels)"),
+		jpegProg:    fs.Bool("jpeg-progressive", false, "JPEG: write a progressive file (smaller still, the same pixels)"),
+		jpegTrellis: fs.Bool("jpeg-trellis", false, "JPEG: trellis quantization as mozjpeg does it (smaller at about the same look; other pixels)"),
+		pngColors:   fs.Int("png-colors", 0, "PNG: reduce to this many colours, 2-256, chosen for the image (a much smaller, lossy file)"),
+		noDither:    fs.Bool("no-dither", false, "no dithering when colours are reduced (-png-colors, GIF output)"),
+		pngLevel:    fs.Int("png-level", 0, "PNG compression 1 (fastest) to 9 (smallest); default 7 (6 is the standard library's: faster, larger)"),
+		format:      fs.String("format", "", "output format: "+formatNames()+" (default: from the output file name)"),
+		skipLarger:  fs.Bool("skip-larger", false, "when the result is not smaller than the input file (same format), keep the input file as it is; for runs that only compress"),
+		maxSize:     fs.String("max-size", "", "make the file at most this `size` by lowering the quality (JPEG, lossy WebP): 200KB, 1.5MB, or a number of bytes"),
+		lossless:    fs.Bool("webp-lossless", false, "WebP: write without loss"),
+		gifColors:   fs.Int("gif-colors", 0, "largest number of colours in a GIF, 1-256 (default 256)"),
+		gifFixed:    fs.Bool("gif-fixed-palette", false, "GIF: use the standard fixed palette instead of colours chosen for the image (faster, a much worse picture)"),
+		tiffComp:    fs.String("tiff-compression", "none", "TIFF compression: none or deflate"),
+		animated:    fs.Bool("animated", false, "process every frame of an animated GIF (GIF to GIF)"),
+		keepExif:    fs.Bool("keep-exif", false, "copy the EXIF block (camera, date, GPS) to the output"),
+		stripICC:    fs.Bool("strip-icc", false, "drop the ICC colour profile instead of copying it"),
+		mem:         fs.Int("mem", 64, "working memory limit in `MB` for one image; beyond it data goes to temporary files"),
+		threads:     fs.Int("threads", 1, "CPU cores to use for one image, at most the number of CPUs: 2 decodes on a core of its own, 3 encodes on another, more go to resizing, -blur, -sharpen, -modulate, -rotate and JPEG and PNG encoding"),
+		maxPixels:   fs.Int("max-pixels", 0, "largest image accepted or made, in `megapixels` (default 268: 16383 x 16383); all frames together for -animated"),
+		tmp:         fs.String("tmp", "", "`directory` for temporary files (default: the system one)"),
 	}
 }
 
@@ -526,10 +528,22 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 				return nil, err
 			}
 		}
-		if *o.wmWidth > 0 {
-			wm.Resize(*o.wmWidth, 0)
-		}
 		co := goimgtools.CompositeOptions{Gravity: g, Left: dx, Top: dy, Angle: *o.wmAngle, Opacity: *o.wmOpacity, Tile: *o.wmTile}
+		if v := *o.wmWidth; v != "" {
+			if pct, ok := strings.CutSuffix(v, "%"); ok {
+				f, err := strconv.ParseFloat(pct, 64)
+				if err != nil || !(f > 0 && f <= 1000) {
+					return nil, fmt.Errorf("-watermark-width: want pixels or a percentage above 0, got %q", v)
+				}
+				co.WidthRatio = f / 100
+			} else {
+				n, err := strconv.Atoi(v)
+				if err != nil || n <= 0 {
+					return nil, fmt.Errorf("-watermark-width: want pixels or a percentage above 0, got %q", v)
+				}
+				wm.Resize(n, 0)
+			}
+		}
 		gap, err := ints(*o.wmGap, 2)
 		if err != nil {
 			return nil, fmt.Errorf("-watermark-gap: %w", err)
@@ -566,7 +580,7 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 	}
 	switch kind {
 	case "jpeg":
-		im.JPEG(*o.quality, goimgtools.JPEGOptions{Optimize: *o.jpegOpt, Progressive: *o.jpegProg})
+		im.JPEG(*o.quality, goimgtools.JPEGOptions{Optimize: *o.jpegOpt, Progressive: *o.jpegProg, Trellis: *o.jpegTrellis})
 	case "png":
 		im.PNG(goimgtools.PNGOptions{CompressionLevel: *o.pngLevel, Colors: *o.pngColors, NoDither: *o.noDither})
 	case "webp":

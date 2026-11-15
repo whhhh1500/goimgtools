@@ -350,6 +350,29 @@ type scaler struct {
 	started    bool
 	done       bool
 	err        error
+
+	// With helpers, the destination columns are shared out in parts, each
+	// reading the source columns it needs into a row of its own.
+	parts  []part
+	takers []taker
+}
+
+// part is a share of the destination columns, [x0, x1), which take the
+// source columns [s0, s1).
+type part struct {
+	x0, x1, s0, s1 int
+	row            [][4]float64
+	grow           []float64
+}
+
+// taker is an open row that takes the current source row, with its weight.
+type taker struct {
+	o *open
+	w float64
+}
+
+type subImager interface {
+	SubImage(image.Rectangle) image.Image
 }
 
 // Scale returns a Source holding src scaled to dw × dh with kernel q (for
@@ -443,8 +466,50 @@ func ScaleExtent(src pipeline.Source, dw, dh int, q *draw.Kernel, ew, eh float64
 		s.tmp = make([][4]float64, dw)
 		s.band = image.NewRGBA(image.Rect(0, 0, dw, s.n))
 	}
+	if err := s.share(fpp); err != nil {
+		s.env.Budget.Release(s.reserved)
+		return nil, err
+	}
 	s.rows = pipeline.NewRowReader(src)
 	return s, nil
+}
+
+// share sets the parts up when the pipeline has helpers and the rows are
+// wide enough to be worth sharing: parts of at least 512 destination
+// columns, each with a row of the source columns its columns take.
+func (s *scaler) share(fpp int64) error {
+	parts := min(s.env.Helpers()+1, s.dw/512)
+	if parts < 2 {
+		return nil
+	}
+	var need int64
+	for p := 0; p < parts; p++ {
+		x0, x1 := p*s.dw/parts, (p+1)*s.dw/parts
+		s0, s1 := s.sb.Dx(), 0
+		for x := x0; x < x1; x++ {
+			if h := s.hz.sources[x]; h.i != h.j {
+				s0 = min(s0, int(s.hz.contribs[h.i].coord))
+				s1 = max(s1, int(s.hz.contribs[h.j-1].coord)+1)
+			}
+		}
+		s0 = min(s0, s1)
+		s.parts = append(s.parts, part{x0: x0, x1: x1, s0: s0, s1: s1})
+		need += int64(s1-s0) * fpp
+	}
+	if err := s.env.Budget.Reserve(need, "resize rows of the parts"); err != nil {
+		s.parts = nil
+		return err
+	}
+	s.reserved += need
+	for i := range s.parts {
+		p := &s.parts[i]
+		if s.gray {
+			p.grow = make([]float64, p.s1-p.s0)
+		} else {
+			p.row = make([][4]float64, p.s1-p.s0)
+		}
+	}
+	return nil
 }
 
 func (s *scaler) Env() *pipeline.Env      { return s.env }
@@ -518,12 +583,16 @@ func (s *scaler) feed() error {
 	if !used {
 		return nil
 	}
+	if !s.started {
+		s.started, s.constAlpha = true, s.gray || constAlpha(strip)
+	}
+	if sub, ok := strip.(subImager); ok && len(s.parts) > 0 {
+		s.feedParts(sub, y)
+		return nil
+	}
 	if s.gray {
 		s.feedGray(strip, y)
 		return nil
-	}
-	if !s.started {
-		s.started, s.constAlpha = true, constAlpha(strip)
 	}
 	readRow(strip, s.sb.Min.Y+int(y), s.row)
 
@@ -573,6 +642,92 @@ func (s *scaler) feed() error {
 		}
 	}
 	return nil
+}
+
+// feedParts is feed with the destination columns shared out among the
+// helpers: each part reads the source columns it takes and makes the sums
+// of its columns. Every sum has the same terms, added in the same order,
+// as in feed: the result is the same to the bit.
+func (s *scaler) feedParts(strip subImager, y int32) {
+	// The open rows that take this row, and their weights; their place in
+	// the contributions moves on once, here.
+	s.takers = s.takers[:0]
+	for i := range s.opens {
+		o := &s.opens[i]
+		if o.k >= s.vt.sources[s.dLo+i].j {
+			continue
+		}
+		c := s.vt.contribs[o.k]
+		if c.coord != y {
+			continue
+		}
+		o.k++
+		if s.gray {
+			o.pa += float64(1 * c.weight)
+		}
+		s.takers = append(s.takers, taker{o, c.weight})
+	}
+	ay := s.sb.Min.Y + int(y)
+	x0 := strip.(image.Image).Bounds().Min.X
+	s.env.Parallel(len(s.parts), func(k int) {
+		p := &s.parts[k]
+		if p.s1 <= p.s0 {
+			return
+		}
+		m := strip.SubImage(image.Rect(x0+p.s0, ay, x0+p.s1, ay+1))
+		if s.gray {
+			readRowGray(m, ay, p.grow)
+			for x := p.x0; x < p.x1; x++ {
+				h := s.hz.sources[x]
+				var v float64
+				for _, c := range s.hz.contribs[h.i:h.j] {
+					v += float64(p.grow[int(c.coord)-p.s0] * c.weight)
+				}
+				s.gtmp[x] = v * h.invTotalWeightFFFF
+			}
+			for _, t := range s.takers {
+				acc, tmp := t.o.g[p.x0:p.x1], s.gtmp[p.x0:p.x1]
+				for x, v := range tmp {
+					acc[x] += float64(v * t.w)
+				}
+			}
+			return
+		}
+		readRow(m, ay, p.row)
+		ca := s.constAlpha
+		for x := p.x0; x < p.x1; x++ {
+			h := s.hz.sources[x]
+			var pr, pg, pb, pa float64
+			if ca {
+				for _, c := range s.hz.contribs[h.i:h.j] {
+					q := &p.row[int(c.coord)-p.s0]
+					pr += float64(q[0] * c.weight)
+					pg += float64(q[1] * c.weight)
+					pb += float64(q[2] * c.weight)
+				}
+				s.tmp[x] = [4]float64{pr * h.invTotalWeightFFFF, pg * h.invTotalWeightFFFF, pb * h.invTotalWeightFFFF, 1}
+			} else {
+				for _, c := range s.hz.contribs[h.i:h.j] {
+					q := &p.row[int(c.coord)-p.s0]
+					pr += float64(q[0] * c.weight)
+					pg += float64(q[1] * c.weight)
+					pb += float64(q[2] * c.weight)
+					pa += float64(q[3] * c.weight)
+				}
+				s.tmp[x] = [4]float64{pr * h.invTotalWeightFFFF, pg * h.invTotalWeightFFFF, pb * h.invTotalWeightFFFF, pa * h.invTotalWeightFFFF}
+			}
+		}
+		for _, t := range s.takers {
+			acc, tmp := t.o.acc[p.x0:p.x1], s.tmp[p.x0:p.x1]
+			for x := range tmp {
+				q, a := &tmp[x], &acc[x]
+				a[0] += float64(q[0] * t.w)
+				a[1] += float64(q[1] * t.w)
+				a[2] += float64(q[2] * t.w)
+				a[3] += float64(q[3] * t.w)
+			}
+		}
+	})
 }
 
 // feedGray is the two passes of feed for one channel. Each sum is made

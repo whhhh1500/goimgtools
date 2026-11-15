@@ -320,8 +320,8 @@ func (e *encoder) writeOptimized(src pipeline.Source, first image.Image, size im
 	out := e.w
 	e.w, e.freq = bufio.NewWriterSize(sp, 4<<10), &freq
 	var prevDC [3]int32
-	err := e.scanBlocks(src, first, func(b *block, comp int) {
-		prevDC[comp] = e.writeBlock(b, quantIndex((comp+1)/2), prevDC[comp])
+	err := e.quantBlocks(src, first, func(zz *qblock, comp int) {
+		prevDC[comp] = e.writeQuantized(zz, quantIndex((comp+1)/2), prevDC[comp])
 	})
 	e.emit(0x7f, 7)
 	e.flush()

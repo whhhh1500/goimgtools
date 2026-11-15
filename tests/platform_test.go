@@ -71,8 +71,11 @@ func TestSameOnEveryProcessor(t *testing.T) {
 		{"jpeg progressive", func() ([]byte, error) {
 			return photo.Clone().JPEG(83, JPEGOptions{Progressive: true, Optimize: true}).ToBytes()
 		}, "cdbc714acfd0afd3"},
-		{"png", func() ([]byte, error) { return clear.Clone().PNG().ToBytes() }, "18f1642af3e6c2bf"},
-		{"png 40 colours", func() ([]byte, error) { return photo.Clone().PNG(PNGOptions{Colors: 40}).ToBytes() }, "16f7aa295c5109b2"},
+		{"jpeg trellis", func() ([]byte, error) {
+			return photo.Clone().JPEG(77, JPEGOptions{Optimize: true, Trellis: true}).ToBytes()
+		}, "1e6064dbc5840d3a"},
+		{"png", func() ([]byte, error) { return clear.Clone().PNG().ToBytes() }, "7d6848e3147d24ec"},
+		{"png 40 colours", func() ([]byte, error) { return photo.Clone().PNG(PNGOptions{Colors: 40}).ToBytes() }, "844bdcb3467662a1"},
 		{"webp", func() ([]byte, error) { return photo.Clone().WebP(WebPOptions{Quality: 70}).ToBytes() }, "6ce2fe0efc34b6e7"},
 		{"webp lossless", func() ([]byte, error) { return clear.Clone().WebP(WebPOptions{Lossless: true}).ToBytes() }, "998880f023e64fd8"},
 		{"gif", func() ([]byte, error) { return photo.Clone().GIF().ToBytes() }, "55ae5c4b96926b04"},

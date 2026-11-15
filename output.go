@@ -138,6 +138,12 @@ type JPEGOptions struct {
 	// Progressive writes a progressive JPEG, which is smaller still (it
 	// includes Optimize) and shows coarse to fine while it loads.
 	Progressive bool
+	// Trellis chooses each quantized coefficient to save bits where the
+	// eye loses least, as mozjpeg does ("trellis quantization"): a smaller
+	// file at about the same look. Unlike Optimize and Progressive it
+	// changes the pixels (plain rounding is the most faithful choice, not
+	// the smallest). It goes with either of them.
+	Trellis bool
 }
 
 // JPEG selects JPEG output. quality is 1–100; 0 means the default, 80.
@@ -152,9 +158,19 @@ func (m *Image) JPEG(quality int, opts ...JPEGOptions) *Image {
 	return m
 }
 
+// DefaultPNGLevel is the compression level of PNG output when PNGOptions
+// does not set one. It is 7, not the 6 of the standard library, because
+// Go's level 6 finds far fewer repeats than zlib's: at 7 smooth images
+// (gradients, skies, graphics) come out about five times smaller and
+// photos 4 to 25% smaller, in a similar time for small images and up to
+// 70% longer for large photos (24 megapixels). Level 6 or below gives the
+// standard library's speed.
+const DefaultPNGLevel = 7
+
 // PNGOptions are the optional settings of PNG.
 type PNGOptions struct {
-	// CompressionLevel is 1 (fastest) to 9 (smallest); 0 means the default.
+	// CompressionLevel is 1 (fastest) to 9 (smallest); 0 means
+	// DefaultPNGLevel.
 	CompressionLevel int
 	// Colors, 2 to 256, reduces the image to that many colours, chosen for
 	// this image, and writes a paletted PNG. This is how PNG files are made

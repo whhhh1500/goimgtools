@@ -251,6 +251,8 @@ type encoder struct {
 	recip [nQuantIndex][blockSize]uint64
 	// freq, when set, counts the symbols emitHuff writes (Options.Optimize).
 	freq *[nHuffIndex][257]int64
+	// trellis is set for Options.Trellis.
+	trellis bool
 }
 
 func (e *encoder) flush() {
@@ -393,15 +395,34 @@ func (e *encoder) writeDHT(nComponent int) {
 // returning the post-quantized DC value of the DCT-transformed block. b is in
 // natural (not zig-zag) order.
 func (e *encoder) writeBlock(b *block, q quantIndex, prevDC int32) int32 {
+	var zz qblock
+	e.quantize(b, q, &zz)
+	return e.writeQuantized(&zz, q, prevDC)
+}
+
+// qblock is a block transformed and quantized, in zig-zag order. Baseline
+// coefficients of 8-bit samples fit 16 bits.
+type qblock [blockSize]int16
+
+// quantize transforms b (in place) and quantizes it with table q into zz.
+func (e *encoder) quantize(b *block, q quantIndex, zz *qblock) {
 	fdct(b)
-	// Emit the DC delta.
 	quant, rec := &e.quant[q], &e.recip[q]
-	dc := divBy(b[0], 8*int32(quant[0]), rec[0])
+	for zig := 0; zig < blockSize; zig++ {
+		zz[zig] = int16(divBy(b[unzig[zig]], 8*int32(quant[zig]), rec[zig]))
+	}
+}
+
+// writeQuantized emits a quantized block, its DC as the difference to
+// prevDC, and returns its DC.
+func (e *encoder) writeQuantized(zz *qblock, q quantIndex, prevDC int32) int32 {
+	// Emit the DC delta.
+	dc := int32(zz[0])
 	e.emitHuffRLE(huffIndex(2*q+0), 0, dc-prevDC)
 	// Emit the AC components.
 	h, runLength := huffIndex(2*q+1), int32(0)
 	for zig := 1; zig < blockSize; zig++ {
-		ac := divBy(b[unzig[zig]], 8*int32(quant[zig]), rec[zig])
+		ac := int32(zz[zig])
 		if ac == 0 {
 			runLength++
 		} else {
@@ -641,8 +662,8 @@ func (e *encoder) writeSOS(src pipeline.Source, first image.Image) error {
 	}
 	// DC components are delta-encoded.
 	var prevDC [3]int32
-	err := e.scanBlocks(src, first, func(b *block, comp int) {
-		prevDC[comp] = e.writeBlock(b, quantIndex((comp+1)/2), prevDC[comp])
+	err := e.quantBlocks(src, first, func(zz *qblock, comp int) {
+		prevDC[comp] = e.writeQuantized(zz, quantIndex((comp+1)/2), prevDC[comp])
 	})
 	if err != nil {
 		return err
@@ -658,66 +679,185 @@ func (e *encoder) writeSOS(src pipeline.Source, first image.Image) error {
 // (comp 0), then Cb (comp 1) and Cr (comp 2). The blocks are in natural (not
 // zig-zag) order and may be changed by sink.
 func (e *encoder) scanBlocks(src pipeline.Source, first image.Image, sink func(b *block, comp int)) error {
+	var t unitTemp
+	return e.bands(src, first, func(c *bandConv) error {
+		for u := 0; u < c.units; u++ {
+			c.unit(u, &t, sink)
+		}
+		return nil
+	})
+}
+
+// quantBlocks hands the quantized blocks of the image to sink in the order
+// of scanBlocks. With helpers in the pipeline (see pipeline.Env.Parallel)
+// the blocks of a band are converted, transformed and quantized at once on
+// the cores that are free, into a buffer of the band, and then handed on
+// in order; the result is the same to the byte. Without, block by block.
+func (e *encoder) quantBlocks(src pipeline.Source, first image.Image, sink func(zz *qblock, comp int)) error {
+	env := pipeline.EnvOf(src)
+	ways := env.Helpers() + 1
+	if ways == 1 && !e.trellis {
+		var zz qblock
+		return e.scanBlocks(src, first, func(b *block, comp int) {
+			e.quantize(b, quantIndex((comp+1)/2), &zz)
+			sink(&zz, comp)
+		})
+	}
 	var (
-		// Scratch buffers to hold the YCbCr values.
-		b      block
-		cb, cr [4]block
-		lut    [256][3]uint8 // the palette of a paletted strip
+		buf      []qblock
+		comps    []int8
+		dcs      []dcChoice
+		reserved int64
+		tt       [nQuantIndex]*trellisTables
+		prevDC   [3]int32
+		order    []*qblock
+		dcList   []dcChoice
+		scratch  dcScratch
 	)
+	if e.trellis {
+		for q := range tt {
+			tt[q] = e.trellisTables(quantIndex(q))
+		}
+	}
+	defer func() { env.Budget.Release(reserved) }()
+	return e.bands(src, first, func(c *bandConv) error {
+		n := c.units * c.perUnit
+		if n > len(buf) {
+			need := int64(n) * (int64(len(qblock{}))*2 + 1 + 16*3)
+			if err := env.Budget.Reserve(need-reserved, "jpeg band coefficients"); err != nil {
+				return err
+			}
+			reserved = need
+			buf, comps, dcs = make([]qblock, n), make([]int8, n), make([]dcChoice, n)
+		}
+		parts := min(ways, max(1, c.units/16))
+		env.Parallel(parts, func(p int) {
+			var t unitTemp
+			lo, hi := p*c.units/parts, (p+1)*c.units/parts
+			for u := lo; u < hi; u++ {
+				k := u * c.perUnit
+				c.unit(u, &t, func(b *block, comp int) {
+					q := quantIndex((comp + 1) / 2)
+					if e.trellis {
+						fdct(b)
+						dcs[k] = tt[q].trellisBlock(b, &buf[k])
+					} else {
+						e.quantize(b, q, &buf[k])
+					}
+					comps[k] = int8(comp)
+					k++
+				})
+			}
+		})
+		if e.trellis {
+			// The DC values, one component after the other, in coding order.
+			for comp := 0; comp < 3; comp++ {
+				order, dcList = order[:0], dcList[:0]
+				for k := 0; k < n; k++ {
+					if int(comps[k]) == comp {
+						order, dcList = append(order, &buf[k]), append(dcList, dcs[k])
+					}
+				}
+				prevDC[comp] = tt[(comp+1)/2].trellisDC(dcList, order, prevDC[comp], &scratch)
+			}
+		}
+		for k := 0; k < n; k++ {
+			sink(&buf[k], int(comps[k]))
+		}
+		return nil
+	})
+}
+
+// unitTemp holds the samples of one unit (a block of a gray image, an MCU
+// of a colour one) while it is converted.
+type unitTemp struct {
+	b      block
+	cb, cr [4]block
+}
+
+// bandConv cuts one band of the image into units: blocks of a gray image,
+// row by row, or 16x16 MCUs of a colour one.
+type bandConv struct {
+	m       image.Image
+	bounds  image.Rectangle
+	gray    *image.Gray
+	rgba    *image.RGBA
+	ycbcr   *image.YCbCr
+	nrgba   *image.NRGBA
+	pal     *image.Paletted
+	lut     *[256][3]uint8 // the palette of pal
+	across  int            // gray: blocks across
+	units   int
+	perUnit int // blocks a unit has
+}
+
+// unit hands the blocks of unit u to sink, as scanBlocks does.
+func (c *bandConv) unit(u int, t *unitTemp, sink func(b *block, comp int)) {
+	if c.gray != nil {
+		p := image.Pt(c.bounds.Min.X+8*(u%c.across), c.bounds.Min.Y+8*(u/c.across))
+		grayToY(c.gray, p, &t.b)
+		sink(&t.b, 0)
+		return
+	}
+	x, y := c.bounds.Min.X+16*u, c.bounds.Min.Y
+	for i := 0; i < 4; i++ {
+		xOff := (i & 1) * 8
+		yOff := (i & 2) * 4
+		p := image.Pt(x+xOff, y+yOff)
+		switch {
+		case c.rgba != nil:
+			rgbaToYCbCr(c.rgba, p, &t.b, &t.cb[i], &t.cr[i])
+		case c.ycbcr != nil:
+			yCbCrToYCbCr(c.ycbcr, p, &t.b, &t.cb[i], &t.cr[i])
+		case c.nrgba != nil:
+			nrgbaToYCbCr(c.nrgba, p, &t.b, &t.cb[i], &t.cr[i])
+		case c.pal != nil:
+			palettedToYCbCr(c.pal, c.lut, p, &t.b, &t.cb[i], &t.cr[i])
+		default:
+			toYCbCr(c.m, p, &t.b, &t.cb[i], &t.cr[i])
+		}
+		sink(&t.b, 0)
+	}
+	scale(&t.b, &t.cb)
+	sink(&t.b, 1)
+	scale(&t.b, &t.cr)
+	sink(&t.b, 2)
+}
+
+// bands reads the image band by band and hands each, cut into units, to do.
+func (e *encoder) bands(src pipeline.Source, first image.Image, do func(c *bandConv) error) error {
+	var lut [256][3]uint8 // the palette of a paletted strip
 	_, gray := first.(*image.Gray)
 	for m := first; ; {
 		bounds := m.Bounds()
+		c := &bandConv{m: m, bounds: bounds, lut: &lut}
 		switch m := m.(type) {
 		case *image.Gray:
 			if !gray {
 				return errors.New("goimgtools: jpeg source changed pixel type")
 			}
-			for y := bounds.Min.Y; y < bounds.Max.Y; y += 8 {
-				for x := bounds.Min.X; x < bounds.Max.X; x += 8 {
-					p := image.Pt(x, y)
-					grayToY(m, p, &b)
-					sink(&b, 0)
-				}
-			}
+			c.gray = m
+			c.across = (bounds.Dx() + 7) / 8
+			c.units, c.perUnit = c.across*((bounds.Dy()+7)/8), 1
 		default:
 			if gray {
 				return errors.New("goimgtools: jpeg source changed pixel type")
 			}
-			rgba, _ := m.(*image.RGBA)
-			ycbcr, _ := m.(*image.YCbCr)
-			nrgba, _ := m.(*image.NRGBA)
-			pal, _ := m.(*image.Paletted)
-			if pal != nil {
-				if len(pal.Palette) > 256 || !inPalette(pal) {
-					pal = nil // let the general path deal with it
+			c.rgba, _ = m.(*image.RGBA)
+			c.ycbcr, _ = m.(*image.YCbCr)
+			c.nrgba, _ = m.(*image.NRGBA)
+			c.pal, _ = m.(*image.Paletted)
+			if c.pal != nil {
+				if len(c.pal.Palette) > 256 || !inPalette(c.pal) {
+					c.pal = nil // let the general path deal with it
 				} else {
-					paletteYCbCr(pal.Palette, &lut)
+					paletteYCbCr(c.pal.Palette, &lut)
 				}
 			}
-			y := bounds.Min.Y
-			for x := bounds.Min.X; x < bounds.Max.X; x += 16 {
-				for i := 0; i < 4; i++ {
-					xOff := (i & 1) * 8
-					yOff := (i & 2) * 4
-					p := image.Pt(x+xOff, y+yOff)
-					if rgba != nil {
-						rgbaToYCbCr(rgba, p, &b, &cb[i], &cr[i])
-					} else if ycbcr != nil {
-						yCbCrToYCbCr(ycbcr, p, &b, &cb[i], &cr[i])
-					} else if nrgba != nil {
-						nrgbaToYCbCr(nrgba, p, &b, &cb[i], &cr[i])
-					} else if pal != nil {
-						palettedToYCbCr(pal, &lut, p, &b, &cb[i], &cr[i])
-					} else {
-						toYCbCr(m, p, &b, &cb[i], &cr[i])
-					}
-					sink(&b, 0)
-				}
-				scale(&b, &cb)
-				sink(&b, 1)
-				scale(&b, &cr)
-				sink(&b, 2)
-			}
+			c.units, c.perUnit = (bounds.Dx()+15)/16, 6
+		}
+		if err := do(c); err != nil {
+			return err
 		}
 		if e.err != nil {
 			return e.err
@@ -754,6 +894,11 @@ type Options struct {
 	// optimized tables. The pixels a decoder gets are again the same. The
 	// quantized coefficients are staged (see writer_prog.go).
 	Progressive bool
+	// Trellis chooses the quantized coefficients to trade fidelity for
+	// bits where that pays, as mozjpeg does (see writer_trellis.go): a
+	// smaller file at about the same look, with other pixels than plain
+	// rounding.
+	Trellis bool
 }
 
 // Encode writes src to w in JPEG 4:2:0 baseline format, producing the same
@@ -783,6 +928,7 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 		return err
 	}
 	var e encoder
+	e.trellis = o != nil && o.Trellis
 	if ww, ok := w.(writer); ok {
 		e.w = ww
 	} else {

@@ -107,3 +107,40 @@ func TestOpaqueStaysOpaque(t *testing.T) {
 		}
 	}
 }
+
+// TestSameWithHelpers: with the columns shared out among helpers the
+// result is still x/image's to the byte, for every pixel type, up and
+// down, from sources that do not start at the origin, and the parts' rows
+// are given back.
+func TestSameWithHelpers(t *testing.T) {
+	sizes := [][2]int{{2600, 130}, {1100, 40}, {1024, 61}, {3000, 7}}
+	for name, full := range testutil.Images(1310, 97) {
+		// A source whose bounds start at x = 7.
+		m := full.(interface {
+			SubImage(image.Rectangle) image.Image
+		}).SubImage(image.Rect(7, 3, 1310, 97))
+		for _, sz := range sizes {
+			want := image.NewRGBA(image.Rect(0, 0, sz[0], sz[1]))
+			draw.CatmullRom.Scale(want, want.Bounds(), m, m.Bounds(), draw.Src, nil)
+			for _, helpers := range []int{1, 3, 7} {
+				env := pipeline.NewEnv(0, t.TempDir())
+				env.SetHelpers(helpers)
+				sc, err := Scale(testutil.ChoppedEnv(m, 16, env), sz[0], sz[1], draw.CatmullRom)
+				if err != nil {
+					t.Fatal(err)
+				}
+				got, err := pipeline.Collect(sc)
+				if err != nil {
+					t.Fatalf("%s/%v/%d helpers: %v", name, sz, helpers, err)
+				}
+				sc.Close()
+				if !bytes.Equal(rgbaPix(t, got), want.Pix) {
+					t.Errorf("%s/%v/%d helpers: pixels differ from x/image", name, sz, helpers)
+				}
+				if u := env.Budget.Used(); u != 0 {
+					t.Errorf("%s/%v/%d helpers: %d bytes still reserved", name, sz, helpers, u)
+				}
+			}
+		}
+	}
+}

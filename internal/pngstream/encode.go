@@ -60,7 +60,7 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 		return err
 	}
 
-	e := &encoder{w: w, bounds: b, level: level}
+	e := &encoder{w: w, bounds: b, level: level, env: env}
 	var (
 		pal      color.Palette
 		conv     *converter

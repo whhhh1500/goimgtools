@@ -188,7 +188,23 @@ func (c compositeOp) apply(src pipeline.Source, r *run) (pipeline.Source, error)
 	}
 	o := c.o
 	env := pipeline.EnvOf(src)
-	osrc, closer, _, _, err := c.overlay.build(env, false)
+	overlay := c.overlay
+	if o.WidthRatio != 0 || o.HeightRatio != 0 {
+		for _, v := range []float64{o.WidthRatio, o.HeightRatio} {
+			if !(v >= 0 && v <= 10) {
+				return nil, errors.New("goimgtools: Composite WidthRatio and HeightRatio must be 0 to 10")
+			}
+		}
+		b := src.Bounds()
+		share := func(n int, r float64) int {
+			if r == 0 {
+				return 0
+			}
+			return max(1, int(math.Round(float64(n)*r)))
+		}
+		overlay = overlay.Clone().Resize(share(b.Dx(), o.WidthRatio), share(b.Dy(), o.HeightRatio))
+	}
+	osrc, closer, _, _, err := overlay.build(env, false)
 	if err != nil {
 		return nil, fmt.Errorf("overlay: %w", err)
 	}

@@ -93,3 +93,46 @@ take:
 		panic(p)
 	}
 }
+
+// Go runs fn on a helper of the pipeline that is free, and returns a
+// function that waits for fn to end. With no helper free it runs fn at
+// once, on the calling goroutine, and returns a function that does
+// nothing; so Go never waits for a helper, and the pipeline stays within
+// the helpers it was given. A panic of fn on a helper is raised again by
+// the wait function, as a *PanicError. The wait function must be called
+// exactly once, before what fn uses is reused.
+//
+// It is for work a stage can go on without, such as compressing one block
+// while the next is being filled; Parallel is for work it waits for.
+func (e *Env) Go(fn func()) (wait func()) {
+	if e.Helpers() > 0 {
+		select {
+		case <-e.helpers:
+			var failed *PanicError
+			done := make(chan struct{})
+			go func() {
+				defer func() {
+					if v := recover(); v != nil {
+						p, ok := v.(*PanicError)
+						if !ok {
+							p = &PanicError{Value: v, Stack: debug.Stack()}
+						}
+						failed = p
+					}
+					e.helpers <- struct{}{}
+					close(done)
+				}()
+				fn()
+			}()
+			return func() {
+				<-done
+				if failed != nil {
+					panic(failed)
+				}
+			}
+		default:
+		}
+	}
+	fn()
+	return func() {}
+}

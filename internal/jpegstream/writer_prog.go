@@ -446,7 +446,7 @@ func (e *encoder) writeProgressive(src pipeline.Source, first image.Image, size 
 		}
 		m, mx = m+1, 0
 	}
-	err = e.scanBlocks(src, first, func(b *block, comp int) {
+	err = e.quantBlocks(src, first, func(zz *qblock, comp int) {
 		if passErr != nil {
 			return
 		}
@@ -462,10 +462,7 @@ func (e *encoder) writeProgressive(src pipeline.Source, first image.Image, size 
 		}
 		w := c.buf[(r*c.stride+bx)*blockBytes:]
 		w = w[:blockBytes:blockBytes]
-		q, rec := &e.quant[(comp+1)/2], &e.recip[(comp+1)/2]
-		fdct(b)
-		for zig := 0; zig < blockSize; zig++ {
-			v := divBy(b[unzig[zig]], 8*int32(q[zig]), rec[zig])
+		for zig, v := range zz {
 			w[2*zig], w[2*zig+1] = byte(v), byte(v>>8)
 		}
 		if comp == nComponent-1 {

@@ -337,6 +337,9 @@ func TestAdjustOptions(t *testing.T) {
 		{[]string{"-sharpen", "1.5,2,3", "-resize", "60x"}, func(m *goimgtools.Image) *goimgtools.Image {
 			return m.Resize(60, 0).Sharpen(goimgtools.SharpenOptions{Sigma: 1.5, Amount: 2, Threshold: 3})
 		}},
+		{[]string{"-watermark", in, "-watermark-width", "25%", "-gravity", "center", "-offset", "0,0"}, func(m *goimgtools.Image) *goimgtools.Image {
+			return m.Composite(goimgtools.Open(in), goimgtools.CompositeOptions{Gravity: goimgtools.Center, WidthRatio: 0.25})
+		}},
 	}
 	for _, c := range cases {
 		out := filepath.Join(dir, "out.png")

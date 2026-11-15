@@ -3,6 +3,7 @@ package tests
 import (
 	"bytes"
 	"encoding/binary"
+	xwebp "golang.org/x/image/webp"
 	"image"
 	"image/color"
 	stddraw "image/draw"
@@ -264,7 +265,8 @@ func meanDiff(a, b image.Image) float64 {
 }
 
 // TestMetadataKept: the ICC profile travels to the output by default and
-// the EXIF block only on request, between JPEG and PNG in every direction.
+// the EXIF block only on request, between JPEG, PNG and WebP in every
+// direction; TIFF carries the profile.
 func TestMetadataKept(t *testing.T) {
 	src := testutil.Images(64, 48)["rgba-opaque"]
 	exif := exifWithOrientation(binary.LittleEndian, 6)
@@ -302,19 +304,41 @@ func TestMetadataKept(t *testing.T) {
 		src.Close()
 		return info.Format, info.HasProfile, info.HasExif, info.Orientation, icc
 	}
-	for _, out := range []string{"jpeg", "png"} {
+	for _, out := range []string{"jpeg", "png", "webp", "webp lossless", "tiff"} {
 		enc := func(m *Image) []byte {
 			t.Helper()
-			if out == "jpeg" {
+			switch out {
+			case "jpeg":
 				m.JPEG(90)
-			} else {
+			case "png":
 				m.PNG()
+			case "webp":
+				m.WebP()
+			case "webp lossless":
+				m.WebP(WebPOptions{Lossless: true})
+			case "tiff":
+				m.TIFF()
 			}
 			b, err := m.ToBytes()
 			if err != nil {
 				t.Fatal(err)
 			}
 			return b
+		}
+		if out == "tiff" {
+			// TIFF keeps its EXIF in a directory of its own, which is not
+			// written: the profile only.
+			a := enc(FromBytes(jp).KeepExif())
+			if _, prof, ex, _, gotICC := read(a); !prof || ex || !bytes.Equal(gotICC, icc) {
+				t.Errorf("tiff: profile %v (intact %v), exif %v", prof, bytes.Equal(gotICC, icc), ex)
+			}
+			if _, prof, _, _, _ := read(enc(FromBytes(jp).StripICC())); prof {
+				t.Error("tiff StripICC: profile kept")
+			}
+			if _, prof, _, _, gotICC := read(enc(FromBytes(a))); !prof || !bytes.Equal(gotICC, icc) {
+				t.Error("tiff second generation: profile lost")
+			}
+			continue
 		}
 		// Default: profile kept, EXIF dropped.
 		a := enc(FromBytes(jp))
@@ -352,6 +376,35 @@ func TestMetadataKept(t *testing.T) {
 	y, _ := FromBytes(plain).StripICC().JPEG(90).ToBytes()
 	if !bytes.Equal(x, y) {
 		t.Error("options changed the output of an image without metadata")
+	}
+	// A WebP without metadata stays in the simple format; one with it is
+	// read by another decoder (x/image) all the same, and its pixels are
+	// those of the file without.
+	for _, lossless := range []bool{false, true} {
+		o := WebPOptions{Lossless: lossless}
+		bare, _ := FromBytes(plain).WebP(o).ToBytes()
+		if string(bare[12:16]) == "VP8X" {
+			t.Errorf("lossless %v: a WebP without metadata got the extended format", lossless)
+		}
+		full, _ := FromBytes(jp).KeepExif().WebP(o).ToBytes()
+		if string(full[12:16]) != "VP8X" || full[20]&0x28 != 0x28 {
+			t.Errorf("lossless %v: header %q flags %#x", lossless, full[12:16], full[20])
+		}
+		a, err1 := xwebp.Decode(bytes.NewReader(bare))
+		b, err2 := xwebp.Decode(bytes.NewReader(full))
+		if err1 != nil || err2 != nil {
+			t.Fatalf("lossless %v: x/image cannot read the files: %v, %v", lossless, err1, err2)
+		}
+		sameImage(t, "WebP with and without metadata", b, a)
+	}
+	// Turned upright from the EXIF of a WebP.
+	wp, _ := FromBytes(jp).KeepExif().WebP().ToBytes()
+	up, err := FromBytes(wp).Rotate().PNG().ToBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := decodePNG(t, up).Bounds().Size(); got != image.Pt(48, 64) {
+		t.Errorf("Rotate on a WebP with orientation 6: %v, want 48x64", got)
 	}
 }
 

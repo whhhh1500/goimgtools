@@ -29,6 +29,8 @@ const (
 	dtShort    = 3
 	dtLong     = 4
 	dtRational = 5
+	// dtUndefined is bytes of any meaning (the colour profile).
+	dtUndefined = 7
 )
 
 // The length of one instance of each data type in bytes.
@@ -64,6 +66,9 @@ const (
 	tPredictor    = 317
 	tColorMap     = 320
 	tExtraSamples = 338
+	// tICCProfile holds an ICC colour profile (InterColorProfile, from the
+	// TIFF/EP and the ICC specifications).
+	tICCProfile   = 34675
 	tSampleFormat = 339
 )
 

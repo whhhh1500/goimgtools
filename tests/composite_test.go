@@ -141,3 +141,70 @@ func TestCompositePlacement(t *testing.T) {
 		}
 	}
 }
+
+// TestCompositeSizeByShare: WidthRatio and HeightRatio size the overlay by
+// the image it goes on, so one setting gives the same look on images of
+// every size; bad ratios are errors.
+func TestCompositeSizeByShare(t *testing.T) {
+	logo := image.NewRGBA(image.Rect(0, 0, 100, 50))
+	stddraw.Draw(logo, logo.Bounds(), image.NewUniform(color.RGBA{255, 0, 0, 255}), image.Point{}, stddraw.Src)
+	logoPNG := pngBytes(t, logo)
+	// The red box: the extent of the pixels that are clearly red.
+	redBox := func(m image.Image) image.Rectangle {
+		var r image.Rectangle
+		b := m.Bounds()
+		for y := b.Min.Y; y < b.Max.Y; y++ {
+			for x := b.Min.X; x < b.Max.X; x++ {
+				c := color.RGBAModel.Convert(m.At(x, y)).(color.RGBA)
+				if c.R > 200 && c.G < 60 {
+					r = r.Union(image.Rect(x, y, x+1, y+1))
+				}
+			}
+		}
+		return r
+	}
+	for _, c := range []struct {
+		w, h   int
+		o      CompositeOptions
+		lw, lh int
+	}{
+		{1000, 600, CompositeOptions{WidthRatio: 0.2}, 200, 100},
+		{3000, 1800, CompositeOptions{WidthRatio: 0.2}, 600, 300},
+		{1000, 600, CompositeOptions{HeightRatio: 0.5}, 600, 300},
+		{1000, 600, CompositeOptions{WidthRatio: 0.5, HeightRatio: 0.1}, 120, 60}, // the height decides
+		{1000, 600, CompositeOptions{WidthRatio: 0.05, HeightRatio: 0.5}, 50, 25}, // the width decides
+		{400, 300, CompositeOptions{WidthRatio: 0.2, Gravity: Center, Tile: true}, 80, 40},
+	} {
+		base := image.NewRGBA(image.Rect(0, 0, c.w, c.h))
+		stddraw.Draw(base, base.Bounds(), image.NewUniform(color.White), image.Point{}, stddraw.Src)
+		out, err := FromImage(base).Composite(FromBytes(logoPNG), c.o).PNG().ToBytes()
+		if err != nil {
+			t.Fatalf("%dx%d %+v: %v", c.w, c.h, c.o, err)
+		}
+		got := decodePNG(t, out)
+		if got.Bounds().Size() != image.Pt(c.w, c.h) {
+			t.Fatalf("%+v: the image became %v", c.o, got.Bounds().Size())
+		}
+		r := redBox(got)
+		if c.o.Tile {
+			// Tiled: the first copy is at the centre; the copies cover the image.
+			if r != got.Bounds() {
+				t.Errorf("tiled %+v: red over %v, want all of %v", c.o, r, got.Bounds())
+			}
+			continue
+		}
+		if d := r.Dx() - c.lw; d < -1 || d > 1 || r.Dy()-c.lh < -1 || r.Dy()-c.lh > 1 || r.Min != image.Pt(0, 0) {
+			t.Errorf("%dx%d %+v: the overlay is %v, want %dx%d at the top left", c.w, c.h, c.o, r, c.lw, c.lh)
+		}
+	}
+	base := FromImage(image.NewRGBA(image.Rect(0, 0, 50, 50)))
+	for _, bad := range []CompositeOptions{{WidthRatio: -0.1}, {HeightRatio: math.NaN()}, {WidthRatio: 11}, {WidthRatio: math.Inf(1)}} {
+		if _, err := base.Clone().Composite(FromBytes(logoPNG), bad).PNG().ToBytes(); err == nil {
+			t.Errorf("%+v accepted", bad)
+		}
+	}
+	// A tiny share of a small image is still a pixel of overlay, not an error.
+	if _, err := base.Clone().Composite(FromBytes(logoPNG), CompositeOptions{WidthRatio: 0.001}).PNG().ToBytes(); err != nil {
+		t.Errorf("a very small share: %v", err)
+	}
+}

@@ -532,6 +532,11 @@ func TestArgumentExtremes(t *testing.T) {
 		{"turn 1e-300 degrees", func() *Image { return base().RotateBy(1e-300, nil) }, true},
 		{"turn -0.0000001 degrees", func() *Image { return base().RotateBy(-1e-7, color.Transparent) }, true},
 		{"turn NaN", func() *Image { return base().RotateBy(nan, nil) }, false},
+		{"watermark 10 times the width", func() *Image { return base().Composite(base(), CompositeOptions{WidthRatio: 10}) }, true},
+		{"watermark a millionth of the height", func() *Image { return base().Composite(base(), CompositeOptions{HeightRatio: 1e-6}) }, true},
+		{"watermark ratio 10.5", func() *Image { return base().Composite(base(), CompositeOptions{WidthRatio: 10.5}) }, false},
+		{"watermark ratio NaN", func() *Image { return base().Composite(base(), CompositeOptions{HeightRatio: nan}) }, false},
+		{"watermark ratio -1", func() *Image { return base().Composite(base(), CompositeOptions{WidthRatio: -1}) }, false},
 	}
 	for _, c := range cases {
 		done := make(chan error, 1)
