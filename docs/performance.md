@@ -1,6 +1,6 @@
 English | [中文](zh-CN/performance.md)
 
-# Memory, speed and benchmarks
+# Performance and benchmarks
 
 ## How memory is kept low
 

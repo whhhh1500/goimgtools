@@ -1,6 +1,6 @@
 [English](../CHANGELOG.md) | 中文
 
-# 改动日志
+# 变更记录
 
 ## 未发布
 

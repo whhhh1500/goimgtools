@@ -1,29 +1,31 @@
 # goimgtools
 
-| 缩到 1536 框内 + 白底 + 水印（单线程） | goimgtools | 标准库整张解码 |
+| 缩放至 1536 以内 + 白底 + 水印（单线程） | goimgtools | 标准库（整图解码） |
 |---|---|---|
-| JPEG 6000×4000（2400 万像素）：进程峰值内存 | **8.3MB** | 242MB |
-| PNG 6900×9200（6300 万像素，带透明）：进程峰值内存 | **10.4MB** | 588MB |
-| JPEG 6000×4000：耗时 | **0.38s** | 0.87s |
-| PNG 6900×9200：耗时 | **1.63s** | 3.10s |
+| JPEG 6000×4000（2400 万像素）进程峰值内存 | **8.3MB** | 242MB |
+| PNG 6900×9200（6300 万像素，含透明通道）进程峰值内存 | **10.4MB** | 588MB |
+| JPEG 6000×4000 耗时 | **0.38s** | 0.87s |
+| PNG 6900×9200 耗时 | **1.63s** | 3.10s |
 
-**超低内存占用的纯 Go 图片处理库和命令行程序。** 图片按行流过处理链，从不整张解到内存里，所以内存占用基本不随图片变大而增长，速度也比整张解码快。（峰值里约 5.4MB 是 Go 程序启动本身就占的；测试环境和更多数字见[内存、速度和实测](docs/zh-CN/performance.md)。）
+goimgtools 是纯 Go 实现的流式图像处理库与命令行工具。图像以若干行组成的条带在处理链中逐段流动，不整体解码到内存，内存占用与图像尺寸基本无关，处理速度也优于整图解码。
+
+注：峰值内存包含 Go 运行时约 5.4MB 的基础占用；测试环境与完整数据见[性能与基准测试](docs/zh-CN/performance.md)。
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/whhhh1500/goimgtools.svg)](https://pkg.go.dev/github.com/whhhh1500/goimgtools)
 [![test](https://github.com/whhhh1500/goimgtools/actions/workflows/test.yml/badge.svg)](https://github.com/whhhh1500/goimgtools/actions/workflows/test.yml)
 
 [English](README.md) | 中文
 
-## 特点
+## 特性
 
-- **内存有硬上限**：默认 64MB，用 `MemoryLimit` 可调。必须看完整张图才能继续的步骤（旋转、渐进式 JPEG、减色等）暂存数据超出份额就写临时文件；所有随图片尺寸变大的缓冲都计入上限，不够时返回错误，不会悄悄多用。适合小内存的服务器和容器，以及同时处理很多张图的服务。
-- **常用操作**：缩放（6 种算法、5 种适配方式）、裁剪、任意角度旋转、翻转、去边 / 加边、铺底色、灰度、调色、模糊、锐化；图片或文字水印（九宫格定位、按比例缩放、旋转、平铺、透明度）；文字渲染（多字体按字回退、描边、阴影）。
-- **六种格式读写**：JPEG、PNG、WebP（有损、无损）、GIF（含动图）、BMP、TIFF。ICC 色彩配置默认保留，也可换算成 sRGB；EXIF 可选保留。
-- **压缩**：JPEG 优化编码表、渐进式、网格量化；PNG 按图选色减色；有损 WebP 在 7 张真实照片上同等 SSIM 时比 libwebp 默认设置小 2.4%；按文件大小上限自动选质量；动图只存变化的部分。
-- **多核可选**：`Threads(n)`，结果与单线程逐字节相同。
-- **不会崩溃**：任何 panic 都转成错误返回；输入和输出的像素数有上限；可以取消；用模糊测试守着。
-- **可扩展**：自己的操作、输入、文件格式、缩放滤镜；按名字注册的操作；改写内置行为的钩子；带上自己操作的命令行程序。
-- **纯 Go，不依赖 cgo**。依赖只有 Go 官方扩展库（`golang.org/x/image`，以及它解析字体要用的 `x/text`、`x/sys`）和 `github.com/klauspost/compress`（只用它的 zlib 解压）。
+- **内存有界**：默认上限 64MB，可通过 `MemoryLimit` 配置。依赖全图的步骤（旋转、渐进式 JPEG、减色等）在暂存数据超出配额时转存临时文件；所有随图像尺寸增长的缓冲均计入上限，超限时返回 `ErrMemoryLimit`。适用于内存受限的服务器、容器以及高并发图像服务。
+- **图像操作**：缩放（6 种插值核、5 种适配模式）、裁剪、任意角度旋转、翻转、去边与扩边、铺底色、灰度化、色彩调整、高斯模糊、锐化（含反锐化掩模）；图片与文字水印（九宫格定位、按比例缩放、旋转、平铺、不透明度）；文字渲染（逐字字体回退、描边、阴影）。
+- **格式**：JPEG、PNG、WebP（有损、无损）、GIF（含动画）、BMP、TIFF 的读写；默认保留 ICC 色彩配置，可转换至 sRGB；EXIF 可选保留。
+- **压缩**：JPEG 霍夫曼表优化、渐进式编码与网格量化；PNG 自适应调色板减色；有损 WebP 空间噪声整形（7 张真实照片上，同等 SSIM 时比 libwebp 默认设置小 2.4%）；按目标文件大小自动选择质量；GIF 动画帧间差分存储。
+- **并行**：`Threads(n)` 启用多核处理，输出与单线程逐字节一致。
+- **健壮性**：运行期 panic 转为错误返回；输入与输出像素数设有上限；支持 `context` 取消；持续进行模糊测试。
+- **可扩展**：支持自定义操作、输入源、文件格式与插值滤镜；按名称注册操作；通过钩子改写内置行为；可构建包含自定义操作的命令行程序。
+- **纯 Go**：不依赖 cgo；依赖仅有 `golang.org/x/image`（及字体解析所需的 `x/text`、`x/sys`）与 `github.com/klauspost/compress`（仅用于 zlib 解压）。
 
 ## 安装
 
@@ -31,25 +33,25 @@
 go get github.com/whhhh1500/goimgtools
 ```
 
-命令行程序：
+命令行工具：
 
 ```bash
 go install github.com/whhhh1500/goimgtools/cmd/goimgtools@latest
 ```
 
-需要 Go 1.27 以上。
+需要 Go 1.27 及以上版本。
 
-## 快速上手
+## 快速开始
 
-接口照 [sharp](https://sharp.pixelplumbing.com/) 的链式写法：输入 → 串操作 → 选输出格式 → 写出。操作按调用顺序执行，错误在最后一步返回。
+API 采用与 [sharp](https://sharp.pixelplumbing.com/) 类似的链式调用：打开输入、追加操作、选择输出格式、写出。操作按调用顺序执行，错误由最终的写出方法统一返回。
 
 ```go
 err := goimgtools.Open("in.jpg").
-    Rotate().                              // 按 EXIF 方向转正
+    Rotate().                              // 按 EXIF 方向校正
     Resize(1536, 0).                       // 宽 1536，高按比例
-    Flatten(color.White).                  // 透明处铺白底
+    Flatten(color.White).                  // 透明区域铺白底
     Composite(goimgtools.Open("logo.png"), goimgtools.CompositeOptions{
-        Gravity: goimgtools.SouthEast, Left: -24, Top: -24, // 右下角，留 24 像素边
+        Gravity: goimgtools.SouthEast, Left: -24, Top: -24, // 右下角，边距 24 像素
     }).
     JPEG(85).
     ToFile("out.jpg")
@@ -62,56 +64,56 @@ goimgtools -rotate auto -resize 1536x1536 -no-enlarge -flatten white -watermark 
 ```
 
 ```bash
-goimgtools batch -resize 1920x1920 -no-enlarge -quality 80 -format jpeg 输入目录 输出目录
+goimgtools batch -resize 1920x1920 -no-enlarge -quality 80 -format jpeg in_dir out_dir
 ```
 
 ## 文档
 
 | 文档 | 内容 |
 |---|---|
-| [用法](docs/zh-CN/usage.md) | 输入、操作、输出、元数据和资源控制；在服务里使用（错误分类、取消、并发）；水印；文字；查看和检查图片 |
-| [压缩](docs/zh-CN/compression.md) | 让 JPEG、PNG、WebP、GIF 动图变小的做法和实测 |
-| [命令行](docs/zh-CN/cli.md) | 全部选项，批量处理目录 |
-| [扩展](docs/zh-CN/extending.md) | 自己的操作、输入、格式，按名字注册操作，钩子，自己的命令行程序 |
-| [内存、速度和实测](docs/zh-CN/performance.md) | 内存是怎么省下来的、多核、实测数据和复测方法 |
-| [一致性与对比](docs/zh-CN/compatibility.md) | 与标准库逐字节一致的部分、故意不同的地方、与 libwebp 的对比 |
-| [测试](docs/zh-CN/testing.md) | 怎么测、实跑过的平台、模糊测试 |
-| [改动日志](docs/zh-CN/CHANGELOG.md) | 各版本的改动 |
-| [API 文档](https://pkg.go.dev/github.com/whhhh1500/goimgtools) | 每个类型和方法的说明（英文） |
+| [用法](docs/zh-CN/usage.md) | 输入、操作、输出、元数据与资源控制；服务端使用（错误分类、取消、并发）；水印；文字；图像检查工具 |
+| [压缩](docs/zh-CN/compression.md) | JPEG、PNG、WebP 与 GIF 动画的压缩方法及实测数据 |
+| [命令行](docs/zh-CN/cli.md) | 全部选项与目录批处理 |
+| [扩展](docs/zh-CN/extending.md) | 自定义操作、输入与格式，按名称注册操作，钩子，自定义命令行程序 |
+| [性能与基准测试](docs/zh-CN/performance.md) | 内存控制机制、多核并行、实测数据与复测方法 |
+| [一致性与对比](docs/zh-CN/compatibility.md) | 与标准库逐字节一致的范围、有意的差异、与 libwebp 的对比 |
+| [测试](docs/zh-CN/testing.md) | 测试方法、已验证平台、模糊测试 |
+| [变更记录](docs/zh-CN/CHANGELOG.md) | 各版本的变更 |
+| [API 参考](https://pkg.go.dev/github.com/whhhh1500/goimgtools) | 全部类型与方法（英文） |
 
 ## 支持的格式
 
 | 格式 | 读 | 写 | 读取方式 |
 |---|---|---|---|
-| PNG | 是 | 是 | 按行流式；隔行（Adam7）先把各遍像素存入暂存区再按行取出 |
-| JPEG | 是 | 是 | 基线式按行流式；渐进式把 DCT 系数存入暂存区，最后一遍扫描结束后按行还原 |
-| WebP | 是 | 是（有损、无损） | 有损按宏块行流式；无损只保留格式规定的最远回看窗口（约 4.2MB） |
-| GIF | 是（含动图） | 是（含动图） | 按行流式；隔行同 PNG |
-| BMP | 是 | 是 | 按行按文件偏移读 |
-| TIFF | 是 | 是 | 按行流式解压 |
+| PNG | ✓ | ✓ | 逐行流式解码；隔行（Adam7）图像先将各遍扫描写入暂存区，再按行输出 |
+| JPEG | ✓ | ✓ | 基线式逐行流式解码；渐进式将 DCT 系数写入暂存区，末次扫描完成后按行重建 |
+| WebP | ✓ | ✓（有损、无损） | 有损按宏块行流式解码；无损仅保留格式规定的最大回溯窗口（约 4.2MB） |
+| GIF | ✓（含动画） | ✓（含动画） | 逐行流式解码；隔行处理方式同 PNG |
+| BMP | ✓ | ✓ | 按文件偏移逐行读取 |
+| TIFF | ✓ | ✓ | 逐行流式解压 |
 
-「暂存区」的数据不超过内存上限的 1/8（默认 8MB）时放内存，超过就写临时文件，用完即删。
+暂存区数据不超过内存上限的 1/8（默认 8MB）时驻留内存，超出部分写入临时文件，用后删除。
 
-## 没做的
+## 限制
 
-- 不支持 AVIF、HEIC。
-- TIFF 的 EXIF 不读不写（ICC 读写）。
-- 查找表类（A2B0 等）和灰度的色彩配置不换算到 sRGB（转 GIF、BMP 时原样写出）。
-- JPEG 解码的熵解码只能按顺序，IDCT 和颜色换算也还没分摊到多个核：线程多时它是缩小 JPEG 最慢的一环。
-- 动图只支持 GIF。相同的相邻帧不合并（仍各写一帧，只占几十字节）；没做 gifsicle 的有损 LZW（`--lossy`）。
-- 对比度、伽马、色阶、反色这类调色没有内置方法，用 `Pixels` 几行就能写（[扩展](docs/zh-CN/extending.md)里有灰度的例子）；其他要看相邻像素的滤镜（中值、浮雕、边缘检测等）要自己写成 `Pipe` 的一环。
-- GIF、BMP、TIFF 的编码只用一个核；无损 WebP 的 LZ77 匹配和第二遍分组只能按顺序做，多线程只快 10–20%。
-- JPEG 网格量化的码长用的是标准哈夫曼表（mozjpeg 先扫一遍整张图统计、用优化后的表来估码长）：本库按条带流式处理，不为此多存一遍整图的系数。
-- `MaxFileSize` 只支持 JPEG 和有损 WebP（以及带 `Quality` 的注册格式）。
+- 不支持 AVIF 与 HEIC。
+- 不读写 TIFF 中的 EXIF（ICC 色彩配置可读写）。
+- 查找表类（A2B0 等）与灰度色彩配置不转换至 sRGB，按原样写出（包括输出 GIF、BMP 时）。
+- JPEG 解码中的熵解码为顺序过程，IDCT 与色彩转换尚未并行化；多线程下它是 JPEG 缩小流程中最慢的环节。
+- 动画仅支持 GIF；相邻的相同帧不合并（每帧仍单独存储，仅占数十字节）；未实现 gifsicle 的有损 LZW（`--lossy`）。
+- 未内置对比度、伽马、色阶与反色调整，可用 `Pixels` 以数行代码实现（参见[扩展](docs/zh-CN/extending.md)中的灰度示例）；依赖邻域像素的滤镜（中值、浮雕、边缘检测等）需实现为 `Pipe` 环节。
+- GIF、BMP、TIFF 编码为单线程；无损 WebP 的 LZ77 匹配与第二遍分组为顺序过程，多线程仅提速 10–20%。
+- JPEG 网格量化按标准霍夫曼表估算码长（mozjpeg 先统计全图再用优化后的表估算）：本库按条带流式处理，不为此保存整图系数。
+- `MaxFileSize` 仅支持 JPEG 与有损 WebP（以及提供 `Quality` 的注册格式）。
 
 ## 版本
 
-版本号在 1.0 之前，接口还可能调整。每个版本的改动见[改动日志](docs/zh-CN/CHANGELOG.md)。
+1.0 之前 API 可能发生不兼容变更。各版本变更见[变更记录](docs/zh-CN/CHANGELOG.md)。
 
-## 参与
+## 参与贡献
 
-欢迎提问题和提交改动，见[贡献说明](.github/CONTRIBUTING.md)。
+欢迎提交 Issue 与 Pull Request，详见[贡献指南](.github/CONTRIBUTING.md)。
 
 ## 许可
 
-本项目用 MIT 许可（[LICENSE](LICENSE)）。其中从 Go 标准库和 `golang.org/x/image` 改写的代码沿用其 BSD 许可（[licenses/LICENSE-GO](licenses/LICENSE-GO)）；从 libjpeg 移植的两段和从 mozjpeg 移植的网格量化沿用其许可（[licenses/LICENSE-LIBJPEG-TURBO](licenses/LICENSE-LIBJPEG-TURBO)）；从 Pillow 移植的模糊和反锐化掩模沿用其 MIT-CMU 许可（[licenses/LICENSE-PILLOW](licenses/LICENSE-PILLOW)）；从 libwebp 移植的有损 WebP 分段量化沿用其 BSD 许可（[licenses/LICENSE-LIBWEBP](licenses/LICENSE-LIBWEBP)）。[licenses/THIRD-PARTY.md](licenses/THIRD-PARTY.md) 逐项列了哪些文件来自哪里。
+本项目采用 MIT 许可（[LICENSE](LICENSE)）。改写自 Go 标准库与 `golang.org/x/image` 的代码沿用其 BSD 许可（[licenses/LICENSE-GO](licenses/LICENSE-GO)）；移植自 libjpeg 的两部分及移植自 mozjpeg 的网格量化沿用其许可（[licenses/LICENSE-LIBJPEG-TURBO](licenses/LICENSE-LIBJPEG-TURBO)）；移植自 Pillow 的模糊与反锐化掩模沿用其 MIT-CMU 许可（[licenses/LICENSE-PILLOW](licenses/LICENSE-PILLOW)）；移植自 libwebp 的有损 WebP 分段量化沿用其 BSD 许可（[licenses/LICENSE-LIBWEBP](licenses/LICENSE-LIBWEBP)）。各文件的来源详见 [licenses/THIRD-PARTY.md](licenses/THIRD-PARTY.md)。

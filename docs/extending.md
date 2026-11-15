@@ -1,6 +1,6 @@
 English | [中文](zh-CN/extending.md)
 
-# Extending: building on the library
+# Extending
 
 The library is built so that you can add features without changing its code. Every stage has an opening for this, and the library's own features use the same opening: the six formats sit in the same table as the formats you register, and built-in operations are the same kind of thing as the operations you write.
 
