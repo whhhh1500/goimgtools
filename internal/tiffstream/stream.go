@@ -7,11 +7,11 @@ package tiffstream
 import (
 	"errors"
 	"fmt"
-	"github.com/klauspost/compress/zlib"
 	"image"
 	"image/color"
 	"io"
 
+	"github.com/whhhh1500/goimgtools/internal/inflate"
 	"github.com/whhhh1500/goimgtools/internal/tiffstream/lzw"
 	"golang.org/x/image/ccitt"
 
@@ -50,8 +50,8 @@ type stream struct {
 
 	// The block being read.
 	br        io.Reader
-	lz        *lzw.Reader   // LZW reader, reused from block to block
-	zr        io.ReadCloser // zlib reader, reused from block to block
+	lz        *lzw.Reader     // LZW reader, reused from block to block
+	zr        *inflate.Reader // zlib reader, reused from block to block
 	blkW      int
 	blkH      int
 	blockRead int64 // decompressed bytes read from the block so far
@@ -226,6 +226,8 @@ func open(r io.ReaderAt, env *pipeline.Env) (_ *stream, err error) {
 	case cG3, cG4:
 		// The CCITT reader keeps two rows of one byte per pixel.
 		need += 2 * int64(blockWidth)
+	case cDeflate, cDeflateOld:
+		need += inflate.Size
 	}
 	if err := env.Budget.Reserve(need, "tiff strip buffers"); err != nil {
 		return nil, err
@@ -444,9 +446,9 @@ func (s *stream) openBlock(i, j int) (err error) {
 	case cDeflate, cDeflateOld:
 		sr := io.NewSectionReader(d.r, offset, n)
 		if s.zr == nil {
-			s.zr, err = zlib.NewReader(sr)
+			s.zr, err = inflate.NewReader(sr)
 		} else {
-			err = s.zr.(zlib.Resetter).Reset(sr, nil)
+			err = s.zr.Reset(sr)
 		}
 		if err != nil {
 			return err

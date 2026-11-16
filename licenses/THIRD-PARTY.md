@@ -114,6 +114,15 @@ final block, so that a stream can be compressed in pieces. Without a
 dictionary, with libdeflate's settings, its output is byte for byte
 libdeflate's (checked at levels 10, 11 and 12).
 
+`internal/inflate` decompresses with the method of libdeflate's
+decompressor (`lib/deflate_decompress.c`, `lib/decompress_template.h`): a
+64-bit bit buffer refilled without a branch, decode tables whose entries
+hold a symbol's extra bits count and base value, subtables for long codes,
+and a fast loop that looks up the next code before refilling and copies
+matches eight bytes at a time. It was written afresh in Go, with an entry
+layout of its own; no code of libdeflate is included. The table sizes are
+those of zlib's `enough` program, as libdeflate's.
+
 ## zopfli
 
 Apache License 2.0, copyright 2011 Google Inc. The full text, as

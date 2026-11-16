@@ -26,6 +26,7 @@ import (
 	"image/color"
 	"io"
 
+	"github.com/whhhh1500/goimgtools/internal/inflate"
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
@@ -426,7 +427,7 @@ func Open(r io.Reader, env *pipeline.Env) (pipeline.Source, error) {
 	proto := s.newImage(image.Rect(0, 0, 1, 1))
 	s.n = pipeline.StripRows(pipeline.BandBytes(proto, image.Rect(0, 0, d.width, 1)), d.height)
 	full := image.Rect(0, 0, d.width, s.n)
-	need := pipeline.BandBytes(proto, full) + 2*rowSize
+	need := pipeline.BandBytes(proto, full) + 2*rowSize + inflate.Size
 	if d.interlace == itAdam7 {
 		need += adam7Extra(proto, d.width)
 	}
@@ -437,7 +438,7 @@ func Open(r io.Reader, env *pipeline.Env) (pipeline.Source, error) {
 	s.band = s.newImage(full)
 	s.cr = make([]uint8, rowSize)
 	s.pr = make([]uint8, rowSize)
-	zr, err := zlib.NewReader(d)
+	zr, err := inflate.NewReader(d)
 	if err != nil {
 		s.Close()
 		return nil, err
