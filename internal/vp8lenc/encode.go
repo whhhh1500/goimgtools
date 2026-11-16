@@ -290,10 +290,13 @@ func (e *encoder) feedColour(rr *rowReader, row []uint32) (*race, error) {
 		specs := []spec{{kindARGB, true, sgOn, false, false}, {kindARGB, false, sgAuto, false, false},
 			{kindARGB, true, sgOff, false, false}, {kindARGB, true, sgAuto, true, false}}
 		if e.p.cross && int64(e.w)*int64(e.h) <= crossMaxPixels {
-			specs = append(specs, spec{kindARGB, true, sgAuto, false, true})
+			// Without subtract green: the transform takes green from red
+			// and blue itself, as much as pays (an interface picture 5.5%
+			// smaller than with subtract green decided on its blank top).
+			specs = append(specs, spec{kindARGB, true, sgOff, false, true})
 		}
 		if testCrossOnly {
-			specs = []spec{{kindARGB, true, sgAuto, false, true}}
+			specs = []spec{{kindARGB, true, sgOff, false, true}}
 		}
 		rc, err = e.newRace(nil, specs...)
 	case pr.n <= 16:
