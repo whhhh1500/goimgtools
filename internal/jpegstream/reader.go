@@ -181,6 +181,9 @@ type decoder struct {
 	// the run into the next scan (tests compare the pixels only without).
 	overrun bool
 	tables  int // Huffman tables defined
+	// dcOnly tells reconstructBlock that the block's AC coefficients are
+	// all zero (decodeBlock, stepRows).
+	dcOnly bool
 }
 
 // newDecoder returns a decoder that reads r.

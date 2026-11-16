@@ -248,6 +248,7 @@ func (s *stream) stepRows(my0, my1 int) error {
 					k := (by-my*vi)*stride + bx
 					b := &d.rowCoef[i][k]
 					d.dequantizeNZ(b, d.rowNZ[i][k], i)
+					d.dcOnly = d.rowNZ[i][k]&^1 == 0
 					if err := d.reconstructBlock(b, bx, by-my0*vi, i); err != nil {
 						return err
 					}

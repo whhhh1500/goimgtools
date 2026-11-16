@@ -578,6 +578,7 @@ func (s *stream) reconstructBand(my0, my1 int) error {
 					return err
 				}
 				d.dequantize(&b, i)
+				d.dcOnly = false
 				if err := d.reconstructBlock(&b, bx, by-my0*vi, i); err != nil {
 					return err
 				}

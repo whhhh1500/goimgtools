@@ -438,8 +438,10 @@ func (d *decoder) scanRow(my int) error {
 // straight away (the AC loop of the standard library's processSOS for zigStart
 // 0, zigEnd 63 and al 0, with the fast table). Each coefficient is multiplied
 // by its quantizer as it is decoded, where the standard library multiplies in
-// reconstructBlock; the products are the same. b must be zero.
+// reconstructBlock; the products are the same. b must be zero. It sets
+// d.dcOnly when the block has no AC coefficient, for reconstructBlock.
 func (d *decoder) decodeBlock(b *block, dcH, acH *huffman, qt *block, dc *int32) error {
+	stored := false // an AC coefficient
 	if d.bits.n < 32 {
 		d.fillBits()
 	}
@@ -465,6 +467,7 @@ func (d *decoder) decodeBlock(b *block, dcH, acH *huffman, qt *block, dc *int32)
 	b[0] = *dc * qt[0]
 	if d.eobRun > 0 {
 		d.eobRun--
+		d.dcOnly = !stored
 		return nil
 	}
 	// The accumulator is kept in a and n, and stored back in d.bits for
@@ -488,6 +491,7 @@ func (d *decoder) decodeBlock(b *block, dcH, acH *huffman, qt *block, dc *int32)
 					n -= int32(k)
 					zig = z
 					b[unzig[zig&63]&63] = e >> 16 * qt[zig&63]
+					stored = true
 					continue
 				}
 			} else if v := acH.lut[peek]; v != 0 {
@@ -498,6 +502,7 @@ func (d *decoder) decodeBlock(b *block, dcH, acH *huffman, qt *block, dc *int32)
 					zig += run
 					if zig >= blockSize {
 						d.bits.a, d.bits.n = a<<l, n-int32(l)
+						d.dcOnly = !stored
 						return nil
 					}
 					x := int32(a << l >> (64 - size))
@@ -507,9 +512,11 @@ func (d *decoder) decodeBlock(b *block, dcH, acH *huffman, qt *block, dc *int32)
 					a <<= l + size
 					n -= int32(l + size)
 					b[unzig[zig&63]&63] = x * qt[zig&63]
+					stored = true
 					continue
 				case run == 0: // end of block
 					d.bits.a, d.bits.n = a<<l, n-int32(l)
+					d.dcOnly = !stored
 					return nil
 				case run == 0x0f: // sixteen zeros
 					a <<= l
@@ -531,6 +538,7 @@ func (d *decoder) decodeBlock(b *block, dcH, acH *huffman, qt *block, dc *int32)
 		if val1 != 0 {
 			zig += int32(val0)
 			if zig >= blockSize {
+				d.dcOnly = !stored
 				return nil
 			}
 			ac, err := d.receiveExtend(val1)
@@ -538,6 +546,7 @@ func (d *decoder) decodeBlock(b *block, dcH, acH *huffman, qt *block, dc *int32)
 				return err
 			}
 			b[unzig[zig]] = ac * qt[zig]
+			stored = true
 		} else {
 			if val0 != 0x0f {
 				d.eobRun = uint16(1 << val0)
@@ -549,6 +558,7 @@ func (d *decoder) decodeBlock(b *block, dcH, acH *huffman, qt *block, dc *int32)
 					d.eobRun |= uint16(bits)
 				}
 				d.eobRun--
+				d.dcOnly = !stored
 				return nil
 			}
 			zig += 0x0f
@@ -556,6 +566,7 @@ func (d *decoder) decodeBlock(b *block, dcH, acH *huffman, qt *block, dc *int32)
 		a, n = d.bits.a, d.bits.n
 	}
 	d.bits.a, d.bits.n = a, n
+	d.dcOnly = !stored
 	return nil
 }
 
@@ -818,6 +829,10 @@ func (d *decoder) reconstructBlock(b *block, bx, by, compIndex int) error {
 		return nil
 	}
 
+	if d.dcOnly {
+		dcStore(b[0], dst, stride, d.scale)
+		return nil
+	}
 	switch d.scale {
 	case 0:
 		idctStore(b, dst, stride)

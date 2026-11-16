@@ -663,3 +663,28 @@ func idct2Store(b *block, dst []byte, stride int) {
 func idct1Store(b *block, dst []byte) {
 	dst[0] = uint8(max(0, min(255, (int64(b[0])+4)>>3+128)))
 }
+
+// dcStore stores a block whose AC coefficients are zero, of dequantized DC
+// coefficient dc, at 1<<scale times smaller (scale 0 to 3): every pixel is
+// the same, the one idctStore, idct4Store, idct2Store or idct1Store makes
+// of such a block (their arithmetic, with the zeros left out).
+func dcStore(dc int32, dst []byte, stride int, scale uint) {
+	var v uint8
+	switch scale {
+	case 0:
+		v = uint8(max(0, min(255, (dc<<17+1<<19)>>20+128)))
+	case 1, 2:
+		v = redPixel(int64(dc) * redInvSqrt2 * redInvSqrt2)
+	default:
+		dst[0] = uint8(max(0, min(255, (int64(dc)+4)>>3+128)))
+		return
+	}
+	n := 8 >> scale
+	_ = dst[(n-1)*stride+n-1]
+	for y := range n {
+		row := dst[y*stride : y*stride+n]
+		for x := range row {
+			row[x] = v
+		}
+	}
+}
