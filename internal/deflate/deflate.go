@@ -19,6 +19,8 @@
 // throughout.
 package deflate
 
+import "unsafe"
+
 const (
 	windowOrder    = 15
 	windowSize     = 1 << windowOrder
@@ -68,6 +70,16 @@ type Params struct {
 	MaxStaticLen  int // blocks up to this long are also parsed for the static code
 	BlockLen      int // the soft maximum length of a block
 	CachePerBlock int // entries of the match cache for each byte of a block
+
+	// Not in libdeflate: NoSkip looks for matches inside a match of
+	// NiceLen too, which libdeflate skips, so that the parse may start
+	// the next match anywhere within it; SplitByCost splits blocks where
+	// the estimated sizes say so, as zopfli does, instead of where the
+	// statistics of the data change, after a parse with SplitPasses
+	// passes at most (see split.go).
+	NoSkip      bool
+	SplitByCost bool
+	SplitPasses int
 }
 
 // Level10, Level11 and Level12 are libdeflate's levels 10 to 12, but for
@@ -81,7 +93,8 @@ var (
 // Bytes is the memory a Compressor with the parameters takes.
 func (p Params) Bytes() int64 {
 	maxBlock := p.maxBlockLength()
-	return matchfinderBytes + 4*int64(p.cacheLength()) + 4*int64(maxBlock+maxMatch+1) + 4*int64(maxBlock) + 4<<10
+	return matchfinderBytes + 4*int64(p.cacheLength()) + 4*int64(maxBlock+maxMatch+1) + 4*int64(maxBlock) + 4<<10 +
+		maxSplitBlocks*int64(unsafe.Sizeof(codes{})) + 3*8*(maxSplitBlocks+1)
 }
 
 func (p Params) maxBlockLength() int {
@@ -161,6 +174,12 @@ type Compressor struct {
 	lenLens      [maxMatch + 1]uint8
 
 	w bitWriter
+
+	// Splitting by cost (see split.go).
+	partCodes [maxSplitBlocks]codes
+	bounds    []int
+	ends      []int
+	done      []bool
 }
 
 // New makes a compressor; it takes p.Bytes() of memory.
@@ -171,6 +190,9 @@ func New(p Params) *Compressor {
 		cache:     make([]lzMatch, p.cacheLength()),
 		costToEnd: make([]uint32, maxBlock+maxMatch+1),
 		items:     make([]uint32, maxBlock),
+		bounds:    make([]int, 0, maxSplitBlocks+1),
+		ends:      make([]int, 0, maxSplitBlocks+1),
+		done:      make([]bool, 0, maxSplitBlocks+1),
 	}
 }
 

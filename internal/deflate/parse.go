@@ -78,7 +78,7 @@ func (c *Compressor) compress(in []byte, start int, final bool) {
 			c.cache[cp] = lzMatch{uint16(cp - matches), uint16(in[inNext])}
 			inNext++
 			cp++
-			if bestLen >= minMatch && bestLen >= niceLen {
+			if !c.p.NoSkip && bestLen >= minMatch && bestLen >= niceLen {
 				// Skip past a long match: it will be taken.
 				for bestLen--; bestLen > 0; bestLen-- {
 					step(inNext)
@@ -93,7 +93,7 @@ func (c *Compressor) compress(in []byte, start int, final bool) {
 			if inNext >= maxBlockEnd || cp >= cacheEnd {
 				break
 			}
-			if !c.split.readyToCheck(blockBegin, inNext, inEnd) {
+			if c.p.SplitByCost || !c.split.readyToCheck(blockBegin, inNext, inEnd) {
 				continue
 			}
 			if c.split.endBlockCheck(uint32(inNext - blockBegin)) {
@@ -257,6 +257,20 @@ func calculateMinMatchLen(data []byte, maxSearchDepth int) int {
 // before cacheEnd, over several passes, and writes it; it tells whether
 // the block was written as literals only.
 func (c *Compressor) optimizeAndFlushBlock(block []byte, cacheEnd int, isFirst, isFinal bool) (onlyLiterals bool) {
+	if c.p.SplitByCost {
+		return c.splitAndFlush(block, cacheEnd, isFirst, isFinal)
+	}
+	onlyLiterals = c.optimizeBlock(block, cacheEnd, func() { c.setInitialCosts(len(block), isFirst) })
+	c.flushBlock(block, onlyLiterals, isFinal)
+	return onlyLiterals
+}
+
+// optimizeBlock parses the block with the matches in the cache before
+// cacheEnd, over several passes, starting from the costs initial sets
+// (with the literals of the block counted in c.freqs), and leaves the
+// best parse in c.items, c.freqs and c.codes; it tells whether literals
+// only are best.
+func (c *Compressor) optimizeBlock(block []byte, cacheEnd int, initial func()) (onlyLiterals bool) {
 	n := len(block)
 	passes := c.p.Passes
 	bestTrueCost := uint32(1<<32 - 1)
@@ -265,7 +279,7 @@ func (c *Compressor) optimizeAndFlushBlock(block []byte, cacheEnd int, isFirst, 
 
 	c.chooseAllLiterals(block)
 	onlyLitsCost := c.computeTrueCost()
-	c.setInitialCosts(n, isFirst)
+	initial()
 
 	// Past the end of the block, positions cost more than any number of
 	// literals could, so that no match reaches them.
@@ -311,7 +325,6 @@ func (c *Compressor) optimizeAndFlushBlock(block []byte, cacheEnd int, isFirst, 
 		c.findMinCostPath(n, cacheEnd)
 		c.setCostsFromCodes(&c.codes.litlenLens, &c.codes.offsetLens)
 	}
-	c.flushBlock(block, onlyLiterals, isFinal)
 	return onlyLiterals
 }
 

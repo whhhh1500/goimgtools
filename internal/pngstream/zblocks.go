@@ -20,7 +20,8 @@ import (
 //
 // Up to level 7 the blocks are compressed with compress/flate; levels 8
 // and 9 use the near-optimal parsing of libdeflate (internal/deflate),
-// with the settings of its levels 10 and 12.
+// with the settings of its levels 10 and 12, and the blocks of deflate
+// split where it saves bits, as zopfli does.
 //
 // The blocks are the same however many helpers the pipeline has (see
 // pipeline.Env.Go), and so is the file. Without helpers, up to level 7,
@@ -63,10 +64,22 @@ const (
 // nearLevels are the settings of levels 8 and 9: libdeflate's levels 10
 // and 12, with blocks of at most about 128KB (libdeflate's are 300000
 // bytes; the files are 0.05% larger, the compressor takes 3MB instead of
-// 8.6MB).
+// 8.6MB), split by cost as zopfli does. Level 9 also looks for matches
+// inside long matches.
+//
+// Measured on the filtered rows of three screenshots and three
+// photographs, against libdeflate's settings: level 8 0.75% smaller in
+// 25% more time; level 9 0.8% smaller (screenshots 2.5 to 4.1%, within
+// about 1% of zopfli with 15 iterations), in 3.5 times the time; 256KB
+// blocks would gain another 0.2% for 2.5MB more per compressor.
 var nearLevels = map[int]deflate.Params{
-	8: withBlocks(deflate.Level10),
-	9: withBlocks(deflate.Level12),
+	8: withSplit(withBlocks(deflate.Level10), false, 1),
+	9: withSplit(withBlocks(deflate.Level12), true, 2),
+}
+
+func withSplit(p deflate.Params, noSkip bool, passes int) deflate.Params {
+	p.SplitByCost, p.SplitPasses, p.NoSkip = true, passes, noSkip
+	return p
 }
 
 // nearBytes is the memory levels 8 and 9 take beyond what level 7 takes

@@ -54,7 +54,9 @@ func inflate(t *testing.T, dict, z []byte) []byte {
 }
 
 func TestRoundTrip(t *testing.T) {
-	for _, p := range []Params{Level10, Level12, {SearchDepth: 8, NiceLen: 32, Passes: 1, BlockLen: 20000, CachePerBlock: 1}} {
+	split := Level12
+	split.NoSkip, split.SplitByCost, split.SplitPasses, split.BlockLen, split.CachePerBlock = true, true, 2, 128<<10, 3
+	for _, p := range []Params{Level10, Level12, split, {SearchDepth: 8, NiceLen: 32, Passes: 1, BlockLen: 20000, CachePerBlock: 1}} {
 		c := New(p)
 		for name, data := range samples() {
 			z := c.Compress(nil, data, 0, true)
@@ -65,7 +67,7 @@ func TestRoundTrip(t *testing.T) {
 			fw, _ := flate.NewWriter(std, 9)
 			fw.Write(data)
 			fw.Close()
-			t.Logf("%-6s depth %3d: %7d -> %7d (flate 9: %7d)", name, p.SearchDepth, len(data), len(z), std.Len())
+			t.Logf("%-6s depth %3d split %v: %7d -> %7d (flate 9: %7d)", name, p.SearchDepth, p.SplitByCost, len(data), len(z), std.Len())
 		}
 	}
 }
@@ -73,19 +75,22 @@ func TestRoundTrip(t *testing.T) {
 // TestPieces compresses data in pieces, each with the data before as its
 // dictionary and a sync flush after all but the last, as zBlocks does.
 func TestPieces(t *testing.T) {
-	c := New(Level10)
-	for name, data := range samples() {
-		for _, piece := range []int{1000, 32 << 10, 100 << 10} {
-			var z []byte
-			for start := 0; ; start += piece {
-				end := min(start+piece, len(data))
-				z = c.Compress(z, data[:end], start, end == len(data))
-				if end == len(data) {
-					break
+	split := Level10
+	split.NoSkip, split.SplitByCost = true, true
+	for _, c := range []*Compressor{New(Level10), New(split)} {
+		for name, data := range samples() {
+			for _, piece := range []int{1000, 32 << 10, 100 << 10} {
+				var z []byte
+				for start := 0; ; start += piece {
+					end := min(start+piece, len(data))
+					z = c.Compress(z, data[:end], start, end == len(data))
+					if end == len(data) {
+						break
+					}
 				}
-			}
-			if got := inflate(t, nil, z); !bytes.Equal(got, data) {
-				t.Fatalf("%s in pieces of %d: round trip differs", name, piece)
+				if got := inflate(t, nil, z); !bytes.Equal(got, data) {
+					t.Fatalf("%s in pieces of %d: round trip differs", name, piece)
+				}
 			}
 		}
 	}
@@ -147,12 +152,19 @@ func FuzzRoundTrip(f *testing.F) {
 	for _, d := range samples() {
 		f.Add(d[:min(len(d), 3000)], 0)
 	}
-	c := New(Params{SearchDepth: 20, NiceLen: 64, Passes: 3, MinImprove: 1, MinNonfinal: 1, MaxStaticLen: 1000, BlockLen: 6000, CachePerBlock: 2})
+	p := Params{SearchDepth: 20, NiceLen: 64, Passes: 3, MinImprove: 1, MinNonfinal: 1, MaxStaticLen: 1000, BlockLen: 6000, CachePerBlock: 2}
+	c := New(p)
+	p.NoSkip, p.SplitByCost, p.SplitPasses = true, true, 1
+	split := New(p)
 	f.Fuzz(func(t *testing.T, data []byte, start int) {
 		if start < 0 || start > len(data) {
 			start = 0
 		}
 		z := c.Compress(nil, data, start, true)
+		if got := inflate(t, data[:start], z); !bytes.Equal(got, data[start:]) {
+			t.Fatal("round trip differs")
+		}
+		z = split.Compress(nil, data, start, true)
 		if got := inflate(t, data[:start], z); !bytes.Equal(got, data[start:]) {
 			t.Fatal("round trip differs")
 		}

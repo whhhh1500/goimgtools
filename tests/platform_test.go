@@ -82,10 +82,10 @@ func TestSameOnEveryProcessor(t *testing.T) {
 		// for every Go version.
 		{"png text level 8", func() ([]byte, error) {
 			return FromImage(textLike(320, 200)).PNG(PNGOptions{CompressionLevel: 8}).ToBytes()
-		}, "b6b0f351e5b12cfb"},
+		}, "a8e340058544273a"},
 		{"png level 9", func() ([]byte, error) {
 			return photo.Clone().PNG(PNGOptions{CompressionLevel: 9}).ToBytes()
-		}, "3d613280e5c08749"},
+		}, "9fc69f7ab2c9c389"},
 		{"gif lossy", func() ([]byte, error) { return photo.Clone().GIF(GIFOptions{Lossy: 24}).ToBytes() }, "0d853b8290dead48"},
 		{"jpeg jpegli tables", func() ([]byte, error) {
 			return photo.Clone().JPEG(77, JPEGOptions{QuantTable: QuantTableJpegli, Progressive: true}).ToBytes()

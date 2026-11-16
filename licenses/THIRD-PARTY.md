@@ -114,6 +114,22 @@ final block, so that a stream can be compressed in pieces. Without a
 dictionary, with libdeflate's settings, its output is byte for byte
 libdeflate's (checked at levels 10, 11 and 12).
 
+## zopfli
+
+Apache License 2.0, copyright 2011 Google Inc. The full text, as
+github.com/google/zopfli distributes it (commit df1517d), is in
+`LICENSE-ZOPFLI`, next to this file; zopfli has no NOTICE file.
+
+`internal/deflate/split.go` splits the blocks of deflate as zopfli does
+(`src/zopfli/blocksplitter.c`: `ZopfliBlockSplitLZ77`, `FindMinimum`,
+`FindLargestSplittableBlock`; the size of a part estimated as
+`ZopfliCalculateBlockSizeAutoType` does, the least of a dynamic, a static
+and a stored block): the largest part that may still gain is split where
+its two halves cost least, found by sampling nine points and narrowing
+down, up to fifteen parts. It works on this package's parse instead of
+zopfli's LZ77 store, by byte position instead of by symbol; the code was
+rewritten in Go and nothing of the original files is included unchanged.
+
 ## oxipng
 
 MIT License, copyright (c) 2016 Joshua Holmer. The full text is in
