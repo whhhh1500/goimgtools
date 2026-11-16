@@ -76,7 +76,9 @@ type Params struct {
 	// the next match anywhere within it; SplitByCost splits blocks where
 	// the estimated sizes say so, as zopfli does, instead of where the
 	// statistics of the data change, after a parse with SplitPasses
-	// passes at most (see split.go).
+	// passes at most (see split.go), and also tries the codes of each
+	// block with their counts evened out for the header, as zopfli does
+	// (see evenForRLE).
 	NoSkip      bool
 	SplitByCost bool
 	SplitPasses int
@@ -160,16 +162,7 @@ type Compressor struct {
 	matchLenFreqs    [maxMatch + 1]uint32
 
 	// The header of a dynamic block.
-	precode struct {
-		freqs       [numPrecodeSyms]uint32
-		codewords   [numPrecodeSyms]uint32
-		lens        [numPrecodeSyms]uint8
-		items       [numLitlenSyms + numOffsetSyms]uint32
-		numLitlen   int
-		numOffset   int
-		numExplicit int
-		numItems    int
-	}
+	precode      precode
 	lenCodewords [maxMatch + 1]uint32
 	lenLens      [maxMatch + 1]uint8
 
@@ -268,4 +261,17 @@ func (c *Compressor) Compress(dst, in []byte, start int, final bool) []byte {
 	out := c.w.out
 	c.w = bitWriter{}
 	return out
+}
+
+// precode is the header of a dynamic block: the code of the code lengths
+// and the lengths coded with it.
+type precode struct {
+	freqs       [numPrecodeSyms]uint32
+	codewords   [numPrecodeSyms]uint32
+	lens        [numPrecodeSyms]uint8
+	items       [numLitlenSyms + numOffsetSyms]uint32
+	numLitlen   int
+	numOffset   int
+	numExplicit int
+	numItems    int
 }

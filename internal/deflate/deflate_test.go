@@ -170,3 +170,38 @@ func FuzzRoundTrip(f *testing.F) {
 		}
 	})
 }
+
+// TestEvenForRLE: evening out the counts never takes a code away from a
+// symbol in use, nor gives one to the symbols after the last in use.
+func TestEvenForRLE(t *testing.T) {
+	r := rand.New(rand.NewPCG(5, 6))
+	for i := 0; i < 20000; i++ {
+		n := 1 + r.IntN(300)
+		c := make([]uint32, n)
+		for j := range c {
+			switch r.IntN(4) {
+			case 0:
+			case 1:
+				c[j] = uint32(r.IntN(3))
+			default:
+				c[j] = uint32(r.IntN(1 << uint(r.IntN(16))))
+			}
+		}
+		orig := append([]uint32(nil), c...)
+		evenForRLE(c)
+		last := -1
+		for j, v := range orig {
+			if v != 0 {
+				last = j
+			}
+		}
+		for j := range c {
+			if orig[j] != 0 && c[j] == 0 {
+				t.Fatalf("count %d at %d became 0", orig[j], j)
+			}
+			if j > last && c[j] != 0 {
+				t.Fatalf("trailing zero at %d became %d", j, c[j])
+			}
+		}
+	}
+}

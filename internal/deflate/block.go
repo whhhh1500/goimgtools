@@ -80,19 +80,21 @@ func computePrecodeItems(lens []uint8, freqs *[numPrecodeSyms]uint32, items []ui
 
 // precomputeHeader works out the header of a dynamic block with the
 // current codes.
-func (c *Compressor) precomputeHeader() {
-	pc := &c.precode
+func (c *Compressor) precomputeHeader() { precomputeHeaderOf(&c.codes, &c.precode) }
+
+// precomputeHeaderOf works out the header of a dynamic block with cd.
+func precomputeHeaderOf(cd *codes, pc *precode) {
 	pc.numLitlen = numLitlenSyms
-	for pc.numLitlen > 257 && c.codes.litlenLens[pc.numLitlen-1] == 0 {
+	for pc.numLitlen > 257 && cd.litlenLens[pc.numLitlen-1] == 0 {
 		pc.numLitlen--
 	}
 	pc.numOffset = numOffsetSyms
-	for pc.numOffset > 1 && c.codes.offsetLens[pc.numOffset-1] == 0 {
+	for pc.numOffset > 1 && cd.offsetLens[pc.numOffset-1] == 0 {
 		pc.numOffset--
 	}
 	var lens [numLitlenSyms + numOffsetSyms]uint8
-	copy(lens[:], c.codes.litlenLens[:pc.numLitlen])
-	copy(lens[pc.numLitlen:], c.codes.offsetLens[:pc.numOffset])
+	copy(lens[:], cd.litlenLens[:pc.numLitlen])
+	copy(lens[pc.numLitlen:], cd.offsetLens[:pc.numOffset])
 	pc.numItems = computePrecodeItems(lens[:pc.numLitlen+pc.numOffset], &pc.freqs, pc.items[:])
 	makeHuffmanCode(maxPreCodewordLen, pc.freqs[:], pc.lens[:], pc.codewords[:])
 	pc.numExplicit = numPrecodeSyms
@@ -109,29 +111,37 @@ func (c *Compressor) flushBlock(block []byte, onlyLiterals, isFinal bool) {
 	c.precomputeHeader()
 	pc := &c.precode
 	f := &c.freqs
-
-	dynamicCost := uint32(3 + 5 + 5 + 4 + 3*pc.numExplicit)
-	for sym, n := range pc.freqs {
-		dynamicCost += n * (uint32(extraPrecodeBits[sym]) + uint32(pc.lens[sym]))
+	dynamicCost := dynamicBits(f, &c.codes, pc)
+	if c.p.SplitByCost {
+		// Beyond libdeflate, as zopfli does (TryOptimizeHuffmanForRle):
+		// counts evened out along runs make code lengths whose header
+		// codes smaller, which can pay for the data coding a little worse;
+		// the smaller block is kept.
+		alt := *f
+		evenForRLE(alt.litlen[:])
+		evenForRLE(alt.offset[:])
+		var cd codes
+		var ap precode
+		makeCodes(&alt, &cd)
+		precomputeHeaderOf(&cd, &ap)
+		if b := dynamicBits(f, &cd, &ap); b < dynamicCost {
+			c.codes, c.precode, dynamicCost = cd, ap, b
+		}
 	}
 	staticCost := uint32(3)
 	for sym := range numLiterals {
-		dynamicCost += f.litlen[sym] * uint32(c.codes.litlenLens[sym])
 		if sym < 144 {
 			staticCost += f.litlen[sym] * 8
 		} else {
 			staticCost += f.litlen[sym] * 9
 		}
 	}
-	dynamicCost += uint32(c.codes.litlenLens[endOfBlock])
 	staticCost += 7
 	for slot, x := range extraLengthBits {
 		sym := firstLenSym + slot
-		dynamicCost += f.litlen[sym] * (uint32(x) + uint32(c.codes.litlenLens[sym]))
 		staticCost += f.litlen[sym] * (uint32(x) + uint32(staticCodes.litlenLens[sym]))
 	}
 	for slot, x := range extraOffsetBits {
-		dynamicCost += f.offset[slot] * (uint32(x) + uint32(c.codes.offsetLens[slot]))
 		staticCost += f.offset[slot] * (uint32(x) + 5)
 	}
 	n := len(block)
@@ -208,4 +218,98 @@ func (c *Compressor) flushBlock(block []byte, onlyLiterals, isFinal bool) {
 		}
 	}
 	w.add(codes.litlenCodewords[endOfBlock], uint(codes.litlenLens[endOfBlock]))
+}
+
+// dynamicBits is the size of a dynamic block of the frequencies f coded
+// with cd, whose header is pc, in bits.
+func dynamicBits(f *freqs, cd *codes, pc *precode) uint32 {
+	b := uint32(3 + 5 + 5 + 4 + 3*pc.numExplicit)
+	for sym, n := range pc.freqs {
+		b += n * (uint32(extraPrecodeBits[sym]) + uint32(pc.lens[sym]))
+	}
+	for sym := range numLiterals {
+		b += f.litlen[sym] * uint32(cd.litlenLens[sym])
+	}
+	b += uint32(cd.litlenLens[endOfBlock])
+	for slot, x := range extraLengthBits {
+		sym := firstLenSym + slot
+		b += f.litlen[sym] * (uint32(x) + uint32(cd.litlenLens[sym]))
+	}
+	for slot, x := range extraOffsetBits {
+		b += f.offset[slot] * (uint32(x) + uint32(cd.offsetLens[slot]))
+	}
+	return b
+}
+
+// evenForRLE replaces runs of nearly equal counts by their mean, so that
+// their code lengths come out equal and the header can code them as
+// repeats (zopfli's OptimizeHuffmanForRle, src/zopfli/deflate.c). A count
+// that is not zero stays at least 1, so every symbol in use keeps a code; a
+// stretch of zeros stays zero, and so do the zeros at the end.
+func evenForRLE(counts []uint32) {
+	length := len(counts)
+	// The zeros at the end are left alone.
+	for length > 0 && counts[length-1] == 0 {
+		length--
+	}
+	if length == 0 {
+		return
+	}
+	// Runs that already code well as repeats: of zeros at least 5 long,
+	// of others at least 7.
+	good := make([]bool, length)
+	symbol, stride := counts[0], 0
+	for i := 0; i <= length; i++ {
+		if i == length || counts[i] != symbol {
+			if symbol == 0 && stride >= 5 || symbol != 0 && stride >= 7 {
+				for k := 0; k < stride; k++ {
+					good[i-k-1] = true
+				}
+			}
+			stride = 1
+			if i != length {
+				symbol = counts[i]
+			}
+		} else {
+			stride++
+		}
+	}
+	// Even out the stretches that would make more repeats.
+	stride, limit, sum := 0, counts[0], uint32(0)
+	for i := 0; i <= length; i++ {
+		if i == length || good[i] || absDiff(counts[i], limit) >= 4 {
+			if stride >= 4 || stride >= 3 && sum == 0 {
+				count := (sum + uint32(stride)/2) / uint32(stride)
+				if count < 1 {
+					count = 1
+				}
+				if sum == 0 {
+					count = 0
+				}
+				for k := 0; k < stride; k++ {
+					counts[i-k-1] = count
+				}
+			}
+			stride, sum = 0, 0
+			switch {
+			case i < length-3:
+				limit = (counts[i] + counts[i+1] + counts[i+2] + counts[i+3] + 2) / 4
+			case i < length:
+				limit = counts[i]
+			default:
+				limit = 0
+			}
+		}
+		stride++
+		if i != length {
+			sum += counts[i]
+		}
+	}
+}
+
+func absDiff(a, b uint32) uint32 {
+	if a > b {
+		return a - b
+	}
+	return b - a
 }

@@ -129,6 +129,9 @@ its two halves cost least, found by sampling nine points and narrowing
 down, up to fifteen parts. It works on this package's parse instead of
 zopfli's LZ77 store, by byte position instead of by symbol; the code was
 rewritten in Go and nothing of the original files is included unchanged.
+`internal/deflate/block.go` (`evenForRLE`) is a port of zopfli's
+`OptimizeHuffmanForRle` (`src/zopfli/deflate.c`), used as zopfli's
+`TryOptimizeHuffmanForRle` uses it, under the same licence.
 
 ## oxipng
 
