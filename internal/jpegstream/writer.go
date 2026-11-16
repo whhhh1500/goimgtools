@@ -3,17 +3,20 @@
 // license that can be found in the licenses/LICENSE-GO file.
 
 // Package jpegstream is Go's image/jpeg encoder (go1.27.1) changed to read
-// the image from a pipeline.Source in 16-row bands. Only writeSOS and Encode
-// differ from the standard library; the output bytes are the same.
+// the image from a pipeline.Source in 16-row bands, and made faster (the bit
+// writer, quantization, the colour conversion and the gathering of the
+// blocks); the output bytes are the same.
 package jpegstream
 
 import (
 	"bufio"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"image"
 	"image/color"
 	"io"
+	mbits "math/bits"
 
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
@@ -33,31 +36,13 @@ func recip(b int32) uint64 { return (1<<32 + uint64(b) - 1) / uint64(b) }
 // place of the division. The result is the same for every a an encoder
 // meets: it is exact while (|a| + b/2) * b < 2^32, and coefficients are
 // below 2^19, divisors (8 times a quantization value) at most 2040.
+//
+// It has no branch on the sign: s is 0 for a >= 0 and -1 below, and
+// x^s - s is x or -x.
 func divBy(a, b int32, m uint64) int32 {
-	if a >= 0 {
-		return int32(uint64(a+(b>>1)) * m >> 32)
-	}
-	return -int32(uint64(-a+(b>>1)) * m >> 32)
-}
-
-// bitCount counts the number of bits needed to hold an integer.
-var bitCount = [256]byte{
-	0, 1, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4,
-	5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
-	6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
-	6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
-	7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
-	7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
-	7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
-	7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
-	8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
-	8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
-	8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
-	8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
-	8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
-	8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
-	8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
-	8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
+	s := a >> 31
+	v := int32(uint64((a^s)-s+(b>>1)) * m >> 32)
+	return (v ^ s) - s
 }
 
 type quantIndex int
@@ -213,8 +198,12 @@ type encoder struct {
 	err error
 	// buf is a scratch buffer.
 	buf [16]byte
-	// bits and nBits are accumulated bits to write to w.
-	bits, nBits uint32
+	// bits holds nBits accumulated bits (the low ones) to write to w, by
+	// way of out, where whole bytes go, stuffed, until there are enough to
+	// write.
+	bits  uint64
+	nBits uint32
+	out   []byte
 	// quant is the scaled quantization tables, in zig-zag order.
 	quant [nQuantIndex][blockSize]byte
 	// recip is recip(8 * quant), for dividing by a quantization value
@@ -229,7 +218,19 @@ type encoder struct {
 	trellis bool
 }
 
+// drain writes out the bytes of the bit-stream gathered in out.
+func (e *encoder) drain() {
+	if len(e.out) == 0 {
+		return
+	}
+	if e.err == nil {
+		_, e.err = e.w.Write(e.out)
+	}
+	e.out = e.out[:0]
+}
+
 func (e *encoder) flush() {
+	e.drain()
 	if e.err != nil {
 		return
 	}
@@ -237,6 +238,7 @@ func (e *encoder) flush() {
 }
 
 func (e *encoder) write(p []byte) {
+	e.drain()
 	if e.err != nil {
 		return
 	}
@@ -244,6 +246,7 @@ func (e *encoder) write(p []byte) {
 }
 
 func (e *encoder) writeByte(b byte) {
+	e.drain()
 	if e.err != nil {
 		return
 	}
@@ -251,21 +254,59 @@ func (e *encoder) writeByte(b byte) {
 }
 
 // emit emits the least significant nBits bits of bits to the bit-stream.
-// The precondition is bits < 1<<nBits && nBits <= 16.
+// The precondition is bits < 1<<nBits && nBits <= 32. The bytes are what
+// the standard library's emit writes, a byte at a time, gathered 32 bits at
+// a time.
 func (e *encoder) emit(bits, nBits uint32) {
-	nBits += e.nBits
-	bits <<= 32 - nBits
-	bits |= e.bits
-	for nBits >= 8 {
-		b := uint8(bits >> 24)
-		e.writeByte(b)
-		if b == 0xff {
-			e.writeByte(0x00)
-		}
-		bits <<= 8
-		nBits -= 8
+	e.bits = e.bits<<nBits | uint64(bits)
+	e.nBits += nBits
+	if e.nBits >= 32 {
+		e.spill()
 	}
-	e.bits, e.nBits = bits, nBits
+}
+
+// spill moves the oldest 32 bits of the accumulator to out as four bytes,
+// each 0xff followed by a stuffed 0x00.
+func (e *encoder) spill() {
+	e.bits, e.nBits = e.spillAcc(e.bits, e.nBits)
+}
+
+// spillAcc is spill for an accumulator acc of n >= 32 bits held outside e;
+// it returns what is left of it.
+func (e *encoder) spillAcc(acc uint64, n uint32) (uint64, uint32) {
+	n -= 32
+	w := uint32(acc >> n)
+	acc &= 1<<n - 1
+	if (^w-0x01010101)&w&0x80808080 == 0 { // no 0xff byte
+		e.out = binary.BigEndian.AppendUint32(e.out, w)
+	} else {
+		for s := 24; s >= 0; s -= 8 {
+			b := byte(w >> s)
+			e.out = append(e.out, b)
+			if b == 0xff {
+				e.out = append(e.out, 0x00)
+			}
+		}
+	}
+	if len(e.out) >= 4096 {
+		e.drain()
+	}
+	return acc, n
+}
+
+// padBits ends a scan: the last byte is padded with 1's, as the standard
+// library's emit(0x7f, 7) does, and the bits left over are dropped.
+func (e *encoder) padBits() {
+	e.emit(0x7f, 7)
+	for e.nBits >= 8 {
+		b := byte(e.bits >> (e.nBits - 8))
+		e.nBits -= 8
+		e.out = append(e.out, b)
+		if b == 0xff {
+			e.out = append(e.out, 0x00)
+		}
+	}
+	e.bits, e.nBits = 0, 0
 }
 
 // emitHuff emits the given value with the given Huffman encoder.
@@ -284,16 +325,15 @@ func (e *encoder) emitHuffRLE(h huffIndex, runLength, value int32) {
 	if a < 0 {
 		a, b = -value, value-1
 	}
-	var nBits uint32
-	if a < 0x100 {
-		nBits = uint32(bitCount[a])
-	} else {
-		nBits = 8 + uint32(bitCount[a>>8])
+	nBits := uint32(mbits.Len32(uint32(a)))
+	// The code and the bits of the value, in one go.
+	sym := runLength<<4 | int32(nBits)
+	if e.freq != nil {
+		e.freq[h][sym]++
 	}
-	e.emitHuff(h, runLength<<4|int32(nBits))
-	if nBits > 0 {
-		e.emit(uint32(b)&(1<<nBits-1), nBits)
-	}
+	x := theHuffmanLUT[h][sym]
+	n := x >> 24
+	e.emit((x&(1<<24-1))<<nBits|uint32(b)&(1<<nBits-1), n+nBits)
 }
 
 // writeMarkerHeader writes the header for a marker with the given length.
@@ -411,26 +451,99 @@ func (e *encoder) quantizeCoefs(b *block, q quantIndex, zz *qblock) {
 
 // writeQuantized emits a quantized block, its DC as the difference to
 // prevDC, and returns its DC.
+//
+// It is emitHuffRLE and emitHuff for every value, with the accumulator held
+// in local variables for the whole block; writeCounted does the same while
+// counting the symbols.
 func (e *encoder) writeQuantized(zz *qblock, q quantIndex, prevDC int32) int32 {
+	if e.freq != nil {
+		return e.writeCounted(zz, q, prevDC)
+	}
+	dcLUT, acLUT := theHuffmanLUT[2*q], theHuffmanLUT[2*q+1]
+	acc, n := e.bits, e.nBits
+	// Each value goes in as its code x (a huffmanLUT entry) followed by its
+	// nb low bits (of v-1 for a negative v: v+s, s its sign).
+	dc := int32(zz[0])
+	v := dc - prevDC
+	s := v >> 31
+	nb := uint32(mbits.Len32(uint32((v ^ s) - s)))
+	x := dcLUT[nb]
+	size := x>>24 + nb
+	acc = acc<<(size&63) | uint64((x&(1<<24-1))<<nb|uint32(v+s)&(1<<nb-1))
+	if n += size; n >= 32 {
+		acc, n = e.spillAcc(acc, n)
+	}
+	nz := nonzeros(zz) &^ 1
+	last := 0
+	for ; nz != 0; nz &= nz - 1 {
+		zig := mbits.TrailingZeros64(nz)
+		run := uint32(zig - last - 1)
+		for ; run > 15; run -= 16 {
+			x := acLUT[0xf0]
+			acc = acc<<(x>>24&63) | uint64(x&(1<<24-1))
+			if n += x >> 24; n >= 32 {
+				acc, n = e.spillAcc(acc, n)
+			}
+		}
+		v := int32(zz[zig])
+		s := v >> 31
+		nb := uint32(mbits.Len32(uint32((v ^ s) - s)))
+		x := acLUT[run<<4|nb]
+		size := x>>24 + nb
+		acc = acc<<(size&63) | uint64((x&(1<<24-1))<<nb|uint32(v+s)&(1<<nb-1))
+		if n += size; n >= 32 {
+			acc, n = e.spillAcc(acc, n)
+		}
+		last = zig
+	}
+	if last != blockSize-1 {
+		x := acLUT[0x00]
+		acc = acc<<(x>>24&63) | uint64(x&(1<<24-1))
+		if n += x >> 24; n >= 32 {
+			acc, n = e.spillAcc(acc, n)
+		}
+	}
+	e.bits, e.nBits = acc, n
+	return dc
+}
+
+// nonzeros returns the mask of the nonzero values of zz: bit k is set when
+// zz[k] != 0. Four values at a time, as the lanes of a uint64: the top bit
+// of a 16-bit lane of (w&0x7fff...)+0x7fff... | w is set when the lane is
+// not 0 (the sum does not carry out of the lane), and multiplying the top
+// bits, moved to bits 0, 16, 32 and 48, by 2^48+2^33+2^18+2^3 gathers them
+// in bits 48 to 51, with no other product landing there or carrying.
+func nonzeros(zz *qblock) uint64 {
+	const low, top = 0x7fff7fff7fff7fff, 0x8000800080008000
+	var nz uint64
+	for i := 0; i < blockSize; i += 4 {
+		q := zz[i : i+4 : i+4]
+		w := uint64(uint16(q[0])) | uint64(uint16(q[1]))<<16 | uint64(uint16(q[2]))<<32 | uint64(uint16(q[3]))<<48
+		t := ((w & low) + low | w) & top >> 15
+		nz |= (t * (1<<48 | 1<<33 | 1<<18 | 1<<3) >> 48) << i
+	}
+	return nz
+}
+
+// writeCounted is writeQuantized counting the symbols in e.freq.
+func (e *encoder) writeCounted(zz *qblock, q quantIndex, prevDC int32) int32 {
 	// Emit the DC delta.
 	dc := int32(zz[0])
 	e.emitHuffRLE(huffIndex(2*q+0), 0, dc-prevDC)
-	// Emit the AC components.
-	h, runLength := huffIndex(2*q+1), int32(0)
-	for zig := 1; zig < blockSize; zig++ {
-		ac := int32(zz[zig])
-		if ac == 0 {
-			runLength++
-		} else {
-			for runLength > 15 {
-				e.emitHuff(h, 0xf0)
-				runLength -= 16
-			}
-			e.emitHuffRLE(h, runLength, ac)
-			runLength = 0
+	// Emit the AC components: only the nonzero ones are visited.
+	nz := nonzeros(zz) &^ 1
+	h, last := huffIndex(2*q+1), 0
+	for ; nz != 0; nz &= nz - 1 {
+		zig := mbits.TrailingZeros64(nz)
+		runLength := int32(zig - last - 1)
+		for runLength > 15 {
+			e.emitHuff(h, 0xf0)
+			runLength -= 16
 		}
+		e.emitHuffRLE(h, runLength, int32(zz[zig]))
+		last = zig
 	}
-	if runLength > 0 {
+	if last != blockSize-1 {
 		e.emitHuff(h, 0x00)
 	}
 	return dc
@@ -467,27 +580,33 @@ func grayToY(m *image.Gray, p image.Point, yBlock *block) {
 	}
 }
 
+// ycc is color.RGBToYCbCr, small enough to be inlined: the clamping of Cb
+// and Cr to [0, 255] gives the same values as its bit twiddling.
+func ycc(r, g, b int32) (yy, cb, cr int32) {
+	yy = (19595*r + 38470*g + 7471*b + 1<<15) >> 16
+	cb = min(max((-11056*r-21712*g+32768*b+257<<15)>>16, 0), 0xff)
+	cr = min(max((32768*r-27440*g-5328*b+257<<15)>>16, 0), 0xff)
+	return yy, cb, cr
+}
+
+// pixCols returns the byte offsets, in a row of m's pixels (bpp bytes
+// each), of the 8 columns from x on, clamped to m's last column.
+func pixCols(b image.Rectangle, x, bpp int) (col [8]int) {
+	for i := range col {
+		col[i] = (min(x+i, b.Max.X-1) - b.Min.X) * bpp
+	}
+	return col
+}
+
 // rgbaToYCbCr is a specialized version of toYCbCr for image.RGBA images.
 func rgbaToYCbCr(m *image.RGBA, p image.Point, yBlock, cbBlock, crBlock *block) {
 	b := m.Bounds()
-	xmax := b.Max.X - 1
-	ymax := b.Max.Y - 1
+	col := pixCols(b, p.X, 4)
 	for j := 0; j < 8; j++ {
-		sj := p.Y + j
-		if sj > ymax {
-			sj = ymax
-		}
-		offset := (sj-b.Min.Y)*m.Stride - b.Min.X*4
+		row := m.Pix[(min(p.Y+j, b.Max.Y-1)-b.Min.Y)*m.Stride:]
 		for i := 0; i < 8; i++ {
-			sx := p.X + i
-			if sx > xmax {
-				sx = xmax
-			}
-			pix := m.Pix[offset+sx*4:]
-			yy, cb, cr := color.RGBToYCbCr(pix[0], pix[1], pix[2])
-			yBlock[8*j+i] = int32(yy)
-			cbBlock[8*j+i] = int32(cb)
-			crBlock[8*j+i] = int32(cr)
+			pix := row[col[i] : col[i]+3 : col[i]+3]
+			yBlock[8*j+i], cbBlock[8*j+i], crBlock[8*j+i] = ycc(int32(pix[0]), int32(pix[1]), int32(pix[2]))
 		}
 	}
 }
@@ -497,30 +616,18 @@ func rgbaToYCbCr(m *image.RGBA, p image.Point, yBlock, cbBlock, crBlock *block) 
 // color.NRGBA.RGBA computes it), without making a color for every pixel.
 func nrgbaToYCbCr(m *image.NRGBA, p image.Point, yBlock, cbBlock, crBlock *block) {
 	b := m.Bounds()
-	xmax := b.Max.X - 1
-	ymax := b.Max.Y - 1
+	col := pixCols(b, p.X, 4)
 	for j := 0; j < 8; j++ {
-		sj := p.Y + j
-		if sj > ymax {
-			sj = ymax
-		}
-		offset := (sj-b.Min.Y)*m.Stride - b.Min.X*4
+		row := m.Pix[(min(p.Y+j, b.Max.Y-1)-b.Min.Y)*m.Stride:]
 		for i := 0; i < 8; i++ {
-			sx := p.X + i
-			if sx > xmax {
-				sx = xmax
-			}
-			pix := m.Pix[offset+sx*4 : offset+sx*4+4 : offset+sx*4+4]
+			pix := row[col[i] : col[i]+4 : col[i]+4]
 			r, g, bl := pix[0], pix[1], pix[2]
 			if a := uint32(pix[3]); a != 0xff {
 				r = uint8(uint32(r) * 0x101 * a / 0xff >> 8)
 				g = uint8(uint32(g) * 0x101 * a / 0xff >> 8)
 				bl = uint8(uint32(bl) * 0x101 * a / 0xff >> 8)
 			}
-			yy, cb, cr := color.RGBToYCbCr(r, g, bl)
-			yBlock[8*j+i] = int32(yy)
-			cbBlock[8*j+i] = int32(cb)
-			crBlock[8*j+i] = int32(cr)
+			yBlock[8*j+i], cbBlock[8*j+i], crBlock[8*j+i] = ycc(int32(r), int32(g), int32(bl))
 		}
 	}
 }
@@ -581,25 +688,103 @@ func inPalette(m *image.Paletted) bool {
 }
 
 // yCbCrToYCbCr is a specialized version of toYCbCr for image.YCbCr images.
+//
+// The offsets of the samples are worked out once for the 8 columns and the
+// 8 rows: for every subsampling ratio YOffset and COffset are a part that
+// depends on y alone plus one that depends on x alone, each 0 at the
+// image's corner, so COffset(x, y) = COffset(x, Min.Y) + COffset(Min.X, y).
 func yCbCrToYCbCr(m *image.YCbCr, p image.Point, yBlock, cbBlock, crBlock *block) {
 	b := m.Bounds()
-	xmax := b.Max.X - 1
-	ymax := b.Max.Y - 1
+	var yCol, cCol [8]int
+	for i := range yCol {
+		sx := min(p.X+i, b.Max.X-1)
+		yCol[i], cCol[i] = sx-b.Min.X, m.COffset(sx, b.Min.Y)
+	}
 	for j := 0; j < 8; j++ {
-		sy := p.Y + j
-		if sy > ymax {
-			sy = ymax
-		}
+		sy := min(p.Y+j, b.Max.Y-1)
+		yRow, cRow := m.Y[(sy-b.Min.Y)*m.YStride:], m.COffset(b.Min.X, sy)
+		cb, cr := m.Cb[cRow:], m.Cr[cRow:]
 		for i := 0; i < 8; i++ {
-			sx := p.X + i
-			if sx > xmax {
-				sx = xmax
-			}
-			yi := m.YOffset(sx, sy)
-			ci := m.COffset(sx, sy)
-			yBlock[8*j+i] = int32(m.Y[yi])
-			cbBlock[8*j+i] = int32(m.Cb[ci])
-			crBlock[8*j+i] = int32(m.Cr[ci])
+			yBlock[8*j+i] = int32(yRow[yCol[i]])
+			cbBlock[8*j+i] = int32(cb[cCol[i]])
+			crBlock[8*j+i] = int32(cr[cCol[i]])
+		}
+	}
+}
+
+// chroma444 stores in dst the chroma block (Cb or Cr, plane) of the 16x16
+// MCU of a 4:4:4 image m whose top-left corner is p, which must lie inside
+// m: the rounded averages of 2x2 samples, what yCbCrToYCbCr and scale make
+// of it.
+func chroma444(m *image.YCbCr, plane []byte, p image.Point, dst *block) {
+	b := m.Bounds()
+	off := (p.Y-b.Min.Y)*m.CStride + p.X - b.Min.X
+	for j := 0; j < 8; j++ {
+		r0 := plane[off : off+16 : off+16]
+		r1 := plane[off+m.CStride : off+m.CStride+16 : off+m.CStride+16]
+		d := dst[8*j : 8*j+8 : 8*j+8]
+		for i := range d {
+			d[i] = (int32(r0[2*i]) + int32(r0[2*i+1]) + int32(r1[2*i]) + int32(r1[2*i+1]) + 2) >> 2
+		}
+		off += 2 * m.CStride
+	}
+}
+
+// yOfYCbCr stores the luma of the 8x8 region of m whose top-left corner is
+// p in yBlock, as yCbCrToYCbCr does.
+func yOfYCbCr(m *image.YCbCr, p image.Point, yBlock *block) {
+	b := m.Bounds()
+	if p.X+8 <= b.Max.X && p.Y+8 <= b.Max.Y { // nothing to clamp
+		off := (p.Y-b.Min.Y)*m.YStride + p.X - b.Min.X
+		for j := 0; j < 8; j++ {
+			row := m.Y[off : off+8 : off+8]
+			d := yBlock[8*j : 8*j+8 : 8*j+8]
+			d[0], d[1], d[2], d[3] = int32(row[0]), int32(row[1]), int32(row[2]), int32(row[3])
+			d[4], d[5], d[6], d[7] = int32(row[4]), int32(row[5]), int32(row[6]), int32(row[7])
+			off += m.YStride
+		}
+		return
+	}
+	var yCol [8]int
+	for i := range yCol {
+		yCol[i] = min(p.X+i, b.Max.X-1) - b.Min.X
+	}
+	for j := 0; j < 8; j++ {
+		yRow := m.Y[(min(p.Y+j, b.Max.Y-1)-b.Min.Y)*m.YStride:]
+		for i := 0; i < 8; i++ {
+			yBlock[8*j+i] = int32(yRow[yCol[i]])
+		}
+	}
+}
+
+// chroma420 stores in dst the chroma block (Cb or Cr, plane) of the 16x16
+// MCU of a 4:2:0 image m whose top-left corner is p, what yCbCrToYCbCr and
+// scale make of it: when m's corner is even and not negative, the four
+// pixels of every 2x2 cell of the MCU have the same chroma sample (those
+// past the right or bottom edge, clamped to it, too: the last column or
+// row is even then, or shares its sample with the one before), and the
+// rounded average of four equal values is that value.
+func chroma420(m *image.YCbCr, plane []byte, p image.Point, dst *block) {
+	b := m.Bounds()
+	if p.X+16 <= b.Max.X && p.Y+16 <= b.Max.Y { // nothing to clamp
+		off := (p.Y/2-b.Min.Y/2)*m.CStride + p.X/2 - b.Min.X/2
+		for j := 0; j < 8; j++ {
+			row := plane[off : off+8 : off+8]
+			d := dst[8*j : 8*j+8 : 8*j+8]
+			d[0], d[1], d[2], d[3] = int32(row[0]), int32(row[1]), int32(row[2]), int32(row[3])
+			d[4], d[5], d[6], d[7] = int32(row[4]), int32(row[5]), int32(row[6]), int32(row[7])
+			off += m.CStride
+		}
+		return
+	}
+	var cCol [8]int
+	for i := range cCol {
+		cCol[i] = min(p.X/2+i, (b.Max.X-1)/2) - b.Min.X/2
+	}
+	for j := 0; j < 8; j++ {
+		row := plane[(min(p.Y/2+j, (b.Max.Y-1)/2)-b.Min.Y/2)*m.CStride:]
+		for i := 0; i < 8; i++ {
+			dst[8*j+i] = int32(row[cCol[i]])
 		}
 	}
 }
@@ -665,7 +850,7 @@ func (e *encoder) writeSOS(src pipeline.Source, first image.Image) error {
 		return err
 	}
 	// Pad the last byte with 1's.
-	e.emit(0x7f, 7)
+	e.padBits()
 	return nil
 }
 
@@ -774,17 +959,23 @@ type unitTemp struct {
 // bandConv cuts one band of the image into units: blocks of a gray image,
 // row by row, or 16x16 MCUs of a colour one.
 type bandConv struct {
-	m       image.Image
-	bounds  image.Rectangle
-	gray    *image.Gray
-	rgba    *image.RGBA
-	ycbcr   *image.YCbCr
-	nrgba   *image.NRGBA
-	pal     *image.Paletted
-	lut     *[256][3]uint8 // the palette of pal
-	across  int            // gray: blocks across
-	units   int
-	perUnit int // blocks a unit has
+	m      image.Image
+	bounds image.Rectangle
+	gray   *image.Gray
+	rgba   *image.RGBA
+	ycbcr  *image.YCbCr
+	nrgba  *image.NRGBA
+	pal    *image.Paletted
+	lut    *[256][3]uint8 // the palette of pal
+	// direct420: ycbcr is 4:2:0 with its corner even and not negative, so
+	// its chroma samples are the MCUs' chroma blocks (see chroma420).
+	direct420 bool
+	// direct444: ycbcr is 4:4:4; the chroma blocks of an MCU with nothing
+	// to clamp are averaged from it directly (see chroma444).
+	direct444 bool
+	across    int // gray: blocks across
+	units     int
+	perUnit   int // blocks a unit has
 }
 
 // unit hands the blocks of unit u to sink, as scanBlocks does.
@@ -796,6 +987,28 @@ func (c *bandConv) unit(u int, t *unitTemp, sink func(b *block, comp int)) {
 		return
 	}
 	x, y := c.bounds.Min.X+16*u, c.bounds.Min.Y
+	if c.direct444 && x+16 <= c.bounds.Max.X && y+16 <= c.bounds.Max.Y {
+		for i := 0; i < 4; i++ {
+			yOfYCbCr(c.ycbcr, image.Pt(x+(i&1)*8, y+(i&2)*4), &t.b)
+			sink(&t.b, 0)
+		}
+		chroma444(c.ycbcr, c.ycbcr.Cb, image.Pt(x, y), &t.b)
+		sink(&t.b, 1)
+		chroma444(c.ycbcr, c.ycbcr.Cr, image.Pt(x, y), &t.b)
+		sink(&t.b, 2)
+		return
+	}
+	if c.direct420 {
+		for i := 0; i < 4; i++ {
+			yOfYCbCr(c.ycbcr, image.Pt(x+(i&1)*8, y+(i&2)*4), &t.b)
+			sink(&t.b, 0)
+		}
+		chroma420(c.ycbcr, c.ycbcr.Cb, image.Pt(x, y), &t.b)
+		sink(&t.b, 1)
+		chroma420(c.ycbcr, c.ycbcr.Cr, image.Pt(x, y), &t.b)
+		sink(&t.b, 2)
+		return
+	}
 	for i := 0; i < 4; i++ {
 		xOff := (i & 1) * 8
 		yOff := (i & 2) * 4
@@ -841,6 +1054,9 @@ func (e *encoder) bands(src pipeline.Source, first image.Image, do func(c *bandC
 			}
 			c.rgba, _ = m.(*image.RGBA)
 			c.ycbcr, _ = m.(*image.YCbCr)
+			c.direct420 = c.ycbcr != nil && c.ycbcr.SubsampleRatio == image.YCbCrSubsampleRatio420 &&
+				bounds.Min.X >= 0 && bounds.Min.Y >= 0 && bounds.Min.X%2 == 0 && bounds.Min.Y%2 == 0
+			c.direct444 = c.ycbcr != nil && c.ycbcr.SubsampleRatio == image.YCbCrSubsampleRatio444
 			c.nrgba, _ = m.(*image.NRGBA)
 			c.pal, _ = m.(*image.Paletted)
 			if c.pal != nil {

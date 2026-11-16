@@ -346,8 +346,7 @@ func (s *progScan) finish() {
 	}
 	if !s.gather {
 		// Pad the last byte with 1's.
-		s.e.emit(0x7f, 7)
-		s.e.bits, s.e.nBits = 0, 0
+		s.e.padBits()
 	}
 	s.lastDC = [3]int32{}
 }

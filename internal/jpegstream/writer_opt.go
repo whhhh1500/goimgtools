@@ -318,12 +318,13 @@ func (e *encoder) writeOptimized(src pipeline.Source, first image.Image, size im
 	// Pass 1: the plain scan, into the spill, counting symbols.
 	var freq [nHuffIndex][257]int64
 	out := e.w
+	e.drain()
 	e.w, e.freq = bufio.NewWriterSize(sp, 4<<10), &freq
 	var prevDC [3]int32
 	err := e.quantBlocks(src, first, func(zz *qblock, comp int) {
 		prevDC[comp] = e.writeQuantized(zz, quantIndex((comp+1)/2), prevDC[comp])
 	})
-	e.emit(0x7f, 7)
+	e.padBits()
 	e.flush()
 	e.w, e.freq, e.bits, e.nBits = out, nil, 0, 0
 	if err != nil {
@@ -395,6 +396,6 @@ func (e *encoder) writeOptimized(src pipeline.Source, first image.Image, size im
 		return rd.err
 	}
 	// Pad the last byte with 1's.
-	e.emit(0x7f, 7)
+	e.padBits()
 	return e.err
 }

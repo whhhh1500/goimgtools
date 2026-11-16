@@ -3,6 +3,7 @@ package jpegstream
 import (
 	"bytes"
 	"image"
+	"image/color"
 	"image/jpeg"
 	"io"
 	"math"
@@ -42,6 +43,32 @@ func TestMatchesStdlib(t *testing.T) {
 	}
 	if !bytes.Equal(got.Bytes(), want.Bytes()) {
 		t.Error("sub-image: bytes differ from jpeg.Encode")
+	}
+	// YCbCr images whose corner is even, odd or negative, of every
+	// subsampling ratio: the chroma of a 4:2:0 one is taken as it is only
+	// when its corner is even and not negative.
+	for _, ratio := range []image.YCbCrSubsampleRatio{image.YCbCrSubsampleRatio420, image.YCbCrSubsampleRatio422,
+		image.YCbCrSubsampleRatio440, image.YCbCrSubsampleRatio411, image.YCbCrSubsampleRatio410, image.YCbCrSubsampleRatio444} {
+		for _, r := range []image.Rectangle{image.Rect(0, 0, 37, 29), image.Rect(2, 4, 41, 36), image.Rect(3, 5, 40, 34),
+			image.Rect(2, 7, 35, 40), image.Rect(-7, -3, 30, 26), image.Rect(-6, -10, 28, 23), image.Rect(-1, 0, 16, 17)} {
+			m := image.NewYCbCr(r, ratio)
+			for i := range m.Y {
+				m.Y[i] = uint8(i * 13)
+			}
+			for i := range m.Cb {
+				m.Cb[i], m.Cr[i] = uint8(i*29), uint8(i*i)
+			}
+			for _, sub := range []image.Image{m, m.SubImage(image.Rect(r.Min.X+1, r.Min.Y+1, r.Max.X, r.Max.Y))} {
+				var want, got bytes.Buffer
+				jpeg.Encode(&want, sub, &jpeg.Options{Quality: 90})
+				if err := Encode(&got, testutil.Chopped(sub, 3), &Options{Quality: 90}); err != nil {
+					t.Fatal(err)
+				}
+				if !bytes.Equal(got.Bytes(), want.Bytes()) {
+					t.Errorf("YCbCr %v %v: bytes differ from jpeg.Encode", ratio, sub.Bounds())
+				}
+			}
+		}
 	}
 }
 
@@ -175,6 +202,42 @@ func TestDeadZone(t *testing.T) {
 		e.quantizeCoefs(&b, quantIndexLuminance, &zz)
 		if got := [4]int16{zz[0], zz[1], zz[2], zz[3]}; got != c.want {
 			t.Errorf("dead zone %v: %v, want %v", c.dz != nil, got, c.want)
+		}
+	}
+}
+
+// TestNonzeros checks the mask of nonzero values against a plain loop, with
+// the lane values that matter: 0, 1, -1, the extremes of int16.
+func TestNonzeros(t *testing.T) {
+	vals := []int16{0, 1, -1, 2, 0x7fff, -0x8000, 0x100, -0x100, 0x4000}
+	var zz qblock
+	for k := 0; k < 20000; k++ {
+		for i := range zz {
+			zz[i] = 0
+			if (k*31+i*17)%5 != 0 {
+				zz[i] = vals[(k*7+i*13+k/9)%len(vals)]
+			}
+		}
+		var want uint64
+		for i, v := range zz {
+			if v != 0 {
+				want |= 1 << i
+			}
+		}
+		if got := nonzeros(&zz); got != want {
+			t.Fatalf("%v: %x, want %x", zz, got, want)
+		}
+	}
+}
+
+// TestYcc: ycc is color.RGBToYCbCr for every colour.
+func TestYcc(t *testing.T) {
+	for c := 0; c < 1<<24; c++ {
+		r, g, b := uint8(c>>16), uint8(c>>8), uint8(c)
+		y0, cb0, cr0 := color.RGBToYCbCr(r, g, b)
+		y1, cb1, cr1 := ycc(int32(r), int32(g), int32(b))
+		if int32(y0) != y1 || int32(cb0) != cb1 || int32(cr0) != cr1 {
+			t.Fatalf("%d %d %d: %d %d %d, want %d %d %d", r, g, b, y1, cb1, cr1, y0, cb0, cr0)
 		}
 	}
 }

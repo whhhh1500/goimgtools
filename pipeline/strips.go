@@ -289,6 +289,16 @@ func (c *rechunk) Next() (image.Image, error) {
 	return band, nil
 }
 
+// chromaFits reports whether the chroma rows of a YCbCr buffer covering b
+// serve rect once relabelled (see Relabel).
+func chromaFits(ratio image.YCbCrSubsampleRatio, b, rect image.Rectangle) bool {
+	switch ratio {
+	case image.YCbCrSubsampleRatio420, image.YCbCrSubsampleRatio440, image.YCbCrSubsampleRatio410:
+		return (rect.Min.Y-b.Min.Y)%2 == 0 && (rect.Max.Y+1)/2-rect.Min.Y/2 <= (b.Max.Y+1)/2-b.Min.Y/2
+	}
+	return true
+}
+
 func sameType(a, b image.Image) bool { return fmt.Sprintf("%T", a) == fmt.Sprintf("%T", b) }
 
 // subBand re-labels the reusable band buffer to cover rect without copying.
@@ -300,19 +310,20 @@ func subBand(band image.Image, rect image.Rectangle) image.Image {
 
 // Relabel returns a view of band's buffer whose first row is rect.Min.Y.
 // Vertically subsampled YCbCr cannot be shifted by an odd number of rows
-// (chroma rows pair up by absolute parity), so a fresh band is returned then.
+// (chroma rows pair up by absolute parity), so a fresh band is returned then,
+// and when rect needs a chroma row more than the buffer has (y/2 rounds
+// toward zero, so a band of rows starting below 0 has one fewer).
 func Relabel(band image.Image, rect image.Rectangle) image.Image {
-	dy := rect.Min.Y - band.Bounds().Min.Y
 	switch p := band.(type) {
 	case *image.YCbCr:
-		if dy%2 != 0 && (p.SubsampleRatio == image.YCbCrSubsampleRatio420 || p.SubsampleRatio == image.YCbCrSubsampleRatio440) {
+		if !chromaFits(p.SubsampleRatio, p.Rect, rect) {
 			return image.NewYCbCr(rect, p.SubsampleRatio)
 		}
 		q := *p
 		q.Rect = rect
 		return &q
 	case *image.NYCbCrA:
-		if dy%2 != 0 && (p.SubsampleRatio == image.YCbCrSubsampleRatio420 || p.SubsampleRatio == image.YCbCrSubsampleRatio440) {
+		if !chromaFits(p.SubsampleRatio, p.Rect, rect) {
 			return image.NewNYCbCrA(rect, p.SubsampleRatio)
 		}
 		q := *p

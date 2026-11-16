@@ -27,7 +27,7 @@ Measurements (6000×4000; output byte-for-byte identical at every thread count):
 
 | Case | 1 thread | 3 threads | 4 threads | 8 threads |
 |---|---|---|---|---|
-| JPEG to JPEG, without shrinking | 0.61s | 0.43s | 0.33s | 0.27s |
+| JPEG to JPEG, without shrinking | 0.23s | 0.13s | 0.10s | 0.11s |
 | JPEG to PNG, without shrinking (level 7) | 2.10s | 1.89s | 1.16s | 0.49s |
 | RGB PNG to PNG, without shrinking (level 7) | 1.58s | 1.01s | 0.71s | 0.45s |
 | JPEG shrunk to 1536 | 0.41s | 0.23s | 0.22s | 0.22s |
