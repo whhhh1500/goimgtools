@@ -3,6 +3,7 @@ package jpegstream
 import (
 	"bytes"
 	"image"
+	"io"
 	"math"
 	"math/rand/v2"
 	"testing"
@@ -177,6 +178,37 @@ func TestReducedIDCT(t *testing.T) {
 						t.Fatalf("%d×%d block %d (%d,%d): got %d, want %v", n, n, iter, x, y, dst[8*y+x], want)
 					}
 				}
+			}
+		}
+	}
+}
+
+// TestShrinkInStep checks that the scans decoded in step give the pixels the
+// coefficient store gives, reduced too.
+func TestShrinkInStep(t *testing.T) {
+	for name, data := range corpus(t) {
+		for _, k := range []int{1, 2, 4, 8} {
+			var imgs [2]image.Image
+			for i, random := range []bool{false, true} {
+				src, err := Open(bytes.NewReader(data), nil)
+				if err != nil {
+					break
+				}
+				if random {
+					WithRandomAccess(src, func() (io.ReaderAt, int64, error) { return bytes.NewReader(data), int64(len(data)), nil })
+				}
+				if k > 1 && !src.(*stream).ShrinkOnLoad(k) {
+					src.Close()
+					break
+				}
+				imgs[i], err = pipeline.Collect(src)
+				src.Close()
+				if err != nil {
+					t.Fatalf("%s /%d random %v: %v", name, k, random, err)
+				}
+			}
+			if imgs[0] != nil && imgs[1] != nil {
+				same(t, name, imgs[0], imgs[1])
 			}
 		}
 	}

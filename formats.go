@@ -151,7 +151,15 @@ var builtin = []*formatDef{
 	{
 		Format: Format{"jpeg", []string{".jpg", ".jpeg"}},
 		magic:  func(h []byte) bool { return bytes.HasPrefix(h, []byte("\xff\xd8")) },
-		open:   func(in *input, env *pipeline.Env) (pipeline.Source, error) { return jpegstream.Open(in.br, env) },
+		open: func(in *input, env *pipeline.Env) (pipeline.Source, error) {
+			src, err := jpegstream.Open(in.br, env)
+			// With random access, a progressive JPEG is decoded with its
+			// scans in step instead of storing its coefficients.
+			if err == nil && (in.ra != nil || in.at != nil) {
+				jpegstream.WithRandomAccess(src, func() (io.ReaderAt, int64, error) { return in.readerAt(env) })
+			}
+			return src, err
+		},
 		encode: func(w io.Writer, src pipeline.Source, o EncodeOptions) error {
 			jo, err := optionsOf[JPEGOptions](o.Options, "jpeg")
 			if err != nil {

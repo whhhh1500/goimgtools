@@ -53,6 +53,9 @@ type huffman struct {
 	valsIndices [maxCodeLength]int32
 }
 
+// noTable stands for a table that has not been defined: it has no codes.
+var noTable = new(huffman)
+
 // errShortHuffmanData means that an unexpected EOF occurred while decoding
 // Huffman data.
 var errShortHuffmanData = FormatError("short Huffman data")
@@ -174,7 +177,9 @@ func (d *decoder) processDHT(n int) error {
 		if th > maxTh || (d.baseline && th > 1) {
 			return FormatError("bad Th value")
 		}
-		h := &d.huff[tc][th]
+		// A new table, as the old one may be a scan's (multiscan.go).
+		h := new(huffman)
+		d.huff[tc][th] = h
 
 		// Read nCodes and h.vals (and derive h.nCodes).
 		// nCodes[i] is the number of codes with code length i.

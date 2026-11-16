@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"image"
 	"image/jpeg"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/whhhh1500/goimgtools/internal/testutil"
@@ -32,12 +34,24 @@ func corpus(t *testing.T) map[string][]byte {
 }
 
 func decodeStream(data []byte, env *pipeline.Env) (image.Image, error) {
+	m, _, err := decodeMode(data, env, false)
+	return m, err
+}
+
+// decodeMode decodes data, with random access to it when random is set
+// (which decodes a progressive image's scans in step), and reports whether
+// a scan ended inside an end-of-band run.
+func decodeMode(data []byte, env *pipeline.Env, random bool) (m image.Image, overrun bool, err error) {
 	src, err := Open(bytes.NewReader(data), env)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer src.Close()
-	return pipeline.Collect(src)
+	if random {
+		WithRandomAccess(src, func() (io.ReaderAt, int64, error) { return bytes.NewReader(data), int64(len(data)), nil })
+	}
+	m, err = pipeline.Collect(src)
+	return m, src.(*stream).d.overrun, err
 }
 
 func same(t *testing.T, name string, want, got image.Image) {
@@ -64,23 +78,29 @@ func same(t *testing.T, name string, want, got image.Image) {
 // TestStdlibCorpus decodes Go's JPEG test files (baseline, progressive,
 // every subsampling, CMYK, RGB, restart markers, separate scans) with bands
 // of one MCU row, of automatic height, and with the coefficient store forced
-// to disk.
+// to disk; and with random access to the input (the scans decoded in step,
+// or, with too little memory or too many scans for that, read one after the
+// other).
 func TestStdlibCorpus(t *testing.T) {
 	files := corpus(t)
-	for _, mode := range []string{"auto", "one-mcu-row", "disk"} {
+	for _, mode := range []string{"auto", "one-mcu-row", "disk", "random", "random-one-mcu-row", "random-disk", "random-few-cursors"} {
 		testMCURows = 0
+		maxCursors = 1024
+		if mode == "random-few-cursors" {
+			maxCursors = 2
+		}
 		var dir string
-		if mode != "auto" {
+		if mode != "auto" && mode != "random" {
 			testMCURows = 1
 		}
 		for name, data := range files {
 			want, werr := jpeg.Decode(bytes.NewReader(data))
 			env := pipeline.NewEnv(0, "")
-			if mode == "disk" {
+			if mode == "disk" || mode == "random-disk" {
 				dir = t.TempDir()
 				env = pipeline.NewEnv(96<<10, dir)
 			}
-			got, gerr := decodeStream(data, env)
+			got, _, gerr := decodeMode(data, env, strings.HasPrefix(mode, "random"))
 			if werr != nil {
 				if gerr == nil {
 					t.Errorf("%s/%s: stdlib error %v, stream decoded fine", mode, name, werr)
@@ -92,7 +112,7 @@ func TestStdlibCorpus(t *testing.T) {
 				continue
 			}
 			same(t, mode+"/"+name, want, got)
-			if mode == "disk" {
+			if mode == "disk" || mode == "random-disk" {
 				if left, _ := filepath.Glob(filepath.Join(dir, "*")); len(left) != 0 {
 					t.Errorf("%s: temp files left behind: %v", name, left)
 				}
@@ -103,6 +123,7 @@ func TestStdlibCorpus(t *testing.T) {
 		}
 	}
 	testMCURows = 0
+	maxCursors = 1024
 }
 
 // TestProgressiveUsesDisk checks the small budget above really sends the
@@ -162,17 +183,24 @@ func TestTruncatedAndCorrupt(t *testing.T) {
 		}
 		check := func(what string, in []byte) {
 			want, werr := jpeg.Decode(bytes.NewReader(in))
-			got, gerr := decodeStream(in, nil)
-			if werr != nil {
-				if gerr == nil {
-					t.Fatalf("%s %s: stdlib error %v, stream decoded fine", name, what, werr)
+			for _, random := range []bool{false, true} {
+				got, overrun, gerr := decodeMode(in, nil, random)
+				if werr != nil {
+					if gerr == nil {
+						t.Fatalf("%s %s (random %v): stdlib error %v, stream decoded fine", name, what, random, werr)
+					}
+					continue
 				}
-				return
+				if gerr != nil {
+					t.Fatalf("%s %s (random %v): stdlib decoded fine, stream error %v", name, what, random, gerr)
+				}
+				// Where an end-of-band run overran its scan, the
+				// standard library carries it on, libjpeg and this
+				// package do not.
+				if !overrun {
+					same(t, name+" "+what, want, got)
+				}
 			}
-			if gerr != nil {
-				t.Fatalf("%s %s: stdlib decoded fine, stream error %v", name, what, gerr)
-			}
-			same(t, name+" "+what, want, got)
 		}
 		for cut := 2; cut < len(data); cut += 53 {
 			check("cut", data[:cut])
@@ -182,5 +210,45 @@ func TestTruncatedAndCorrupt(t *testing.T) {
 			bad[i] ^= 0x5a
 			check("flip", bad)
 		}
+	}
+}
+
+// TestScansInStep checks that with random access a progressive image, and
+// one whose components are in separate scans, is decoded with its scans in
+// step, without a coefficient store, when there is the memory for it.
+func TestScansInStep(t *testing.T) {
+	files := corpus(t)
+	for _, name := range []string{"video-001.progressive.jpeg", "video-001.separate.dc.progression.jpeg",
+		"video-001.q50.420.progressive.jpeg", "video-005.gray.q50.progressive.jpeg"} {
+		data := files[name]
+		src, err := Open(bytes.NewReader(data), pipeline.NewEnv(0, t.TempDir()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		WithRandomAccess(src, func() (io.ReaderAt, int64, error) { return bytes.NewReader(data), int64(len(data)), nil })
+		if _, err := src.Next(); err != nil {
+			t.Fatal(err)
+		}
+		st := src.(*stream)
+		if st.d.rowCoef[0] == nil || st.d.coef != nil || len(st.cursors) < 2 {
+			t.Errorf("%s: rowCoef %v, coef %v, %d cursors", name, st.d.rowCoef[0] != nil, st.d.coef != nil, len(st.cursors))
+		}
+		src.Close()
+
+		// Without the memory for that, the scans are read one after the
+		// other into the coefficient store, by their cursors.
+		src, err = Open(bytes.NewReader(data), pipeline.NewEnv(96<<10, t.TempDir()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		WithRandomAccess(src, func() (io.ReaderAt, int64, error) { return bytes.NewReader(data), int64(len(data)), nil })
+		if _, err := src.Next(); err != nil {
+			t.Fatal(err)
+		}
+		st = src.(*stream)
+		if st.d.rowCoef[0] != nil || st.d.coef == nil || len(st.cursors) < 2 {
+			t.Errorf("%s, low limit: rowCoef %v, coef %v, %d cursors", name, st.d.rowCoef[0] != nil, st.d.coef != nil, len(st.cursors))
+		}
+		src.Close()
 	}
 }

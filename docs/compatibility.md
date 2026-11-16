@@ -26,7 +26,7 @@ Decoding and encoding of PNG, JPEG, GIF, BMP and TIFF, as well as the default re
 - GIF, BMP and WebP images with a size of 0 are rejected; the standard library returns an empty image.
 - Animated WebP files, which `x/image` rejects, give their first frame as the canvas shows it: the frame at its place, the rest of the canvas transparent; the frame's pixels are those of the same bitstream decoded as a still image.
 - A JPEG quality outside 1–100 returns an error, whereas the standard library silently clamps it to the valid range.
-- Progressive JPEG coefficients are stored in 16 bits; an out-of-range value (which occurs only in corrupt files) returns an error.
+- A progressive JPEG read from a stream (`FromReader`) has its coefficients stored in 16 bits; an out-of-range value (which occurs only in corrupt files) returns an error. An end-of-band run that a corrupt progressive scan leaves unfinished ends with that scan, as in libjpeg, which the decoding of the scans in step needs; the standard library carries it into the next scan.
 - **Blur and sharpening of images with an alpha channel**: computed with premultiplied alpha, so the colour of transparent pixels does not bleed into neighbouring pixels; Pillow blurs each of the four RGBA channels separately, and the colour of transparent areas (often black) darkens the edges.
 
 ## WebP encoders

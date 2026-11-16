@@ -106,18 +106,24 @@ type bits struct {
 	end error  // why fillBits last stopped short, or nil
 }
 
+// byteBuf is a byte buffer, similar to a bufio.Reader, except that fillBits
+// can look back at the byte before the first unread one. Byte stuffing is
+// specified in section F.1.2.3.
+type byteBuf struct {
+	// buf[i:j] are the buffered bytes read from the underlying io.Reader
+	// that haven't yet been passed further on.
+	buf  [4096]byte
+	i, j int
+}
+
 type decoder struct {
 	r    io.Reader
 	bits bits
-	// bytes is a byte buffer, similar to a bufio.Reader, except that it
-	// has to be able to unread more than 1 byte, due to byte stuffing.
-	// Byte stuffing is specified in section F.1.2.3.
-	bytes struct {
-		// buf[i:j] are the buffered bytes read from the underlying
-		// io.Reader that haven't yet been passed further on.
-		buf  [4096]byte
-		i, j int
-	}
+	// bytes is own, or a cursor's buffer while that scan is decoded
+	// (multiscan.go).
+	bytes         *byteBuf
+	own           byteBuf
+	consumed      int64 // bytes read from r
 	width, height int
 
 	img1        *image.Gray
@@ -146,9 +152,9 @@ type decoder struct {
 	eobRun              uint16 // End-of-Band run, specified in section G.1.2.2.
 
 	comp       [maxComponents]component
-	progCoeffs [maxComponents][]block // Saved state between progressive-mode scans.
-	huff       [maxTc + 1][maxTh + 1]huffman
-	quant      [maxTq + 1]block // Quantization tables, in zig-zag order.
+	progCoeffs [maxComponents][]block         // Saved state between progressive-mode scans.
+	huff       [maxTc + 1][maxTh + 1]*huffman // noTable until defined
+	quant      [maxTq + 1]block               // Quantization tables, in zig-zag order.
 	tmp        [2 * blockSize]byte
 
 	// Streaming state (goimgtools).
@@ -166,7 +172,30 @@ type decoder struct {
 	touched  [maxComponents]bool // components that appeared in a scan
 	bandMy   int                 // first MCU row of the current band
 	scale    uint                // the image is shrunk by 1<<scale (ShrinkOnLoad)
+	// rowCoef holds the coefficients of one MCU row, by component, when
+	// the scans of a multi-scan image are decoded in step (multiscan.go).
+	rowCoef [maxComponents][]block
+	rowNZ   [maxComponents][]uint64 // rowCoef's non-zero AC coefficients (refine)
+	// overrun records a scan that ended inside an end-of-band run, which
+	// only a corrupt image has; the standard library carries the rest of
+	// the run into the next scan (tests compare the pixels only without).
+	overrun bool
 }
+
+// newDecoder returns a decoder that reads r.
+func newDecoder(r io.Reader) *decoder {
+	d := &decoder{r: r}
+	d.bytes = &d.own
+	for i := range d.huff {
+		for j := range d.huff[i] {
+			d.huff[i][j] = noTable
+		}
+	}
+	return d
+}
+
+// offset is the position in r of the next unread byte.
+func (d *decoder) offset() int64 { return d.consumed - int64(d.bytes.j-d.bytes.i) }
 
 // fill fills up the d.bytes.buf buffer from the underlying io.Reader. It
 // should only be called when there are no unread bytes in d.bytes.
@@ -184,6 +213,7 @@ func (d *decoder) fill() error {
 	// Fill in the rest of the buffer.
 	n, err := d.r.Read(d.bytes.buf[d.bytes.j:])
 	d.bytes.j += n
+	d.consumed += int64(n)
 	if n > 0 {
 		return nil
 	}

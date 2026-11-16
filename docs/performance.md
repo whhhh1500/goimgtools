@@ -6,10 +6,11 @@ English | [中文](zh-CN/performance.md)
 
 - Each stage processes a few rows at a time (a strip of about 256KB) and passes them to the next stage once processed.
 - Resizing uses no intermediate buffer: each source row is resized horizontally as it is read, then accumulated by weight directly into the few target rows it affects.
-- Where the first output row cannot be produced until the whole image has been read, the data is placed in the staging area, and written directly to disk when it is known not to fit. This applies to interlaced PNG and GIF, progressive JPEG, rotation and vertical flip, BMP output (the file must be written starting from the last row), and encoders that require information about the whole image before writing the file header (the PNG transparency check, WebP, compressed TIFF; for these, the staged data is already compressed or encoded).
+- Where the first output row cannot be produced until the whole image has been read, the data is placed in the staging area, and written directly to disk when it is known not to fit. This applies to interlaced PNG and GIF, progressive JPEG read from a stream (`FromReader`), rotation and vertical flip, BMP output (the file must be written starting from the last row), and encoders that require information about the whole image before writing the file header (the PNG transparency check, WebP, compressed TIFF; for these, the staged data is already compressed or encoded).
 - Staged data occupies at most 1/8 of the memory limit; the remainder is written to disk. The cost of writing to disk is small (measured on 12–24 MP images: interlaced GIF time unchanged, progressive JPEG about 20% slower, rotation about 0.1 seconds longer), whereas keeping the data in memory would raise the peak for medium-sized images to 20–45MB. To favour speed, raise `MemoryLimit`: when staged data is smaller than 1/8 of the limit, the disk is not accessed.
 - Every buffer that grows with image size counts towards the memory limit. If the limit is insufficient, `ErrMemoryLimit` is returned; additional memory is never used silently.
 - When `Rotate` is immediately followed by `Resize`, the image is shrunk before it is rotated, so only the smaller image is staged.
+- A progressive JPEG (or one whose colour components are in separate scans) read from a file or from memory is decoded with its scans in step: a first pass finds where each scan's data starts, then each row of blocks is decoded by every scan in turn, each read from its own place in the file, and becomes pixels. Only that row's coefficients are kept (0.6MB at 6000 pixels wide), instead of the whole image's (72MB at 6000×4000, a temporary file under the default limit). Refinement scans visit only the coefficients that are not zero. Read from a stream, which cannot be read again, the image still has its coefficients stored.
 
 ## CPU and threads
 
@@ -39,7 +40,7 @@ Measurements (6000×4000; output byte-for-byte identical at every thread count):
 
 ## Shrinking JPEGs while decoding (optional)
 
-`ResizeOptions{FastShrinkOnLoad: true}` (command line: `-fast-shrink`): when a JPEG is to be shrunk to less than half its size and `Resize` is the first operation (or is preceded only by rotation or flips), it is decoded straight to 1/2, 1/4 or 1/8 of its size, and the remainder of the resize is then applied. Each 8×8 block of coefficients becomes 4×4, 2×2 or 1×1 pixels, the averages of the block's pixels worked out from the coefficients, as libjpeg's scaled decoding does, which leaves out most of the inverse DCT. CMYK and RGB JPEGs, and unusual subsampling, are decoded in full and then block-averaged. The output dimensions are the same as without this option; pixel values differ slightly (by less than 2 levels on average on smooth images, and by a few levels where ringing next to black or white is clipped), so it is disabled by default. On one core, a 6000×4000 baseline JPEG is shrunk to fit 400×400 in 83ms (libvips' `vipsthumbnail`, also on one core: 100ms) and to fit 1536×1536 in 177ms (151ms).
+`ResizeOptions{FastShrinkOnLoad: true}` (command line: `-fast-shrink`): when a JPEG is to be shrunk to less than half its size and `Resize` is the first operation (or is preceded only by rotation or flips), it is decoded straight to 1/2, 1/4 or 1/8 of its size, and the remainder of the resize is then applied. Each 8×8 block of coefficients becomes 4×4, 2×2 or 1×1 pixels, the averages of the block's pixels worked out from the coefficients, as libjpeg's scaled decoding does, which leaves out most of the inverse DCT. Shrunk by 8, a block is the mean of its pixels, its DC coefficient over 8, so a progressive JPEG has only its scans of DC coefficients decoded. CMYK and RGB JPEGs, and unusual subsampling, are decoded in full and then block-averaged. The output dimensions are the same as without this option; pixel values differ slightly (by less than 2 levels on average on smooth images, and by a few levels where ringing next to black or white is clipped), so it is disabled by default. On one core, a 6000×4000 baseline JPEG is shrunk to fit 400×400 in 86ms (libvips' `vipsthumbnail`, also on one core: 99ms) and to fit 1536×1536 in 185ms (152ms); a progressive one in 50ms (230ms) and 322ms (279ms). With 2 threads the 1536 cases take 111ms and 247ms (`vipsthumbnail` with its own threads: 171ms and 300ms).
 
 ## Benchmarks
 
@@ -52,10 +53,10 @@ Environment: Windows 10, Go 1.27.1. "Standard library approach" denotes whole-im
 | PNG RGBA 6900×9200 | JPEG | 10.4MB / 11.2MB | 588MB | 1.63s | 1.21s | 3.10s |
 | PNG RGBA 6900×9200 | PNG | 11.2MB / 12.2MB | 591MB | 1.71s | 1.27s | 3.16s |
 | PNG interlaced RGB 6000×4000 | JPEG | 8.8MB / 10.9MB | 379MB | 0.56s | 0.50s | 1.02s |
-| JPEG baseline 4:2:0 6000×4000 | JPEG | 8.3MB / 9.0MB | 242MB | 0.38s | 0.21s | 0.87s |
-| JPEG baseline 4:4:4 6000×4000 | JPEG | 8.3MB / 8.8MB | 277MB | 0.57s | 0.37s | 1.02s |
-| JPEG progressive 6000×4000 | JPEG | 8.8MB / 10.5MB | 373MB | 0.87s | 0.75s | 1.07s |
-| JPEG progressive 5000×8000 | JPEG | 8.8MB / 10.4MB | 535MB | 1.43s | 1.23s | 1.58s |
+| JPEG baseline 4:2:0 6000×4000 | JPEG | 8.3MB / 9.0MB | 242MB | 0.30s | 0.19s | 0.87s |
+| JPEG baseline 4:4:4 6000×4000 | JPEG | 8.3MB / 8.8MB | 277MB | 0.43s | 0.24s | 1.02s |
+| JPEG progressive 6000×4000 | JPEG | 10.4MB / 11.0MB | 373MB | 0.44s | 0.26s | 1.07s |
+| JPEG progressive 5000×8000 | JPEG | 10.6MB / 10.7MB | 535MB | 0.70s | 0.41s | 1.58s |
 | GIF 6000×4000 | JPEG | 8.4MB / 10.5MB | 230MB | 0.29s | 0.15s | 0.85s |
 | GIF interlaced 6000×4000 | JPEG | 9.1MB / 10.7MB | 248MB | 0.32s | 0.30s | 0.86s |
 | BMP 24-bit 6000×4000 | JPEG | 8.7MB / 10.5MB | 299MB | 0.21s | 0.18s | 0.58s |
@@ -66,24 +67,24 @@ Environment: Windows 10, Go 1.27.1. "Standard library approach" denotes whole-im
 | WebP lossless 6000×4000 | JPEG | 14.2MB / 15.0MB | 300MB | 1.00s | 0.80s | 1.52s |
 
 - Total CPU time does not vary with the thread count (2 threads merely distribute the same work across two cores).
-- For the progressive JPEGs, the coefficients (72MB at 6000×4000) were written to a temporary file; with the limit raised to 1GB so that the coefficients remain in memory, the time is 0.76s and the peak 78MB.
-- With `FastShrinkOnLoad` enabled (single thread): JPEG baseline 4:2:0 about 0.3s, 4:4:4 about 0.5s.
+- The progressive JPEGs are decoded with their scans in step (see [Memory control](#memory-control)); before that change their coefficients (72MB at 6000×4000) went to a temporary file, and the 6000×4000 row took 0.87s at 8.8MB. Of the 1.6–1.8MB more at the peak, 0.6MB is the one row of coefficients; the rest is a garbage collection that the larger heap starts, which touches more memory the more cores there are (0.5MB more in all with `GOMAXPROCS=1`).
+- With `FastShrinkOnLoad` enabled (single thread): JPEG baseline 4:2:0 0.16s, 4:4:4 0.25s, progressive 0.30s.
 
 ### Other operations (input: JPEG baseline 4:2:0 6000×4000 in all cases; single thread)
 
 | Operation | Output file | Peak memory | Time |
 |---|---|---|---|
-| Without shrinking, to JPEG (quality 85) | 5.9MB | 6.0MB | 0.61s |
+| Without shrinking, to JPEG (quality 85) | 5.9MB | 6.0MB | 0.55s |
 | Without shrinking, to PNG | 43.7MB | 8.0MB | 1.66s |
 | Without shrinking, to lossy WebP (quality 75) | 3.2MB | 19.7MB | 8.81s (1.85s with 8 threads; effort 1: 3.29s, 0.79s) |
 | Without shrinking, to lossless WebP | 27.6MB | 25.6MB | 5.13s (4.70s with 8 threads) |
-| Without shrinking, to BMP | 72MB | 6.7MB | 0.36s |
-| Without shrinking, to TIFF (uncompressed) | 96MB | 6.4MB | 0.34s |
-| Rotate 90°, without shrinking | 6.0MB | 12.4MB | 1.24s |
-| Rotate 90°, then shrink to 1536 | 0.1MB | 15.5MB | 0.39s |
-| Shrink to 1536, GIF output | 0.5MB | 12.9MB | 0.62s |
-| Without shrinking, outlined text watermark tiled across the whole image | 6.2MB | 10.6MB | 0.75s |
-| Shrink to 1536, lossy WebP output | 10KB | 9.2MB | 0.61s |
+| Without shrinking, to BMP | 72MB | 6.7MB | 0.28s |
+| Without shrinking, to TIFF (uncompressed) | 96MB | 6.4MB | 0.26s |
+| Rotate 90°, without shrinking | 6.0MB | 12.4MB | 1.18s |
+| Rotate 90°, then shrink to 1536 | 0.1MB | 15.5MB | 0.30s |
+| Shrink to 1536, GIF output | 0.5MB | 12.9MB | 0.53s |
+| Without shrinking, outlined text watermark tiled across the whole image | 6.2MB | 10.6MB | 0.67s |
+| Shrink to 1536, lossy WebP output | 10KB | 9.2MB | 0.54s |
 
 - When rotating by 90° without shrinking, the 96MB of pixel data is held in a temporary file; with all data in memory (a limit of 768MB or more), the time is about 0.8s and the peak about 108MB.
 - Lossless WebP from PNG RGB 6000×4000 (41.6MB; the same image as in the table above): output 27.6MB, peak 25.8MB, 5.35s (4.67s with 8 threads). (Before the encoder stopped trying the same Huffman grouping once for every block size it asks for, when a large image makes them all the same: 32.6MB and 8.87s. Version 0.1.0, without the optimal parse: 22.2MB and 4.15s, for a file 0.004% larger: the noise of a photograph from a JPEG leaves little for the parse to find.)
@@ -97,19 +98,19 @@ Times for this library include decoding and encoding. The Pillow column gives th
 
 | Operation | 1 thread | 3 threads | 6 threads | Peak memory (1 / 6 threads) | Pillow, this step only |
 |---|---|---|---|---|---|
-| No operation | 0.61s | 0.40s | 0.40s | 6.4 / 7.5MB | — |
-| `Grayscale()` | 0.49s | 0.28s | 0.28s | 6.6 / 7.6MB | 0.02s |
-| `Modulate(1.1, 1.3, 20)` | 1.17s | 0.55s | 0.42s | 6.9 / 9.9MB | — |
-| `Blur(2)` | 1.11s | 0.55s | 0.32s | 9.1 / 15.2MB | 0.38s |
-| `Blur(40)` | 0.96s | 0.56s | 0.25s | 15.8 / 20.8MB | 0.38s |
-| `Sharpen()` (light) | 0.88s | 0.45s | 0.43s | 7.8 / 12.5MB | 0.24s (Pillow's `SHARPEN`, also 3×3) |
-| `Sharpen(SharpenOptions{Sigma: 2})` | 1.26s | 0.58s | 0.46s | 10.4 / 17.1MB | 0.48s |
-| `Trim(10)` | 0.73s | 0.60s | 0.60s | 7.4 / 8.4MB | — |
-| `Extend(50, 50, 50, 50, white)` | 0.72s | 0.45s | 0.45s | 7.5 / 11.0MB | 0.02s |
-| `RotateBy(30, white)`, output 7197×6465 | 1.27s | 0.76s | 0.75s | 12.2 / 14.7MB | 0.57s |
+| No operation | 0.55s | 0.45s | 0.29s | 6.9 / 12.7MB | — |
+| `Grayscale()` | 0.41s | 0.31s | 0.23s | 6.9 / 12.6MB | 0.02s |
+| `Modulate(1.1, 1.3, 20)` | 1.08s | 0.56s | 0.54s | 7.3 / 14.2MB | — |
+| `Blur(2)` | 0.98s | 0.56s | 0.30s | 10.2 / 17.9MB | 0.38s |
+| `Blur(40)` | 0.88s | 0.57s | 0.25s | 16.4 / 24.4MB | 0.38s |
+| `Sharpen()` (light) | 0.82s | 0.48s | 0.35s | 8.3 / 16.1MB | 0.24s (Pillow's `SHARPEN`, also 3×3) |
+| `Sharpen(SharpenOptions{Sigma: 2})` | 1.18s | 0.60s | 0.36s | 10.9 / 19.9MB | 0.48s |
+| `Trim(10)` | 0.67s | 0.57s | 0.40s | 7.6 / 13.3MB | — |
+| `Extend(50, 50, 50, 50, white)` | 0.64s | 0.49s | 0.30s | 7.9 / 15.4MB | 0.02s |
+| `RotateBy(30, white)`, output 7197×6465 | 1.25s | 0.73s | 0.68s | 12.6 / 19.7MB | 0.57s |
 
-- Single-threaded, after subtracting the 0.61s of the no-operation case: blur adds 0.5s, of the same order as Pillow's 0.38s; rotation by 30° adds 0.66s, of which about 0.3s is spent encoding the additional 22 MP (estimated from the encoding time per megapixel), so the rotation itself is faster than Pillow's 0.57s.
-- With 6 threads, light sharpening, unsharp masking and rotation level off at 0.43–0.75s; the remainder is single-threaded JPEG encoding (a sharpened image is harder to compress, and a rotated image is twice as large).
+- Single-threaded, after subtracting the 0.55s of the no-operation case: blur adds 0.43s, of the same order as Pillow's 0.38s; rotation by 30° adds 0.70s, of which about 0.3s is spent encoding the additional 22 MP (estimated from the encoding time per megapixel), so the rotation itself is faster than Pillow's 0.57s.
+- With 6 threads, rotation levels off at about 0.7s: its output, twice as large, takes that much longer to encode.
 - With the memory limit lowered to 16MB (staged rows written to a temporary file), blur, sharpening, rotation and trimming produce results pixel-for-pixel identical to those without a memory limit (compared as PNG output); time increases by 0–15%, and peak memory remains within 13MB in all cases.
 
 Evaluated but not implemented:

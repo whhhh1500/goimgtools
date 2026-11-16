@@ -6,6 +6,7 @@ package jpegstream
 
 import (
 	"image"
+	mbits "math/bits"
 )
 
 // setup is the standard library's makeImg without the allocation: it decides
@@ -158,6 +159,10 @@ func (d *decoder) beginScan(n int) error {
 	}
 
 	d.bits = bits{}
+	// An end-of-band run ends with its scan, as in libjpeg; the standard
+	// library would carry one that a corrupt scan leaves over into the
+	// next scan.
+	d.eobRun = 0
 	d.scan.nComp = nComp
 	d.scan.zigStart, d.scan.zigEnd, d.scan.ah, d.scan.al = zigStart, zigEnd, ah, al
 	d.scan.mcu, d.scan.expectedRST = 0, uint8(rst0Marker)
@@ -199,12 +204,21 @@ func (d *decoder) scanRow(my int) error {
 		// blocks: the third block in the first row has (bx, by) = (2, 0).
 		bx, by     int
 		blockCount = st.blockCount
+		// In a scan of one component, nbx and nby are the block that
+		// blockCount counts to, of q in a row; they move on without
+		// divisions.
+		nbx, nby, q int
 	)
+	if nComp == 1 {
+		q = mxx * d.comp[scan[0].compIndex].h
+		nbx, nby = blockCount%q, blockCount/q
+	}
 	for mx := 0; mx < mxx; mx++ {
 		for i := 0; i < nComp; i++ {
 			compIndex := scan[i].compIndex
 			hi := d.comp[compIndex].h
 			vi := d.comp[compIndex].v
+			jx, jy := 0, 0 // j%hi and j/hi
 			for j := 0; j < hi*vi; j++ {
 				// The blocks are traversed one MCU at a time. For 4:2:0 chroma
 				// subsampling, there are four Y 8x8 blocks in every 16x16 MCU.
@@ -232,53 +246,85 @@ func (d *decoder) scanRow(my int) error {
 				//	0 1 2
 				//	3 4 5
 				if nComp != 1 {
-					bx = hi*mx + j%hi
-					by = vi*my + j/hi
+					bx = hi*mx + jx
+					by = vi*my + jy
+					if jx++; jx == hi {
+						jx, jy = 0, jy+1
+					}
 				} else {
-					q := mxx * hi
-					bx = blockCount % q
-					by = blockCount / q
+					bx, by = nbx, nby
+					if nbx++; nbx == q {
+						nbx, nby = 0, nby+1
+					}
 					blockCount++
 					if bx*8 >= d.width || by*8 >= d.height {
 						continue
 					}
 				}
 
-				// Load the previous partially decoded coefficients, if applicable.
-				if d.progressive {
+				// Load the previous partially decoded coefficients, if
+				// applicable. bp is the block being decoded: b, or the
+				// block of the MCU row when the scans are decoded in step.
+				// nzm marks bp's non-zero AC coefficients, for refine.
+				bp, nzm := &b, (*uint64)(nil)
+				switch {
+				case d.rowCoef[0] != nil:
+					stride := mxx * hi
+					k := (by-vi*my)*stride + bx
+					if bx < 0 || bx >= stride || k < 0 || k >= len(d.rowCoef[compIndex]) {
+						return FormatError("block outside the image")
+					}
+					bp, nzm = &d.rowCoef[compIndex][k], &d.rowNZ[compIndex][k]
+					if !d.progressive {
+						*bp, *nzm = block{}, 0
+					}
+				case d.progressive:
 					if err := d.coef.load(int(compIndex), bx, by, &b, zigStart, zigEnd); err != nil {
 						return err
 					}
-				} else {
+				default:
 					b = block{}
 				}
 
 				if ah != 0 {
-					if err := d.refine(&b, &d.huff[acTable][scan[i].ta], zigStart, zigEnd, 1<<al); err != nil {
+					if err := d.refine(bp, nzm, d.huff[acTable][scan[i].ta], zigStart, zigEnd, 1<<al); err != nil {
 						return err
 					}
 				} else if !d.full {
-					if err := d.decodeBlock(&b, &d.huff[dcTable][scan[i].td], &d.huff[acTable][scan[i].ta],
+					if err := d.decodeBlock(bp, d.huff[dcTable][scan[i].td], d.huff[acTable][scan[i].ta],
 						&d.quant[d.comp[compIndex].tq], &dc[compIndex]); err != nil {
 						return err
 					}
 				} else {
+					b := bp
 					zig := zigStart
 					if zig == 0 {
 						zig++
-						// Decode the DC coefficient, as specified in section F.2.2.1.
-						value, err := d.decodeHuffman(&d.huff[dcTable][scan[i].td])
-						if err != nil {
-							return err
+						// Decode the DC coefficient, as specified in section
+						// F.2.2.1 (with the fast table when it can).
+						dcH := d.huff[dcTable][scan[i].td]
+						if d.bits.n < 32 {
+							d.fillBits()
 						}
-						if value > 16 {
-							return UnsupportedError("excessive DC component")
+						if e := dcH.fast[d.bits.a>>(64-lutBits)]; e != 0 && d.bits.n >= 32 {
+							n := uint32(e) & 0xff
+							d.bits.a <<= n
+							d.bits.n -= int32(n)
+							dc[compIndex] += e >> 16
+						} else {
+							value, err := d.decodeHuffman(dcH)
+							if err != nil {
+								return err
+							}
+							if value > 16 {
+								return UnsupportedError("excessive DC component")
+							}
+							dcDelta, err := d.receiveExtend(value)
+							if err != nil {
+								return err
+							}
+							dc[compIndex] += dcDelta
 						}
-						dcDelta, err := d.receiveExtend(value)
-						if err != nil {
-							return err
-						}
-						dc[compIndex] += dcDelta
 						b[0] = dc[compIndex] << al
 					}
 
@@ -286,7 +332,7 @@ func (d *decoder) scanRow(my int) error {
 						d.eobRun--
 					} else {
 						// Decode the AC coefficients, as specified in section F.2.2.2.
-						huff := &d.huff[acTable][scan[i].ta]
+						huff := d.huff[acTable][scan[i].ta]
 						for ; zig <= zigEnd; zig++ {
 							if d.bits.n < 16 {
 								d.fillBits()
@@ -299,6 +345,9 @@ func (d *decoder) scanRow(my int) error {
 										d.bits.n -= int32(n)
 										zig = z
 										b[unzig[zig]] = e >> 16 << al
+										if nzm != nil {
+											*nzm |= 1 << zig
+										}
 										continue
 									}
 								}
@@ -319,6 +368,9 @@ func (d *decoder) scanRow(my int) error {
 									return err
 								}
 								b[unzig[zig]] = ac << al
+								if nzm != nil {
+									*nzm |= 1 << zig
+								}
 							} else {
 								if val0 != 0x0f {
 									d.eobRun = uint16(1 << val0)
@@ -340,9 +392,12 @@ func (d *decoder) scanRow(my int) error {
 
 				if d.full {
 					// Save the coefficients; the pixels are made after the
-					// last scan (reconstructBand).
-					if err := d.coef.save(int(compIndex), bx, by, &b, zigStart, zigEnd); err != nil {
-						return err
+					// last scan (reconstructBand), or after the MCU row's
+					// last scan (multiscan.go).
+					if bp == &b {
+						if err := d.coef.save(int(compIndex), bx, by, &b, zigStart, zigEnd); err != nil {
+							return err
+						}
 					}
 					continue
 				}
@@ -505,8 +560,10 @@ func (d *decoder) decodeBlock(b *block, dcH, acH *huffman, qt *block, dc *int32)
 }
 
 // refine decodes a successive approximation refinement block, as specified in
-// section G.1.2.
-func (d *decoder) refine(b *block, h *huffman, zigStart, zigEnd, delta int32) error {
+// section G.1.2. nzm, if not nil, has a bit set for each non-zero coefficient
+// of b (by its position in zig-zag order), which refine keeps up to date;
+// otherwise refine finds them.
+func (d *decoder) refine(b *block, nzm *uint64, h *huffman, zigStart, zigEnd, delta int32) error {
 	// Refining a DC component is trivial.
 	if zigStart == 0 {
 		if zigEnd != 0 {
@@ -522,92 +579,172 @@ func (d *decoder) refine(b *block, h *huffman, zigStart, zigEnd, delta int32) er
 		return nil
 	}
 
-	// Refining AC components is more complicated; see sections G.1.2.2 and G.1.2.3.
+	var m uint64
+	if nzm != nil {
+		m = *nzm
+	} else {
+		for k := zigStart; k <= zigEnd; k++ {
+			if b[unzig[k]] != 0 {
+				m |= 1 << k
+			}
+		}
+	}
+
+	// Refining AC components is more complicated; see sections G.1.2.2 and
+	// G.1.2.3. The accumulator is kept in a and n, as in decodeBlock; the
+	// look-up and the bits read here are what decodeHuffman, decodeBits and
+	// decodeBit would do.
 	zig := zigStart
+	a, n := d.bits.a, d.bits.n
 	if d.eobRun == 0 {
 	loop:
 		for ; zig <= zigEnd; zig++ {
-			z := int32(0)
-			value, err := d.decodeHuffman(h)
-			if err != nil {
-				return err
+			if n < 32 {
+				a, n = d.refill(a, n)
 			}
-			val0 := value >> 4
-			val1 := value & 0x0f
-
-			switch val1 {
+			var value uint8
+			if v := h.lut[a>>(64-lutBits)]; v != 0 && n >= lutBits {
+				l := uint32(v&0xff) - 1
+				a <<= l
+				n -= int32(l)
+				value = uint8(v >> 8)
+			} else {
+				d.bits.a, d.bits.n = a, n
+				var err error
+				if value, err = d.decodeHuffman(h); err != nil {
+					return err
+				}
+				a, n = d.bits.a, d.bits.n
+			}
+			val0 := int32(value >> 4)
+			z := int32(0)
+			switch value & 0x0f {
 			case 0:
 				if val0 != 0x0f {
 					d.eobRun = uint16(1 << val0)
 					if val0 != 0 {
-						bits, err := d.decodeBits(int32(val0))
-						if err != nil {
-							return err
+						if n < val0 {
+							if a, n = d.refill(a, n); n < val0 {
+								return d.bits.end
+							}
 						}
-						d.eobRun |= uint16(bits)
+						d.eobRun |= uint16(a >> (64 - val0))
+						a <<= val0
+						n -= val0
 					}
 					break loop
 				}
 			case 1:
-				z = delta
-				bit, err := d.decodeBit()
-				if err != nil {
-					return err
+				if n == 0 {
+					if a, n = d.refill(a, n); n == 0 {
+						return d.bits.end
+					}
 				}
-				if !bit {
+				z = delta
+				if a>>63 == 0 {
 					z = -z
 				}
+				a <<= 1
+				n--
 			default:
+				d.bits.a, d.bits.n = a, n
 				return FormatError("unexpected Huffman code")
 			}
 
-			zig, err = d.refineNonZeroes(b, zig, zigEnd, int32(val0), delta)
-			if err != nil {
-				return err
+			// The standard library's refineNonZeroes, here for a walk that
+			// stops at the zero entry after val0 others: it refines the
+			// non-zero entries before that one.
+			in := ^uint64(0) >> (63 - zigEnd) &^ (uint64(1)<<zig - 1)
+			end, nz := zigEnd+1, val0
+			for zr := ^m & in; zr != 0; zr &= zr - 1 {
+				if nz == 0 {
+					end = int32(mbits.TrailingZeros64(zr))
+					break
+				}
+				nz--
 			}
+			x := m & in
+			if end < 64 {
+				x &= uint64(1)<<end - 1
+			}
+			for ; x != 0; x &= x - 1 {
+				if n == 0 {
+					if a, n = d.refill(a, n); n == 0 {
+						return d.bits.end
+					}
+				}
+				bit := a >> 63
+				a <<= 1
+				n--
+				if bit != 0 {
+					u := unzig[mbits.TrailingZeros64(x)]
+					if b[u] >= 0 {
+						b[u] += delta
+					} else {
+						b[u] -= delta
+					}
+				}
+			}
+			zig = end
 			if zig > zigEnd {
+				d.bits.a, d.bits.n = a, n
 				return FormatError("too many coefficients")
 			}
 			if z != 0 {
 				b[unzig[zig]] = z
+				m |= 1 << zig
 			}
 		}
 	}
 	if d.eobRun > 0 {
 		d.eobRun--
-		if _, err := d.refineNonZeroes(b, zig, zigEnd, -1, delta); err != nil {
+		var err error
+		if a, n, err = d.refineNonZeroes(b, m, a, n, zig, zigEnd, delta); err != nil {
 			return err
 		}
+	}
+	d.bits.a, d.bits.n = a, n
+	if nzm != nil {
+		*nzm = m
 	}
 	return nil
 }
 
-// refineNonZeroes refines non-zero entries of b in zig-zag order. If nz >= 0,
-// the first nz zero entries are skipped over.
-func (d *decoder) refineNonZeroes(b *block, zig, zigEnd, nz, delta int32) (int32, error) {
-	for ; zig <= zigEnd; zig++ {
-		u := unzig[zig]
-		if b[u] == 0 {
-			if nz == 0 {
-				break
+// refill stores the accumulator a, n in d.bits, tops it up and returns it.
+func (d *decoder) refill(a uint64, n int32) (uint64, int32) {
+	d.bits.a, d.bits.n = a, n
+	d.fillBits()
+	return d.bits.a, d.bits.n
+}
+
+// refineNonZeroes refines every non-zero entry of b from zig to zigEnd, in
+// zig-zag order (a block in an end-of-band run), reading the correction bits
+// from the accumulator a, n, which it returns. m has a bit set for each
+// non-zero entry; the standard library looks at the entries one by one,
+// which finds the same ones.
+func (d *decoder) refineNonZeroes(b *block, m, a uint64, n, zig, zigEnd, delta int32) (uint64, int32, error) {
+	if zig > zigEnd {
+		return a, n, nil
+	}
+	for x := m & (^uint64(0) >> (63 - zigEnd) &^ (uint64(1)<<zig - 1)); x != 0; x &= x - 1 {
+		if n == 0 {
+			if a, n = d.refill(a, n); n == 0 {
+				return a, n, d.bits.end
 			}
-			nz--
-			continue
 		}
-		bit, err := d.decodeBit()
-		if err != nil {
-			return 0, err
-		}
-		if !bit {
-			continue
-		}
-		if b[u] >= 0 {
-			b[u] += delta
-		} else {
-			b[u] -= delta
+		bit := a >> 63
+		a <<= 1
+		n--
+		if bit != 0 {
+			u := unzig[mbits.TrailingZeros64(x)]
+			if b[u] >= 0 {
+				b[u] += delta
+			} else {
+				b[u] -= delta
+			}
 		}
 	}
-	return zig, nil
+	return a, n, nil
 }
 
 // dequantize multiplies the coefficients of b by their quantizers.
@@ -615,6 +752,18 @@ func (d *decoder) dequantize(b *block, compIndex int) {
 	qt := &d.quant[d.comp[compIndex].tq]
 	for zig := 0; zig < blockSize; zig++ {
 		b[unzig[zig]] *= qt[zig]
+	}
+}
+
+// dequantizeNZ is dequantize for a block whose non-zero AC coefficients
+// are marked in nz (by their positions in zig-zag order): the others stay
+// zero.
+func (d *decoder) dequantizeNZ(b *block, nz uint64, compIndex int) {
+	qt := &d.quant[d.comp[compIndex].tq]
+	b[0] *= qt[0]
+	for x := nz &^ 1; x != 0; x &= x - 1 {
+		k := mbits.TrailingZeros64(x)
+		b[unzig[k]] *= qt[k]
 	}
 }
 

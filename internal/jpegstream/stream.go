@@ -14,9 +14,11 @@ package jpegstream
 //   - a baseline image whose first scan holds every component is decoded
 //     straight into that band, strip by strip;
 //   - every other image (progressive, or sequential with the components in
-//     separate scans) stores its DCT coefficients in a pipeline.Scratch, which is
-//     a temporary file when it does not fit in the memory budget, and turns
-//     them into pixels band by band after the last scan;
+//     separate scans) is decoded with its scans in step when the input can be
+//     read at any offset (multiscan.go); otherwise it stores its DCT
+//     coefficients in a pipeline.Scratch, which is a temporary file when it
+//     does not fit in the memory budget, and turns them into pixels band by
+//     band after the last scan;
 //   - applyBlack and convertToRGB work on a band;
 //   - the entropy-coded data is read 64 bits at a time (fillBits), the
 //     Huffman look-up tables have 11 bits, and a further table decodes a
@@ -26,7 +28,10 @@ package jpegstream
 //   - ShrinkOnLoad decodes the image reduced by 2, 4 or 8 (dct.go's reduced
 //     IDCTs), which jpeg.Decode cannot.
 //
-// The pixels are the same as jpeg.Decode's (but for ShrinkOnLoad).
+// The pixels are the same as jpeg.Decode's, but for ShrinkOnLoad and for
+// a corrupt progressive scan that ends inside an end-of-band run, whose rest
+// jpeg.Decode carries into the next scan (libjpeg ends it with the scan, as
+// the scans decoded in step must).
 
 import (
 	"encoding/binary"
@@ -166,9 +171,14 @@ type stream struct {
 	reserved int64
 	band     int64 // the part of reserved that is the band (planBand)
 	started  bool  // Next has been called
-	scanned  bool  // full mode: every scan has been read
-	done     bool
-	err      error
+	scanned  bool  // full mode: every scan has been read (or planned)
+	// ra, if set, gives random access to the input (WithRandomAccess);
+	// cursors are the scans of a full-mode image (multiscan.go).
+	ra      func() (io.ReaderAt, int64, error)
+	cursors []*cursor
+	rest    *cursor // Open's reader, at the scan after maxCursors
+	done    bool
+	err     error
 }
 
 // Open reads the JPEG headers up to the first scan and returns a Source that
@@ -177,7 +187,7 @@ func Open(r io.Reader, env *pipeline.Env) (pipeline.Source, error) {
 	if env == nil {
 		env = pipeline.NewEnv(0, "")
 	}
-	d := &decoder{r: r}
+	d := newDecoder(r)
 	// Check for the Start Of Image marker.
 	if err := d.readFull(d.tmp[:2]); err != nil {
 		return nil, err
@@ -460,8 +470,10 @@ func (s *stream) Close() error {
 }
 
 // scanAll reads every scan of a progressive or multi-scan image into the
-// coefficient store, through to the End Of Image marker.
-func (s *stream) scanAll() error {
+// coefficient store, through to the End Of Image marker. Given cursors
+// (multiscan.go), it reads their scans first, one after the other, and then
+// goes on from s.rest if it is set.
+func (s *stream) scanAll(cursors []*cursor) error {
 	d := s.d
 	c := &coefStore{}
 	var total, win int64
@@ -485,12 +497,41 @@ func (s *stream) scanAll() error {
 	}
 	c.sc = sc
 	d.coef = c
-	for {
+	for _, cur := range cursors {
+		if d.unused(&cur.scan) {
+			continue
+		}
+		d.enter(cur)
 		for my := 0; my < d.myy; my++ {
 			if err := d.scanRow(my); err != nil {
 				return err
 			}
 		}
+		d.leave(cur)
+		cur.bytes = nil
+		d.overrun = d.overrun || d.eobRun != 0
+		if err := c.flushAll(); err != nil {
+			return err
+		}
+	}
+	if cursors != nil {
+		if s.rest == nil {
+			return nil
+		}
+		d.enter(s.rest)
+	}
+	for {
+		if d.unused(&d.scan) {
+			if err := d.skipEntropy(); err != nil {
+				return err
+			}
+		}
+		for my := 0; my < d.myy && !d.unused(&d.scan); my++ {
+			if err := d.scanRow(my); err != nil {
+				return err
+			}
+		}
+		d.overrun = d.overrun || d.eobRun != 0
 		if err := c.flushAll(); err != nil {
 			return err
 		}
@@ -568,7 +609,7 @@ func (s *stream) next() (image.Image, error) {
 		s.allocBand()
 	}
 	if d.full && !s.scanned {
-		if err := s.scanAll(); err != nil {
+		if err := s.startScans(); err != nil {
 			return nil, err
 		}
 		s.scanned = true
@@ -584,7 +625,11 @@ func (s *stream) next() (image.Image, error) {
 	}
 	my0, my1 := s.my, min(s.my+s.k, d.myy)
 	d.bandMy = my0
-	if d.full {
+	if d.rowCoef[0] != nil {
+		if err := s.stepRows(my0, my1); err != nil {
+			return nil, err
+		}
+	} else if d.full {
 		if err := s.reconstructBand(my0, my1); err != nil {
 			return nil, err
 		}
