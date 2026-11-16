@@ -300,11 +300,11 @@ type PNGOptions struct {
 	// (its levels 10 and 12), its blocks split where it saves bits, as
 	// zopfli splits them. On screenshots, photographs and game artwork the
 	// files are 14% (8) and 15% (9) smaller than at level 7; level 9 is
-	// 0.4% smaller than oxipng -o max and 0.6% larger than ECT -9. Level 8
+	// 0.5% smaller than oxipng -o max and 0.55% larger than ECT -9. Level 8
 	// takes about 10 times as long as level 7, level 9 about 20 times
 	// (oxipng -o max about 130, ECT -9 about 500). They take about 4MB
-	// more memory per thread, and give the same file with every Go
-	// version.
+	// (level 8) and 6.5MB (level 9) more memory per thread, and give the
+	// same file with every Go version.
 	CompressionLevel int
 	// Colors, 2 to 256, reduces the image to that many colours, chosen for
 	// this image, and writes a paletted PNG. This is how PNG files are made

@@ -62,19 +62,19 @@ const (
 )
 
 // nearLevels are the settings of levels 8 and 9: libdeflate's levels 10
-// and 12, with blocks of at most about 128KB (libdeflate's are 300000
-// bytes; the files are 0.05% larger, the compressor takes 3MB instead of
-// 8.6MB), split by cost as zopfli does. Level 9 also looks for matches
-// inside long matches.
+// and 12, split by cost as zopfli does; level 9 also looks for matches
+// inside long matches. A block of deflate is parsed whole within at most
+// 128KB at level 8, so the compressor takes 3MB (libdeflate's 300000
+// bytes would take 8.6MB, for files 0.05% smaller), and within the 256KB
+// of a compression block at level 9 (5.6MB, 0.2% smaller than 128KB).
 //
 // Measured on the filtered rows of three screenshots and three
 // photographs, against libdeflate's settings: level 8 0.75% smaller in
-// 25% more time; level 9 0.8% smaller (screenshots 2.5 to 4.1%, within
-// about 1% of zopfli with 15 iterations), in 3.5 times the time; 256KB
-// blocks would gain another 0.2% for 2.5MB more per compressor.
+// 25% more time; level 9 1% smaller (screenshots 3 to 4.5%, within 0.4
+// to 1.7% of zopfli with 15 iterations), in 3.5 times the time.
 var nearLevels = map[int]deflate.Params{
-	8: withSplit(withBlocks(deflate.Level10), false, 1),
-	9: withSplit(withBlocks(deflate.Level12), true, 2),
+	8: withSplit(withBlocks(deflate.Level10, 128<<10), false, 1),
+	9: withSplit(withBlocks(deflate.Level12, zBlockBytes), true, 2),
 }
 
 func withSplit(p deflate.Params, noSkip bool, passes int) deflate.Params {
@@ -95,8 +95,8 @@ func nearBytes(level, width int) int64 {
 	return p.Bytes() + zWindow + zBlockBytes + zBlockOut + bruteBytes(row) + int64(trialBytes+row)
 }
 
-func withBlocks(p deflate.Params) deflate.Params {
-	p.BlockLen, p.CachePerBlock = 128<<10, 3
+func withBlocks(p deflate.Params, blockLen int) deflate.Params {
+	p.BlockLen, p.CachePerBlock = blockLen, 3
 	return p
 }
 
