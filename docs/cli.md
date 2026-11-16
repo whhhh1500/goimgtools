@@ -86,7 +86,7 @@ Operations run in a fixed order: rotate → flip → trim → crop → resize �
 | `-webp-lossless`, `-webp-effort N` | Lossless WebP; effort 1 (fastest) to 9 (smallest file), 5 by default. The effort also applies to lossy WebP, where 5 already does all there is (above 5, only the alpha plane gets more) and 1 takes about half the time |
 | `-png-level N`, `-gif-colors N`, `-gif-fixed-palette`, `-tiff-compression none\|deflate` | Format-specific options |
 | `-gif-lossy N` | GIF: lossy compression, the colour difference 1–255 it may accept (16–32 for photographic animations, 8–16 for dithered stills; see [Compression](compression.md)) |
-| `-animated` | Process every frame of an animated GIF and write an animated GIF or WebP (by the output); `-gif-colors` and `-no-dither` also apply to GIF, the WebP options to WebP. Another output format, or an animated WebP or APNG input, is an error |
+| `-animated` | Process every frame of an animated GIF or WebP and write an animated GIF or WebP (by the output); `-gif-colors` and `-no-dither` also apply to GIF, the WebP options to WebP. Another output format, or an APNG input, is an error |
 | `-op NAME[:ARG,ARG...]` | Run an operation by name (`goimgtools ops` lists all of them, both built-in and registered by the program); may be specified more than once, and the operations run after sharpening in the order specified |
 | `-keep-exif`, `-strip-icc` | Metadata |
 | `-srgb` | Convert colours to sRGB using the colour profile; the output contains no profile (applied automatically when converting to GIF or BMP) |

@@ -2,12 +2,16 @@ package tests
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"hash/crc32"
 	"image"
 	"image/color"
 	"image/png"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -117,8 +121,9 @@ func apng(t testing.TB, still []byte, plays int) []byte {
 	return out
 }
 
-// TestOtherAnimations: an animated WebP or PNG gives its first frame, its
-// frames are counted, and Animated, which cannot go through them, says so.
+// TestOtherAnimations: an animated WebP or PNG gives its first frame and
+// its frames are counted; Animated goes through a WebP's frames, and says
+// that it cannot go through an APNG's.
 func TestOtherAnimations(t *testing.T) {
 	red := image.NewNRGBA(image.Rect(0, 0, 40, 30))
 	for i := range red.Pix {
@@ -177,13 +182,31 @@ func TestOtherAnimations(t *testing.T) {
 		t.Errorf("acTL after IDAT: %+v, %v", fr, err)
 	}
 
-	// Animated cannot go through their frames, whatever the output.
+	// Animated goes through a WebP's frames into a GIF or a WebP, keeping
+	// how long they show and how often they play.
 	for _, c := range []struct {
 		what string
 		m    *Image
 	}{
 		{"WebP to GIF", FromBytes(anim).Animated().GIF()},
-		{"WebP to WebP", FromBytes(anim).Animated().WebP()},
+		{"WebP to WebP", FromBytes(anim).Animated().WebP(WebPOptions{Lossless: true})},
+		{"WebP read twice to GIF", FromReader(bytes.NewReader(anim)).Animated().GIF()},
+	} {
+		out, err := c.m.ToBytes()
+		if err != nil {
+			t.Fatalf("%s: %v", c.what, err)
+		}
+		if fr, err := FromBytes(out).Frames(); err != nil || fr != (Frames{Count: 2, Duration: 320 * time.Millisecond, LoopCount: 0}) {
+			t.Errorf("%s: %+v, %v", c.what, fr, err)
+		}
+	}
+	// A WebP's frames cannot go into a still format; an APNG's cannot be
+	// gone through at all.
+	for _, c := range []struct {
+		what string
+		m    *Image
+	}{
+		{"WebP to PNG", FromBytes(anim).Animated().PNG()},
 		{"APNG to PNG", FromBytes(ap).Animated().PNG()},
 		{"APNG read twice", FromReader(bytes.NewReader(ap)).Animated().PNG()},
 	} {
@@ -202,6 +225,53 @@ func TestOtherAnimations(t *testing.T) {
 		}
 		if fr, err := FromBytes(b).Frames(); err != nil || fr != (Frames{Count: 1}) {
 			t.Errorf("still: %+v, %v", fr, err)
+		}
+	}
+}
+
+// TestWebPAnimationFrames draws the frames of two animated WebP files made by
+// libwebp's img2webp (lossy with alpha, and lossy and lossless mixed, with
+// frames blended and not, disposed and not) and checks every frame against
+// the frame libwebp's animation decoder makes (anim_dump), pixel for pixel
+// (the colour of transparent pixels left out).
+func TestWebPAnimationFrames(t *testing.T) {
+	for name, want := range map[string][]string{
+		"anim-lossy.webp": {"19d6762eb48883bd", "90a3a8b421e22a9a", "14ac8e85d29bc2c1", "ed8a0369659f4727",
+			"60a192a159922d16", "bce945a4d109d85a", "c0bab96ae33b2ff9", "b0d480ea42ca2bae"},
+		"anim-mixed.webp": {"98af95af555808c9", "749150b88075c606", "846a7790c27f0c07", "da0268a758c9f3ca",
+			"381baaeef70aab62", "8951729558fbdb3e", "abefe65a6993ca8c", "3db976d310f8e714"},
+	} {
+		data, err := os.ReadFile(filepath.Join("testdata", "webp", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var frames [][]byte
+		_, err = FromBytes(data).Animated().Pixels(func(strip *image.NRGBA) error {
+			if strip.Rect.Min.Y == 0 {
+				frames = append(frames, nil)
+			}
+			for y := strip.Rect.Min.Y; y < strip.Rect.Max.Y; y++ {
+				row := strip.Pix[strip.PixOffset(strip.Rect.Min.X, y):][:4*strip.Rect.Dx()]
+				for x := 0; x < len(row); x += 4 {
+					px := row[x : x+4]
+					if px[3] == 0 {
+						px = []byte{0, 0, 0, 0}
+					}
+					frames[len(frames)-1] = append(frames[len(frames)-1], px...)
+				}
+			}
+			return nil
+		}).WebP(WebPOptions{Lossless: true}).ToBytes()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if len(frames) != len(want) {
+			t.Fatalf("%s: %d frames, want %d", name, len(frames), len(want))
+		}
+		for i, f := range frames {
+			if got := fmt.Sprintf("%x", sha256.Sum256(f))[:16]; got != want[i] {
+				t.Errorf("%s frame %d: %s, libwebp %s", name, i, got, want[i])
+			}
 		}
 	}
 }

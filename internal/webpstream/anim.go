@@ -249,3 +249,93 @@ func ReadAnimation(r io.ReaderAt, size int64) (Animation, error) {
 	}
 	return a, nil
 }
+
+// AnimReader reads the frames of an animated WebP file one by one.
+type AnimReader struct {
+	r        io.ReaderAt
+	size     int64
+	env      *pipeline.Env
+	canvas   image.Rectangle
+	loop     int
+	pos, end int64 // the chunks still to read
+}
+
+// Frame is how a frame goes on the canvas.
+type Frame struct {
+	// Rect is where the frame goes.
+	Rect image.Rectangle
+	// Duration is how long the canvas shows once the frame is on it.
+	Duration time.Duration
+	// Blend says that the frame is alpha-blended onto the canvas; it
+	// replaces what it covers otherwise.
+	Blend bool
+	// Dispose says that the frame's rectangle is cleared to transparent
+	// before the next frame is drawn.
+	Dispose bool
+}
+
+// OpenAnimation reads the headers of the animated WebP file r (size bytes)
+// for its frames to be read with NextFrame.
+func OpenAnimation(r io.ReaderAt, size int64, env *pipeline.Env) (*AnimReader, error) {
+	if env == nil {
+		env = pipeline.NewEnv(0, "")
+	}
+	a, err := ReadAnimation(r, size)
+	if err != nil {
+		return nil, err
+	}
+	if a.Frames == 0 {
+		return nil, errInvalidFormat
+	}
+	var b [8]byte
+	if _, err := readAt(r, b[:8], 0, size); err != nil {
+		return nil, err
+	}
+	return &AnimReader{r: r, size: size, env: env, canvas: image.Rect(0, 0, a.Width, a.Height), loop: a.LoopCount,
+		pos: 12, end: min(size, 8+int64(u32(b[4:])))}, nil
+}
+
+// Config returns the size of the canvas and how often the animation plays
+// (0 for ever).
+func (a *AnimReader) Config() (width, height, loopCount int) {
+	return a.canvas.Dx(), a.canvas.Dy(), a.loop
+}
+
+// NextFrame returns the pixels of the next frame, NRGBA strips of the size
+// of the frame (from 0, 0), and how it goes on the canvas; io.EOF after the
+// last. The caller closes the frame before asking for the next.
+func (a *AnimReader) NextFrame() (pipeline.Source, Frame, error) {
+	var b [16]byte
+	for a.end-a.pos >= 8 {
+		if _, err := a.r.ReadAt(b[:8], a.pos); err != nil {
+			return nil, Frame{}, err
+		}
+		n := int64(u32(b[4:]))
+		p := a.pos + 8
+		a.pos = p + n + n&1
+		if string(b[:4]) != "ANMF" {
+			continue
+		}
+		if n < 16 || n > a.end-p {
+			return nil, Frame{}, errShortChunkData
+		}
+		if _, err := a.r.ReadAt(b[:16], p); err != nil {
+			return nil, Frame{}, err
+		}
+		fh := parseFrameHeader(b[:])
+		s := &source{env: a.env, ra: a.r}
+		if err := s.openFrame(a.r, p, uint32(n), a.canvas); err != nil {
+			return nil, Frame{}, err
+		}
+		src := pipeline.Map(ToRGB(s), func(*image.NRGBA) error { return nil })
+		return src, Frame{Rect: fh.rect, Duration: time.Duration(fh.duration) * time.Millisecond,
+			Blend: !fh.noBlend, Dispose: fh.dispose}, nil
+	}
+	return nil, Frame{}, io.EOF
+}
+
+// Close lets go of the input.
+func (a *AnimReader) Close() error {
+	a.r = nil
+	return nil
+}

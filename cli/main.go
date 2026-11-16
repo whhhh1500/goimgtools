@@ -179,7 +179,7 @@ func register(fs *flag.FlagSet) *options {
 		gifFixed:       fs.Bool("gif-fixed-palette", false, "GIF: use the standard fixed palette instead of colours chosen for the image (faster, a much worse picture)"),
 		gifLossy:       fs.Int("gif-lossy", 0, "GIF: lossy compression, the colour difference 1-255 it may accept (16-32 for photographic GIFs: 18-32% smaller); 0 keeps every pixel"),
 		tiffComp:       fs.String("tiff-compression", "none", "TIFF compression: none or deflate"),
-		animated:       fs.Bool("animated", false, "process every frame of an animated GIF and write an animated GIF or WebP; only what changes is stored (GIF: one palette for all frames, -gif-colors, -no-dither); another output format, or an animated WebP or PNG input, is an error"),
+		animated:       fs.Bool("animated", false, "process every frame of an animated GIF or WebP and write an animated GIF or WebP; only what changes is stored (GIF: one palette for all frames, -gif-colors, -no-dither); another output format, or an animated PNG input, is an error"),
 		keepExif:       fs.Bool("keep-exif", false, "copy the EXIF block (camera, date, GPS) to the output"),
 		stripICC:       fs.Bool("strip-icc", false, "drop the ICC colour profile instead of copying it"),
 		toSRGB:         fs.Bool("srgb", false, "convert the colours to sRGB from the image's ICC profile (Display P3, Adobe RGB...) and leave the profile out; GIF and BMP output always are"),

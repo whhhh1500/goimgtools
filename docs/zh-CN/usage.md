@@ -56,7 +56,7 @@ err := goimgtools.Open("in.jpg").
 | `Sharpen(SharpenOptions{Sigma, Amount, Threshold})` | 反锐化掩模（Pillow 的 `UnsharpMask`），`Amount` 默认为 1.5 |
 | `Flatten(color)` | 去除透明，铺底色 |
 | `Composite(overlay, CompositeOptions{...})` | 图像叠加 / 水印（见[水印](#水印)） |
-| `Animated()` | 处理 GIF 动画的每一帧并输出 GIF 或 WebP 动画。静态图像不受影响；无法保留的动画（GIF 输出为其他格式；WebP 动画与 APNG 不逐帧处理）返回包装了 `errors.ErrUnsupported` 的错误。WebP 第一帧完整存储，之后各帧仅存储变化的矩形区域。GIF 的所有帧共用一套按画面内容选取的调色板（`GIFOptions` 的 `Colors`、`NoDither` 依然有效；颜色数不超过该值时原样保留），自第二帧起仅存储变化的部分（见[压缩](compression.md)） |
+| `Animated()` | 处理 GIF 或 WebP 动画的每一帧并输出 GIF 或 WebP 动画。WebP 的各帧按 libwebp 动画解码器的方式绘制（混合与否、清除与否），逐像素一致。静态图像不受影响；无法保留的动画（GIF 或 WebP 输出为其他格式；APNG 不逐帧处理）返回包装了 `errors.ErrUnsupported` 的错误。WebP 第一帧完整存储，之后各帧仅存储变化的矩形区域。GIF 的所有帧共用一套按画面内容选取的调色板（`GIFOptions` 的 `Colors`、`NoDither` 依然有效；颜色数不超过该值时原样保留），自第二帧起仅存储变化的部分（见[压缩](compression.md)） |
 | `Pixels(fn)` | 自定义逐像素操作：`fn` 逐条带接收 8 位 NRGBA 数据并原地修改（见[扩展](extending.md)） |
 | `Pipe(op)` | 在链的当前位置插入任意自定义操作（见[扩展](extending.md)） |
 | `Apply(steps...)` | 将一组步骤写为函数，在链的中间调用 |
@@ -107,7 +107,7 @@ err := goimgtools.Open("in.jpg").
 | `Threads(n)` | 单次处理最多使用的核数，默认 1，最大为 CPU 核数（见 [CPU 与线程](performance.md#cpu-与线程)） |
 | `SetDefaultThreads(n)` | 全程序的默认线程数（供未调用 `Threads` 的处理使用），无需在每个调用处重复设置 |
 | `TempDir(dir)` | 临时文件目录，默认为系统临时目录 |
-| `LimitInputPixels(n)` | 输入像素数上限，默认 16383×16383（同 sharp）。对使用 `Animated()` 的 GIF 动画，按所有帧的像素总和计算 |
+| `LimitInputPixels(n)` | 输入像素数上限，默认 16383×16383（同 sharp）。对使用 `Animated()` 的 GIF 或 WebP 动画，按所有帧的像素总和计算 |
 | `LimitOutputPixels(n)` | 链上任一步骤所生成图像（因而也包括结果）的像素数上限，默认值同上。用于防止小文件被放大为占满磁盘、耗时数小时的结果 |
 | `WithContext(ctx)` | `ctx` 取消或超时后中止处理，返回 `ctx.Err()` |
 | `Clone()` | 复制配方，用于从同一起点派生多个结果 |
@@ -133,7 +133,7 @@ large := base.Clone().Resize(1600, 0)
 | 错误 | 含义 | 服务端的常见处理 |
 |---|---|---|
 | `ErrFormat` | 输入不是可读取的图像：其他类型的文件、不支持的格式或变体、数据损坏或截断 | 上传的文件有误 |
-| `ErrPixelLimit` | 输入像素数超过 `LimitInputPixels`（GIF 动画按所有帧合计），或链上某一步骤的结果超过 `LimitOutputPixels` | 图像过大，或请求的尺寸过大 |
+| `ErrPixelLimit` | 输入像素数超过 `LimitInputPixels`（动画按所有帧合计），或链上某一步骤的结果超过 `LimitOutputPixels` | 图像过大，或请求的尺寸过大 |
 | `ErrMemoryLimit` | 无法在内存上限内完成处理 | 调高 `MemoryLimit` 或拒绝请求 |
 | `ErrFileSize` | 即使采用最低质量也无法达到 `MaxFileSize` 的目标 | 先缩小尺寸 |
 | `context.Canceled` / `DeadlineExceeded` | `WithContext` 的上下文已结束 | 请求已取消 |

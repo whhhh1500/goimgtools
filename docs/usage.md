@@ -56,7 +56,7 @@ err := goimgtools.Open("in.jpg").
 | `Sharpen(SharpenOptions{Sigma, Amount, Threshold})` | Unsharp mask (Pillow's `UnsharpMask`); `Amount` defaults to 1.5 |
 | `Flatten(color)` | Removes transparency by flattening onto a background colour |
 | `Composite(overlay, CompositeOptions{...})` | Composites an overlay or watermark (see [Watermarks](#watermarks)) |
-| `Animated()` | Processes every frame of an animated GIF and writes an animated GIF or WebP. A still image passes unchanged; an animation that cannot be kept (a GIF to another format; an animated WebP or APNG, whose frames are not processed one by one) is an error wrapping `errors.ErrUnsupported`. A WebP stores the first frame whole and later frames as the changed rectangle. In a GIF, all frames share a single palette chosen from the image content (`Colors` and `NoDither` in `GIFOptions` still apply; if the image has no more colours than that, the colours are kept unchanged), and from the second frame onwards only the changed region is stored (see [Compression](compression.md)) |
+| `Animated()` | Processes every frame of an animated GIF or WebP and writes an animated GIF or WebP. A WebP's frames are drawn as libwebp's animation decoder draws them (blended or not, cleared or not), pixel for pixel. A still image passes unchanged; an animation that cannot be kept (a GIF or WebP to another format; an APNG, whose frames are not processed one by one) is an error wrapping `errors.ErrUnsupported`. A WebP stores the first frame whole and later frames as the changed rectangle. In a GIF, all frames share a single palette chosen from the image content (`Colors` and `NoDither` in `GIFOptions` still apply; if the image has no more colours than that, the colours are kept unchanged), and from the second frame onwards only the changed region is stored (see [Compression](compression.md)) |
 | `Pixels(fn)` | A custom per-pixel operation: `fn` receives 8-bit NRGBA data strip by strip and modifies it in place (see [Extending](extending.md)) |
 | `Pipe(op)` | Inserts an arbitrary custom operation at this point in the chain (see [Extending](extending.md)) |
 | `Apply(steps...)` | Calls a group of steps, defined as a function, in the middle of the chain |
@@ -107,7 +107,7 @@ When no output format is specified and no extension is available, the output for
 | `Threads(n)` | Maximum number of cores used by a single run; default 1, up to the number of CPU cores (see [CPU and threads](performance.md#cpu-and-threads)) |
 | `SetDefaultThreads(n)` | Program-wide default thread count (used by runs that do not call `Threads`), so that it need not be specified at every call site |
 | `TempDir(dir)` | Directory for temporary files; the system temporary directory by default |
-| `LimitInputPixels(n)` | Limit on the number of input pixels; default 16383×16383 (as in sharp). For an animated GIF with `Animated()`, the limit applies to the total pixels of all frames |
+| `LimitInputPixels(n)` | Limit on the number of input pixels; default 16383×16383 (as in sharp). For an animated GIF or WebP with `Animated()`, the limit applies to the total pixels of all frames |
 | `LimitOutputPixels(n)` | Limit on the number of pixels in the image produced by any step of the chain (and therefore in the result); same default as above. Prevents a small file from being enlarged into a result that fills the disk and takes hours to compute |
 | `WithContext(ctx)` | Stops processing when `ctx` is cancelled or times out, and returns `ctx.Err()` |
 | `Clone()` | Copies the recipe, so that several results can be derived from the same starting point |
@@ -133,7 +133,7 @@ A completed recipe can be run repeatedly, including concurrently by multiple gor
 | Error | Meaning | Typical handling in a service |
 |---|---|---|
 | `ErrFormat` | The input is not a readable image: a file of another type, an unsupported format or variant, or corrupt or truncated data | The uploaded file is invalid |
-| `ErrPixelLimit` | The input pixel count exceeds `LimitInputPixels` (for animated GIFs, all frames combined), or the result of a step on the chain exceeds `LimitOutputPixels` | The image, or the requested size, is too large |
+| `ErrPixelLimit` | The input pixel count exceeds `LimitInputPixels` (for animations, all frames combined), or the result of a step on the chain exceeds `LimitOutputPixels` | The image, or the requested size, is too large |
 | `ErrMemoryLimit` | The image cannot be processed within the memory limit | Increase `MemoryLimit` or reject the request |
 | `ErrFileSize` | The `MaxFileSize` target cannot be met even at the lowest quality | Reduce the dimensions first |
 | `context.Canceled` / `DeadlineExceeded` | The `WithContext` context has ended | The request was cancelled |

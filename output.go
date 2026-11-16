@@ -399,9 +399,18 @@ func (m *Image) write(w io.Writer, ext string) (err error) {
 	if m.animated {
 		env = m.newEnv()
 		keeps := keepsAnimation(inFormat, format)
+		if keeps && inFormat == "webp" {
+			// A still WebP is not an animation to keep.
+			n, err := inputFrames(f, inFormat, env)
+			if err != nil {
+				f.Close()
+				return err
+			}
+			keeps = n > 0
+		}
 		if keeps && m.maxBytes == 0 {
 			defer f.Close()
-			return m.writeAnimated(w, f, env, format)
+			return m.writeAnimated(w, f, env, inFormat, format)
 		}
 		var err error
 		if keeps {
