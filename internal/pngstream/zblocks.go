@@ -92,7 +92,8 @@ func nearBytes(level, width int) int64 {
 		return 0
 	}
 	row := 1 + 8*width // at most
-	return p.Bytes() + zWindow + zBlockBytes + zBlockOut + bruteBytes(row) + int64(trialBytes+row)
+	return p.Bytes() + zWindow + zBlockBytes + zBlockOut + bruteBytes(row) + int64(trialBytes+row) +
+		nearEstimatorBytes - estimatorBytes + int64(2*estWindowNear+trialBytes+row)
 }
 
 func withBlocks(p deflate.Params, blockLen int) deflate.Params {
