@@ -98,12 +98,12 @@ type Reader interface {
 }
 
 // bits holds the unprocessed bits that have been taken from the byte-stream.
-// The n least significant bits of a form the unread bits, to be read in MSB to
-// LSB order.
+// The n most significant bits of a form the unread bits, to be read in MSB to
+// LSB order; the bits below them are zero.
 type bits struct {
-	a uint32 // accumulator.
-	m uint32 // mask. m==1<<(n-1) when n>0, with m==0 when n==0.
-	n int32  // the number of unread bits in a.
+	a   uint64 // accumulator.
+	n   int32  // the number of unread bits in a.
+	end error  // why fillBits last stopped short, or nil
 }
 
 type decoder struct {
@@ -117,9 +117,6 @@ type decoder struct {
 		// io.Reader that haven't yet been passed further on.
 		buf  [4096]byte
 		i, j int
-		// nUnreadable is the number of bytes to back up i after
-		// overshooting. It can be 0, 1 or 2.
-		nUnreadable int
 	}
 	width, height int
 
@@ -168,6 +165,7 @@ type decoder struct {
 	metaDone bool
 	touched  [maxComponents]bool // components that appeared in a scan
 	bandMy   int                 // first MCU row of the current band
+	scale    uint                // the image is shrunk by 1<<scale (ShrinkOnLoad)
 }
 
 // fill fills up the d.bytes.buf buffer from the underlying io.Reader. It
@@ -176,8 +174,8 @@ func (d *decoder) fill() error {
 	if d.bytes.i != d.bytes.j {
 		panic("jpeg: fill called when unread bytes exist")
 	}
-	// Move the last 2 bytes to the start of the buffer, in case we need
-	// to call unreadByteStuffedByte.
+	// Move the last 2 bytes to the start of the buffer: fillBits looks
+	// back at a 0xff that ended the buffer.
 	if d.bytes.j > 2 {
 		d.bytes.buf[0] = d.bytes.buf[d.bytes.j-2]
 		d.bytes.buf[1] = d.bytes.buf[d.bytes.j-1]
@@ -195,21 +193,6 @@ func (d *decoder) fill() error {
 	return err
 }
 
-// unreadByteStuffedByte undoes the most recent readByteStuffedByte call,
-// giving a byte of data back from d.bits to d.bytes. The Huffman look-up table
-// requires at least 8 bits for look-up, which means that Huffman decoding can
-// sometimes overshoot and read one or two too many bytes. Two-byte overshoot
-// can happen when expecting to read a 0xff 0x00 byte-stuffed byte.
-func (d *decoder) unreadByteStuffedByte() {
-	d.bytes.i -= d.bytes.nUnreadable
-	d.bytes.nUnreadable = 0
-	if d.bits.n >= 8 {
-		d.bits.a >>= 8
-		d.bits.n -= 8
-		d.bits.m >>= 8
-	}
-}
-
 // readByte returns the next byte, whether buffered or not buffered. It does
 // not care about byte stuffing.
 func (d *decoder) readByte() (x byte, err error) {
@@ -220,65 +203,16 @@ func (d *decoder) readByte() (x byte, err error) {
 	}
 	x = d.bytes.buf[d.bytes.i]
 	d.bytes.i++
-	d.bytes.nUnreadable = 0
 	return x, nil
 }
 
-// errMissingFF00 means that readByteStuffedByte encountered an 0xff byte (a
+// errMissingFF00 means that fillBits encountered an 0xff byte (a
 // marker byte) that wasn't the expected byte-stuffed sequence 0xff, 0x00.
 var errMissingFF00 = FormatError("missing 0xff00 sequence")
-
-// readByteStuffedByte is like readByte but is for byte-stuffed Huffman data.
-func (d *decoder) readByteStuffedByte() (x byte, err error) {
-	// Take the fast path if d.bytes.buf contains at least two bytes.
-	if d.bytes.i+2 <= d.bytes.j {
-		x = d.bytes.buf[d.bytes.i]
-		d.bytes.i++
-		d.bytes.nUnreadable = 1
-		if x != 0xff {
-			return x, err
-		}
-		if d.bytes.buf[d.bytes.i] != 0x00 {
-			return 0, errMissingFF00
-		}
-		d.bytes.i++
-		d.bytes.nUnreadable = 2
-		return 0xff, nil
-	}
-
-	d.bytes.nUnreadable = 0
-
-	x, err = d.readByte()
-	if err != nil {
-		return 0, err
-	}
-	d.bytes.nUnreadable = 1
-	if x != 0xff {
-		return x, nil
-	}
-
-	x, err = d.readByte()
-	if err != nil {
-		return 0, err
-	}
-	d.bytes.nUnreadable = 2
-	if x != 0x00 {
-		return 0, errMissingFF00
-	}
-	return 0xff, nil
-}
 
 // readFull reads exactly len(p) bytes into p. It does not care about byte
 // stuffing.
 func (d *decoder) readFull(p []byte) error {
-	// Unread the overshot bytes, if any.
-	if d.bytes.nUnreadable != 0 {
-		if d.bits.n >= 8 {
-			d.unreadByteStuffedByte()
-		}
-		d.bytes.nUnreadable = 0
-	}
-
 	for {
 		n := copy(p, d.bytes.buf[d.bytes.i:d.bytes.j])
 		p = p[n:]
@@ -295,14 +229,6 @@ func (d *decoder) readFull(p []byte) error {
 
 // ignore ignores the next n bytes.
 func (d *decoder) ignore(n int) error {
-	// Unread the overshot bytes, if any.
-	if d.bytes.nUnreadable != 0 {
-		if d.bits.n >= 8 {
-			d.unreadByteStuffedByte()
-		}
-		d.bytes.nUnreadable = 0
-	}
-
 	for {
 		m := d.bytes.j - d.bytes.i
 		if m > n {

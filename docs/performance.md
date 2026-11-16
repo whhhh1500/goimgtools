@@ -39,7 +39,7 @@ Measurements (6000×4000; output byte-for-byte identical at every thread count):
 
 ## Shrinking JPEGs while decoding (optional)
 
-`ResizeOptions{FastShrinkOnLoad: true}` (command line: `-fast-shrink`): when a JPEG is to be shrunk to less than half its size and `Resize` is the first operation (or is preceded only by rotation or flips), each decoded plane is first block-averaged by a factor of 2, 4 or 8, and the remainder of the resize is then applied. The output dimensions are the same as without this option; pixel values differ slightly (by less than 2 levels on average on smooth images), so it is disabled by default.
+`ResizeOptions{FastShrinkOnLoad: true}` (command line: `-fast-shrink`): when a JPEG is to be shrunk to less than half its size and `Resize` is the first operation (or is preceded only by rotation or flips), it is decoded straight to 1/2, 1/4 or 1/8 of its size, and the remainder of the resize is then applied. Each 8×8 block of coefficients becomes 4×4, 2×2 or 1×1 pixels, the averages of the block's pixels worked out from the coefficients, as libjpeg's scaled decoding does, which leaves out most of the inverse DCT. CMYK and RGB JPEGs, and unusual subsampling, are decoded in full and then block-averaged. The output dimensions are the same as without this option; pixel values differ slightly (by less than 2 levels on average on smooth images, and by a few levels where ringing next to black or white is clipped), so it is disabled by default. On one core, a 6000×4000 baseline JPEG is shrunk to fit 400×400 in 83ms (libvips' `vipsthumbnail`, also on one core: 100ms) and to fit 1536×1536 in 177ms (151ms).
 
 ## Benchmarks
 

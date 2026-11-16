@@ -257,6 +257,11 @@ func (d *decoder) scanRow(my int) error {
 					if err := d.refine(&b, &d.huff[acTable][scan[i].ta], zigStart, zigEnd, 1<<al); err != nil {
 						return err
 					}
+				} else if !d.full {
+					if err := d.decodeBlock(&b, &d.huff[dcTable][scan[i].td], &d.huff[acTable][scan[i].ta],
+						&d.quant[d.comp[compIndex].tq], &dc[compIndex]); err != nil {
+						return err
+					}
 				} else {
 					zig := zigStart
 					if zig == 0 {
@@ -283,6 +288,21 @@ func (d *decoder) scanRow(my int) error {
 						// Decode the AC coefficients, as specified in section F.2.2.2.
 						huff := &d.huff[acTable][scan[i].ta]
 						for ; zig <= zigEnd; zig++ {
+							if d.bits.n < 16 {
+								d.fillBits()
+							}
+							if d.bits.n >= lutBits {
+								if e := huff.fast[d.bits.a>>(64-lutBits)]; e != 0 {
+									if z := zig + e>>8&0x0f; z <= zigEnd {
+										n := uint32(e) & 0xff
+										d.bits.a <<= n
+										d.bits.n -= int32(n)
+										zig = z
+										b[unzig[zig]] = e >> 16 << al
+										continue
+									}
+								}
+							}
 							value, err := d.decodeHuffman(huff)
 							if err != nil {
 								return err
@@ -356,6 +376,131 @@ func (d *decoder) scanRow(my int) error {
 		}
 	} // for mx
 	st.mcu, st.expectedRST, st.dc, st.blockCount = mcu, expectedRST, dc, blockCount
+	return nil
+}
+
+// decodeBlock decodes a block of a sequential scan whose pixels are made
+// straight away (the AC loop of the standard library's processSOS for zigStart
+// 0, zigEnd 63 and al 0, with the fast table). Each coefficient is multiplied
+// by its quantizer as it is decoded, where the standard library multiplies in
+// reconstructBlock; the products are the same. b must be zero.
+func (d *decoder) decodeBlock(b *block, dcH, acH *huffman, qt *block, dc *int32) error {
+	if d.bits.n < 32 {
+		d.fillBits()
+	}
+	if e := dcH.fast[d.bits.a>>(64-lutBits)]; e != 0 && d.bits.n >= 32 {
+		n := uint32(e) & 0xff
+		d.bits.a <<= n
+		d.bits.n -= int32(n)
+		*dc += e >> 16
+	} else {
+		value, err := d.decodeHuffman(dcH)
+		if err != nil {
+			return err
+		}
+		if value > 16 {
+			return UnsupportedError("excessive DC component")
+		}
+		dcDelta, err := d.receiveExtend(value)
+		if err != nil {
+			return err
+		}
+		*dc += dcDelta
+	}
+	b[0] = *dc * qt[0]
+	if d.eobRun > 0 {
+		d.eobRun--
+		return nil
+	}
+	// The accumulator is kept in a and n, and stored back in d.bits for
+	// the calls.
+	a, n := d.bits.a, d.bits.n
+	for zig := int32(1); zig < blockSize; zig++ {
+		// With 32 bits at hand a code of up to lutBits bits and its extra
+		// bits are in the accumulator; the look-ups here decode them the
+		// way decodeHuffman and receiveExtend would.
+		if n < 32 {
+			d.bits.a, d.bits.n = a, n
+			d.fillBits()
+			a, n = d.bits.a, d.bits.n
+		}
+		if n >= 32 {
+			peek := a >> (64 - lutBits)
+			if e := acH.fast[peek]; e != 0 {
+				if z := zig + e>>8&0x0f; z < blockSize {
+					k := uint32(e) & 0xff
+					a <<= k
+					n -= int32(k)
+					zig = z
+					b[unzig[zig&63]&63] = e >> 16 * qt[zig&63]
+					continue
+				}
+			} else if v := acH.lut[peek]; v != 0 {
+				l := uint32(v&0xff) - 1
+				run, size := int32(v>>12), uint32(v>>8)&0x0f
+				switch {
+				case size != 0:
+					zig += run
+					if zig >= blockSize {
+						d.bits.a, d.bits.n = a<<l, n-int32(l)
+						return nil
+					}
+					x := int32(a << l >> (64 - size))
+					if x < 1<<(size-1) {
+						x += (-1 << size) + 1
+					}
+					a <<= l + size
+					n -= int32(l + size)
+					b[unzig[zig&63]&63] = x * qt[zig&63]
+					continue
+				case run == 0: // end of block
+					d.bits.a, d.bits.n = a<<l, n-int32(l)
+					return nil
+				case run == 0x0f: // sixteen zeros
+					a <<= l
+					n -= int32(l)
+					zig += 0x0f
+					continue
+				}
+				// An end-of-band run, which only progressive scans have:
+				// the general path below.
+			}
+		}
+		d.bits.a, d.bits.n = a, n
+		value, err := d.decodeHuffman(acH)
+		if err != nil {
+			return err
+		}
+		val0 := value >> 4
+		val1 := value & 0x0f
+		if val1 != 0 {
+			zig += int32(val0)
+			if zig >= blockSize {
+				return nil
+			}
+			ac, err := d.receiveExtend(val1)
+			if err != nil {
+				return err
+			}
+			b[unzig[zig]] = ac * qt[zig]
+		} else {
+			if val0 != 0x0f {
+				d.eobRun = uint16(1 << val0)
+				if val0 != 0 {
+					bits, err := d.decodeBits(int32(val0))
+					if err != nil {
+						return err
+					}
+					d.eobRun |= uint16(bits)
+				}
+				d.eobRun--
+				return nil
+			}
+			zig += 0x0f
+		}
+		a, n = d.bits.a, d.bits.n
+	}
+	d.bits.a, d.bits.n = a, n
 	return nil
 }
 
@@ -465,16 +610,18 @@ func (d *decoder) refineNonZeroes(b *block, zig, zigEnd, nz, delta int32) (int32
 	return zig, nil
 }
 
-// reconstructBlock dequantizes, performs the inverse DCT and stores the block
-// to the image. Here the image is the current band, and by is relative to
-// the band's first block row.
-func (d *decoder) reconstructBlock(b *block, bx, by, compIndex int) error {
+// dequantize multiplies the coefficients of b by their quantizers.
+func (d *decoder) dequantize(b *block, compIndex int) {
 	qt := &d.quant[d.comp[compIndex].tq]
 	for zig := 0; zig < blockSize; zig++ {
 		b[unzig[zig]] *= qt[zig]
 	}
-	idct(b)
+}
 
+// reconstructBlock performs the inverse DCT of the dequantized b and stores
+// the block to the image. Here the image is the current band, and by is
+// relative to the band's first block row.
+func (d *decoder) reconstructBlock(b *block, bx, by, compIndex int) error {
 	var h, v int
 	if d.flex {
 		// Flex mode: scale bx and by according to the component's sampling factors.
@@ -483,19 +630,21 @@ func (d *decoder) reconstructBlock(b *block, bx, by, compIndex int) error {
 		bx, by = bx*h, by*v
 	}
 
+	// bs is the side of the block in pixels.
+	bs := 8 >> d.scale
 	dst, stride := []byte(nil), 0
 	if d.nComp == 1 {
-		dst, stride = d.img1.Pix[8*(by*d.img1.Stride+bx):], d.img1.Stride
+		dst, stride = d.img1.Pix[bs*(by*d.img1.Stride+bx):], d.img1.Stride
 	} else {
 		switch compIndex {
 		case 0:
-			dst, stride = d.img3.Y[8*(by*d.img3.YStride+bx):], d.img3.YStride
+			dst, stride = d.img3.Y[bs*(by*d.img3.YStride+bx):], d.img3.YStride
 		case 1:
-			dst, stride = d.img3.Cb[8*(by*d.img3.CStride+bx):], d.img3.CStride
+			dst, stride = d.img3.Cb[bs*(by*d.img3.CStride+bx):], d.img3.CStride
 		case 2:
-			dst, stride = d.img3.Cr[8*(by*d.img3.CStride+bx):], d.img3.CStride
+			dst, stride = d.img3.Cr[bs*(by*d.img3.CStride+bx):], d.img3.CStride
 		case 3:
-			dst, stride = d.blackPix[8*(by*d.blackStride+bx):], d.blackStride
+			dst, stride = d.blackPix[bs*(by*d.blackStride+bx):], d.blackStride
 		default:
 			return UnsupportedError("too many components")
 		}
@@ -503,6 +652,7 @@ func (d *decoder) reconstructBlock(b *block, bx, by, compIndex int) error {
 
 	if d.flex {
 		// Flex mode: expand each source pixel to h×v destination pixels.
+		idct(b)
 		for y := 0; y < 8; y++ {
 			y8 := y * 8
 			yv := y * v
@@ -519,13 +669,15 @@ func (d *decoder) reconstructBlock(b *block, bx, by, compIndex int) error {
 		return nil
 	}
 
-	// Level shift by +128, clip to [0, 255], and write to dst.
-	for y := 0; y < 8; y++ {
-		y8 := y * 8
-		yStride := y * stride
-		for x := 0; x < 8; x++ {
-			dst[yStride+x] = uint8(max(0, min(255, b[y8+x]+128)))
-		}
+	switch d.scale {
+	case 0:
+		idctStore(b, dst, stride)
+	case 1:
+		idct4Store(b, dst, stride)
+	case 2:
+		idct2Store(b, dst, stride)
+	default:
+		idct1Store(b, dst)
 	}
 	return nil
 }

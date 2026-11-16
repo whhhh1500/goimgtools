@@ -142,14 +142,18 @@ func (m *Image) buildFrom(env *pipeline.Env, top bool, f *input, format string, 
 		// comes first can have the decoder's help.
 		if z, turn, ok := firstResize(m.chain, r); ok && z.spec.o.FastShrinkOnLoad && (len(m.hooks) == 0 || turn == ops.Upright && len(m.chain) > 0 && isResize(m.chain[0])) {
 			if k := shrinkFactor(src, z.spec, turn); k > 1 {
-				small, err := resize.Shrink(src, k)
-				if err != nil {
-					src.Close()
-					f.Close()
-					return nil, nil, "", none, err
-				}
 				pre = preShrunk{orig: src.Bounds().Size(), k: k}
-				src = small
+				// The decoder reduces the blocks as it decodes them;
+				// failing that, the decoded pixels are averaged.
+				if j, ok := src.(interface{ ShrinkOnLoad(k int) bool }); !ok || !j.ShrinkOnLoad(k) {
+					small, err := resize.Shrink(src, k)
+					if err != nil {
+						src.Close()
+						f.Close()
+						return nil, nil, "", none, err
+					}
+					src = small
+				}
 			}
 		}
 	}

@@ -64,12 +64,12 @@ type ResizeOptions struct {
 	// size would make it larger.
 	WithoutEnlargement bool
 	// FastShrinkOnLoad lets a JPEG that is being reduced to half its size
-	// or less be shrunk by 2, 4 or 8 while it is decoded (by averaging
-	// blocks of pixels), leaving less for the resize itself. It is
-	// markedly faster and uses less memory; the pixels differ slightly from
-	// a resize of the full image, the size of the result does not. It
-	// applies when Resize is the first operation on a JPEG, and is ignored
-	// otherwise.
+	// or less be shrunk by 2, 4 or 8 while it is decoded (each 8×8 block
+	// decoded straight to the averages of its pixels), leaving less for the
+	// resize itself. It is markedly faster and uses less memory; the pixels
+	// differ slightly from a resize of the full image, the size of the
+	// result does not. It applies when Resize is the first operation on a
+	// JPEG, and is ignored otherwise.
 	FastShrinkOnLoad bool
 	// Background fills the bars FitContain adds. The default is black.
 	Background color.Color

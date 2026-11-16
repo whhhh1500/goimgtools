@@ -112,6 +112,13 @@ func (d *decoded) Subsampling() (ratio image.YCbCrSubsampleRatio, gray, ok bool)
 	return 0, false, false
 }
 
+// ShrinkOnLoad passes on a request to a JPEG decoder to decode the image
+// reduced by k; false where the decoder cannot.
+func (d *decoded) ShrinkOnLoad(k int) bool {
+	j, is := d.Source.(interface{ ShrinkOnLoad(k int) bool })
+	return is && j.ShrinkOnLoad(k)
+}
+
 func fileInput(path string) (*input, error) {
 	f, err := os.Open(path)
 	if err != nil {

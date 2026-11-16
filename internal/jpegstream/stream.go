@@ -17,9 +17,16 @@ package jpegstream
 //     separate scans) stores its DCT coefficients in a pipeline.Scratch, which is
 //     a temporary file when it does not fit in the memory budget, and turns
 //     them into pixels band by band after the last scan;
-//   - applyBlack and convertToRGB work on a band.
+//   - applyBlack and convertToRGB work on a band;
+//   - the entropy-coded data is read 64 bits at a time (fillBits), the
+//     Huffman look-up tables have 11 bits, and a further table decodes a
+//     coefficient's extra bits with its code; a baseline block is decoded by
+//     decodeBlock, which dequantizes as it goes, and the inverse DCT skips
+//     the arithmetic on rows of zeros;
+//   - ShrinkOnLoad decodes the image reduced by 2, 4 or 8 (dct.go's reduced
+//     IDCTs), which jpeg.Decode cannot.
 //
-// The pixels are the same as jpeg.Decode's.
+// The pixels are the same as jpeg.Decode's (but for ShrinkOnLoad).
 
 import (
 	"encoding/binary"
@@ -157,7 +164,9 @@ type stream struct {
 	my       int         // next MCU row to output
 	rgba     *image.RGBA // band for convertToRGB / applyBlack
 	reserved int64
-	scanned  bool // full mode: every scan has been read
+	band     int64 // the part of reserved that is the band (planBand)
+	started  bool  // Next has been called
+	scanned  bool  // full mode: every scan has been read
 	done     bool
 	err      error
 }
@@ -203,8 +212,19 @@ func Open(r io.Reader, env *pipeline.Env) (pipeline.Source, error) {
 	d.full = d.progressive || d.scan.nComp != d.nComp
 
 	s := &stream{d: d, env: env}
+	if err := s.planBand(); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+// planBand sizes the band for d.scale and reserves its memory; allocBand
+// makes it when the first strip is decoded.
+func (s *stream) planBand() error {
+	d := s.d
 	// Bytes per pixel row across the band buffers, at MCU-padded width.
-	pw := 8 * d.maxH * d.mxx
+	pw := 8 * d.maxH * d.mxx >> d.scale
+	w, h := s.size()
 	rowBytes := int64(pw)
 	if d.nComp > 1 {
 		rowBytes = 3 * int64(pw) // an upper bound for every subsampling
@@ -213,18 +233,30 @@ func Open(r io.Reader, env *pipeline.Env) (pipeline.Source, error) {
 		rowBytes += int64(pw)
 	}
 	if d.nComp == 4 || (d.nComp == 3 && d.isRGB()) {
-		rowBytes += 4 * int64(d.width)
+		rowBytes += 4 * int64(w)
 	}
-	mcuRows := 8 * d.maxV
-	s.k = max(1, pipeline.StripRows(rowBytes, d.height)/mcuRows)
+	mcuRows := 8 * d.maxV >> d.scale
+	s.k = max(1, pipeline.StripRows(rowBytes, h)/mcuRows)
 	if testMCURows > 0 {
 		s.k = testMCURows
 	}
 	need := rowBytes * int64(mcuRows*s.k)
-	if err := env.Budget.Reserve(need, "jpeg band"); err != nil {
-		return nil, err
+	s.env.Budget.Release(s.band)
+	s.reserved -= s.band
+	s.band = 0
+	if err := s.env.Budget.Reserve(need, "jpeg band"); err != nil {
+		return err
 	}
-	s.reserved = need
+	s.reserved += need
+	s.band = need
+	return nil
+}
+
+// allocBand makes the band planBand sized.
+func (s *stream) allocBand() {
+	d := s.d
+	pw := 8 * d.maxH * d.mxx >> d.scale
+	mcuRows := 8 * d.maxV >> d.scale
 	band := image.Rect(0, 0, pw, mcuRows*s.k)
 	if d.nComp == 1 {
 		d.img1 = image.NewGray(band)
@@ -238,7 +270,52 @@ func Open(r io.Reader, env *pipeline.Env) (pipeline.Source, error) {
 	if d.nComp == 4 || (d.nComp == 3 && d.isRGB()) {
 		s.rgba = image.NewRGBA(image.Rect(0, 0, d.width, mcuRows*s.k))
 	}
-	return s, nil
+}
+
+// size is the size of the image as decoded.
+func (s *stream) size() (w, h int) {
+	k := 1<<s.d.scale - 1
+	return (s.d.width + k) >> s.d.scale, (s.d.height + k) >> s.d.scale
+}
+
+// ShrinkOnLoad makes the decoder produce the image reduced by k (2, 4 or 8):
+// each 8×8 block becomes 4×4, 2×2 or 1×1 pixels, the averages of the block's
+// pixels before rounding and clipping, worked out from the coefficients
+// (libjpeg's scaled decoding). The image is ceil(w/k) × ceil(h/k). It must be
+// called before the first Next, and reports false, leaving the image as it
+// is, for CMYK and RGB images and for subsampling other than 4:4:4, 4:2:2,
+// 4:2:0 and 4:4:0.
+func (s *stream) ShrinkOnLoad(k int) bool {
+	d := s.d
+	if s.started || d.flex || d.nComp == 4 || (d.nComp == 3 && d.isRGB()) {
+		return false
+	}
+	if d.nComp == 3 {
+		switch d.ratio {
+		case image.YCbCrSubsampleRatio444, image.YCbCrSubsampleRatio422,
+			image.YCbCrSubsampleRatio420, image.YCbCrSubsampleRatio440:
+		default:
+			return false
+		}
+	}
+	switch k {
+	case 2:
+		d.scale = 1
+	case 4:
+		d.scale = 2
+	case 8:
+		d.scale = 3
+	default:
+		return false
+	}
+	if err := s.planBand(); err != nil {
+		// A smaller band than the one reserved always fits; this is
+		// only for safety.
+		d.scale = 0
+		s.planBand()
+		return false
+	}
+	return true
 }
 
 // nextSegment is one iteration of the marker loop in the standard library's
@@ -325,9 +402,12 @@ func (d *decoder) nextSegment() (sos, eoi bool, err error) {
 	}
 }
 
-func (s *stream) Env() *pipeline.Env      { return s.env }
-func (s *stream) Bounds() image.Rectangle { return image.Rect(0, 0, s.d.width, s.d.height) }
-func (s *stream) Opaque() bool            { return true }
+func (s *stream) Env() *pipeline.Env { return s.env }
+func (s *stream) Bounds() image.Rectangle {
+	w, h := s.size()
+	return image.Rect(0, 0, w, h)
+}
+func (s *stream) Opaque() bool { return true }
 
 // Meta returns the EXIF block and ICC profile found before the first scan.
 func (s *stream) Meta() pipeline.Meta { return s.d.meta }
@@ -454,6 +534,7 @@ func (s *stream) reconstructBand(my0, my1 int) error {
 				if err := d.coef.load(i, bx, by, &b, 0, blockSize-1); err != nil {
 					return err
 				}
+				d.dequantize(&b, i)
 				if err := d.reconstructBlock(&b, bx, by-my0*vi, i); err != nil {
 					return err
 				}
@@ -482,6 +563,10 @@ func (s *stream) Next() (image.Image, error) {
 
 func (s *stream) next() (image.Image, error) {
 	d := s.d
+	if !s.started {
+		s.started = true
+		s.allocBand()
+	}
 	if d.full && !s.scanned {
 		if err := s.scanAll(); err != nil {
 			return nil, err
@@ -519,8 +604,9 @@ func (s *stream) next() (image.Image, error) {
 		}
 		s.done = true
 	}
-	mcuRows := 8 * d.maxV
-	r := image.Rect(0, my0*mcuRows, d.width, min(my1*mcuRows, d.height))
+	mcuRows := 8 * d.maxV >> d.scale
+	w, h := s.size()
+	r := image.Rect(0, my0*mcuRows, w, min(my1*mcuRows, h))
 	return s.finishBand(r), nil
 }
 

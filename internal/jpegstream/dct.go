@@ -353,15 +353,66 @@ func fdctRows(b *block) {
 // Inputs are UQ8.0; outputs are Q10.3.
 func idct(b *block) {
 	// A 2D IDCT is a 1D IDCT on rows followed by columns.
-	idctRows(b)
+	if idctRows(b) > 1 {
+		idctCols(b)
+		return
+	}
+	// Only the first row is non-zero, so every column is constant: what
+	// idctCols computes when x[1234567] are zero.
+	for i := range 8 {
+		v := (b[i] + 1<<19) >> 20
+		for y := range 8 {
+			b[8*y+i] = v
+		}
+	}
+}
+
+// idctStore is idct followed by the level shift by +128, the clip to
+// [0, 255] and the store into dst, whose rows are stride apart.
+func idctStore(b *block, dst []byte, stride int) {
+	_ = dst[7*stride+7]
+	if idctRows(b) <= 1 {
+		var row [8]byte
+		for i := range 8 {
+			row[i] = uint8(max(0, min(255, (b[i]+1<<19)>>20+128)))
+		}
+		for y := range 8 {
+			copy(dst[y*stride:y*stride+8], row[:])
+		}
+		return
+	}
 	idctCols(b)
+	for y := range 8 {
+		d := dst[y*stride : y*stride+8 : y*stride+8]
+		s := b[8*y : 8*y+8 : 8*y+8]
+		d[0] = uint8(max(0, min(255, s[0]+128)))
+		d[1] = uint8(max(0, min(255, s[1]+128)))
+		d[2] = uint8(max(0, min(255, s[2]+128)))
+		d[3] = uint8(max(0, min(255, s[3]+128)))
+		d[4] = uint8(max(0, min(255, s[4]+128)))
+		d[5] = uint8(max(0, min(255, s[5]+128)))
+		d[6] = uint8(max(0, min(255, s[6]+128)))
+		d[7] = uint8(max(0, min(255, s[7]+128)))
+	}
 }
 
 // idctRows applies the 1D IDCT to the rows of b.
 // Inputs are UQ8.0; outputs are Q9.20.
-func idctRows(b *block) {
+// It returns a bit mask of the rows that are not zero. A zero row stays
+// zero, and a row with only x[0] becomes x[0]<<17 throughout: what the
+// arithmetic below gives for them.
+func idctRows(b *block) (rows uint) {
 	for i := range 8 {
 		x := b[8*i : 8*i+8 : 8*i+8]
+		if x[1]|x[2]|x[3]|x[4]|x[5]|x[6]|x[7] == 0 {
+			if x[0] != 0 {
+				v := x[0] << 17
+				x[0], x[1], x[2], x[3], x[4], x[5], x[6], x[7] = v, v, v, v, v, v, v, v
+				rows |= 1 << i
+			}
+			continue
+		}
+		rows |= 1 << i
 		x0 := x[0]
 		x7 := x[1]
 		x2 := x[2]
@@ -441,6 +492,7 @@ func idctRows(b *block) {
 		x[6] = x6
 		x[7] = x7
 	}
+	return rows
 }
 
 // idctCols applies the 1D IDCT to the columns of b.
@@ -518,4 +570,96 @@ func idctCols(b *block) {
 		b[6*8+i] = x6
 		b[7*8+i] = x7
 	}
+}
+
+// The reduced inverse DCTs decode a block straight to 4×4, 2×2 or 1×1
+// pixels, for an image shrunk by 2, 4 or 8 while it is decoded, as libjpeg's
+// jidctred.c does (these are derived afresh). Each pixel is the average of
+// the 2×2, 4×4 or 8×8 pixels of the full IDCT that it stands for, before
+// rounding and clipping.
+//
+// In one dimension the IDCT is x_n = ½ Σ C(u) X_u cos((2n+1)uπ/16), with
+// C(0) = 1/√2 and C(u) = 1 otherwise. The average of x_2k and x_2k+1 is
+// ½ Σ C(u) X_u cos(uπ/16) cos((2k+1)uπ/8). The terms for u and 8−u share the
+// second cosine up to its sign and the term for u = 4 vanishes, which leaves
+// the 4-point IDCT ½ Σ_{u<4} Y_u cos((2k+1)uπ/8) of Y_0 = X_0/√2 and
+// Y_u = cos(uπ/16) X_u − sin(uπ/16) X_8−u. The average of four outputs keeps
+// X_0/√2 and the odd X_u, weighted by m_u, the mean of cos((2n+1)uπ/16) over
+// n = 0 to 3 (the sign flips for the second half). The constants are 13-bit
+// fixed point and the arithmetic is int64, kept unscaled between the passes.
+const (
+	redInvSqrt2 = 5793 // 1/√2
+
+	// cos(π/8)/√2 and sin(π/8)/√2, for Y_2 cos(π/4).
+	red4x2, red4x6 = 5352, 2217
+	// The products of cos(uπ/16) or sin(uπ/16) with cos(π/8) or cos(3π/8).
+	red4o0x1, red4o0x7, red4o0x3, red4o0x5 = 7423, 1477, 2607, 1742
+	red4o1x1, red4o1x7, red4o1x3, red4o1x5 = 3075, 612, 6293, 4205
+
+	// m_1, m_3, m_5 and m_7.
+	red2m1, red2m3, red2m5, red2m7 = 5249, -1843, 1232, -1044
+)
+
+// red4 is the one-dimensional 8-to-4 transform (without the ½).
+func red4(x0, x1, x2, x3, x5, x6, x7 int64) (a0, a1, a2, a3 int64) {
+	e := x0 * redInvSqrt2
+	e2 := x2*red4x2 - x6*red4x6
+	t0, t1 := e+e2, e-e2
+	o0 := x1*red4o0x1 - x7*red4o0x7 + x3*red4o0x3 - x5*red4o0x5
+	o1 := x1*red4o1x1 - x7*red4o1x7 - x3*red4o1x3 + x5*red4o1x5
+	return t0 + o0, t1 + o1, t1 - o1, t0 - o0
+}
+
+// red2 is the one-dimensional 8-to-2 transform (without the ½).
+func red2(x0, x1, x3, x5, x7 int64) (a0, a1 int64) {
+	e := x0 * redInvSqrt2
+	o := x1*red2m1 + x3*red2m3 + x5*red2m5 + x7*red2m7
+	return e + o, e - o
+}
+
+// redPixel turns a sum of the two passes (2^26 times twice the value in
+// each dimension) into a pixel.
+func redPixel(v int64) uint8 {
+	return uint8(max(0, min(255, (v+1<<27)>>28+128)))
+}
+
+// idct4Store stores the 4×4 reduction of the dequantized block b into dst,
+// whose rows are stride apart.
+func idct4Store(b *block, dst []byte, stride int) {
+	_ = dst[3*stride+3]
+	var t [8][4]int64
+	for r := range 8 {
+		x := b[8*r : 8*r+8 : 8*r+8]
+		if r == 4 || x[0]|x[1]|x[2]|x[3]|x[5]|x[6]|x[7] == 0 {
+			continue
+		}
+		t[r][0], t[r][1], t[r][2], t[r][3] = red4(int64(x[0]), int64(x[1]), int64(x[2]), int64(x[3]), int64(x[5]), int64(x[6]), int64(x[7]))
+	}
+	for k := range 4 {
+		a0, a1, a2, a3 := red4(t[0][k], t[1][k], t[2][k], t[3][k], t[5][k], t[6][k], t[7][k])
+		dst[k] = redPixel(a0)
+		dst[stride+k] = redPixel(a1)
+		dst[2*stride+k] = redPixel(a2)
+		dst[3*stride+k] = redPixel(a3)
+	}
+}
+
+// idct2Store stores the 2×2 reduction of b into dst.
+func idct2Store(b *block, dst []byte, stride int) {
+	_ = dst[stride+1]
+	var t [8][2]int64
+	for _, r := range [...]int{0, 1, 3, 5, 7} {
+		x := b[8*r : 8*r+8 : 8*r+8]
+		t[r][0], t[r][1] = red2(int64(x[0]), int64(x[1]), int64(x[3]), int64(x[5]), int64(x[7]))
+	}
+	for k := range 2 {
+		a0, a1 := red2(t[0][k], t[1][k], t[3][k], t[5][k], t[7][k])
+		dst[k] = redPixel(a0)
+		dst[stride+k] = redPixel(a1)
+	}
+}
+
+// idct1Store stores the mean of b's pixels, X_0/8.
+func idct1Store(b *block, dst []byte) {
+	dst[0] = uint8(max(0, min(255, (int64(b[0])+4)>>3+128)))
 }
