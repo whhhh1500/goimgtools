@@ -41,6 +41,12 @@ import (
 // alpha planes takes several times longer for files 10 to 30% smaller.
 const alphaEffort = 4
 
+// alphaPredictorBits makes the lossless encoder choose its predictors for
+// blocks of 16x16 pixels at least: an alpha plane is simple, and the modes
+// of smaller blocks cost more than they save (Tux 5% smaller; libwebp
+// uses 32x32 at its default effort).
+const alphaPredictorBits = 4
+
 // alphaBudget is the most memory the lossless encoder takes for an alpha
 // plane. It is held for as long as the plane is coded, just after the
 // image is read, when little else is.
@@ -126,7 +132,7 @@ func (e *encoder) codeAlphaWith(method int) (*alphaLL, error) {
 		pix: make([]uint8, 4*e.w*rows), cur: make([]uint8, e.w), prev: make([]uint8, e.w)}
 	e.alpha.rewind(e.readBuf)
 	st := newStore(e.env)
-	if err := vp8lenc.Encode(st, src, &vp8lenc.Options{Effort: alphaEffort}); err != nil {
+	if err := vp8lenc.Encode(st, src, &vp8lenc.Options{Effort: alphaEffort, PredictorBits: alphaPredictorBits}); err != nil {
 		st.Close()
 		return nil, err
 	}

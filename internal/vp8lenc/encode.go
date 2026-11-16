@@ -44,6 +44,11 @@ type Options struct {
 	// Effort trades speed for size: 1 is the fastest, 9 gives the smallest
 	// files. Zero means the default (5).
 	Effort int
+	// PredictorBits, when set, is the log2 of the smallest blocks the
+	// predictor is chosen for (2, blocks of 4x4 pixels, by default): larger
+	// blocks suit simple images, an alpha plane, whose predictor modes
+	// cost more than they save in small blocks.
+	PredictorBits int
 }
 
 // DefaultEffort is used when Options is nil or Effort is zero.
@@ -71,6 +76,7 @@ type params struct {
 	groupIter  int     // refinement replays after the first grouping
 	optimal    bool    // the optimal parse for the predictor and colour table variants
 	optimalRaw bool    // and for the others
+	predBits   uint    // log2 of the smallest predictor blocks, if not the default
 }
 
 // The predictor modes in the order they are tried; on a tie the earlier
@@ -151,6 +157,9 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 		effort = o.Effort
 	}
 	e := &encoder{env: pipeline.EnvOf(src), out: w, w: b.Dx(), h: b.Dy(), p: paramsFor(effort)}
+	if o != nil && o.PredictorBits > 0 {
+		e.p.predBits = uint(min(max(o.PredictorBits, 2), 9))
+	}
 	defer e.close()
 	return e.encode(src)
 }

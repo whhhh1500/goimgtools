@@ -3,6 +3,8 @@ package vp8lenc
 import (
 	"math/rand/v2"
 	"testing"
+
+	"github.com/whhhh1500/goimgtools/internal/testutil"
 )
 
 // TestMatchAt checks the remembered ends of matches against comparing the
@@ -49,6 +51,17 @@ func TestMatchAt(t *testing.T) {
 					t.Fatalf("round %d: at %d, distance %d, limit %d: %d, want %d", round, p, d, limit, got, want)
 				}
 			}
+		}
+	}
+}
+
+// TestPredictorBits: larger predictor blocks give files that decode to the
+// same pixels.
+func TestPredictorBits(t *testing.T) {
+	imgs := testutil.Images(67, 45)
+	for _, name := range []string{"nrgba", "rgba-opaque", "gray", "paletted"} {
+		for _, bits := range []int{2, 3, 4, 5, 9} {
+			roundTrip(t, name, imgs[name], 7, &Options{Effort: 4, PredictorBits: bits})
 		}
 	}
 }

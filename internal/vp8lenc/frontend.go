@@ -165,6 +165,9 @@ func (f *frontend) init(palette []uint32, sg int, share int64) error {
 			if f.kind != kindARGB {
 				least = 3 // single-channel residuals are cheap; modes weigh more
 			}
+			if e.p.predBits > 0 {
+				least = max(least, e.p.predBits)
+			}
 			bits := predictorBits(sw, h, least)
 			// The band holds whole block rows; its residuals are held
 			// too, and a row of scratch for each block row.
