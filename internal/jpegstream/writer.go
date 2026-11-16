@@ -861,8 +861,8 @@ type Options struct {
 	// smaller. The entropy-coded data is staged (see writer_opt.go).
 	Optimize bool
 	// Progressive writes a progressive JPEG (spectral selection and
-	// successive approximation, libjpeg's default scan script) with
-	// optimized tables. The pixels a decoder gets are again the same. The
+	// successive approximation, the scan script searched for as mozjpeg
+	// does; see writer_progsearch.go) with optimized tables. The pixels a decoder gets are again the same. The
 	// quantized coefficients are staged (see writer_prog.go).
 	Progressive bool
 	// Trellis chooses the quantized coefficients to trade fidelity for

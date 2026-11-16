@@ -71,7 +71,7 @@ func TestSameOnEveryProcessor(t *testing.T) {
 		{"jpeg", func() ([]byte, error) { return photo.Clone().JPEG(83).ToBytes() }, "72272b88c25cc018"},
 		{"jpeg progressive", func() ([]byte, error) {
 			return photo.Clone().JPEG(83, JPEGOptions{Progressive: true, Optimize: true}).ToBytes()
-		}, "cdbc714acfd0afd3"},
+		}, "15fdeecd80749ec2"},
 		{"jpeg trellis", func() ([]byte, error) {
 			return photo.Clone().JPEG(77, JPEGOptions{Optimize: true, Trellis: true}).ToBytes()
 		}, "1e6064dbc5840d3a"},

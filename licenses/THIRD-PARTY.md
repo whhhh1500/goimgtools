@@ -66,6 +66,14 @@ see the section above and `LICENSE-LIBJPEG-TURBO`). The port works on this
 package's blocks and reads its bit costs from the standard Huffman tables;
 nothing of the original file is included unchanged.
 
+`internal/jpegstream/writer_progsearch.go` follows mozjpeg's search for
+the progressive scan script (`jcparam.c`: `jpeg_search_progression`, the
+candidate scans; `jcmaster.c`: `select_scans`, how the bit depth and the
+band split are chosen and the order of the chosen scans), under the same
+licences. It was rewritten for this package, which prices a candidate by
+counting its symbols rather than encoding it; nothing of the original
+files is included unchanged.
+
 `internal/jpegstream/qtables.go` holds the nine quantization tables of
 mozjpeg's `jcparam.c` (`std_luminance_quant_tbl`,
 `std_chrominance_quant_tbl`), generated from that file, under the same

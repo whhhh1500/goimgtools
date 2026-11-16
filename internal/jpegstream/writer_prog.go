@@ -16,8 +16,8 @@ package jpegstream
 // quantized. After the pixel pass each scan reads back the rows of its
 // components once and writes them.
 //
-// The scan script is jpeg_simple_progression's and the coding of a scan
-// (EOB runs, correction bits of refinement scans) is a port of jcphuff.c,
+// The scan script is searched for (see writer_progsearch.go); the coding of
+// a scan (EOB runs, correction bits of refinement scans) is a port of jcphuff.c,
 // both from the Independent JPEG Group's library as kept in libjpeg-turbo
 // (jcparam.c, jcphuff.c; copyright 1991-1997 Thomas G. Lane, libjpeg-turbo
 // modifications copyright D. R. Commander and others; IJG and BSD-style
@@ -39,6 +39,22 @@ type progComp struct {
 	bw, bh int // the component's real size in blocks: what a scan of this component alone covers
 	off    int // offset of the component's blocks in the MCU row
 	buf    []byte
+	// last is, for each block of buf, the zig-zag index of its last
+	// nonzero coefficient (0 when only DC may be): beyond it a scan only
+	// counts zeros.
+	last []uint8
+}
+
+// findLast sets c.last for the blocks in c.buf.
+func (c *progComp) findLast() {
+	for i := range c.last {
+		w := c.buf[i*blockSize*2 : (i+1)*blockSize*2]
+		k := blockSize - 1
+		for k > 0 && w[2*k] == 0 && w[2*k+1] == 0 {
+			k--
+		}
+		c.last[i] = uint8(k)
+	}
 }
 
 // progStore holds the quantized coefficients.
@@ -54,14 +70,19 @@ func (st *progStore) rowOff(m int) int64 { return int64(m) * int64(len(st.row)) 
 // loadRow reads MCU row m of the given components.
 func (st *progStore) loadRow(m int, comps []int) error {
 	if len(comps) == len(st.comp) {
-		_, err := st.sc.ReadAt(st.row, st.rowOff(m))
-		return err
-	}
-	for _, ci := range comps {
-		c := &st.comp[ci]
-		if _, err := st.sc.ReadAt(c.buf, st.rowOff(m)+int64(c.off)); err != nil {
+		if _, err := st.sc.ReadAt(st.row, st.rowOff(m)); err != nil {
 			return err
 		}
+	} else {
+		for _, ci := range comps {
+			c := &st.comp[ci]
+			if _, err := st.sc.ReadAt(c.buf, st.rowOff(m)+int64(c.off)); err != nil {
+				return err
+			}
+		}
+	}
+	for _, ci := range comps {
+		st.comp[ci].findLast()
 	}
 	return nil
 }
@@ -81,7 +102,8 @@ type progScan struct {
 	ss, se, ah, al int
 
 	e      *encoder
-	gather bool // count symbols instead of writing
+	gather bool  // count symbols instead of writing
+	extra  int64 // in counting mode, the bits besides the codes
 	// Statistics and codes, by table number: 0 luma, 1 chroma.
 	freq   [2][257]int64
 	lut    [2]codeLUT
@@ -94,37 +116,6 @@ type progScan struct {
 	corr   [maxCorrBits]byte
 }
 
-// progScript is libjpeg's jpeg_simple_progression.
-func progScript(nComponent int) []*progScan {
-	all := []int{0}
-	if nComponent == 3 {
-		all = []int{0, 1, 2}
-	}
-	y, cb, cr := []int{0}, []int{1}, []int{2}
-	if nComponent == 3 {
-		return []*progScan{
-			{comps: all, ss: 0, se: 0, ah: 0, al: 1}, // DC, all but the last bit
-			{comps: y, ss: 1, se: 5, ah: 0, al: 2},   // some luma soon
-			{comps: cr, ss: 1, se: 63, ah: 0, al: 1}, // chroma is small: one scan each
-			{comps: cb, ss: 1, se: 63, ah: 0, al: 1}, //
-			{comps: y, ss: 6, se: 63, ah: 0, al: 2},  // the rest of luma
-			{comps: y, ss: 1, se: 63, ah: 2, al: 1},  // next bit of luma
-			{comps: all, ss: 0, se: 0, ah: 1, al: 0}, // last bit of DC
-			{comps: cr, ss: 1, se: 63, ah: 1, al: 0}, // last bit of chroma
-			{comps: cb, ss: 1, se: 63, ah: 1, al: 0}, //
-			{comps: y, ss: 1, se: 63, ah: 1, al: 0},  // last bit of luma: the largest scan
-		}
-	}
-	return []*progScan{
-		{comps: all, ss: 0, se: 0, ah: 0, al: 1},
-		{comps: y, ss: 1, se: 5, ah: 0, al: 2},
-		{comps: y, ss: 6, se: 63, ah: 0, al: 2},
-		{comps: y, ss: 1, se: 63, ah: 2, al: 1},
-		{comps: all, ss: 0, se: 0, ah: 1, al: 0},
-		{comps: y, ss: 1, se: 63, ah: 1, al: 0},
-	}
-}
-
 func (s *progScan) symbol(t int, v uint8) {
 	if s.gather {
 		s.freq[t][v]++
@@ -135,7 +126,11 @@ func (s *progScan) symbol(t int, v uint8) {
 
 // putBits writes the low n bits of v.
 func (s *progScan) putBits(v uint32, n uint32) {
-	if s.gather || n == 0 {
+	if s.gather {
+		s.extra += int64(n)
+		return
+	}
+	if n == 0 {
 		return
 	}
 	s.e.emit(v&(1<<n-1), n)
@@ -143,6 +138,7 @@ func (s *progScan) putBits(v uint32, n uint32) {
 
 func (s *progScan) putCorr(p []byte) {
 	if s.gather {
+		s.extra += int64(len(p))
 		return
 	}
 	for _, b := range p {
@@ -183,10 +179,12 @@ func (s *progScan) dcRefine(w []byte) {
 	s.putBits(uint32(coefAt(w, 0)>>s.al)&1, 1)
 }
 
-// acFirst codes coefficients ss to se without their low al bits.
-func (s *progScan) acFirst(t int, w []byte) {
+// acFirst codes coefficients ss to se without their low al bits; those
+// after last are zero.
+func (s *progScan) acFirst(t int, w []byte, last int) {
 	r := 0
-	for k := s.ss; k <= s.se; k++ {
+	end := min(s.se, last)
+	for k := s.ss; k <= end; k++ {
 		v := coefAt(w, k)
 		if v == 0 {
 			r++
@@ -217,6 +215,9 @@ func (s *progScan) acFirst(t int, w []byte) {
 		s.putBits(uint32(b), n)
 		r = 0
 	}
+	if end < s.se {
+		r += s.se - max(end, s.ss-1)
+	}
 	if r > 0 {
 		s.eobRun++
 		if s.eobRun == 0x7fff {
@@ -228,11 +229,12 @@ func (s *progScan) acFirst(t int, w []byte) {
 // acRefine sends bit al of coefficients ss to se: for a coefficient that
 // was already nonzero a correction bit, for one that becomes nonzero now a
 // symbol with the run of still-zero coefficients before it.
-func (s *progScan) acRefine(t int, w []byte) {
+func (s *progScan) acRefine(t int, w []byte, last int) {
 	var abs [blockSize]int32
 	// eob is the last coefficient that becomes nonzero in this scan.
 	eob := 0
-	for k := s.ss; k <= s.se; k++ {
+	end := min(s.se, last)
+	for k := s.ss; k <= end; k++ {
 		a := coefAt(w, k)
 		if a < 0 {
 			a = -a
@@ -246,7 +248,7 @@ func (s *progScan) acRefine(t int, w []byte) {
 	// This block's correction bits are corr[start:start+nbr]: after those of
 	// the pending EOB run, or at the front once that run has been written.
 	r, start, nbr := 0, s.be, 0
-	for k := s.ss; k <= s.se; k++ {
+	for k := s.ss; k <= end; k++ {
 		a := abs[k]
 		if a == 0 {
 			r++
@@ -277,6 +279,9 @@ func (s *progScan) acRefine(t int, w []byte) {
 		s.putCorr(s.corr[start : start+nbr])
 		start, nbr = 0, 0
 		r = 0
+	}
+	if end < s.se {
+		r += s.se - max(end, s.ss-1)
 	}
 	if r > 0 || nbr > 0 {
 		s.eobRun++
@@ -324,10 +329,11 @@ func (s *progScan) mcuRow(st *progStore, m int) {
 		for bx := 0; bx < c.bw; bx++ {
 			o := (r*c.stride + bx) * blockBytes
 			w := c.buf[o : o+blockBytes : o+blockBytes]
+			last := int(c.last[r*c.stride+bx])
 			if s.ah == 0 {
-				s.acFirst(t, w)
+				s.acFirst(t, w, last)
 			} else {
-				s.acRefine(t, w)
+				s.acRefine(t, w, last)
 			}
 		}
 	}
@@ -408,14 +414,17 @@ func (e *encoder) writeProgressive(src pipeline.Source, first image.Image, size 
 		st.comp[i].off = rowBytes
 		rowBytes += st.comp[i].stride * st.comp[i].v * blockBytes
 	}
-	if err := env.Budget.Reserve(int64(rowBytes), "jpeg coefficient row"); err != nil {
+	// The row, and the index of the last nonzero coefficient of each block.
+	need := int64(rowBytes) + int64(rowBytes/blockBytes)
+	if err := env.Budget.Reserve(need, "jpeg coefficient row"); err != nil {
 		return err
 	}
-	defer env.Budget.Release(int64(rowBytes))
+	defer env.Budget.Release(need)
 	st.row = make([]byte, rowBytes)
 	for i := range st.comp {
 		c := &st.comp[i]
 		c.buf = st.row[c.off : c.off+c.stride*c.v*blockBytes]
+		c.last = make([]uint8, c.stride*c.v)
 	}
 	sc, err := pipeline.NewScratch(env, int64(rowBytes)*int64(st.myy))
 	if err != nil {
@@ -424,10 +433,8 @@ func (e *encoder) writeProgressive(src pipeline.Source, first image.Image, size 
 	defer sc.Close()
 	st.sc = sc
 
-	scans := progScript(nComponent)
-	for _, s := range scans {
-		s.e, s.gather = e, true
-	}
+	search := newProgSearch(e, nComponent)
+	counted := search.counted()
 
 	e.writeSOF(sof2Marker, size, nComponent)
 
@@ -441,9 +448,11 @@ func (e *encoder) writeProgressive(src pipeline.Source, first image.Image, size 
 			passErr = err
 			return
 		}
-		for _, s := range scans {
-			s.mcuRow(st, m)
+		for i := range st.comp {
+			st.comp[i].findLast()
 		}
+		// The scans count on their own: on as many cores as are free.
+		env.Parallel(len(counted), func(i int) { counted[i].mcuRow(st, m) })
 		m, mx = m+1, 0
 	}
 	err = e.quantBlocks(src, first, func(zz *qblock, comp int) {
@@ -481,12 +490,26 @@ func (e *encoder) writeProgressive(src pipeline.Source, first image.Image, size 
 	if err != nil {
 		return err
 	}
-	for _, s := range scans {
+	for _, s := range counted {
+		s.finish()
+	}
+
+	// The band splits, once the bits left to refinement are chosen: one
+	// more pass over the coefficients.
+	splits := search.splitScans()
+	all := []int{0, 1, 2}[:nComponent]
+	for m := 0; m < st.myy; m++ {
+		if err := st.loadRow(m, all); err != nil {
+			return err
+		}
+		env.Parallel(len(splits), func(i int) { splits[i].mcuRow(st, m) })
+	}
+	for _, s := range splits {
 		s.finish()
 	}
 
 	// The scans.
-	for _, s := range scans {
+	for _, s := range search.script() {
 		s.gather = false
 		s.writeHeader()
 		for m := 0; m < st.myy; m++ {

@@ -184,7 +184,9 @@ type JPEGOptions struct {
 	// the standard ones.
 	Optimize bool
 	// Progressive writes a progressive JPEG, which is smaller still (it
-	// includes Optimize) and shows coarse to fine while it loads.
+	// includes Optimize) and shows coarse to fine while it loads. Its scans
+	// are chosen as mozjpeg chooses them, for the smallest file; that takes
+	// some more time, shared among the Threads.
 	Progressive bool
 	// Trellis chooses each quantized coefficient to save bits where the
 	// eye loses least, as mozjpeg does ("trellis quantization"): a smaller
