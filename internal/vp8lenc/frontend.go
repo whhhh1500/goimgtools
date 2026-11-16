@@ -66,7 +66,14 @@ type frontend struct {
 
 	tok    *tokenizer
 	tokens *pipeline.Spill
-	hi     uint32 // alpha, red and blue of the stream's 1-byte literals
+	// For small images, the same pixels are also coded with matches only
+	// at distance 1 and a row up, taken greedily (processRLE), and the
+	// smaller of the two streams is kept: on icons and drawings of few
+	// colours, the cheap codes of those two distances can beat the best
+	// matches found anywhere (an icon 4% smaller).
+	rleTok    *tokenizer
+	rleTokens *pipeline.Spill
+	hi        uint32 // alpha, red and blue of the stream's 1-byte literals
 
 	mem     int64 // budget held
 	passOne int64 // the part of mem pass two does not need
@@ -92,6 +99,11 @@ func (f *frontend) close() {
 		f.tokens.Close()
 		f.tokens = nil
 	}
+	if f.rleTokens != nil {
+		f.rleTokens.Close()
+		f.rleTokens = nil
+	}
+	f.rleTok = nil
 	f.band, f.res, f.resBand, f.tmps, f.modes, f.tok, f.ccodes, f.cc = nil, nil, nil, nil, nil, nil, nil, nil
 	f.e.unreserve(f.mem)
 	f.mem = 0
@@ -281,6 +293,27 @@ func (f *frontend) init(palette []uint32, sg int, share int64) error {
 		f.tok.box = boxDistances(f.sw, boxCodes)
 	}
 	f.tok.lit1 = litBytes == 1
+	if e.p.rleAlt && !f.pred && int64(e.w)*int64(e.h) <= smallMaxPixels {
+		// Only for the variants without the predictor: on residuals it has
+		// not been seen to pay, and the second stream is held to the end.
+		// Its window need hold a row and a pixel only. It is left out when
+		// memory is short: the variant does without it.
+		rw := 16
+		for rw <= f.sw {
+			rw *= 2
+		}
+		rw = min(rw, window)
+		nbuf, nhead, nprev := tokenizerSizes(f.total, rw)
+		if need := int64(nbuf+nhead+nprev)*4 + tokenFlush + 1024 + matchEndBytes; need <= e.avail()/(4*share) {
+			if err := f.reserve(need, "webp LZ77 window"); err != nil {
+				return err
+			}
+			f.rleTokens = pipeline.NewSpill(e.env)
+			e.expect(f.rleTokens, f.total*litBytes+f.total*litBytes/255+64)
+			f.rleTok = newTokenizer(f.sw, f.total, rw, nil, f.rleTokens, newStats(e.p.cache))
+			f.rleTok.rle, f.rleTok.lit1 = true, f.tok.lit1
+		}
+	}
 	f.tok.chain, f.tok.nice, f.tok.lazy = e.p.chain, e.p.nice, e.p.lazy
 	if !f.pred && f.kind != kindIndex {
 		f.tok.chain, f.tok.nice = e.p.chainRaw, e.p.niceRaw
@@ -296,7 +329,7 @@ func (f *frontend) feedRow(row []uint32) error {
 		for i, p := range row {
 			res[i] = subGreen(p)
 		}
-		return f.tok.push(res)
+		return f.push(res)
 	}
 	dst := f.band[(1+f.nrows)*f.sw:][:f.sw]
 	if f.sg {
@@ -339,7 +372,7 @@ func (f *frontend) feedIndex(idx []byte) error {
 	if f.banded {
 		return f.rowDone()
 	}
-	return f.tok.push(dst)
+	return f.push(dst)
 }
 
 func (f *frontend) rowDone() error {
@@ -423,7 +456,7 @@ func (f *frontend) flush() error {
 	w := f.sw
 	if !f.pred {
 		for r := 1; r <= f.nrows; r++ {
-			if err := f.tok.push(f.band[r*w : (r+1)*w]); err != nil {
+			if err := f.push(f.band[r*w : (r+1)*w]); err != nil {
 				return err
 			}
 		}
@@ -467,7 +500,7 @@ func (f *frontend) flush() error {
 		f.crossBand()
 	}
 	for i := 0; i < f.nrows; i++ {
-		if err := f.tok.push(f.resBand[off+i*w : off+(i+1)*w]); err != nil {
+		if err := f.push(f.resBand[off+i*w : off+(i+1)*w]); err != nil {
 			return err
 		}
 	}
@@ -485,6 +518,11 @@ func (f *frontend) finish() error {
 	}
 	if err := f.tok.finish(); err != nil {
 		return err
+	}
+	if f.rleTok != nil {
+		if err := f.rleTok.finish(); err != nil {
+			return err
+		}
 	}
 	f.band, f.res, f.resBand, f.tmps = nil, nil, nil, nil
 	f.tok.head, f.tok.prev, f.tok.obuf, f.tok.opt = nil, nil, nil, nil
@@ -541,4 +579,31 @@ func (f *frontend) crossBand() {
 		}
 	}
 	copy(buf[:w], buf[f.nrows*w:(f.nrows+1)*w])
+}
+
+// push hands a row of the stream to the tokenizers.
+func (f *frontend) push(row []uint32) error {
+	if f.rleTok != nil {
+		if err := f.rleTok.push(row); err != nil {
+			return err
+		}
+	}
+	return f.tok.push(row)
+}
+
+// useRLE makes the stream with runs and copies from a row up the
+// variant's stream, the other's memory freed.
+func (f *frontend) useRLE() {
+	f.dropBuf()
+	f.tokens.Close()
+	f.tok, f.tokens = f.rleTok, f.rleTokens
+	f.rleTok, f.rleTokens = nil, nil
+}
+
+// dropRLE frees the stream with runs and copies from a row up.
+func (f *frontend) dropRLE() {
+	if f.rleTokens != nil {
+		f.rleTokens.Close()
+	}
+	f.rleTok, f.rleTokens = nil, nil
 }

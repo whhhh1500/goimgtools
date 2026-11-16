@@ -242,6 +242,10 @@ of libwebp's `BackwardReferencesLz77Box` (the same file's
 `GetBestGreenRedToBlue`, `PredictionCostCrossColor`; `src/dsp/lossless_enc.c`:
 `VP8LTransformColor`), rewritten in Go with its costs in fixed point.
 
+`processRLE` in `internal/vp8lenc/lz77.go` takes matches only at distance 1
+and a row up, greedily, as libwebp's `BackwardReferencesRle`
+(`src/enc/backward_references_enc.c`) does.
+
 `internal/vp8lenc/rle.go` evens out the counts of a prefix code before
 its lengths are made, as libwebp's `OptimizeHuffmanForRle`
 (`src/utils/huffman_encode_utils.c`) does, and `writeTree` in

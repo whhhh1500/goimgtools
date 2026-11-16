@@ -286,6 +286,7 @@ type tokenizer struct {
 	// The run of equal pixels the last search was in: it started at
 	// stream position runFrom, and the search was at runAt-1 (0: none).
 	runAt, runFrom int
+	rle            bool // matches only at distance 1 and a row up, greedily (processRLE)
 	// box lists the distances to the nearest pixels above and to the left
 	// whose codes are the cheapest (but 1 and width), cheapest first.
 	box []int
@@ -620,6 +621,10 @@ func (t *tokenizer) copyRef(pos, length, dist int) {
 // process encodes the buffered pixels. Unless final, it stops short of the
 // end so that every match search sees a full look-ahead.
 func (t *tokenizer) process(final bool) {
+	if t.rle {
+		t.processRLE(final)
+		return
+	}
 	if t.opt != nil {
 		t.processOptimal(final)
 		return
@@ -695,3 +700,41 @@ func (t *tokenizer) finish() error {
 	t.flushOut()
 	return t.err
 }
+
+// processRLE is process with matches only at distance 1 (runs) and one row
+// up, taken greedily: the longer of the two, the run on a tie, if 4 pixels
+// or more long, else a literal (libwebp's BackwardReferencesRle,
+// src/enc/backward_references_enc.c).
+func (t *tokenizer) processRLE(final bool) {
+	end := t.base + t.n
+	stop := end
+	if !final {
+		stop -= maxMatch + 2
+	}
+	for t.cur < stop {
+		pos := t.cur
+		p := pos - t.base
+		limit := min(maxMatch, t.n-p)
+		run, up := 0, 0
+		if p >= 1 {
+			run = t.matchAt(p, 1, limit)
+		}
+		if w := t.width; p >= w && w <= t.maxDist {
+			up = t.matchAt(p, w, limit)
+		}
+		switch {
+		case run >= up && run >= rleMin:
+			t.copyRef(pos, run, 1)
+			t.cur += run
+		case up >= rleMin:
+			t.copyRef(pos, up, t.width)
+			t.cur += up
+		default:
+			t.literal(pos)
+			t.cur++
+		}
+	}
+}
+
+// rleMin is the shortest copy processRLE takes.
+const rleMin = 4

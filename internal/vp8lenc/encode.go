@@ -84,6 +84,7 @@ type params struct {
 	predBits   uint    // log2 of the smallest predictor blocks, if not the default
 	cross      bool    // a variant with the cross-color transform, for images of many colours
 	regroup    bool    // the split into Huffman groups is tried without the colour cache too
+	rleAlt     bool    // each variant also codes its stream with runs and copies from a row up
 }
 
 // The predictor modes in the order they are tried; on a tie the earlier
@@ -96,7 +97,7 @@ var (
 
 func paramsFor(effort int) params {
 	p := params{lazy: effort >= 3, variants: 5, dropRatio: 1.15, optimal: effort >= DefaultEffort, optimalRaw: effort >= DefaultEffort,
-		cross: effort >= DefaultEffort, regroup: effort >= DefaultEffort}
+		cross: effort >= DefaultEffort, regroup: effort >= DefaultEffort, rleAlt: effort >= DefaultEffort}
 	switch {
 	case effort <= 1:
 		p.modes, p.dropRatio = modesFast, 1
@@ -386,6 +387,11 @@ const raceMem = 3 << 19
 // larger, and on a large photograph, which it does not help, the variant
 // would add 2MB to the peak of memory, all variants starting together.
 const crossMaxPixels = 1 << 22
+
+// smallMaxPixels bounds the images whose variants also code their stream
+// with runs and copies from a row up (see frontend.rleTok): icons and
+// drawings, which it helps, are seldom larger.
+const smallMaxPixels = 1 << 22
 
 // testCrossOnly makes the cross-color variant the only one, for tests.
 var testCrossOnly bool

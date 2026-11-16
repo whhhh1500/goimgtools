@@ -75,6 +75,14 @@ type plan struct {
 	totalBits int64 // exact size of the VP8L bitstream
 }
 
+// testRLE makes the stream of runs and copies from a row up the one kept,
+// for tests.
+var testRLE bool
+
+// rleMargin is how far ahead the stream of runs and copies from a row up
+// must be to be kept.
+const rleMargin = 1.02
+
 // regroupMaxPixels bounds the images whose split into Huffman groups is
 // tried without the colour cache too: on a photograph of 24 megapixels the
 // second split takes 2s and 4MB more, and has not been seen to pay.
@@ -307,6 +315,25 @@ func (e *encoder) write(rc *race, alpha bool) error {
 		p, err := e.plan(f, alpha)
 		if err != nil {
 			return err
+		}
+		if f.rleTok != nil {
+			// The stream of runs and copies from a row up, if smaller.
+			main := f.tok
+			f.tok = f.rleTok
+			q, err := e.plan(f, alpha)
+			f.tok = main
+			if err != nil {
+				return err
+			}
+			// It has to be well ahead: the split into Huffman groups,
+			// which comes after, favours the other on photographs (one
+			// 0.7% ahead here came out 0.6% behind).
+			if float64(q.totalBits)*rleMargin < float64(p.totalBits) || testRLE {
+				f.useRLE()
+				q.f, p = f, q
+			} else {
+				f.dropRLE()
+			}
 		}
 		if best == nil || p.weighed() < best.weighed() {
 			if best != nil {

@@ -241,3 +241,15 @@ func TestCrossColor(t *testing.T) {
 	plain := len(roundTrip(t, "gradient", grad, 7, &Options{Effort: 5}))
 	t.Logf("gradient: %d bytes with the transform, %d without", sizes["gradient"], plain)
 }
+
+// TestRLE codes images with matches only at distance 1 and a row up: the
+// files decode to the same pixels, whatever the strips and the variant.
+func TestRLE(t *testing.T) {
+	testRLE = true
+	defer func() { testRLE = false }()
+	for name, m := range testutil.Images(61, 39) {
+		for _, n := range []int{1, 5, 64} {
+			roundTrip(t, name, m, n, &Options{Effort: 5})
+		}
+	}
+}
