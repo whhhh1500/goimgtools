@@ -281,7 +281,13 @@ func TestFastShrinkOnLoad(t *testing.T) {
 						}
 					}
 				}
-				if mean := float64(sum) / float64(n); mean > 2 {
+				// Shrunk to 2 pixels across, the picture whose planes are
+				// scaled differs by 2.2 levels (1.75 with an RGBA scale).
+				limit := 2.0
+				if r.Dx() < 4 {
+					limit = 2.5
+				}
+				if mean := float64(sum) / float64(n); mean > limit {
 					t.Errorf("%v gray=%v box %d: mean difference %.2f levels", size, gray, box, mean)
 				}
 			}

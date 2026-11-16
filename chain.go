@@ -58,6 +58,11 @@ func (r *run) fits(w, h int) error {
 type preShrunk struct {
 	orig image.Point
 	k    int
+	// planes: the strips are Gray (gray) or YCbCr of ratio, which the
+	// resize can scale plane by plane (resize.ScalePlanes).
+	planes bool
+	gray   bool
+	ratio  image.YCbCrSubsampleRatio
 }
 
 // turnOp is Rotate, Flip or Flop.
@@ -141,7 +146,14 @@ func (z resizeOp) resize(src pipeline.Source, turn ops.Orientation, pre preShrun
 	out := src
 	if iw != b.Dx() || ih != b.Dy() || pre.k > 1 {
 		var err error
-		if out, err = resize.ScaleExtent(src, iw, ih, z.kernel, ew, eh); err != nil {
+		if pre.k > 1 && pre.planes {
+			// The pixels of FastShrinkOnLoad already differ a little:
+			// the planes are scaled as they are, in fixed point.
+			out, err = resize.ScalePlanes(src, iw, ih, z.kernel, ew, eh, pre.ratio, pre.gray)
+		} else {
+			out, err = resize.ScaleExtent(src, iw, ih, z.kernel, ew, eh)
+		}
+		if err != nil {
 			return nil, err
 		}
 	}

@@ -143,6 +143,11 @@ func (m *Image) buildFrom(env *pipeline.Env, top bool, f *input, format string, 
 		if z, turn, ok := firstResize(m.chain, r); ok && z.spec.o.FastShrinkOnLoad && (len(m.hooks) == 0 || turn == ops.Upright && len(m.chain) > 0 && isResize(m.chain[0])) {
 			if k := shrinkFactor(src, z.spec, turn); k > 1 {
 				pre = preShrunk{orig: src.Bounds().Size(), k: k}
+				if j, ok := src.(interface {
+					Subsampling() (image.YCbCrSubsampleRatio, bool, bool)
+				}); ok {
+					pre.ratio, pre.gray, pre.planes = j.Subsampling()
+				}
 				// The decoder reduces the blocks as it decodes them;
 				// failing that, the decoded pixels are averaged.
 				if j, ok := src.(interface{ ShrinkOnLoad(k int) bool }); !ok || !j.ShrinkOnLoad(k) {
