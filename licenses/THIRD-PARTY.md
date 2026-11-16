@@ -120,6 +120,11 @@ Apache License 2.0, copyright 2011 Google Inc. The full text, as
 github.com/google/zopfli distributes it (commit df1517d), is in
 `LICENSE-ZOPFLI`, next to this file; zopfli has no NOTICE file.
 
+`internal/deflate/entropy.go` prices the symbols of a parse at their
+entropy under the last pass's frequencies, as zopfli's cost model does
+(`src/zopfli/squeeze.c`: `GetCostStat`, `CalculateStatistics`), in fixed
+point.
+
 `internal/deflate/split.go` splits the blocks of deflate as zopfli does
 (`src/zopfli/blocksplitter.c`: `ZopfliBlockSplitLZ77`, `FindMinimum`,
 `FindLargestSplittableBlock`; the size of a part estimated as

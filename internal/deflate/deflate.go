@@ -78,10 +78,13 @@ type Params struct {
 	// statistics of the data change, after a parse with SplitPasses
 	// passes at most (see split.go), and also tries the codes of each
 	// block with their counts evened out for the header, as zopfli does
-	// (see evenForRLE).
-	NoSkip      bool
-	SplitByCost bool
-	SplitPasses int
+	// (see evenForRLE). EntropyCosts prices the symbols, from the second
+	// pass on, at their entropy rather than at the length of their codes,
+	// as zopfli does (see entropy.go).
+	NoSkip       bool
+	SplitByCost  bool
+	SplitPasses  int
+	EntropyCosts bool
 }
 
 // Level10, Level11 and Level12 are libdeflate's levels 10 to 12, but for

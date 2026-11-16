@@ -71,14 +71,16 @@ const (
 // Measured on the filtered rows of three screenshots and three
 // photographs, against libdeflate's settings: level 8 0.75% smaller in
 // 25% more time; level 9 1% smaller (screenshots 3 to 4.5%, within 0.4
-// to 1.7% of zopfli with 15 iterations), in 3.5 times the time.
+// to 1.7% of zopfli with 15 iterations), in 3.5 times the time. Pricing
+// the symbols at their entropy, as zopfli does, makes level 8 another
+// 0.07% smaller and level 9 0.18% (17 images; 9 takes 18% longer).
 var nearLevels = map[int]deflate.Params{
 	8: withSplit(withBlocks(deflate.Level10, 128<<10), false, 1),
 	9: withSplit(withBlocks(deflate.Level12, zBlockBytes), true, 2),
 }
 
 func withSplit(p deflate.Params, noSkip bool, passes int) deflate.Params {
-	p.SplitByCost, p.SplitPasses, p.NoSkip = true, passes, noSkip
+	p.SplitByCost, p.SplitPasses, p.NoSkip, p.EntropyCosts = true, passes, noSkip, true
 	return p
 }
 

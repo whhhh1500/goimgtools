@@ -303,7 +303,11 @@ func (c *Compressor) optimizeBlock(block []byte, cacheEnd int, initial func()) (
 		}
 		bestTrueCost = trueCost
 		c.costsSaved = c.costs
-		c.setCostsFromCodes(&c.codes.litlenLens, &c.codes.offsetLens)
+		if c.p.EntropyCosts {
+			c.setCostsFromFreqs(&c.freqs)
+		} else {
+			c.setCostsFromCodes(&c.codes.litlenLens, &c.codes.offsetLens)
+		}
 		passes--
 		if passes == 0 || c.costs == c.costsSaved {
 			break

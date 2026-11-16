@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/flate"
 	"io"
+	"math"
 	"math/rand/v2"
 	"testing"
 )
@@ -56,7 +57,9 @@ func inflate(t *testing.T, dict, z []byte) []byte {
 func TestRoundTrip(t *testing.T) {
 	split := Level12
 	split.NoSkip, split.SplitByCost, split.SplitPasses, split.BlockLen, split.CachePerBlock = true, true, 2, 128<<10, 3
-	for _, p := range []Params{Level10, Level12, split, {SearchDepth: 8, NiceLen: 32, Passes: 1, BlockLen: 20000, CachePerBlock: 1}} {
+	entropy := split
+	entropy.EntropyCosts = true
+	for _, p := range []Params{Level10, Level12, split, entropy, {SearchDepth: 8, NiceLen: 32, Passes: 1, BlockLen: 20000, CachePerBlock: 1}} {
 		c := New(p)
 		for name, data := range samples() {
 			z := c.Compress(nil, data, 0, true)
@@ -202,6 +205,16 @@ func TestEvenForRLE(t *testing.T) {
 			if j > last && c[j] != 0 {
 				t.Fatalf("trailing zero at %d became %d", j, c[j])
 			}
+		}
+	}
+}
+
+// TestLog2Fix: the fixed-point logarithm is within 1/180 bit of log2.
+func TestLog2Fix(t *testing.T) {
+	for _, v := range []uint32{1, 2, 3, 255, 256, 257, 511, 512, 1000, 65535, 1 << 20, 123456789, 1<<32 - 1} {
+		got := float64(log2Fix(v)) / 1024
+		if want := math.Log2(float64(v)); math.Abs(got-want) > 1.0/180 {
+			t.Errorf("log2(%d): %.5f, want %.5f", v, got, want)
 		}
 	}
 }
