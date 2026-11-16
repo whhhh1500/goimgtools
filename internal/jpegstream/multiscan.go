@@ -24,6 +24,10 @@ import (
 // by their cursors, the rest as scanAll reads them.
 var maxCursors = 1024 // a variable for the tests
 
+// testNoStep, in tests, has every planned scan read into the coefficient
+// store, as when the memory for the row is short.
+var testNoStep bool
+
 // cursor is the reading state of one scan.
 type cursor struct {
 	r      io.Reader
@@ -35,8 +39,12 @@ type cursor struct {
 	ri     int
 }
 
-// cursorBytes is what a cursor holds while it is read.
-const cursorBytes = 4400
+// cursorBytes is what a cursor holds while it is read; tableBytes is a
+// Huffman table, which the cursors of the scans after its definition keep.
+const (
+	cursorBytes = 4400
+	tableBytes  = 12800
+)
 
 // unused reports whether a scan changes nothing that the pixels are made
 // from: when the image is shrunk by 8 each block becomes the mean of its
@@ -100,13 +108,12 @@ func (d *decoder) skipEntropy() error {
 			}
 			i = b.i - 1
 		}
-		switch m := b.buf[i+1]; {
-		case m == 0x00 || rst0Marker <= m && m <= rst7Marker:
+		// A marker, fill bytes before one included, is where nextSegment
+		// takes over (and finds fault with what the standard library
+		// does).
+		if m := b.buf[i+1]; m == 0x00 || rst0Marker <= m && m <= rst7Marker {
 			b.i = i + 2
-		case m == 0xff:
-			// A fill byte; the marker may start at the next one.
-			b.i = i + 1
-		default:
+		} else {
 			b.i = i
 			return nil
 		}
@@ -116,7 +123,9 @@ func (d *decoder) skipEntropy() error {
 // planScans reads through the image from its first scan to the End Of Image
 // marker, making a cursor for each scan. It reports false, having read
 // nothing, if ra's bytes are not those Open's reader read. It stops at the
-// scan after maxCursors, with s.rest set to read it from Open's reader.
+// scan after maxCursors, or once the cursors and the tables they keep take
+// more than the share of the memory limit that may be staged, with s.rest
+// set to read the rest from Open's reader.
 func (s *stream) planScans(ra io.ReaderAt, size int64) (bool, error) {
 	d := s.d
 	off := d.offset()
@@ -134,9 +143,12 @@ func (s *stream) planScans(ra io.ReaderAt, size int64) (bool, error) {
 	if _, err := ra.ReadAt(got[2:], off); err != nil || !bytes.Equal(got[2:], want) {
 		return false, nil
 	}
+	tables0 := d.tables
+	share := s.env.Budget.Limit() / pipeline.StagingShare
 	for {
 		off := d.offset()
-		if len(s.cursors) == maxCursors {
+		s.held = int64(len(s.cursors))*cursorBytes + int64(d.tables-tables0)*tableBytes
+		if len(s.cursors) == maxCursors || s.held > share {
 			s.rest = &cursor{r: d.r, bytes: d.bytes, bits: d.bits, eobRun: d.eobRun, scan: d.scan, huff: d.huff, ri: d.ri}
 			return true, nil
 		}
@@ -169,7 +181,7 @@ func (s *stream) startScans() error {
 	}
 	ra, size, err := s.ra()
 	if err != nil {
-		return err
+		return s.scanAll(nil)
 	}
 	ok, err := s.planScans(ra, size)
 	if err != nil {
@@ -183,8 +195,8 @@ func (s *stream) startScans() error {
 	for i := 0; i < d.nComp; i++ {
 		row += int64(d.mxx*d.comp[i].h*d.comp[i].v) * (4*blockSize + 8)
 	}
-	need := row + int64(len(s.cursors))*cursorBytes
-	if s.rest != nil || !s.env.Budget.TryReserve(need) {
+	need := row + s.held
+	if s.rest != nil || testNoStep || !s.env.Budget.TryReserve(need) {
 		return s.scanAll(s.cursors)
 	}
 	s.reserved += need

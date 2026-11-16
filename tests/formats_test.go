@@ -345,3 +345,39 @@ func pngLikeStdlib(t *testing.T, what string, got, want []byte) {
 		t.Errorf("%s: %d bytes, png.Encode %d", what, len(got), len(want))
 	}
 }
+
+// failingAt is a Codec Input of the caller's that cannot be read at any
+// offset.
+type failingAt struct{ io.Reader }
+
+func (failingAt) ReaderAt() (io.ReaderAt, int64, error) {
+	return nil, 0, errors.New("no random access here")
+}
+
+// TestCodecInputProgressive decodes a progressive JPEG through the Codec
+// from an Input that has no random access to give: the decoder does not
+// ask for it, and stores the coefficients as for a stream.
+func TestCodecInputProgressive(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(runtime.GOROOT(), "src", "image", "testdata", "video-001.progressive.jpeg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, ok := CodecByName("jpeg")
+	if !ok {
+		t.Fatal("no jpeg codec")
+	}
+	src, err := c.Decode(failingAt{bytes.NewReader(data)}, pipeline.NewEnv(0, t.TempDir()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := pipeline.Collect(src)
+	src.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := jpeg.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sameImage(t, "progressive through the codec", got, want)
+}

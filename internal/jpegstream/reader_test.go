@@ -83,12 +83,13 @@ func same(t *testing.T, name string, want, got image.Image) {
 // other).
 func TestStdlibCorpus(t *testing.T) {
 	files := corpus(t)
-	for _, mode := range []string{"auto", "one-mcu-row", "disk", "random", "random-one-mcu-row", "random-disk", "random-few-cursors"} {
+	for _, mode := range []string{"auto", "one-mcu-row", "disk", "random", "random-one-mcu-row", "random-disk", "random-few-cursors", "random-store"} {
 		testMCURows = 0
 		maxCursors = 1024
 		if mode == "random-few-cursors" {
 			maxCursors = 2
 		}
+		testNoStep = mode == "random-store"
 		var dir string
 		if mode != "auto" && mode != "random" {
 			testMCURows = 1
@@ -124,6 +125,7 @@ func TestStdlibCorpus(t *testing.T) {
 	}
 	testMCURows = 0
 	maxCursors = 1024
+	testNoStep = false
 }
 
 // TestProgressiveUsesDisk checks the small budget above really sends the
@@ -246,9 +248,77 @@ func TestScansInStep(t *testing.T) {
 			t.Fatal(err)
 		}
 		st = src.(*stream)
-		if st.d.rowCoef[0] != nil || st.d.coef == nil || len(st.cursors) < 2 {
+		if st.d.rowCoef[0] != nil || st.d.coef == nil || len(st.cursors) < 1 {
 			t.Errorf("%s, low limit: rowCoef %v, coef %v, %d cursors", name, st.d.rowCoef[0] != nil, st.d.coef != nil, len(st.cursors))
 		}
 		src.Close()
+	}
+}
+
+// TestManyTables decodes a progressive image of 2000 scans, each after a
+// DHT segment of four tables: the tables the cursors keep count against the
+// share of the memory limit that may be staged, and the scans past it are
+// read on, from Open's reader.
+func TestManyTables(t *testing.T) {
+	var f bytes.Buffer
+	f.Write([]byte{0xff, 0xd8})
+	// A 1-bit DC code for size 0, in each of the four DC and four AC slots.
+	table := func(id byte) []byte { return append([]byte{id, 1}, append(make([]byte, 15), 0)...) }
+	f.Write([]byte{0xff, 0xdb, 0, 67, 0})
+	f.Write(bytes.Repeat([]byte{1}, 64))
+	f.Write([]byte{0xff, 0xc2, 0, 11, 8, 0, 8, 0, 8, 1, 1, 0x11, 0})
+	for i := 0; i < 2000; i++ {
+		var dht []byte
+		for _, id := range []byte{0x00, 0x01, 0x02, 0x03} {
+			dht = append(dht, table(id)...)
+		}
+		f.Write([]byte{0xff, 0xc4, byte((len(dht) + 2) >> 8), byte(len(dht) + 2)})
+		f.Write(dht)
+		f.Write([]byte{0xff, 0xda, 0, 8, 1, 1, 0x00, 0, 0, 0})
+		f.Write([]byte{0x7f}) // the code 0, then padding
+	}
+	f.Write([]byte{0xff, 0xd9})
+	data := f.Bytes()
+	want, werr := jpeg.Decode(bytes.NewReader(data))
+	if werr != nil {
+		t.Fatal(werr)
+	}
+	env := pipeline.NewEnv(0, t.TempDir())
+	src, err := Open(bytes.NewReader(data), env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	WithRandomAccess(src, func() (io.ReaderAt, int64, error) { return bytes.NewReader(data), int64(len(data)), nil })
+	got, err := pipeline.Collect(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := src.(*stream)
+	if st.rest == nil || len(st.cursors) >= 2000 || st.held > env.Budget.Limit()/pipeline.StagingShare+cursorBytes+4*tableBytes {
+		t.Errorf("%d cursors, rest %v, %d bytes held", len(st.cursors), st.rest != nil, st.held)
+	}
+	src.Close()
+	same(t, "many tables", want, got)
+	if env.Budget.Used() != 0 {
+		t.Errorf("%d bytes still reserved", env.Budget.Used())
+	}
+}
+
+// TestFillBytesAfterScan: fill bytes after a scan followed by 0x00 are an
+// error for the standard library (an unknown marker), and so with the scans
+// planned too.
+func TestFillBytesAfterScan(t *testing.T) {
+	data := bytes.Clone(corpus(t)["video-001.q50.444.progressive.jpeg"])
+	if data[2193] != 0xff || data[2194] != 0xda {
+		t.Fatalf("bytes 2193-2194 are %x, want a SOS marker", data[2193:2195])
+	}
+	data[2194] = 0xff
+	if _, err := jpeg.Decode(bytes.NewReader(data)); err == nil {
+		t.Fatal("the standard library decodes it")
+	}
+	for _, random := range []bool{false, true} {
+		if _, _, err := decodeMode(data, nil, random); err == nil {
+			t.Errorf("random %v: decoded", random)
+		}
 	}
 }

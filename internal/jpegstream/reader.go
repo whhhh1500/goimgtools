@@ -180,6 +180,7 @@ type decoder struct {
 	// only a corrupt image has; the standard library carries the rest of
 	// the run into the next scan (tests compare the pixels only without).
 	overrun bool
+	tables  int // Huffman tables defined
 }
 
 // newDecoder returns a decoder that reads r.

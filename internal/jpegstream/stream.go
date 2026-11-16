@@ -176,7 +176,8 @@ type stream struct {
 	// cursors are the scans of a full-mode image (multiscan.go).
 	ra      func() (io.ReaderAt, int64, error)
 	cursors []*cursor
-	rest    *cursor // Open's reader, at the scan after maxCursors
+	rest    *cursor // Open's reader, at the scan where planScans stopped
+	held    int64   // what the cursors and their tables take
 	done    bool
 	err     error
 }
@@ -497,7 +498,9 @@ func (s *stream) scanAll(cursors []*cursor) error {
 	}
 	c.sc = sc
 	d.coef = c
-	for _, cur := range cursors {
+	for i, cur := range cursors {
+		// Let go of the scan, its buffer and its tables, once read.
+		cursors[i] = nil
 		if d.unused(&cur.scan) {
 			continue
 		}
@@ -508,7 +511,6 @@ func (s *stream) scanAll(cursors []*cursor) error {
 			}
 		}
 		d.leave(cur)
-		cur.bytes = nil
 		d.overrun = d.overrun || d.eobRun != 0
 		if err := c.flushAll(); err != nil {
 			return err

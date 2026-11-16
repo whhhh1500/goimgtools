@@ -180,6 +180,7 @@ func (d *decoder) processDHT(n int) error {
 		// A new table, as the old one may be a scan's (multiscan.go).
 		h := new(huffman)
 		d.huff[tc][th] = h
+		d.tables++
 
 		// Read nCodes and h.vals (and derive h.nCodes).
 		// nCodes[i] is the number of codes with code length i.

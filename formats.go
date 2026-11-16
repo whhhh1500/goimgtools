@@ -154,8 +154,10 @@ var builtin = []*formatDef{
 		open: func(in *input, env *pipeline.Env) (pipeline.Source, error) {
 			src, err := jpegstream.Open(in.br, env)
 			// With random access, a progressive JPEG is decoded with its
-			// scans in step instead of storing its coefficients.
-			if err == nil && (in.ra != nil || in.at != nil) {
+			// scans in step instead of storing its coefficients. Only
+			// for an input that has it of its own: a Codec's Input may
+			// give it only by stopping Read.
+			if err == nil && in.ra != nil {
 				jpegstream.WithRandomAccess(src, func() (io.ReaderAt, int64, error) { return in.readerAt(env) })
 			}
 			return src, err
