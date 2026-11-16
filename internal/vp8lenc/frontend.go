@@ -241,12 +241,12 @@ func (f *frontend) init(palette []uint32, sg int, share int64) error {
 	f.tokens = pipeline.NewSpill(e.env)
 	e.expect(f.tokens, f.total*litBytes+f.total*litBytes/255+64)
 	f.tok = newTokenizer(f.sw, f.total, window, nil, f.tokens, newStats(e.p.cache))
-	if e.p.optimal && (f.pred || f.kind == kindIndex) {
+	if raw := !f.pred && f.kind != kindIndex; e.p.optimal && !raw || e.p.optimalRaw && raw {
 		if err := f.reserve(optimalBytes, "webp optimal parse"); err != nil {
 			return err
 		}
 		f.passOne += optimalBytes
-		f.tok.opt = newOptimal()
+		f.tok.opt = newOptimal(!raw)
 	}
 	f.tok.lit1 = litBytes == 1
 	f.tok.chain, f.tok.nice, f.tok.lazy = e.p.chain, e.p.nice, e.p.lazy

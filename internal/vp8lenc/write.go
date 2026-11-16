@@ -70,6 +70,7 @@ type plan struct {
 	assign    []uint16   // group per block of the entropy image; nil for one group
 	hbits     uint
 	tw        int
+	groupMem  int64 // budget held for the split
 	tail      int64 // bits after bw: entropy image, codes, pixels
 	totalBits int64 // exact size of the VP8L bitstream
 }
@@ -152,18 +153,33 @@ const replayReadBuf = 64 << 10
 // maxGroupBlocks bounds the size of the entropy image.
 const maxGroupBlocks = 16 << 10
 
-// group tries to split the image into several Huffman groups and keeps the
-// split if the stream gets smaller. w is the walker pass two replays with.
+// group tries to split the image into several Huffman groups, by blocks
+// of each size of e.p.groupSizes, and keeps the smallest split if the
+// stream gets smaller. w is the walker pass two replays with.
 func (e *encoder) group(p *plan, w *walker) error {
-	f := p.f
-	st := f.tok.st
 	// A group costs a few hundred bytes of codes: aim at no more than a
 	// few percent of overhead.
-	want := int(min(p.totalBits/8/3000, int64(e.p.groups)))
-	if want < 2 {
-		return nil
+	tried := map[int]bool{}
+	for _, per := range e.p.groupBytes {
+		want := int(min(p.totalBits/8/int64(per), int64(e.p.groups)))
+		if want < 2 || tried[want] {
+			continue
+		}
+		tried[want] = true
+		for _, hbits := range e.p.groupSizes {
+			if err := e.groupBy(p, w, hbits, want); err != nil {
+				return err
+			}
+		}
 	}
-	hbits := e.p.groupBits
+	return nil
+}
+
+// groupBy is group with blocks of 1<<hbits pixels (or larger, if there
+// would be too many, or for memory).
+func (e *encoder) groupBy(p *plan, w *walker, hbits uint, want int) error {
+	f := p.f
+	st := f.tok.st
 	for hbits < 7 && int64((f.sw+1<<hbits-1)>>hbits)*int64((f.h+1<<hbits-1)>>hbits) > maxGroupBlocks {
 		hbits++
 	}
@@ -225,6 +241,8 @@ func (e *encoder) group(p *plan, w *walker) error {
 		e.unreserve(need)
 		return nil
 	}
+	e.unreserve(p.groupMem) // the split this one replaces
+	p.groupMem = need
 	p.groups, p.assign, p.hbits, p.tw = groups, g.assign, hbits, g.tw
 	p.tail = tail
 	p.totalBits = p.bw.bitLen() + tail

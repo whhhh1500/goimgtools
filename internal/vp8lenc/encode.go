@@ -54,21 +54,23 @@ const maxDim = 1 << 14
 
 // params are the knobs an effort level sets.
 type params struct {
-	modes     []uint8 // predictor modes tried per block
-	chain     int     // hash chain positions examined per match search
-	nice      int     // stop searching at a match this long
-	chainRaw  int     // the same for the colour variants without the predictor,
-	niceRaw   int     // which screenshots take: long repeats, cheap to search
-	lazy      bool
-	window    int     // LZ77 window in pixels (power of two) without predictor
-	predWin   int     // the same with predictor: residuals rarely repeat far back
-	cache     []uint  // colour cache sizes (bits) evaluated
-	variants  int     // transform variants raced against each other
-	dropRatio float64 // a variant is dropped when it is this much worse than the best
-	groups    int     // most Huffman groups an image is split into
-	groupBits uint    // log2 of the block size of the entropy image
-	groupIter int     // refinement replays after the first grouping
-	optimal   bool    // the optimal parse for the predictor and colour table variants
+	modes      []uint8 // predictor modes tried per block
+	chain      int     // hash chain positions examined per match search
+	nice       int     // stop searching at a match this long
+	chainRaw   int     // the same for the colour variants without the predictor,
+	niceRaw    int     // which screenshots take: long repeats, cheap to search
+	lazy       bool
+	window     int     // LZ77 window in pixels (power of two) without predictor
+	predWin    int     // the same with predictor: residuals rarely repeat far back
+	cache      []uint  // colour cache sizes (bits) evaluated
+	variants   int     // transform variants raced against each other
+	dropRatio  float64 // a variant is dropped when it is this much worse than the best
+	groups     int     // most Huffman groups an image is split into
+	groupSizes []uint  // log2 of the block sizes of the entropy image tried
+	groupBytes []int   // bytes of output per Huffman group at most, each tried
+	groupIter  int     // refinement replays after the first grouping
+	optimal    bool    // the optimal parse for the predictor and colour table variants
+	optimalRaw bool    // and for the others
 }
 
 // The predictor modes in the order they are tried; on a tie the earlier
@@ -80,7 +82,7 @@ var (
 )
 
 func paramsFor(effort int) params {
-	p := params{lazy: effort >= 3, variants: 5, dropRatio: 1.15, optimal: effort >= DefaultEffort}
+	p := params{lazy: effort >= 3, variants: 5, dropRatio: 1.15, optimal: effort >= DefaultEffort, optimalRaw: effort >= 7}
 	switch {
 	case effort <= 1:
 		p.modes, p.dropRatio = modesFast, 1
@@ -92,7 +94,19 @@ func paramsFor(effort int) params {
 		p.modes = modesAll
 	}
 	p.groups = [...]int{0, 0, 8, 16, 24, 32, 48, 64, 64, 64}[effort]
-	p.groupBits = 4
+	// How the image is cut into blocks for its Huffman groups matters a
+	// lot, and differently for every image (one 5% smaller with blocks of
+	// 8 pixels, a screenshot 4% with 32 and few groups): from the default
+	// effort several sizes and numbers of groups are tried, and the
+	// smallest kept.
+	switch {
+	case effort < DefaultEffort:
+		p.groupSizes, p.groupBytes = []uint{4}, []int{3000}
+	case effort < 7:
+		p.groupSizes, p.groupBytes = []uint{2, 3, 4, 5}, []int{3000, 1000, 400}
+	default:
+		p.groupSizes, p.groupBytes = []uint{2, 3, 4, 5, 6}, []int{3000, 1000, 400, 200}
+	}
 	p.groupIter = [...]int{0, 0, 1, 2, 3, 4, 4, 5, 6, 8}[effort]
 	p.chain = [...]int{0, 4, 8, 16, 24, 32, 48, 64, 128, 256}[effort]
 	p.nice = [...]int{0, 32, 64, 128, 256, 256, 512, 1024, 4096, 4096}[effort]
