@@ -56,7 +56,7 @@ err := goimgtools.Open("in.jpg").
 | `Sharpen(SharpenOptions{Sigma, Amount, Threshold})` | 反锐化掩模（Pillow 的 `UnsharpMask`），`Amount` 默认为 1.5 |
 | `Flatten(color)` | 去除透明，铺底色 |
 | `Composite(overlay, CompositeOptions{...})` | 图像叠加 / 水印（见[水印](#水印)） |
-| `Animated()` | 处理 GIF 或 WebP 动画的每一帧并输出 GIF 或 WebP 动画。WebP 的各帧按 libwebp 动画解码器的方式绘制（混合与否、清除与否），逐像素一致。静态图像不受影响；无法保留的动画（GIF 或 WebP 输出为其他格式；APNG 不逐帧处理）返回包装了 `errors.ErrUnsupported` 的错误。WebP 第一帧完整存储，之后各帧仅存储变化的矩形区域。GIF 的所有帧共用一套按画面内容选取的调色板（`GIFOptions` 的 `Colors`、`NoDither` 依然有效；颜色数不超过该值时原样保留），自第二帧起仅存储变化的部分（见[压缩](compression.md)） |
+| `Animated()` | 处理 GIF、WebP 或 PNG 动画（APNG）的每一帧并输出 GIF 或 WebP 动画。WebP 的各帧按 libwebp 动画解码器的方式绘制（混合与否、清除与否），逐像素一致；APNG 的各帧按其规范绘制。静态图像不受影响；无法保留的动画（输出为其他格式）返回包装了 `errors.ErrUnsupported` 的错误。WebP 第一帧完整存储，之后各帧仅存储变化的矩形区域。GIF 的所有帧共用一套按画面内容选取的调色板（`GIFOptions` 的 `Colors`、`NoDither` 依然有效；颜色数不超过该值时原样保留），自第二帧起仅存储变化的部分（见[压缩](compression.md)） |
 | `Pixels(fn)` | 自定义逐像素操作：`fn` 逐条带接收 8 位 NRGBA 数据并原地修改（见[扩展](extending.md)） |
 | `Pipe(op)` | 在链的当前位置插入任意自定义操作（见[扩展](extending.md)） |
 | `Apply(steps...)` | 将一组步骤写为函数，在链的中间调用 |

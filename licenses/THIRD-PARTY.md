@@ -266,6 +266,18 @@ specification. How a GIF's frame delays and loop count become a WebP's
 extension as one play) follows libwebp's `examples/gif2webp.c`; no code
 of it is included.
 
+`blendNonPremult` in `animate.go` blends a frame of an animated WebP onto
+the picture as libwebp's animation decoder does (`src/demux/anim_decode.c`:
+`BlendPixelNonPremult`, `BlendChannelNonPremult`), with its integer
+arithmetic, so that the frames come out as libwebp draws them; it was
+rewritten in Go.
+
+## apngdis
+
+`blendOver` in `animate.go` composites a frame of an APNG over the picture
+with the integer arithmetic of apngdis (by Max Stepin, the author of APNG;
+zlib licence), rewritten in Go; nothing of its files is included.
+
 ## Acknowledgements (no code taken)
 
 - **gifsicle**: `internal/gifstream/optimize.go` and `localpal.go` try,
@@ -282,6 +294,11 @@ of it is included.
   uses ideas described for pngquant (working on premultiplied colours,
   weighting by how visible an error would be, a dither map). No code of
   either was used.
+- **libjpeg, stb_image**: decoding a JPEG straight to 1/2, 1/4 or 1/8 of
+  its size, the averages of the pixels worked out from the coefficients,
+  is libjpeg's scaled decoding (`jidctred.c`); `dct.go`'s reduced IDCTs were
+  derived afresh. Decoding a code's extra bits together with the code in
+  one table look-up is an idea of stb_image's JPEG decoder.
 - **libvips / sharp**: the chained interface of the package follows sharp;
   so do the mild sharpen kernel, `Modulate` working in LCh, the limits of
   sigma and the default threshold of `Trim`.

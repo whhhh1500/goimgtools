@@ -17,17 +17,17 @@ import (
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
-// Animated makes the chain apply to every frame of an animated GIF or WebP
-// and write an animated GIF or WebP. Without it only the first frame is
-// used. A still image passes unchanged. An animation that cannot be kept
-// fails with an error wrapping errors.ErrUnsupported: a GIF or WebP to
-// another output format, and an animated PNG (APNG), whose frames are not
-// processed one by one (without Animated its first frame is used).
+// Animated makes the chain apply to every frame of an animated GIF, WebP or
+// PNG (APNG) and write an animated GIF or WebP. Without it only the first
+// frame is used. A still image passes unchanged. An animation that cannot be
+// kept, one to another output format, fails with an error wrapping
+// errors.ErrUnsupported (without Animated its first frame is used).
 //
 // Each frame is drawn onto the full picture first (frames often hold only
 // the part that changed; a WebP frame is blended or put there as it says,
-// as libwebp's animation decoder does), then goes through the chain as a
-// complete image.
+// as libwebp's animation decoder does, an APNG frame as the APNG
+// specification says, composited over as apngdis does), then goes through
+// the chain as a complete image.
 //
 // A WebP holds the first frame whole and every later one as the rectangle
 // that changed; a frame that changes nothing lengthens the one before, and
@@ -171,7 +171,7 @@ func (in *input) otherFrames(format string, env *pipeline.Env) (Frames, error) {
 // keepsAnimation reports whether Animated can run the chain over the
 // frames of input format into output format.
 func keepsAnimation(input, output string) bool {
-	return (input == "gif" || input == "webp") && (output == "gif" || output == "webp")
+	return (input == "gif" || input == "webp" || input == "png") && (output == "gif" || output == "webp")
 }
 
 // refuseAnimation fails when Animated asks for the frames of input format
@@ -184,12 +184,8 @@ func (m *Image) refuseAnimation(f *input, input, output string, env *pipeline.En
 		return err
 	}
 	name := map[string]string{"gif": "an animated GIF", "webp": "an animated WebP", "png": "an animated PNG (APNG)"}[input]
-	if input == "gif" || input == "webp" {
-		return fmt.Errorf("goimgtools: the input is %s and %s output cannot hold an animation (GIF and WebP output can); without Animated its first frame is used: %w",
-			name, output, errors.ErrUnsupported)
-	}
-	return fmt.Errorf("goimgtools: the input is %s, whose frames cannot be processed one by one (only those of an animated GIF or WebP can); without Animated its first frame is used: %w",
-		name, errors.ErrUnsupported)
+	return fmt.Errorf("goimgtools: the input is %s and %s output cannot hold an animation (GIF and WebP output can); without Animated its first frame is used: %w",
+		name, output, errors.ErrUnsupported)
 }
 
 // refuseMaxSize fails when MaxFileSize is set for an animation that would
@@ -262,10 +258,12 @@ type animFrame struct {
 	ms       int             // how long the canvas shows with the frame on it
 	disposal byte            // disposalBackground, disposalPrevious or 0
 	// gif is a GIF frame's: paletted strips in the canvas's coordinates.
-	// A WebP frame's strips are NRGBA, from (0, 0), alpha-blended onto the
-	// canvas or (blend false) put there as they are.
+	// A WebP or APNG frame's strips are NRGBA, from (0, 0), blended onto
+	// the canvas (as libwebp does, or as apngdis does when apng is set) or
+	// put there as they are.
 	gif   *gifstream.FrameInfo
 	blend bool
+	apng  bool
 }
 
 type gifReader struct{ *gifstream.Animation }
@@ -276,6 +274,18 @@ func (g gifReader) nextFrame() (pipeline.Source, animFrame, error) {
 		return nil, animFrame{}, err
 	}
 	return fr, animFrame{rect: fr.Bounds(), ms: 10 * info.Delay, disposal: info.Disposal, gif: &info}, nil
+}
+
+type pngReader struct{ *pngstream.AnimReader }
+
+func (r pngReader) nextFrame() (pipeline.Source, animFrame, error) {
+	fr, f, err := r.NextFrame()
+	if err != nil {
+		return nil, animFrame{}, err
+	}
+	d := map[byte]byte{1: disposalBackground, 2: disposalPrevious}[f.Dispose]
+	src := pipeline.Map(fr, func(*image.NRGBA) error { return nil })
+	return src, animFrame{rect: f.Rect, ms: int(f.Delay / time.Millisecond), disposal: d, blend: f.Over, apng: true}, nil
 }
 
 type webpReader struct{ *webpstream.AnimReader }
@@ -333,7 +343,7 @@ func (c *canvas) off(x, y int) int64 { return (int64(y)*int64(c.w) + int64(x)) *
 // saved first.
 func (c *canvas) draw(f pipeline.Source, af animFrame, saved *pipeline.Spill) error {
 	if af.gif == nil {
-		return c.drawWebP(f, af)
+		return c.drawNRGBA(f, af, saved)
 	}
 	info := *af.gif
 	clip := image.Rect(0, 0, c.w, c.h)
@@ -388,9 +398,10 @@ func (c *canvas) draw(f pipeline.Source, af animFrame, saved *pipeline.Spill) er
 	}
 }
 
-// drawWebP puts a WebP frame (NRGBA strips of its size) on the canvas at
-// af.rect, alpha-blended or as it is.
-func (c *canvas) drawWebP(f pipeline.Source, af animFrame) error {
+// drawNRGBA puts a WebP or APNG frame (NRGBA strips of its size) on the
+// canvas at af.rect, blended or as it is, having copied what it covers to
+// saved when that is set.
+func (c *canvas) drawNRGBA(f pipeline.Source, af animFrame, saved *pipeline.Spill) error {
 	r := af.rect
 	if !r.In(image.Rect(0, 0, c.w, c.h)) {
 		return errors.New("goimgtools: animation frame outside the picture")
@@ -411,17 +422,28 @@ func (c *canvas) drawWebP(f pipeline.Source, af animFrame) error {
 		for y := m.Rect.Min.Y; y < m.Rect.Max.Y; y++ {
 			src := m.Pix[m.PixOffset(0, y):][:len(row)]
 			off := c.off(r.Min.X, r.Min.Y+y)
+			if saved != nil || af.blend {
+				if _, err := c.sc.ReadAt(row, off); err != nil {
+					return err
+				}
+			}
+			if saved != nil {
+				if _, err := saved.Write(row); err != nil {
+					return err
+				}
+			}
 			if !af.blend {
 				if _, err := c.sc.WriteAt(src, off); err != nil {
 					return err
 				}
 				continue
 			}
-			if _, err := c.sc.ReadAt(row, off); err != nil {
-				return err
-			}
 			for x := 0; x < len(row); x += 4 {
-				blendNonPremult(row[x:x+4:x+4], src[x:x+4:x+4])
+				if af.apng {
+					blendOver(row[x:x+4:x+4], src[x:x+4:x+4])
+				} else {
+					blendNonPremult(row[x:x+4:x+4], src[x:x+4:x+4])
+				}
 			}
 			if _, err := c.sc.WriteAt(row, off); err != nil {
 				return err
@@ -446,6 +468,25 @@ func blendNonPremult(dst, src []uint8) {
 		dst[i] = uint8(((uint32(src[i])*sa + uint32(dst[i])*dfa) * scale) >> 24)
 	}
 	dst[3] = uint8(ba)
+}
+
+// blendOver composites the NRGBA pixel src over dst, as apngdis (by the
+// author of APNG) does.
+func blendOver(dst, src []uint8) {
+	sa := uint32(src[3])
+	switch {
+	case sa == 0:
+	case sa == 255 || dst[3] == 0:
+		copy(dst, src)
+	default:
+		u := sa * 255
+		v := (255 - sa) * uint32(dst[3])
+		al := u + v
+		for i := 0; i < 3; i++ {
+			dst[i] = uint8((uint32(src[i])*u + uint32(dst[i])*v) / al)
+		}
+		dst[3] = uint8(al / 255)
+	}
 }
 
 // dispose undoes or clears the area r of the frame just shown, as its
@@ -545,8 +586,26 @@ func (m *Image) writeAnimated(w io.Writer, f *input, env *pipeline.Env, input, f
 	var anim animReader
 	var cw, ch, plays int
 	frames := 0
-	webpIn := input == "webp"
-	if webpIn {
+	switch input {
+	case "png":
+		ra, size, err := f.readerAt(env)
+		if err != nil {
+			return f.classify(err)
+		}
+		a, err := pngstream.ReadAnimation(ra, size)
+		if err != nil {
+			return f.classify(err)
+		}
+		pa, err := pngstream.OpenAnimation(ra, size, env)
+		if err != nil {
+			return f.classify(err)
+		}
+		cw, ch = pa.Config()
+		if err := m.framesFit(a.Frames, max(cw, 1), max(ch, 1)); err != nil {
+			return err
+		}
+		frames, plays, anim = a.Frames, a.LoopCount, pngReader{pa}
+	case "webp":
 		ra, size, err := f.readerAt(env)
 		if err != nil {
 			return f.classify(err)
@@ -565,7 +624,7 @@ func (m *Image) writeAnimated(w io.Writer, f *input, env *pipeline.Env, input, f
 		}
 		anim = webpReader{wa}
 		cw, ch, plays = wa.Config()
-	} else {
+	default:
 		r := io.Reader(f.br)
 		if format == "gif" && !fixed {
 			// The palette is chosen for all frames, so their number is
@@ -601,7 +660,7 @@ func (m *Image) writeAnimated(w io.Writer, f *input, env *pipeline.Env, input, f
 	if err != nil {
 		return err
 	}
-	cv.nrgba = webpIn
+	cv.nrgba = input != "gif"
 	defer cv.close()
 	seq := &frameSeq{m: m, f: f, anim: anim, cv: cv, env: env, w: cw, h: ch}
 	defer seq.close()

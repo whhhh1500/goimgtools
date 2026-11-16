@@ -122,8 +122,8 @@ func apng(t testing.TB, still []byte, plays int) []byte {
 }
 
 // TestOtherAnimations: an animated WebP or PNG gives its first frame and
-// its frames are counted; Animated goes through a WebP's frames, and says
-// that it cannot go through an APNG's.
+// its frames are counted; Animated goes through their frames into a GIF or
+// a WebP, and says that it cannot keep them in a still format.
 func TestOtherAnimations(t *testing.T) {
 	red := image.NewNRGBA(image.Rect(0, 0, 40, 30))
 	for i := range red.Pix {
@@ -200,8 +200,28 @@ func TestOtherAnimations(t *testing.T) {
 			t.Errorf("%s: %+v, %v", c.what, fr, err)
 		}
 	}
-	// A WebP's frames cannot go into a still format; an APNG's cannot be
-	// gone through at all.
+	for _, c := range []struct {
+		what string
+		m    *Image
+	}{
+		{"APNG to GIF", FromBytes(ap).Animated().GIF()},
+		{"APNG to WebP", FromBytes(ap).Animated().WebP(WebPOptions{Lossless: true})},
+		{"APNG read twice to WebP", FromReader(bytes.NewReader(ap)).Animated().WebP()},
+	} {
+		out, err := c.m.ToBytes()
+		if err != nil {
+			t.Fatalf("%s: %v", c.what, err)
+		}
+		// Two frames alike: the WebP lengthens the first.
+		want := Frames{Count: 2, Duration: 400 * time.Millisecond, LoopCount: 2}
+		if c.what != "APNG to GIF" {
+			want = Frames{Count: 1}
+		}
+		if fr, err := FromBytes(out).Frames(); err != nil || fr != want {
+			t.Errorf("%s: %+v, %v", c.what, fr, err)
+		}
+	}
+	// Their frames cannot go into a still format.
 	for _, c := range []struct {
 		what string
 		m    *Image
@@ -229,19 +249,24 @@ func TestOtherAnimations(t *testing.T) {
 	}
 }
 
-// TestWebPAnimationFrames draws the frames of two animated WebP files made by
+// TestAnimationFrames draws the frames of two animated WebP files made by
 // libwebp's img2webp (lossy with alpha, and lossy and lossless mixed, with
 // frames blended and not, disposed and not) and checks every frame against
-// the frame libwebp's animation decoder makes (anim_dump), pixel for pixel
-// (the colour of transparent pixels left out).
-func TestWebPAnimationFrames(t *testing.T) {
+// the frame libwebp's animation decoder makes (anim_dump); and those of an
+// APNG made by Pillow with every dispose and blend operation, against a
+// renderer written from the APNG specification (Pillow's own composites
+// partly transparent frames wrongly). Pixel for pixel, the colour of
+// transparent pixels left out.
+func TestAnimationFrames(t *testing.T) {
 	for name, want := range map[string][]string{
-		"anim-lossy.webp": {"19d6762eb48883bd", "90a3a8b421e22a9a", "14ac8e85d29bc2c1", "ed8a0369659f4727",
+		"png/anim-ops.png": {"9e3045aff2a36f0d", "b795fc1492368818", "f50083a2a28519b8", "cb290783d93e86fa",
+			"28d6681465896f40", "9a5c5ea8def42dc3", "5c824c46f42d3cab", "83769b2b08e98e14"},
+		"webp/anim-lossy.webp": {"19d6762eb48883bd", "90a3a8b421e22a9a", "14ac8e85d29bc2c1", "ed8a0369659f4727",
 			"60a192a159922d16", "bce945a4d109d85a", "c0bab96ae33b2ff9", "b0d480ea42ca2bae"},
-		"anim-mixed.webp": {"98af95af555808c9", "749150b88075c606", "846a7790c27f0c07", "da0268a758c9f3ca",
+		"webp/anim-mixed.webp": {"98af95af555808c9", "749150b88075c606", "846a7790c27f0c07", "da0268a758c9f3ca",
 			"381baaeef70aab62", "8951729558fbdb3e", "abefe65a6993ca8c", "3db976d310f8e714"},
 	} {
-		data, err := os.ReadFile(filepath.Join("testdata", "webp", name))
+		data, err := os.ReadFile(filepath.Join("testdata", name))
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -8,7 +8,7 @@
 
 0.1.0 导出的内容没有删除，签名也没有改动（用 `apidiff` 核对；此后每次推送都会与上一发布版本比较）。为 0.1.0 写的代码仍可能遇到的变化：
 
-- `Animated()` 遇到无法保留的动画（GIF 或 WebP 转 JPEG、PNG、BMP 或 TIFF；输入为 APNG）时返回包装 `errors.ErrUnsupported` 的错误，0.1.0 会静默只写第一帧。去掉 `Animated()` 即得第一帧。
+- `Animated()` 遇到无法保留的动画（GIF、WebP 或 PNG 动画转 JPEG、PNG、BMP 或 TIFF）时返回包装 `errors.ErrUnsupported` 的错误，0.1.0 会静默只写第一帧。去掉 `Animated()` 即得第一帧。
 - 有损 WebP 解码为 `*image.NRGBA` 条带，不再是 `*image.YCbCr`，以便颜色与 libwebp 一致；`Metadata()` 仍报告 `ycbcr`。对解码结果做类型断言的代码应接受任意 `image.Image`。
 - GIF 的 `Frames().LoopCount` 为播放次数（与文档一致），比 0.1.0 返回的多 1。
 - Go 1.27 下 PNG 默认级别为 7（原为 6）：文件更小，写得更慢。`PNGOptions{CompressionLevel: 6}` 可得原来的文件。
@@ -30,6 +30,7 @@
 - GIF 动图：各帧合计超过 256 色但每帧不超过 256 色时，每帧用自己的调色板，逐像素不变（以前会减成一个调色板，既改了像素又让文件变大）；变化的帧在三种写法中取编码最小者，LZW 字典写满后在划算时继续沿用：三段动画上比 gifsicle `-O3` 小 0.2–0.45%。
 - WebP 动画输出：`Animated()` 且输出为 WebP 时，将 GIF 动画写为 WebP 动画（有损或无损），每帧仅存储变化的矩形区域。
 - WebP 动画输入：读取其第一帧（此前作为无法读取的图像拒绝）；使用 `Animated()` 时逐帧处理并写为 GIF 或 WebP 动画：每帧按 libwebp 动画解码器的方式画到画面上（混合或直接覆盖，之后清除其矩形与否），逐像素一致；各帧时长与播放次数随之保留（写为 GIF 时以百分之一秒计，次数按首次之后的重复次数）。`Frames` 可统计 WebP 动画与 PNG 动画（APNG）的帧数，`info` 一并显示。
+- PNG 动画（APNG）输入：使用 `Animated()` 时逐帧处理并写为 GIF 或 WebP 动画，每帧按 APNG 规范绘制（直接覆盖或按 apngdis 的方式合成在上；之后清除、复原或保留），逐帧与按规范编写的渲染程序对照一致。
 - `CompositeOptions.WidthRatio` / `HeightRatio`：按底图的比例确定水印尺寸；`-watermark-width N%`。
 - 有损 WebP 分段量化：各段使用独立的量化级别（移植自 libwebp 的空间噪声整形）。
 - `pipeline.Env.SetHelpers`、`Helpers`、`Parallel`、`Go`：供处理环节将工作分摊至多个核。
@@ -42,7 +43,7 @@
 - PNG 8、9 级改为搜索最小文件：各行按 oxipng 的 Brute 策略滤波（每种滤波都试），数据改用 libdeflate「接近最优解析」的 Go 移植压缩，不再用 `compress/flate`，并像 zopfli 那样按代价切分 deflate 块、按熵给符号计价。17 张截图、照片与游戏美术图上比 7 级小 14.2%（8 级）和 15.5%（9 级），oxipng `-o max` 为 14.8%（耗时是我们的 6 倍），ECT `-9` 为 15.8%；各 Go 版本输出同一文件。每线程多占约 4MB（8 级）和 6.5MB（9 级）内存。
 - 最低 Go 版本降为 1.26（0.1.0 要求 1.27）。Go 1.27 重写了 `compress/flate`，因此 Go 1.26 与 Go 1.27 写出的 PNG 文件字节不同，像素相同。Go 1.26 下 PNG 默认级别为 6（见下文）。
 - 渐进式 JPEG 按 mozjpeg 的方法（`optimize_scans`）选择扫描：文件小 0.4–14%（18 张图平均 2.4%，与 `Trellis`、`QuantTable: QuantTableImageMagick` 同用时平均 3.9%；四者同用时同等 PSNR 下比 mozjpeg 默认设置小 0.7%），像素不变。单线程多用 3–19% 的时间；候选扫描的统计随 `Threads` 并行。
-- `Animated()` 不再忽略无法保留的动画：GIF 或 WebP 输出为 GIF、WebP 以外的格式，或输入为 APNG 时，返回包装了 `errors.ErrUnsupported` 的错误，而不是写出第一帧。静态图像不受影响。`MaxFileSize` 与 `Animated()` 同用于动画时同样报错（此前被忽略）。
+- `Animated()` 不再忽略无法保留的动画：GIF、WebP 或 PNG 动画输出为 GIF、WebP 以外的格式时，返回包装了 `errors.ErrUnsupported` 的错误，而不是写出第一帧。静态图像不受影响。`MaxFileSize` 与 `Animated()` 同用于动画时同样报错（此前被忽略）。
 - `Threads(n)` 的上限由 3 改为 CPU 核数。自 4 线程起，缩放、模糊、锐化、色彩调整、旋转以及 JPEG、PNG、有损 WebP 编码将工作分摊至多个核。输出与线程数无关，逐字节一致。
 - Go 1.27 下 PNG 默认压缩级别由 6（标准库的默认值）改为 7（Go 1.26 下仍为 6：该版本 7 级仅小 1–1.5%，耗时多一半）：Go 1.27 的 6 级查找重复数据的能力较弱，7 级在渐变、图标类图像上约小 5 倍，照片小 4–25%。
 - PNG 按 256KB 分块压缩（与 pigz 的做法相同），因而可由多核分摊。图像数据不超过一块时，文件与此前版本相同。Go 1.27 及以上版本中，超过一块的数据在 7 级及以下改用 `klauspost/compress` 的 flate 压缩：它写出的字节与 Go 1.27 的 `compress/flate` 相同，复位时可换成每块自己的字典，而 `compress/flate` 的压缩器每块都得新建。2400 万像素的 PNG 分配 3MB（原为 276MB），峰值 9.2MB（原为 16.6MB；4 线程 15.0MB，原为 23.0MB），快 6%，字节不变。
