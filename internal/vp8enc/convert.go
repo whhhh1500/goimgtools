@@ -45,28 +45,37 @@ func init() {
 // sources are converted with sharp YUV (sharp.go) when sharp is set, which
 // hands out each pair of rows eight rows after it took it in.
 type converter struct {
-	b      image.Rectangle
-	w, h   int // image size
-	w16    int // width padded to a multiple of 16
-	y      []uint8
-	u, v   []uint8
-	flush  func() error
-	rows   [2][]uint8  // two rows of non-premultiplied RGBA, padded to even width
-	alpha  *alphaSpool // receives the alpha rows, or nil
-	sharp  *sharpYUV   // or nil
-	arow   []uint8
-	acc    []uint16
-	pal    [256][4]uint8
-	palSrc color.Palette
+	b     image.Rectangle
+	w, h  int // image size
+	w16   int // width padded to a multiple of 16
+	y     []uint8
+	u, v  []uint8
+	flush func() error
+	rows  [2][]uint8  // two rows of non-premultiplied RGBA, padded to even width
+	alpha *alphaSpool // receives the alpha rows, or nil
+	sharp *sharpYUV   // or nil
+	arow  []uint8
+	// With alpha: the last alphaRing rows of it, for cleanTransparent.
+	aring   []uint8
+	arows   int
+	noClean bool // test hook: keep the samples of transparent pixels
+	acc     []uint16
+	pal     [256][4]uint8
+	palSrc  color.Palette
 }
 
 func converterBytes(w int, alpha bool) int64 {
 	n := 2*int64(w+1)*4 + 2*int64(w+1)
 	if alpha {
-		n += int64(w) + alphaSpoolBytes(w)
+		n += int64(w) + alphaSpoolBytes(w) + alphaRing*int64(w)
 	}
 	return n
 }
+
+// alphaRing is how many rows of alpha the converter keeps: those of the
+// macroblock row it completes, which sharp YUV hands out up to ten rows
+// after it took them in.
+const alphaRing = 32
 
 // useSharp tells whether a source whose first strip is m is converted
 // with sharp YUV: one of colours, not of Y'CbCr (whose chroma is kept as
@@ -86,6 +95,7 @@ func newConverter(b image.Rectangle, w16 int, alpha *alphaSpool) *converter {
 	c.rows[1] = make([]uint8, (w+1)*4)
 	if alpha != nil {
 		c.arow = make([]uint8, w)
+		c.aring = make([]uint8, alphaRing*w)
 	}
 	return c
 }
@@ -109,6 +119,7 @@ func (c *converter) row(m image.Image, y int) error {
 		return err
 	}
 	if k == 15 || last {
+		c.cleanTransparent(y-c.b.Min.Y-k, k+1)
 		c.pad(k + 1)
 		return c.flush()
 	}
@@ -149,7 +160,9 @@ func (c *converter) put(p int) error {
 	o := k / 2 * cw16
 	c.sharp.yuv(p, y0, y1, c.u[o:o+cw], c.v[o:o+cw])
 	if bottom := 2*p+2 >= c.h; k == 14 || bottom {
-		c.pad(min(16, c.h-2*p&^15))
+		top := 2 * p &^ 15
+		c.cleanTransparent(top, min(16, c.h-top))
+		c.pad(min(16, c.h-top))
 		return c.flush()
 	}
 	return nil
@@ -243,6 +256,9 @@ func (c *converter) putAlpha(a []uint8) error {
 	if c.alpha == nil {
 		return nil
 	}
+	k := c.arows % alphaRing
+	copy(c.aring[k*c.w:(k+1)*c.w], a)
+	c.arows++
 	return c.alpha.add(a)
 }
 
@@ -443,5 +459,78 @@ func (c *converter) rgbRows(y int, r0, r1 []uint8) {
 			b = (4*(int32(p[2])*a0+int32(p[6])*a1+int32(q[2])*a2+int32(q[6])*a3) + a/2) / a
 		}
 		du[x], dv[x] = rgbToU(r, g, b), rgbToV(r, g, b)
+	}
+}
+
+// cleanTransparent changes, in the n rows of the macroblock row from image
+// row top, the samples of pixels that cannot be seen, so that they cost
+// fewer bits, as libwebp does unless asked to keep them
+// (src/enc/picture_tools_enc.c: WebPCleanupTransparentArea): in a block of
+// 8x8 pixels that is partly transparent, the luma of the transparent ones
+// becomes the mean of the others'; a block that is wholly transparent is
+// made flat, luma and chroma, with the values of the first such block of
+// a run along the row of blocks, so that a run codes as one. Blocks cut
+// by the right or bottom edge are only evened out.
+func (c *converter) cleanTransparent(top, n int) {
+	if c.alpha == nil || c.noClean {
+		return
+	}
+	w, w16, cw16 := c.w, c.w16, c.w16/2
+	alpha := func(y int) []uint8 {
+		k := (top + y) % alphaRing
+		return c.aring[k*w : (k+1)*w]
+	}
+	for by := 0; by < n; by += 8 {
+		bh := min(8, n-by)
+		run := false
+		var vy, vu, vv uint8
+		for bx := 0; bx < w; bx += 8 {
+			bw := min(8, w-bx)
+			sum, count := 0, 0
+			for y := by; y < by+bh; y++ {
+				a := alpha(y)[bx : bx+bw]
+				l := c.y[y*w16+bx : y*w16+bx+bw]
+				for x, v := range a {
+					if v != 0 {
+						count++
+						sum += int(l[x])
+					}
+				}
+			}
+			switch {
+			case count > 0 && count < bw*bh:
+				avg := uint8(sum / count)
+				for y := by; y < by+bh; y++ {
+					a := alpha(y)[bx : bx+bw]
+					l := c.y[y*w16+bx : y*w16+bx+bw]
+					for x, v := range a {
+						if v == 0 {
+							l[x] = avg
+						}
+					}
+				}
+			case count == 0 && bw == 8 && bh == 8:
+				if !run {
+					vy = c.y[by*w16+bx]
+					vu, vv = c.u[by/2*cw16+bx/2], c.v[by/2*cw16+bx/2]
+					run = true
+				}
+				for y := by; y < by+8; y++ {
+					l := c.y[y*w16+bx : y*w16+bx+8]
+					for x := range l {
+						l[x] = vy
+					}
+				}
+				for y := by / 2; y < by/2+4; y++ {
+					u := c.u[y*cw16+bx/2 : y*cw16+bx/2+4]
+					v := c.v[y*cw16+bx/2 : y*cw16+bx/2+4]
+					for x := range u {
+						u[x], v[x] = vu, vv
+					}
+				}
+				continue
+			}
+			run = false
+		}
 	}
 }

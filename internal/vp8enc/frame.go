@@ -189,9 +189,11 @@ type encoder struct {
 	modeMax   int64       // what all modes together may use (modeBudget)
 	mbShare   int64       // a macroblock's share of modeMax
 
-	// Alpha plane, one byte per pixel, when the source may be transparent.
+	// Alpha plane, one byte per pixel, when the source may be transparent,
+	// and the plane coded by the lossless encoder (alphall.go).
 	alpha      *alphaSpool
 	alphaStore *store
+	alphaLL    *alphaLL
 
 	// The second pass: the frame's token probabilities, the first
 	// partition and the token partitions.
@@ -261,6 +263,7 @@ func (e *encoder) init(quality int, rr *pipeline.RowReader, src pipeline.Source)
 		e.alpha = newAlphaSpool(e.alphaStore, e.w)
 	}
 	e.conv = newConverter(e.b, w16, e.alpha)
+	e.conv.noClean = e.dbg != nil && e.dbg.noClean
 	e.topY = make([]uint8, w16+4)
 	e.topU = make([]uint8, w16/2)
 	e.topV = make([]uint8, w16/2)
@@ -312,6 +315,10 @@ func (e *encoder) release() {
 		e.parts[i] = nil
 	}
 	e.spool, e.alphaStore, e.part0 = nil, nil, nil
+	if e.alphaLL != nil {
+		e.alphaLL.st.Close()
+		e.alphaLL = nil
+	}
 	e.env.Budget.Release(e.fixed)
 	e.fixed = 0
 }

@@ -587,7 +587,10 @@ func (e *encoder) write(w io.Writer) error {
 	if hasAlpha {
 		alphaSize = 1 + int64(e.w)*int64(e.h)
 		scratch := alphaScratchBytes(e.w)
-		if e.env.Budget.Reserve(scratch, "webp alpha rows") == nil {
+		if ll := e.alphaLL; ll != nil && 1+ll.n < alphaSize {
+			alphaSize = 1 + ll.n
+			alphaHdr = byte(1 | ll.method<<2) // VP8L compression, the filter
+		} else if e.env.Budget.Reserve(scratch, "webp alpha rows") == nil {
 			defer e.env.Budget.Release(scratch)
 			filter := e.alpha.useFilter()
 			enc := newAlphaEnc(e.alpha, e.w, e.h, filter)
@@ -629,7 +632,11 @@ func (e *encoder) write(w io.Writer) error {
 		if _, err := w.Write(hdr); err != nil {
 			return err
 		}
-		if alphaEnc != nil {
+		if e.alphaLL != nil && alphaHdr&3 == 1 && alphaEnc == nil {
+			if err := e.writeAlphaLL(w); err != nil {
+				return err
+			}
+		} else if alphaEnc != nil {
 			if err := alphaEnc.write(w, e.ioBuf, e.readBuf); err != nil {
 				return err
 			}

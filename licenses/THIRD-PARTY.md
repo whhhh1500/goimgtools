@@ -205,6 +205,15 @@ only, and `internal/vp8enc/dcdiffuse.go` of its chroma DC error diffusion
 rewritten in Go for this encoder; nothing of the original files is
 included unchanged.
 
+`internal/vp8enc/alphall.go` codes the alpha plane of a lossy file as
+libwebp's `src/enc/alpha_enc.c` does: through the filters of
+`src/dsp/filters.c`, with the estimate of the best one of
+`src/utils/filters_utils.c` (`WebPEstimateBestFilter`), as the green
+channel of a lossless image. `cleanTransparent` in
+`internal/vp8enc/convert.go` makes the samples of transparent pixels cheap
+as `WebPCleanupTransparentArea` does (`src/enc/picture_tools_enc.c`). Both
+were rewritten in Go; nothing of the original files is included unchanged.
+
 `internal/webpstream/fancy.go` turns decoded Y'CbCr into RGB as libwebp
 does (`src/dsp/upsampling.c`: the "fancy" chroma upsampler;
 `src/dsp/yuv.h`: the integer conversion), so that decoded pixels are

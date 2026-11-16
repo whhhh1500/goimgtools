@@ -2,6 +2,7 @@ package vp8enc
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"image"
@@ -791,9 +792,10 @@ func TestSmallBudget(t *testing.T) {
 	}
 	t.Logf("%d bytes, budget peak %d", len(data), env.Budget.Peak())
 
-	// The same bytes as with plenty of memory.
+	// The same file as with plenty of memory, but for how the alpha plane
+	// is coded (see alphall.go).
 	big := pipeline.NewEnv(0, dir)
-	if !bytes.Equal(data, mustEncode(t, testutil.ChoppedEnv(m, 16, big), 75, nil)) {
+	if !sameButAlpha(t, data, mustEncode(t, testutil.ChoppedEnv(m, 16, big), 75, nil)) {
 		t.Error("output depends on the memory limit")
 	}
 	t.Logf("budget peak without a limit: %d", big.Budget.Peak())
@@ -869,7 +871,7 @@ func TestLargeImage(t *testing.T) {
 		if env.Budget.Peak() > env.Budget.Limit() {
 			t.Errorf("budget peak %d over the limit %d", env.Budget.Peak(), env.Budget.Limit())
 		}
-		if limit == 0 && env.Budget.Peak() > 4<<20+3*int64(len(data)) {
+		if limit == 0 && env.Budget.Peak() > 4<<20+alphaBudget+3*int64(len(data)) {
 			t.Errorf("budget peak %d for a file of %d bytes", env.Budget.Peak(), len(data))
 		}
 		if env.Budget.Used() != 0 {
@@ -880,7 +882,7 @@ func TestLargeImage(t *testing.T) {
 		}
 		if ref == nil {
 			ref = data
-		} else if !bytes.Equal(ref, data) {
+		} else if !sameButAlpha(t, ref, data) {
 			t.Error("output depends on the memory limit")
 		}
 	}
@@ -889,18 +891,23 @@ func TestLargeImage(t *testing.T) {
 		t.Fatalf("decoded %dx%d alpha %v", d.w, d.h, d.alpha != nil)
 	}
 	var sum float64
+	n := 0
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
 			c := synthPixel(x, y)
 			if d.alpha[y*w+x] != c.A {
 				t.Fatalf("alpha differs at %d,%d", x, y)
 			}
+			if c.A == 0 {
+				continue // made flat, as it cannot be seen
+			}
 			want := 16 + (65.738*float64(c.R)+129.057*float64(c.G)+25.064*float64(c.B))/256
 			e := float64(d.yc.Y[y*d.yc.YStride+x]) - want
 			sum += e * e
+			n++
 		}
 	}
-	if p := 10 * math.Log10(255*255*w*h/sum); p < 32 { // sharp YUV moves luma
+	if p := 10 * math.Log10(255*255*float64(n)/sum); p < 32 { // sharp YUV moves luma
 		t.Errorf("luma PSNR %.2f dB", p)
 	} else {
 		t.Logf("luma PSNR %.2f dB", p)
@@ -1139,7 +1146,11 @@ func TestThreads(t *testing.T) {
 				env := pipeline.NewEnv(c.limit, dir)
 				env.SetHelpers(c.helpers)
 				got := mustEncode(t, testutil.ChoppedEnv(m, 13, env), q, nil)
-				if !bytes.Equal(got, ref) {
+				same := bytes.Equal(got, ref)
+				if c.limit != 0 {
+					same = sameButAlpha(t, got, ref)
+				}
+				if !same {
 					t.Errorf("image %d q%d with %d helpers, limit %d: another file", n, q, c.helpers, c.limit)
 				}
 				if env.Budget.Used() != 0 || tempFiles(t, dir) != 0 {
@@ -1200,4 +1211,29 @@ func TestSegments(t *testing.T) {
 	if dbg.segments != 1 {
 		t.Errorf("one macroblock: %d segments", dbg.segments)
 	}
+}
+
+// sameButAlpha reports whether two files are the same but for how their
+// alpha planes are coded, which depends on the memory limit (alphall.go):
+// the same VP8 chunk, and alpha planes that decode the same.
+func sameButAlpha(t *testing.T, a, b []byte) bool {
+	t.Helper()
+	if bytes.Equal(a, b) {
+		return true
+	}
+	chunk := func(f []byte, id string) []byte {
+		for p := 12; p+8 <= len(f); {
+			n := int(binary.LittleEndian.Uint32(f[p+4:]))
+			if string(f[p:p+4]) == id {
+				return f[p+8 : p+8+n]
+			}
+			p += 8 + n + n&1
+		}
+		return nil
+	}
+	if !bytes.Equal(chunk(a, "VP8 "), chunk(b, "VP8 ")) {
+		return false
+	}
+	da, db := decodeX(t, a), decodeX(t, b)
+	return bytes.Equal(da.alpha, db.alpha)
 }

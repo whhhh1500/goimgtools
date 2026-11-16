@@ -97,6 +97,9 @@ func TestSameOnEveryProcessor(t *testing.T) {
 		{"png 40 colours", func() ([]byte, error) { return photo.Clone().PNG(PNGOptions{Colors: 40}).ToBytes() }, byFlate("844bdcb3467662a1", "81d23e2c5193b24f")},
 		{"webp", func() ([]byte, error) { return photo.Clone().WebP(WebPOptions{Quality: 70}).ToBytes() }, "3a3429d921a08e95"},
 		{"webp lossless", func() ([]byte, error) { return clear.Clone().WebP(WebPOptions{Lossless: true}).ToBytes() }, "6e44fe2727e11c1d"},
+		// Transparency: sharp YUV of the colours, the transparent area
+		// made flat, the alpha plane coded by the lossless encoder.
+		{"webp alpha", func() ([]byte, error) { return clear.Clone().WebP(WebPOptions{Quality: 70}).ToBytes() }, "e71a3fd83ce04b73"},
 		{"gif", func() ([]byte, error) { return photo.Clone().GIF().ToBytes() }, "55ae5c4b96926b04"},
 		{"gif animation", func() ([]byte, error) {
 			return FromBytes(animationBytes(t)).Animated().Resize(90, 0).GIF(GIFOptions{Colors: 50}).ToBytes()

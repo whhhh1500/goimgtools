@@ -87,6 +87,7 @@ Environment: Windows 10, Go 1.27.1. "Standard library approach" denotes whole-im
 
 - When rotating by 90° without shrinking, the 96MB of pixel data is held in a temporary file; with all data in memory (a limit of 768MB or more), the time is about 0.8s and the peak about 108MB.
 - Lossless WebP from PNG RGB 6000×4000 (41.6MB; the same image as in the table above): output 27.6MB, peak 32.6MB, 8.87s (8.21s with 8 threads).
+- Lossy WebP with transparency (the 6000×4000 photograph in a soft round window, quality 75): 2.86MB, peak 26.0MB, 12.5s (5.5s with 8 threads; before the alpha plane was coded by the lossless encoder, 4.29MB, 20.9MB, 10.9s and 3.1s). The alpha plane is coded on one core, in up to 8MB of its own.
 - Before encoding, lossy WebP must convert the whole image to YUV, store it, and measure every macroblock (as required by segment-based quantization; see [Compatibility and comparisons](compatibility.md#webp-encoders)). Images of no more than 256KB after conversion are kept in memory; larger ones are written directly to a temporary file and read back only row by row. Measurements show no effect on the time.
 - GIF output without shrinking takes 2.0s (peak 11.8MB). With a fixed palette (`FixedPalette`), it takes 4.3s: the colour search order on that path has been optimized; the result is byte-for-byte identical to the standard library and is produced more than 3 times as fast as by comparing one colour at a time.
 

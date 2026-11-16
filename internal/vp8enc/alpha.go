@@ -7,17 +7,17 @@ import (
 )
 
 // The alpha plane of a lossy WebP file lives in an ALPH chunk, losslessly.
-// This file writes it the way libwebp usually does: the plane is run
-// through the "horizontal" filter (each value minus the one to its left)
-// when that makes it more regular, and then stored as a headerless VP8L
-// (WebP lossless) stream whose green channel carries the values.
+// It is coded by the lossless encoder (alphall.go); this file keeps the
+// plane until then, and has a simple coder of its own for when there is
+// too little memory for the lossless encoder: the plane is run through the
+// "horizontal" filter (each value minus the one to its left) when that
+// makes it more regular, and then stored as a headerless VP8L (WebP
+// lossless) stream whose green channel carries the values.
 //
-// The VP8L stream uses no transforms and no colour cache: only Huffman
+// That VP8L stream uses no transforms and no colour cache: only Huffman
 // coded values and LZ77 references to the pixel on the left (runs) or the
-// one above. That is a small part of the format, but it is what alpha
-// planes need: flat areas and repeated edges shrink to almost nothing.
-// The plane is read from its spool one row at a time, twice: once to count
-// symbols for the Huffman code, once to write.
+// one above. The plane is read from its spool one row at a time, twice:
+// once to count symbols for the Huffman code, once to write.
 
 const (
 	alphaGreenSyms = 256 + 24 // literals and LZ77 length prefixes
@@ -49,6 +49,10 @@ type alphaSpool struct {
 	raw, horiz [256]uint32
 	rows       int
 	prevFirst  uint8
+	// For estimating the best filter (see bestFilter): the two rows
+	// before, and which coarse sizes of difference each filter leaves.
+	r1, r2 []uint8
+	seen   [4][16]bool
 
 	// Reading.
 	off  int64
@@ -56,10 +60,10 @@ type alphaSpool struct {
 	r, n int
 }
 
-func alphaSpoolBytes(w int) int64 { return int64(w + w/128 + 8) }
+func alphaSpoolBytes(w int) int64 { return int64(w+w/128+8) + 2*int64(w) }
 
 func newAlphaSpool(st *store, w int) *alphaSpool {
-	return &alphaSpool{st: st, w: w, pack: make([]byte, 0, alphaSpoolBytes(w))}
+	return &alphaSpool{st: st, w: w, pack: make([]byte, 0, w+w/128+8), r1: make([]uint8, w), r2: make([]uint8, w)}
 }
 
 // add appends one row.
@@ -69,6 +73,12 @@ func (s *alphaSpool) add(row []uint8) error {
 		prev = 0
 	}
 	s.prevFirst = row[0]
+	// The row before is sampled now that it is known not to be the last.
+	if j := s.rows - 1; j >= 2 && j%2 == 0 {
+		s.sample(s.r1, s.r2)
+	}
+	s.r2, s.r1 = s.r1, s.r2
+	copy(s.r1, row)
 	s.rows++
 	for _, v := range row {
 		s.raw[v]++
@@ -113,6 +123,51 @@ func (s *alphaSpool) add(row []uint8) error {
 	s.pack = p
 	_, err := s.st.Write(p)
 	return err
+}
+
+// sample notes, for every other value of row p (below row above), how far
+// it is from what each filter predicts (libwebp's WebPEstimateBestFilter).
+func (s *alphaSpool) sample(p, above []uint8) {
+	coarse := func(a, b int) int { return min(abs(a-b)>>4, 15) }
+	mean := int(p[0])
+	for i := 2; i < len(p)-1; i += 2 {
+		v := int(p[i])
+		left, up, ul := int(p[i-1]), int(above[i]), int(above[i-1])
+		s.seen[alphaFilterNone][coarse(v, mean)] = true
+		s.seen[alphaFilterHorizontal][coarse(v, left)] = true
+		s.seen[alphaFilterVertical][coarse(v, up)] = true
+		s.seen[alphaFilterGradient][coarse(v, min(max(left+up-ul, 0), 255))] = true
+		mean = (3*mean + v + 2) >> 2
+	}
+}
+
+// bestFilter is the filter estimated to leave the smallest differences:
+// the one whose differences, taken coarsely, are fewest and smallest.
+func (s *alphaSpool) bestFilter() int {
+	best, score := alphaFilterNone, -1
+	for f := range s.seen {
+		sc := 0
+		for i, ok := range s.seen[f] {
+			if ok {
+				sc += i
+			}
+		}
+		if score < 0 || sc < score {
+			best, score = f, sc
+		}
+	}
+	return best
+}
+
+// colours is the number of different values in the plane.
+func (s *alphaSpool) colours() int {
+	n := 0
+	for _, c := range s.raw {
+		if c != 0 {
+			n++
+		}
+	}
+	return n
 }
 
 // transparent reports whether any value is below 255.

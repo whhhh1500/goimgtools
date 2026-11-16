@@ -68,6 +68,8 @@ type debug struct {
 	noSharp      bool // convert colours without sharp YUV
 	noAutoFilter bool // keep the filter levels that follow the quantizers
 	noDiffuse    bool // no chroma DC error diffusion
+	noClean      bool // keep the samples of transparent pixels
+	alphaMethod  int  // 1 + the only alpha filter to try, or 0
 	// When rec is set the encoder's reconstruction is stored here: planes
 	// of whole macroblocks, luma stride 16*mbw, chroma stride 8*mbw.
 	rec     bool
@@ -126,6 +128,9 @@ func encode(w io.Writer, src pipeline.Source, o *Options, dbg *debug) error {
 		return err
 	}
 	if err := e.readAll(); err != nil {
+		return err
+	}
+	if err := e.codeAlpha(); err != nil {
 		return err
 	}
 	if err := e.analyse(quality); err != nil {
