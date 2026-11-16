@@ -290,6 +290,43 @@ func dqt(t *testing.T, b []byte) map[int][]byte {
 	return tables
 }
 
+// TestJPEGJpegliTables: QuantTableJpegli makes the tables cjpegli (built
+// from github.com/google/jpegli at 031a007) writes for the same quality:
+// luminance and, as jpegli's quality setting does, its Cr table for both
+// chrominance components; a gray image without the 4:2:0 adjustment.
+func TestJPEGJpegliTables(t *testing.T) {
+	cases := []struct {
+		q                  int
+		luma, chroma, gray [64]byte
+	}{
+		{50, [64]byte{12, 10, 10, 20, 14, 20, 21, 20, 20, 21, 33, 23, 24, 23, 33, 34, 34, 27, 27, 34, 34, 37, 31, 34, 33, 34, 31, 37, 38, 39, 38, 41, 41, 38, 39, 38, 39, 37, 42, 45, 42, 37, 39, 41, 42, 48, 48, 42, 41, 45, 54, 53, 54, 45, 54, 50, 50, 54, 59, 53, 59, 53, 53, 43}, [64]byte{12, 8, 8, 17, 13, 17, 16, 17, 17, 16, 26, 17, 20, 17, 26, 24, 24, 18, 18, 24, 24, 29, 21, 22, 21, 22, 21, 29, 31, 27, 25, 27, 27, 25, 27, 31, 28, 26, 24, 21, 24, 26, 28, 30, 26, 31, 31, 26, 30, 31, 24, 27, 24, 31, 30, 31, 31, 30, 46, 49, 46, 45, 45, 255}, [64]byte{10, 8, 8, 16, 11, 16, 17, 16, 16, 17, 27, 19, 20, 19, 27, 28, 28, 22, 22, 28, 28, 31, 25, 28, 27, 28, 25, 31, 31, 32, 31, 33, 33, 31, 32, 31, 32, 30, 35, 37, 35, 30, 32, 34, 35, 39, 39, 35, 34, 37, 45, 44, 45, 37, 44, 41, 41, 44, 49, 44, 49, 43, 43, 35}},
+		{75, [64]byte{6, 7, 7, 13, 9, 13, 12, 12, 12, 12, 17, 13, 14, 13, 17, 17, 17, 16, 16, 17, 17, 19, 16, 18, 17, 18, 16, 19, 19, 20, 19, 21, 21, 19, 20, 19, 20, 19, 23, 23, 23, 19, 20, 21, 23, 25, 25, 23, 21, 23, 28, 27, 28, 23, 27, 25, 25, 27, 30, 27, 30, 27, 27, 22}, [64]byte{6, 6, 6, 11, 8, 11, 10, 11, 11, 10, 13, 9, 11, 9, 13, 12, 12, 10, 10, 12, 12, 15, 11, 12, 11, 12, 11, 15, 16, 14, 13, 14, 14, 13, 14, 16, 14, 13, 13, 10, 13, 13, 14, 15, 14, 16, 16, 14, 15, 16, 12, 14, 12, 16, 15, 16, 16, 15, 23, 25, 23, 23, 23, 193}, [64]byte{5, 6, 6, 10, 7, 10, 10, 10, 10, 10, 14, 10, 11, 10, 14, 14, 14, 13, 13, 14, 14, 16, 13, 15, 14, 15, 13, 16, 16, 16, 16, 17, 17, 16, 16, 16, 16, 15, 19, 19, 19, 15, 16, 17, 19, 20, 20, 19, 17, 19, 23, 22, 23, 19, 22, 21, 21, 22, 25, 22, 25, 22, 22, 18}},
+		{90, [64]byte{3, 4, 4, 6, 4, 6, 6, 6, 6, 6, 7, 6, 6, 6, 7, 7, 7, 7, 7, 7, 7, 8, 7, 8, 7, 8, 7, 8, 8, 9, 8, 9, 9, 8, 9, 8, 9, 8, 10, 10, 10, 8, 9, 9, 10, 10, 10, 10, 9, 10, 12, 12, 12, 10, 12, 11, 11, 12, 13, 12, 13, 11, 11, 9}, [64]byte{3, 3, 3, 5, 4, 5, 5, 5, 5, 5, 6, 4, 5, 4, 6, 5, 5, 5, 5, 5, 5, 6, 5, 5, 4, 5, 5, 6, 7, 6, 5, 6, 6, 5, 6, 7, 6, 6, 6, 4, 6, 6, 6, 6, 6, 7, 7, 6, 6, 7, 5, 6, 5, 7, 7, 7, 7, 7, 10, 11, 10, 10, 10, 82}, [64]byte{2, 3, 3, 5, 4, 5, 5, 5, 5, 5, 6, 5, 5, 5, 6, 6, 6, 6, 6, 6, 6, 7, 6, 6, 6, 6, 6, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 8, 8, 8, 7, 7, 7, 8, 9, 9, 8, 7, 8, 10, 9, 10, 8, 10, 9, 9, 10, 11, 9, 11, 9, 9, 8}},
+	}
+	colour := photoLike(64, 48)
+	gray := image.NewGray(image.Rect(0, 0, 64, 48))
+	for i := range gray.Pix {
+		gray.Pix[i] = uint8(i * 7)
+	}
+	for _, c := range cases {
+		b, err := FromImage(colour).JPEG(c.q, JPEGOptions{QuantTable: QuantTableJpegli}).ToBytes()
+		if err != nil {
+			t.Fatal(err)
+		}
+		tables := dqt(t, b)
+		if !bytes.Equal(tables[0], c.luma[:]) || !bytes.Equal(tables[1], c.chroma[:]) {
+			t.Errorf("quality %d: luma %v, chroma %v", c.q, tables[0], tables[1])
+		}
+		b, err = FromImage(gray).JPEG(c.q, JPEGOptions{QuantTable: QuantTableJpegli}).ToBytes()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if g := dqt(t, b)[0]; !bytes.Equal(g, c.gray[:]) {
+			t.Errorf("quality %d, gray: %v", c.q, g)
+		}
+	}
+}
+
 // TestJPEGQuantTables: table 0 is the standard library's file, table 3
 // stores N. Robidoux's table (mozjpeg's default) scaled by the quality,
 // every table gives a readable file, and a table that does not exist is
@@ -312,7 +349,7 @@ func TestJPEGQuantTables(t *testing.T) {
 		135, 156, 131, 124, 131, 156, 189, 169, 169, 189, 238, 226, 238, 311, 311, 418,
 	}
 	for _, c := range []struct{ q, scale int }{{50, 100}, {75, 50}} {
-		b, err := FromImage(src).JPEG(c.q, JPEGOptions{QuantTable: 3}).ToBytes()
+		b, err := FromImage(src).JPEG(c.q, JPEGOptions{QuantTable: QuantTableImageMagick}).ToBytes()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -325,7 +362,7 @@ func TestJPEGQuantTables(t *testing.T) {
 			t.Errorf("table 3 at quality %d: luma %v, chroma %v, want %v", c.q, tables[0], tables[1], want)
 		}
 	}
-	for n := range 9 {
+	for n := QuantTableStandard; n <= QuantTableJpegli; n++ {
 		for _, o := range []JPEGOptions{{QuantTable: n}, {QuantTable: n, Progressive: true, Trellis: true}} {
 			b, err := FromImage(src).JPEG(80, o).ToBytes()
 			if err != nil {
@@ -340,7 +377,7 @@ func TestJPEGQuantTables(t *testing.T) {
 			}
 		}
 	}
-	for _, n := range []int{-1, 9} {
+	for _, n := range []QuantTable{-1, QuantTableJpegli + 1} {
 		if _, err := FromImage(src).JPEG(80, JPEGOptions{QuantTable: n}).ToBytes(); err == nil || errors.Is(err, ErrFormat) {
 			t.Errorf("table %d: %v", n, err)
 		}

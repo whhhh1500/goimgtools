@@ -13,7 +13,9 @@ English | [中文](zh-CN/CHANGELOG.md)
 - `ToSRGB()` / `-srgb`: converts colours to sRGB using the colour profile. GIF and BMP output, which cannot carry a profile, is converted automatically.
 - Colour profiles in WebP and TIFF files (read and write); EXIF in WebP files.
 - `JPEGOptions.Trellis` / `-jpeg-trellis`: trellis quantization, following mozjpeg.
-- `JPEGOptions.QuantTable` / `-jpeg-quant-table`: mozjpeg's nine quantization tables, numbered as its `-quant-table`; 0, the default, is the JPEG standard's.
+- `JPEGOptions.QuantTable` (type `QuantTable`, with a named constant for each choice) / `-jpeg-quant-table`: mozjpeg's nine quantization tables, numbered as its `-quant-table`; `QuantTableStandard` (0), the default, is the JPEG standard's.
+- `QuantTableJpegli` (`-jpeg-quant-table 9`): JPEG quantization tables made as jpegli makes them, with its dead zone without `Trellis`; with `Progressive` and `Trellis`, 15% smaller than mozjpeg's defaults at equal SSIMULACRA2.
+- `GIFOptions.Lossy` / `-gif-lossy`: lossy LZW compression for GIF, still and animated (the method of gifsicle's `--lossy`): a photographic animation 18% smaller at 16, 32% at 24.
 - Animated WebP output: `Animated()` with WebP output writes an animated GIF as an animated WebP (lossy or lossless), storing only the rectangle that changed in each frame.
 - Animated WebP input: read as its first frame (previously rejected as an unreadable image). `Frames` counts the frames of animated WebP and PNG (APNG) files; `info` shows them.
 - `CompositeOptions.WidthRatio` / `HeightRatio`: watermark size as a fraction of the base image; `-watermark-width N%`.
@@ -23,7 +25,7 @@ English | [中文](zh-CN/CHANGELOG.md)
 ### Changed
 
 - The minimum Go version is 1.26 (0.1.0 required 1.27). PNG files written with Go 1.26 and Go 1.27 differ in their bytes but not in their pixels, as Go 1.27 rewrote `compress/flate`. With Go 1.26 the default PNG level is 6 (see below).
-- Progressive JPEG chooses its scans as mozjpeg does (`optimize_scans`): files 0.4–14% smaller (2.4% on average over 18 images, 3.9% with `Trellis` and `QuantTable: 3`; with both, 0.7% smaller than mozjpeg's defaults at equal PSNR), with the same pixels. Single-threaded it takes 3–19% longer; the candidate scans are counted in parallel with `Threads`.
+- Progressive JPEG chooses its scans as mozjpeg does (`optimize_scans`): files 0.4–14% smaller (2.4% on average over 18 images, 3.9% with `Trellis` and `QuantTable: QuantTableImageMagick`; with both, 0.7% smaller than mozjpeg's defaults at equal PSNR), with the same pixels. Single-threaded it takes 3–19% longer; the candidate scans are counted in parallel with `Threads`.
 - `Animated()` no longer ignores an animation it cannot keep: a GIF to an output format other than GIF and WebP, or an animated WebP or APNG input, returns an error wrapping `errors.ErrUnsupported` instead of writing the first frame. A still image passes as before. So does `MaxFileSize` with `Animated()` on an animation, which was ignored.
 - `Threads(n)` now extends to the number of CPUs (previously capped at 3). From 4 threads upwards, resizing, blurring, sharpening, modulation, rotation, and JPEG, PNG and lossy WebP encoding distribute their work across cores. Output is byte-for-byte identical for any number of threads.
 - The default PNG compression level is now 7 with Go 1.27 (previously 6, the standard library's default; with Go 1.26 it stays 6, where level 7 gains only 1–1.5% and takes half as long again): Go 1.27's level 6 finds few repeated sequences, whereas level 7 produces files about 5 times smaller for gradients and icons and 4–25% smaller for photographs.

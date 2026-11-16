@@ -21,7 +21,7 @@ goimgtools 是纯 Go 实现的流式图像处理库与命令行工具。图像�
 - **内存有界**：默认上限 64MB，可通过 `MemoryLimit` 配置。依赖全图的步骤（旋转、渐进式 JPEG、减色等）在暂存数据超出配额时转存临时文件；所有随图像尺寸增长的缓冲均计入上限，超限时返回 `ErrMemoryLimit`。适用于内存受限的服务器、容器以及高并发图像服务。
 - **图像操作**：缩放（6 种插值核、5 种适配模式）、裁剪、任意角度旋转、翻转、去边与扩边、铺底色、灰度化、色彩调整、高斯模糊、锐化（含反锐化掩模）；图片与文字水印（九宫格定位、按比例缩放、旋转、平铺、不透明度）；文字渲染（逐字字体回退、描边、阴影）。
 - **格式**：JPEG、PNG、WebP（有损、无损）、GIF、BMP、TIFF 的读写；GIF 动画可输出为 GIF 或 WebP 动画，WebP 动画与 PNG 动画（APNG）可读取第一帧；默认保留 ICC 色彩配置，可转换至 sRGB；EXIF 可选保留。
-- **压缩**：JPEG 霍夫曼表优化、按 mozjpeg 方法搜索扫描方案的渐进式编码、网格量化与 mozjpeg 量化表（四者同用时，18 张图上同等 PSNR 下比 mozjpeg 默认设置小 0.7%）；PNG 自适应调色板减色；有损 WebP 空间噪声整形（7 张真实照片上，同等 SSIM 时比 libwebp 默认设置小 2.4%）；按目标文件大小自动选择质量；GIF 与 WebP 动画帧间差分存储（照片类 GIF 动画转有损 WebP：同等 PSNR 下比 libwebp 动画编码器小 33%）。
+- **压缩**：JPEG 霍夫曼表优化、按 mozjpeg 方法搜索扫描方案的渐进式编码、网格量化，以及 mozjpeg 或 jpegli 的量化表（用 jpegli 的表时，14 张图上同等 SSIMULACRA2 下比 mozjpeg 默认设置小 15%）；PNG 自适应调色板减色；有损 WebP 空间噪声整形（7 张真实照片上，同等 SSIM 时比 libwebp 默认设置小 2.4%）；按目标文件大小自动选择质量；GIF 与 WebP 动画帧间差分存储、GIF 有损 LZW（照片类 GIF 动画转有损 WebP：同等 PSNR 下比 libwebp 动画编码器小 33%）。
 - **并行**：`Threads(n)` 启用多核处理，输出与单线程逐字节一致。
 - **健壮性**：运行期 panic 转为错误返回；输入与输出像素数设有上限；支持 `context` 取消；持续进行模糊测试。
 - **可扩展**：支持自定义操作、输入源、文件格式与插值滤镜；按名称注册操作；通过钩子改写内置行为；可构建包含自定义操作的命令行程序。
@@ -100,7 +100,7 @@ goimgtools batch -resize 1920x1920 -no-enlarge -quality 80 -format jpeg in_dir o
 - 不读写 TIFF 中的 EXIF（ICC 色彩配置可读写）。
 - 查找表类（A2B0 等）与灰度色彩配置不转换至 sRGB，按原样写出（包括输出 GIF、BMP 时）。
 - JPEG 解码中的熵解码为顺序过程，IDCT 与色彩转换尚未并行化；多线程下它是 JPEG 缩小流程中最慢的环节。
-- 仅处理 GIF 动画输入（输出为 GIF 或 WebP 动画）；WebP 动画与 APNG 的各帧不逐帧处理（`Animated()` 返回 `errors.ErrUnsupported`，不调用时读取第一帧）。GIF 输出中相邻的相同帧不合并（每帧仍单独存储，仅占数十字节）；未实现 gifsicle 的有损 LZW（`--lossy`）。
+- 仅处理 GIF 动画输入（输出为 GIF 或 WebP 动画）；WebP 动画与 APNG 的各帧不逐帧处理（`Animated()` 返回 `errors.ErrUnsupported`，不调用时读取第一帧）。GIF 输出中相邻的相同帧不合并（每帧仍单独存储，仅占数十字节）。
 - 未内置对比度、伽马、色阶与反色调整，可用 `Pixels` 以数行代码实现（参见[扩展](docs/zh-CN/extending.md)中的灰度示例）；依赖邻域像素的滤镜（中值、浮雕、边缘检测等）需实现为 `Pipe` 环节。
 - GIF、BMP、TIFF 编码为单线程；无损 WebP 的 LZ77 匹配与第二遍分组为顺序过程，多线程仅提速 10–20%。
 - JPEG 网格量化按标准霍夫曼表估算码长（mozjpeg 先统计全图再用优化后的表估算）：本库按条带流式处理，不为此保存整图系数。
@@ -116,4 +116,4 @@ goimgtools batch -resize 1920x1920 -no-enlarge -quality 80 -format jpeg in_dir o
 
 ## 许可
 
-本项目采用 MIT 许可（[LICENSE](LICENSE)）。改写自 Go 标准库与 `golang.org/x/image` 的代码沿用其 BSD 许可（[licenses/LICENSE-GO](licenses/LICENSE-GO)）；移植自 libjpeg 的两部分及移植自 mozjpeg 的网格量化沿用其许可（[licenses/LICENSE-LIBJPEG-TURBO](licenses/LICENSE-LIBJPEG-TURBO)）；移植自 Pillow 的模糊与反锐化掩模沿用其 MIT-CMU 许可（[licenses/LICENSE-PILLOW](licenses/LICENSE-PILLOW)）；移植自 libwebp 的有损 WebP 分段量化沿用其 BSD 许可（[licenses/LICENSE-LIBWEBP](licenses/LICENSE-LIBWEBP)）。各文件的来源详见 [licenses/THIRD-PARTY.md](licenses/THIRD-PARTY.md)。
+本项目采用 MIT 许可（[LICENSE](LICENSE)）。改写自 Go 标准库与 `golang.org/x/image` 的代码沿用其 BSD 许可（[licenses/LICENSE-GO](licenses/LICENSE-GO)）；移植自 libjpeg 的两部分及移植自 mozjpeg 的网格量化沿用其许可（[licenses/LICENSE-LIBJPEG-TURBO](licenses/LICENSE-LIBJPEG-TURBO)）；移植自 Pillow 的模糊与反锐化掩模沿用其 MIT-CMU 许可（[licenses/LICENSE-PILLOW](licenses/LICENSE-PILLOW)）；移植自 libwebp 的有损 WebP 分段量化沿用其 BSD 许可（[licenses/LICENSE-LIBWEBP](licenses/LICENSE-LIBWEBP)）；依 jpegli 生成的 JPEG 量化表沿用其 BSD 许可（[licenses/LICENSE-JPEGLI](licenses/LICENSE-JPEGLI)）。各文件的来源详见 [licenses/THIRD-PARTY.md](licenses/THIRD-PARTY.md)。

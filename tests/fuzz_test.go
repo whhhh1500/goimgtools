@@ -268,7 +268,7 @@ func FuzzChain(f *testing.F) {
 		}
 		switch pick(23, 12) {
 		case 0:
-			m.JPEG(1+int(w%100), JPEGOptions{Trellis: bit(12), QuantTable: int(h % 9)})
+			m.JPEG(1+int(w%100), JPEGOptions{Trellis: bit(12), QuantTable: QuantTable(h % 10)})
 		case 1:
 			m.JPEG(1+int(w%100), JPEGOptions{Progressive: true})
 		case 2:
@@ -278,7 +278,7 @@ func FuzzChain(f *testing.F) {
 		case 4:
 			m.PNG(PNGOptions{Colors: 2 + int(h%255), NoDither: bit(27)})
 		case 5:
-			m.GIF(GIFOptions{Colors: 1 + int(h%256), NoDither: bit(27)})
+			m.GIF(GIFOptions{Colors: 1 + int(h%256), NoDither: bit(27), Lossy: int(w%48) * int(more>>15)})
 		case 6:
 			if bit(26) {
 				m.Animated().WebP(WebPOptions{Lossless: bit(27), Quality: 1 + int(w%100)})

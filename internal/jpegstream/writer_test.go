@@ -149,3 +149,32 @@ func TestTrellis(t *testing.T) {
 		}
 	}
 }
+
+// TestDeadZone: with the dead zone of jpegli, an AC coefficient 0.55 of a
+// step from zero is dropped and one 0.6 of a step away kept; without it,
+// both round to one step. The DC coefficient is never dropped.
+func TestDeadZone(t *testing.T) {
+	var e encoder
+	for i := range e.quant {
+		for j := range e.quant[i] {
+			e.quant[i][j] = 10
+			e.recip[i][j] = recip(8 * 10)
+		}
+	}
+	var b block
+	b[0] = 44             // 0.55 of a step (the DCT gives 8 times)
+	b[unzig[1]] = 44      // 0.55
+	b[unzig[2]] = -48     // -0.6
+	b[unzig[3]] = 48 * 10 // 6 steps
+	for _, c := range []struct {
+		dz   *[2]int64
+		want [4]int16
+	}{{nil, [4]int16{1, 1, -1, 6}}, {&jpegliDeadZone, [4]int16{1, 0, -1, 6}}} {
+		e.deadZone = c.dz
+		var zz qblock
+		e.quantizeCoefs(&b, quantIndexLuminance, &zz)
+		if got := [4]int16{zz[0], zz[1], zz[2], zz[3]}; got != c.want {
+			t.Errorf("dead zone %v: %v, want %v", c.dz != nil, got, c.want)
+		}
+	}
+}

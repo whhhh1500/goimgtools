@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/whhhh1500/goimgtools/internal/iccprof"
+	"github.com/whhhh1500/goimgtools/internal/jpegstream"
 	"github.com/whhhh1500/goimgtools/internal/ops"
 	"github.com/whhhh1500/goimgtools/internal/pngstream"
 	"github.com/whhhh1500/goimgtools/pipeline"
@@ -130,6 +131,16 @@ type GIFOptions struct {
 	// An animation is then written frame by frame as it is read, each
 	// frame whole (see Animated).
 	FixedPalette bool
+	// Lossy, 1 to 255, lets the compression take a colour up to this far
+	// (distance in RGB, 0 to 255 a channel) from the pixel's where that
+	// makes the data shorter (the lossy LZW of gifsicle, written from its
+	// description); 0, the default, keeps every pixel. 16 to 32 suit
+	// photographic animations: on one of 557KB (400x533, 8 frames) 16
+	// made it 18% smaller and 24 32% smaller, looking better at the same
+	// size than fewer Colors (SSIMULACRA2 79 at 453KB against 77 at 501KB
+	// with 128 colours). A dithered still image loses more (8 to 16 suit
+	// it), pictures of a few flat colours gain little.
+	Lossy int
 }
 
 // GIF selects GIF output. An image that is not already paletted with few
@@ -194,20 +205,65 @@ type JPEGOptions struct {
 	// changes the pixels (plain rounding is the most faithful choice, not
 	// the smallest). It goes with either of them.
 	Trellis bool
-	// QuantTable picks the quantization tables, 0 to 8, numbered as in
-	// mozjpeg's -quant-table. 0 (the default) is the tables of the JPEG
-	// standard, which the standard library uses. 3, mozjpeg's default
-	// (N. Robidoux's, from ImageMagick), quantizes the finest detail more
-	// coarsely and colour more finely: on photographs, at the same file
-	// size, colour comes out closer to the original (the file is 2 to 15%
-	// smaller at the same PSNR) and fine detail in brightness about as
-	// close (0 to 2% larger at the same luma SSIM). A JPEG saved again at
-	// the quality it was made with keeps closest to itself with 0, since
-	// that is most likely what it was made with. The others: 1 flat, 2
-	// tuned for MS-SSIM, 4 tuned for PSNR-HVS, 5 to 8 from studies of
-	// human vision.
-	QuantTable int
+	// QuantTable picks the quantization tables (see QuantTable for the
+	// choices). The zero value, QuantTableStandard, is what the standard
+	// library uses; QuantTableJpegli gives the smallest files.
+	QuantTable QuantTable
 }
+
+// QuantTable is a set of JPEG quantization tables: how coarsely each DCT
+// coefficient of brightness and of colour is kept, scaled by the quality.
+// The values 0 to 8 are numbered as mozjpeg's -quant-table numbers them.
+type QuantTable int
+
+const (
+	// QuantTableStandard is the tables of the JPEG standard (Annex K),
+	// which the standard library and libjpeg use. A JPEG saved again at
+	// the quality it was made with keeps closest to itself with them,
+	// since they are most likely what it was made with.
+	QuantTableStandard QuantTable = iota
+	// QuantTableFlat quantizes every coefficient alike.
+	QuantTableFlat
+	// QuantTableMSSSIM is tuned for MS-SSIM (mozjpeg).
+	QuantTableMSSSIM
+	// QuantTableImageMagick is N. Robidoux's tables, from ImageMagick:
+	// mozjpeg's default. They quantize the finest detail more coarsely and
+	// colour more finely: on photographs, at the same file size, colour
+	// comes out closer to the original (the file is 2 to 15% smaller at
+	// the same PSNR) and fine detail in brightness about as close (0 to
+	// 2% larger at the same luma SSIM).
+	QuantTableImageMagick
+	// QuantTablePSNRHVS is tuned for PSNR-HVS (mozjpeg).
+	QuantTablePSNRHVS
+	// QuantTableKlein is from Klein, Silverstein and Carney, "Relevance of
+	// human vision to JPEG-DCT compression" (1992).
+	QuantTableKlein
+	// QuantTableWatson is from Watson, Taylor and Borthwick, "DCTune
+	// perceptual optimization of compressed dental X-Rays" (1997).
+	QuantTableWatson
+	// QuantTableAhumada is from Ahumada, Watson and Peterson, "A visual
+	// detection model for DCT coefficient quantization" (1993).
+	QuantTableAhumada
+	// QuantTablePeterson is from Peterson, Ahumada and Watson, "An improved
+	// detection model for DCT coefficient quantization" (1993).
+	QuantTablePeterson
+	// QuantTableJpegli makes the tables as jpegli (Google, 2024) makes
+	// them for the quality: the step of each coefficient follows a curve
+	// of its own as the quality falls, and the colour of a 4:2:0 image is
+	// quantized more coarsely where the eye misses it. Without Trellis,
+	// coefficients that round to one step are dropped unless they are
+	// 0.58 to 0.59 of a step from zero (the dead zone of jpegli), not 0.5.
+	//
+	// On 14 photographs and game artwork, together with Progressive and
+	// Trellis, the files are 15% smaller than mozjpeg's defaults at equal
+	// SSIMULACRA2 and 12% at equal butteraugli (jpegli itself, at 4:2:0:
+	// 13% and 12%). The quality means about what it means for the
+	// standard tables: jpegli maps it to a distance meant to look alike.
+	QuantTableJpegli
+)
+
+// Keep QuantTableJpegli the value jpegstream knows it by.
+var _ = [1]struct{}{}[QuantTableJpegli-jpegstream.QuantTableJpegli]
 
 // JPEG selects JPEG output. quality is 1–100; 0 means the default, 80.
 // Without options the file is the one the standard library writes.

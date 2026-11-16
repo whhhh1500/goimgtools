@@ -220,6 +220,9 @@ type encoder struct {
 	// recip is recip(8 * quant), for dividing by a quantization value
 	// without a division.
 	recip [nQuantIndex][blockSize]uint64
+	// deadZone, when set, is how far from zero (in 1/100000 of a step) an
+	// AC coefficient of each table must be to be kept (QuantTableJpegli).
+	deadZone *[2]int64
 	// freq, when set, counts the symbols emitHuff writes (Options.Optimize).
 	freq *[nHuffIndex][257]int64
 	// trellis is set for Options.Trellis.
@@ -378,9 +381,31 @@ type qblock [blockSize]int16
 // quantize transforms b (in place) and quantizes it with table q into zz.
 func (e *encoder) quantize(b *block, q quantIndex, zz *qblock) {
 	fdct(b)
+	e.quantizeCoefs(b, q, zz)
+}
+
+// quantizeCoefs quantizes the DCT coefficients b (natural order, 8 times
+// their value) into zz (zig-zag order) with table q.
+func (e *encoder) quantizeCoefs(b *block, q quantIndex, zz *qblock) {
 	quant, rec := &e.quant[q], &e.recip[q]
 	for zig := 0; zig < blockSize; zig++ {
 		zz[zig] = int16(divBy(b[unzig[zig]], 8*int32(quant[zig]), rec[zig]))
+	}
+	if e.deadZone != nil {
+		// An AC coefficient that rounds to one step is dropped unless it
+		// is at least the dead zone's fraction of a step from zero.
+		dz := e.deadZone[q]
+		for zig := 1; zig < blockSize; zig++ {
+			if v := zz[zig]; v == 1 || v == -1 {
+				x := int64(b[unzig[zig]])
+				if x < 0 {
+					x = -x
+				}
+				if x*100000 < dz*8*int64(quant[zig]) {
+					zz[zig] = 0
+				}
+			}
+		}
 	}
 }
 
@@ -871,8 +896,9 @@ type Options struct {
 	// rounding.
 	Trellis bool
 	// QuantTable picks the quantization tables, 0 to NQuantTables-1, as
-	// mozjpeg's -quant-table does (see qtables.go). 0, the tables of the
-	// JPEG standard, is what the standard library uses.
+	// mozjpeg's -quant-table does (see qtables.go), or QuantTableJpegli
+	// (qtables_jpegli.go). 0, the tables of the JPEG standard, is what the
+	// standard library uses.
 	QuantTable int
 }
 
@@ -923,8 +949,14 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 	if o != nil {
 		table = o.QuantTable
 	}
-	if table < 0 || table >= NQuantTables {
-		return fmt.Errorf("goimgtools: JPEG quantization table must be 0 to %d, got %d", NQuantTables-1, table)
+	if table < 0 || table > QuantTableJpegli {
+		return fmt.Errorf("goimgtools: JPEG quantization table must be 0 to %d, got %d", QuantTableJpegli, table)
+	}
+	// Compute number of components based on input image type.
+	nComponent := 3
+	switch first.(type) {
+	case *image.Gray:
+		nComponent = 1
 	}
 	// Convert from a quality rating to a scaling factor.
 	var scale int
@@ -936,22 +968,26 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 	// Initialize the quantization tables.
 	for i := range e.quant {
 		for j := range e.quant[i] {
-			x := int(baseQuant[table][i][unzig[j]])
-			x = (x*scale + 50) / 100
-			if x < 1 {
-				x = 1
-			} else if x > 255 {
-				x = 255
+			var x int
+			if table == QuantTableJpegli {
+				x = jpegliQuant(quality, quantIndex(i), unzig[j], nComponent == 3)
+			} else {
+				x = int(baseQuant[table][i][unzig[j]])
+				x = (x*scale + 50) / 100
+				if x < 1 {
+					x = 1
+				} else if x > 255 {
+					x = 255
+				}
 			}
 			e.quant[i][j] = uint8(x)
 			e.recip[i][j] = recip(8 * int32(x))
 		}
 	}
-	// Compute number of components based on input image type.
-	nComponent := 3
-	switch first.(type) {
-	case *image.Gray:
-		nComponent = 1
+	// The tables of jpegli come with its dead zone, unless the trellis
+	// chooses the coefficients.
+	if table == QuantTableJpegli && !e.trellis {
+		e.deadZone = &jpegliDeadZone
 	}
 	// Write the Start Of Image marker.
 	e.buf[0] = 0xff

@@ -79,6 +79,23 @@ mozjpeg's `jcparam.c` (`std_luminance_quant_tbl`,
 `std_chrominance_quant_tbl`), generated from that file, under the same
 licences.
 
+## jpegli
+
+BSD 3-Clause License, copyright (c) the JPEG XL Project Authors, with an
+additional patent grant by Google. Both texts, as github.com/google/jpegli
+distributes them (commit 031a007), are in `LICENSE-JPEGLI`, next to this
+file.
+
+`internal/jpegstream/qtables_jpegli.go` makes the quantization tables of
+`QuantTableJpegli` as jpegli makes them (`lib/jpegli/quant.cc`:
+`SetQuantMatrices`, `DistanceToScale`, the base tables
+`kBaseQuantMatrixYCbCr`, `k420Rescale` and `kZeroBiasOffsetYCbCrAC`;
+`lib/jpegli/encode.cc`: `jpegli_quality_to_distance`), and applies the
+dead zone of `ReQuantizeBlock` (`lib/jpegli/encode_finish.cc`) without the
+adaptive part. The tables are copied from those files; the code was
+rewritten in Go, and the tables it makes were checked against the ones
+cjpegli writes.
+
 ## Pillow
 
 `internal/ops/blur.go` contains Go ports of two routines of Pillow 12.1.1,
@@ -130,6 +147,11 @@ of it is included.
 
 ## Acknowledgements (no code taken)
 
+- **gifsicle**: `internal/gifstream/lossy.go` implements the idea of the
+  lossy LZW of gifsicle (by Kornel Lesiński, described at
+  kornel.ski/lossygif): lengthening a dictionary string with a pixel of a
+  close enough colour. It was written from that description; no code of
+  gifsicle (GPL) was used.
 - **pngquant / libimagequant**: the colour quantizer in `internal/quant`
   uses ideas described for pngquant (working on premultiplied colours,
   weighting by how visible an error would be, a dither map). No code of

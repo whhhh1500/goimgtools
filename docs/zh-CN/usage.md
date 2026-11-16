@@ -77,7 +77,7 @@ err := goimgtools.Open("in.jpg").
 
 | 方法 | 说明 |
 |---|---|
-| `JPEG(quality, JPEGOptions{Optimize, Progressive, Trellis, QuantTable})` | 质量 1–100，0 表示 80。`Optimize`、`Progressive` 在像素不变的前提下减小文件；`Trellis`、`QuantTable`（0–8，编号同 mozjpeg 的 `-quant-table`）会改变像素（见[压缩](compression.md)） |
+| `JPEG(quality, JPEGOptions{Optimize, Progressive, Trellis, QuantTable})` | 质量 1–100，0 表示 80。`Optimize`、`Progressive` 在像素不变的前提下减小文件；`Trellis`、`QuantTable`（0–8，编号同 mozjpeg 的 `-quant-table`；或 `QuantTableJpegli`）会改变像素（见[压缩](compression.md)） |
 | `PNG(PNGOptions{CompressionLevel, Colors, NoDither})` | 压缩级别 1（最快）至 9（最小）；`Colors` 将颜色减至最多 256 色（见[压缩](compression.md)） |
 | `WebP(WebPOptions{Quality, Lossless, Effort})` | 有损（质量 1–100，默认 75）或无损（`Effort` 1 最快至 9 最小，默认 5） |
 | `GIF(GIFOptions{Colors, NoDither, FixedPalette})` | 最多 256 色，按图像内容选取；`FixedPalette` 改用标准库的固定调色板 |

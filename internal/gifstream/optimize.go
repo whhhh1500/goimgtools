@@ -25,6 +25,8 @@ type AnimOptions struct {
 	Colors int
 	// NoDither maps every pixel to the nearest palette colour.
 	NoDither bool
+	// Lossy is as in Options.
+	Lossy int
 }
 
 // GIF disposal methods.
@@ -110,7 +112,7 @@ func EncodeAnimation(w io.Writer, env *pipeline.Env, o AnimOptions, next func() 
 			ti = i
 		}
 	}
-	aw, err := NewAnimWriter(w, AnimConfig{Width: fw, Height: fh, LoopCount: o.LoopCount, BackgroundIndex: byte(max(ti, 0)), GlobalPalette: pal})
+	aw, err := NewAnimWriter(w, AnimConfig{Width: fw, Height: fh, LoopCount: o.LoopCount, BackgroundIndex: byte(max(ti, 0)), GlobalPalette: pal, Lossy: o.Lossy})
 	if err != nil {
 		return err
 	}

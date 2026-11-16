@@ -104,6 +104,7 @@ type options struct {
 	format, maxSize, tiffComp                      *string
 	quality, pngLevel, pngColors, gifColors        *int
 	gifFixed                                       *bool
+	gifLossy                                       *int
 	lossless, jpegOpt, jpegProg, noDither          *bool
 	jpegTrellis                                    *bool
 	jpegQuantTable                                 *int
@@ -164,7 +165,7 @@ func register(fs *flag.FlagSet) *options {
 		jpegOpt:        fs.Bool("jpeg-optimize", false, "JPEG: build the coding tables for this image (a smaller file, the same pixels)"),
 		jpegProg:       fs.Bool("jpeg-progressive", false, "JPEG: write a progressive file (smaller still, the same pixels)"),
 		jpegTrellis:    fs.Bool("jpeg-trellis", false, "JPEG: trellis quantization as mozjpeg does it (smaller at about the same look; other pixels)"),
-		jpegQuantTable: fs.Int("jpeg-quant-table", 0, "JPEG: quantization tables 0-8, numbered as mozjpeg's -quant-table: 0 the standard's (as the standard library), 3 mozjpeg's default (closer colour at the same size)"),
+		jpegQuantTable: fs.Int("jpeg-quant-table", 0, "JPEG: quantization tables: 0-8 numbered as mozjpeg's -quant-table (0 the standard's, as the standard library; 3 mozjpeg's default), 9 made as jpegli makes them (the smallest files)"),
 		pngColors:      fs.Int("png-colors", 0, "PNG: reduce to this many colours, 2-256, chosen for the image (a much smaller, lossy file)"),
 		noDither:       fs.Bool("no-dither", false, "no dithering when colours are reduced (-png-colors, GIF output, -animated)"),
 		pngLevel:       fs.Int("png-level", 0, fmt.Sprintf("PNG compression 1 (fastest) to 9 (smallest); default %d", goimgtools.DefaultPNGLevel)),
@@ -174,6 +175,7 @@ func register(fs *flag.FlagSet) *options {
 		lossless:       fs.Bool("webp-lossless", false, "WebP: write without loss"),
 		gifColors:      fs.Int("gif-colors", 0, "largest number of colours in a GIF, 1-256 (default 256)"),
 		gifFixed:       fs.Bool("gif-fixed-palette", false, "GIF: use the standard fixed palette instead of colours chosen for the image (faster, a much worse picture)"),
+		gifLossy:       fs.Int("gif-lossy", 0, "GIF: lossy compression, the colour difference 1-255 it may accept (16-32 for photographic GIFs: 18-32% smaller); 0 keeps every pixel"),
 		tiffComp:       fs.String("tiff-compression", "none", "TIFF compression: none or deflate"),
 		animated:       fs.Bool("animated", false, "process every frame of an animated GIF and write an animated GIF or WebP; only what changes is stored (GIF: one palette for all frames, -gif-colors, -no-dither); another output format, or an animated WebP or PNG input, is an error"),
 		keepExif:       fs.Bool("keep-exif", false, "copy the EXIF block (camera, date, GPS) to the output"),
@@ -626,13 +628,13 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 	}
 	switch kind {
 	case "jpeg":
-		im.JPEG(*o.quality, goimgtools.JPEGOptions{Optimize: *o.jpegOpt, Progressive: *o.jpegProg, Trellis: *o.jpegTrellis, QuantTable: *o.jpegQuantTable})
+		im.JPEG(*o.quality, goimgtools.JPEGOptions{Optimize: *o.jpegOpt, Progressive: *o.jpegProg, Trellis: *o.jpegTrellis, QuantTable: goimgtools.QuantTable(*o.jpegQuantTable)})
 	case "png":
 		im.PNG(goimgtools.PNGOptions{CompressionLevel: *o.pngLevel, Colors: *o.pngColors, NoDither: *o.noDither})
 	case "webp":
 		im.WebP(goimgtools.WebPOptions{Quality: *o.quality, Lossless: *o.lossless})
 	case "gif":
-		im.GIF(goimgtools.GIFOptions{Colors: *o.gifColors, NoDither: *o.noDither, FixedPalette: *o.gifFixed})
+		im.GIF(goimgtools.GIFOptions{Colors: *o.gifColors, NoDither: *o.noDither, FixedPalette: *o.gifFixed, Lossy: *o.gifLossy})
 	case "bmp":
 		im.BMP()
 	case "tiff":

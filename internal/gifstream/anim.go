@@ -23,6 +23,8 @@ type AnimConfig struct {
 	// GlobalPalette is the global color table; nil when there is none and
 	// every frame carries its own.
 	GlobalPalette color.Palette
+	// Lossy is as in Options.
+	Lossy int
 }
 
 // FrameInfo is what goes with one frame of an animation besides its pixels.
@@ -297,7 +299,11 @@ func NewAnimWriter(w io.Writer, cfg AnimConfig) (*AnimWriter, error) {
 			return nil, err
 		}
 	}
+	if cfg.Lossy < 0 || cfg.Lossy > 255 {
+		return nil, fmt.Errorf("goimgtools: gif: lossy must be 0 to 255, got %d", cfg.Lossy)
+	}
 	e := newEncoder(w, cfg.Width, cfg.Height, cfg.GlobalPalette)
+	e.lossy = cfg.Lossy
 	e.writeHeader(cfg.BackgroundIndex, cfg.LoopCount)
 	if e.err != nil {
 		return nil, e.err

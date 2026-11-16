@@ -466,7 +466,7 @@ func (m *Image) writeAnimated(w io.Writer, f *input, env *pipeline.Env, format s
 		return m.writeFixedFrames(w, seq, cfg.LoopCount, g)
 	}
 	return gifstream.EncodeAnimation(w, env, gifstream.AnimOptions{
-		Frames: frames, LoopCount: cfg.LoopCount, Colors: g.Colors, NoDither: g.NoDither,
+		Frames: frames, LoopCount: cfg.LoopCount, Colors: g.Colors, NoDither: g.NoDither, Lossy: g.Lossy,
 	}, seq.next)
 }
 
@@ -631,7 +631,7 @@ func (m *Image) writeFixedFrames(w io.Writer, seq *frameSeq, loop int, g GIFOpti
 			if aw == nil {
 				size = b.Size()
 				if aw, err = gifstream.NewAnimWriter(w, gifstream.AnimConfig{
-					Width: b.Dx(), Height: b.Dy(), LoopCount: loop, BackgroundIndex: transparent, GlobalPalette: pal,
+					Width: b.Dx(), Height: b.Dy(), LoopCount: loop, BackgroundIndex: transparent, GlobalPalette: pal, Lossy: g.Lossy,
 				}); err != nil {
 					return err
 				}

@@ -77,7 +77,7 @@ Blur, sharpening, modulation and extension are streamed row by row and require o
 
 | Method | Description |
 |---|---|
-| `JPEG(quality, JPEGOptions{Optimize, Progressive, Trellis, QuantTable})` | Quality 1–100; 0 means 80. `Optimize` and `Progressive` reduce file size without changing pixels; `Trellis` and `QuantTable` (0–8, as mozjpeg's `-quant-table`) change pixels (see [Compression](compression.md)) |
+| `JPEG(quality, JPEGOptions{Optimize, Progressive, Trellis, QuantTable})` | Quality 1–100; 0 means 80. `Optimize` and `Progressive` reduce file size without changing pixels; `Trellis` and `QuantTable` (0–8, as mozjpeg's `-quant-table`, or `QuantTableJpegli`) change pixels (see [Compression](compression.md)) |
 | `PNG(PNGOptions{CompressionLevel, Colors, NoDither})` | Compression level from 1 (fastest) to 9 (smallest); `Colors` reduces the image to at most 256 colours (see [Compression](compression.md)) |
 | `WebP(WebPOptions{Quality, Lossless, Effort})` | Lossy (quality 1–100, default 75) or lossless (`Effort` from 1, fastest, to 9, smallest; default 5) |
 | `GIF(GIFOptions{Colors, NoDither, FixedPalette})` | Up to 256 colours, selected from the image content; `FixedPalette` uses the standard library's fixed palette instead |

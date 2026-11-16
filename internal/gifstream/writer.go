@@ -63,6 +63,10 @@ type encoder struct {
 	localColorTable  [3 * 256]byte
 	// lzww is reused from frame to frame.
 	lzww *lzw.Writer
+	// lossy is the colour difference the lossy LZW encoder accepts; 0
+	// for lossless LZW (compress/lzw). lz is that encoder.
+	lossy int
+	lz    *lossyLZW
 }
 
 func newEncoder(w io.Writer, width, height int, global color.Palette) *encoder {
@@ -353,6 +357,13 @@ func (e *encoder) beginImage(pal color.Palette, b image.Rectangle, delay int, di
 
 	bw := blockWriter{e: e}
 	bw.setup()
+	if e.lossy > 0 {
+		if e.lz == nil {
+			e.lz = new(lossyLZW)
+		}
+		e.lz.reset(bw, uint(litWidth), pal, transparentIndex, e.lossy)
+		return
+	}
 	if e.lzww == nil {
 		e.lzww = lzw.NewWriter(bw, lzw.LSB, litWidth).(*lzw.Writer)
 	} else {
@@ -365,6 +376,10 @@ func (e *encoder) writePixels(pix []byte) {
 	if e.err != nil {
 		return
 	}
+	if e.lossy > 0 {
+		e.lz.write(pix)
+		return
+	}
 	_, e.err = e.lzww.Write(pix)
 }
 
@@ -373,7 +388,11 @@ func (e *encoder) endImage() {
 	if e.err != nil {
 		return
 	}
-	e.lzww.Close()            // flush to bw
+	if e.lossy > 0 {
+		e.lz.close()
+	} else {
+		e.lzww.Close() // flush to bw
+	}
 	blockWriter{e: e}.close() // flush to e.w
 }
 
@@ -386,6 +405,10 @@ type Options struct {
 	// of the Plan 9 palette instead of dithering it (gif.Encode with
 	// draw.Src as its Drawer).
 	NoDither bool
+	// Lossy is the largest colour difference (distance in RGB, 0-255 a
+	// channel) the LZW encoder accepts to lengthen a string (see
+	// lossy.go); 0 keeps every pixel.
+	Lossy int
 }
 
 // checkPalette rejects what cannot be written or looked up without a panic.
@@ -543,6 +566,12 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 	// translated such that its top-left corner is (0, 0), so that the single
 	// frame completely fills the overall GIF's bounds.
 	e := newEncoder(w, dx, dy, pal)
+	if o != nil {
+		if o.Lossy < 0 || o.Lossy > 255 {
+			return fmt.Errorf("goimgtools: gif: lossy must be 0 to 255, got %d", o.Lossy)
+		}
+		e.lossy = o.Lossy
+	}
 	e.writeHeader(0, -1)
 	transparentIndex, err := transparentIndexOf(pal)
 	if err != nil {

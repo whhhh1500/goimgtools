@@ -5,9 +5,10 @@
 | 目标 | 方法 | 800 万像素真实照片实测 |
 |---|---|---|
 | JPEG 更小，画质不变 | `JPEG(q, JPEGOptions{Optimize: true})`：为该图像单独计算编码表 | 质量 85：983KB → 965KB（减小 1.9%），0.20s，7.3MB |
-| JPEG 进一步减小，画质不变 | `JPEGOptions{Progressive: true}`：渐进式编码（含优化编码表），扫描方案按 mozjpeg 的方法搜索 | 983KB → 905KB（减小 7.9%），0.34s，6.6MB，为加入扫描搜索之前的数据；扫描搜索使渐进文件再小 0.4–7%（18 张照片与截图平均 2.4%，与 `Trellis`、`QuantTable: 3` 同用时平均 3.9%），像素不变 |
+| JPEG 进一步减小，画质不变 | `JPEGOptions{Progressive: true}`：渐进式编码（含优化编码表），扫描方案按 mozjpeg 的方法搜索 | 983KB → 905KB（减小 7.9%），0.34s，6.6MB，为加入扫描搜索之前的数据；扫描搜索使渐进文件再小 0.4–7%（18 张照片与截图平均 2.4%，与 `Trellis`、`QuantTable: QuantTableImageMagick` 同用时平均 3.9%），像素不变 |
 | JPEG 同等观感下更小（改变像素） | `JPEGOptions{Trellis: true}`：网格量化（mozjpeg 的方法），可与上述两项同时使用 | 7 张真实照片：同等 SSIM 时减小 2.7–10.6%（平均 6.9%），同等 PSNR 时平均减小 6%；3300 万像素耗时增加 0.4s（单线程） |
-| JPEG 使用 mozjpeg 量化表（改变像素） | `JPEGOptions{QuantTable: 3}` / `-jpeg-quant-table 3`：mozjpeg 的默认表（N. Robidoux 为 ImageMagick 设计）；编号 0–8 与 mozjpeg 的 `-quant-table` 一致，默认 0 为 JPEG 标准表 | 18 张真实照片与截图，同等文件大小下：同等 PSNR（RGB）时小 2–15%，同等彩色 SSIM 时小 3–9%，同等亮度 SSIM 时大 0–2%：亮度细节量化更粗、颜色量化更细。JPEG 按原质量重新保存时，0 号表更接近原图（一张图在质量 90：68.3dB 对 49.8dB）。再加 `Progressive` 与 `Trellis` 时，同等 PSNR 下比 mozjpeg 默认设置小 0.7%，同等亮度 SSIM 下小 5.3%（同样 18 张图；mozjpeg 为浏览器所用的 @jsquash/jpeg 1.6.0） |
+| JPEG 使用 mozjpeg 量化表（改变像素） | `JPEGOptions{QuantTable: QuantTableImageMagick}` / `-jpeg-quant-table 3`：mozjpeg 的默认表（N. Robidoux 为 ImageMagick 设计）；编号 0–8 与 mozjpeg 的 `-quant-table` 一致，默认 0 为 JPEG 标准表 | 18 张真实照片与截图，同等文件大小下：同等 PSNR（RGB）时小 2–15%，同等彩色 SSIM 时小 3–9%，同等亮度 SSIM 时大 0–2%：亮度细节量化更粗、颜色量化更细。JPEG 按原质量重新保存时，0 号表更接近原图（一张图在质量 90：68.3dB 对 49.8dB）。再加 `Progressive` 与 `Trellis` 时，同等 PSNR 下比 mozjpeg 默认设置小 0.7%，同等亮度 SSIM 下小 5.3%（同样 18 张图；mozjpeg 为浏览器所用的 @jsquash/jpeg 1.6.0） |
+| 同等观感下 JPEG 最小（改变像素） | `JPEGOptions{QuantTable: QuantTableJpegli}` / `-jpeg-quant-table 9`：按 Google jpegli（2024）的方法生成量化表，不开 `Trellis` 时同时采用其死区 | 14 张照片与游戏美术图，与 `Progressive`、`Trellis` 同用：同等 SSIMULACRA2 下比 mozjpeg 默认设置小 15.4%，同等 butteraugli 下小 12.3%（jpegli 提交 031a007，4:2:0：12.8% / 12.0%；本库 3 号表：1.6% / 2.3%）；游戏美术图小 9–27%，平滑照片小 2–12%。不开 `Trellis`（改用死区）：15.3% / 11.3% |
 | PNG 默认更小（无损） | Go 1.27 下默认压缩级别为 7（标准库为 6）：Go 1.27 的 6 级查找重复数据的能力较弱，7 级在渐变、天空、图标等图像上约小 5 倍，照片小 4–25%；2400 万像素的大图慢 17–70%（单线程），多线程时通过分块压缩弥补。如需标准库的速度，可使用 `PNG(PNGOptions{CompressionLevel: 6})` / `-png-level 6`。Go 1.26 下默认为 6 级：该版本 7 级仅小 1–1.5%，耗时多 50–58% | Go 1.27：渐变 1200×800：21KB → 4.7KB；2400 万像素 RGB PNG：70.7MB → 53.0MB |
 | PNG 大幅减小（有损） | `PNG(PNGOptions{Colors: 256})`：减至最多 256 色，颜色依图像选取，带抖动 | 6474KB → 2653KB（减小 59%），相对原图 39.1dB，0.90s，12.6MB |
 | PNG 减色，不抖动 | 另加 `NoDither: true`：文件更小，渐变处出现色带 | 2142KB，40.7dB |
@@ -16,6 +17,7 @@
 | GIF 动画减小 | `Animated()` 的默认行为：所有帧共用一个调色板，自第二帧起仅存储变化的矩形区域，未变化的像素写为透明；颜色不超过 256 种时逐像素不变 | 每帧均完整存储的 8 帧动画（160×120，仅一个小方块移动）：35KB → 5.6KB，画面不变（`FixedPalette` 每帧完整写出，为 55KB） |
 | GIF 动画转 WebP 动画 | `Animated().WebP()`，或 `-animated` 且输出为 `.webp`：第一帧完整存储，之后每帧仅存储变化的矩形区域；相同的帧合并；无损且不含透明像素的帧将未变化的像素写为透明 | 照片类 GIF 动画（400×533，8 帧，557KB）：有损质量 75 为 128KB，0.15s（libwebp 动画编码器 191KB，浏览器 213KB，PSNR 相差不超过 0.1dB；质量 50 时 92KB 对 141KB）；无损 441KB（libwebp 530KB），逐像素不变 |
 | GIF 动画进一步减小（有损） | 另加 `GIF(GIFOptions{Colors: 128, NoDither: true})` 等设置，减少颜色数 | 一个已优化的照片类 GIF 动画（400×533，8 帧，557KB）：不减色 557KB → 556KB（逐像素不变）；128 色 501KB（减小 10%，每帧 39.6dB）；64 色 404KB（减小 27%，34.7dB）；`FixedPalette`（固定调色板加抖动，每帧完整写出）为 814KB |
+| GIF 有损压缩 | `GIF(GIFOptions{Lossy: 16})` / `-gif-lossy 16`：LZW 压缩在能缩短数据处，接受与原像素相差不超过该值的颜色（gifsicle `--lossy` 的方法）；动画同样适用 | 上述 GIF 动画（557KB）：16 → 453KB（SSIMULACRA2 78.9），24 → 378KB（68.2），32 → 336KB（59.5）；同等体积下观感好于减色（128 色：501KB，76.8）。带抖动的静态图损失更大：一张 1280×720 照片取 24 时小 70%，观感由 76 降至 49，宜用 8–16 |
 
 - **JPEG 的两个选项**不改变任何像素（经 libjpeg 解码验证逐像素相同）。`Optimize` 的文件大小与 libjpeg-turbo 同名选项相差不超过 0.04%，算法移植自 libjpeg。`Progressive` 按 mozjpeg 的方法（`optimize_scans`）选择扫描：候选扫描在量化图像时与对暂存系数再读一遍时统计，选出代价最小的首轮扫描位数（亮度留 0–3 位、色度留 0–2 位给细化扫描）与分频点（第 2、5、8、12、18 个系数之后，或不分），因此文件比 libjpeg-turbo 的固定方案更小（此前与其相差不超过 0.04%）。候选扫描的统计随 `Threads` 并行；单线程时渐进编码比固定方案多用 3–19% 的时间，4 线程及以上时持平或更快。不启用这些选项时，输出仍与 Go 标准库逐字节一致。
 - **PNG 减色**在同等设置下比 Pillow 的中位切分文件更小、画质更高（上述照片：Pillow 带抖动 2877KB / 34.5dB，不抖动 2309KB / 37.6dB）。透明度予以保留：全透明像素仍为全透明，不透明像素仍为不透明，柔和边缘保留中间透明度。颜色数不超过 `Colors` 的图像原样保留，无损失。
