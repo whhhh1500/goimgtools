@@ -84,7 +84,7 @@ err := goimgtools.Open("in.jpg").
 | `BMP()` | |
 | `TIFF(TIFFOptions{Compression})` | 不压缩或 `TIFFDeflate` |
 | `ToFormat(name, 选项)` | 按名称选择输出格式（`"jpeg"`、`"png"`、`".tif"`……，以及已注册的格式）；选项为该格式的选项结构体，可省略 |
-| `MaxFileSize(n)` | 输出不超过 n 字节：自动选用满足该限制的最高质量（JPEG、有损 WebP，以及提供 `Quality` 的注册格式） |
+| `MaxFileSize(n)` | 输出不超过 n 字节：自动选用满足该限制的最高质量（JPEG、有损 WebP，以及提供 `Quality` 的注册格式）。与 `Animated()` 同用于动画时返回包装了 `errors.ErrUnsupported` 的错误；单帧 GIF 按静态图像处理 |
 | `ToFile(path)` / `ToWriter(w)` / `ToBytes()` | 执行并写出。`ToFile` 未指定格式时按扩展名确定；仅当全程成功时才生成文件 |
 | `Metadata()` | 仅读取文件头，描述**输入**：格式、存储的宽高、颜色类型（灰度 / 调色板 / RGB / YCbCr / CMYK）与位深、是否含透明、EXIF 方向、是否含 ICC / EXIF。不受链上操作影响 |
 | `Frames()` | 输入的帧数、单次播放时长、循环次数（仅 GIF 可多于一帧）。须读取整个文件，但不解码像素 |

@@ -29,7 +29,8 @@ import (
 // image.
 //
 // A WebP holds the first frame whole and every later one as the rectangle
-// that changed; a frame that changes nothing lengthens the one before.
+// that changed; a frame that changes nothing lengthens the one before, and
+// a GIF of one frame (or of frames all alike) becomes a still WebP.
 // WebPOptions apply to every frame (lossy or lossless, Quality, Effort);
 // lossless frames without transparency leave the unchanged pixels of their
 // rectangle transparent, blended onto the picture. The frames are encoded
@@ -176,25 +177,9 @@ func keepsAnimation(input, output string) bool {
 // could not be kept: a still image passes, and so its first frame would.
 // It leaves the input to be read again from the start.
 func (m *Image) refuseAnimation(f *input, input, output string, env *pipeline.Env) error {
-	var n int
-	switch input {
-	case "gif":
-		ra, size, err := f.rewind(env)
-		if err != nil {
-			return f.classify(err)
-		}
-		if n, err = gifFrames(io.NewSectionReader(ra, 0, size), env, 2); err != nil {
-			return f.classify(err)
-		}
-	case "webp", "png":
-		fr, err := f.otherFrames(input, env)
-		if err != nil {
-			return err
-		}
-		n = fr.Count
-	}
-	if n <= 1 {
-		return nil
+	n, err := inputFrames(f, input, env)
+	if err != nil || n <= 1 {
+		return err
 	}
 	name := map[string]string{"gif": "an animated GIF", "webp": "an animated WebP", "png": "an animated PNG (APNG)"}[input]
 	if input == "gif" {
@@ -203,6 +188,36 @@ func (m *Image) refuseAnimation(f *input, input, output string, env *pipeline.En
 	}
 	return fmt.Errorf("goimgtools: the input is %s, whose frames cannot be processed one by one (only an animated GIF's can); without Animated its first frame is used: %w",
 		name, errors.ErrUnsupported)
+}
+
+// refuseMaxSize fails when MaxFileSize is set for an animation that would
+// be kept: it chooses the quality of a single picture. A GIF of one frame
+// passes, to be written as a still image.
+func (m *Image) refuseMaxSize(f *input, input string, env *pipeline.Env) error {
+	n, err := inputFrames(f, input, env)
+	if err != nil || n <= 1 {
+		return err
+	}
+	return fmt.Errorf("goimgtools: MaxFileSize does not apply to an animation; without Animated the first frame is used: %w", errors.ErrUnsupported)
+}
+
+// inputFrames tells a still image (1) from an animation (2 or more frames)
+// for an input of format input; 0 for a format without frames. It leaves
+// the input to be read again from the start.
+func inputFrames(f *input, input string, env *pipeline.Env) (int, error) {
+	switch input {
+	case "gif":
+		ra, size, err := f.rewind(env)
+		if err != nil {
+			return 0, f.classify(err)
+		}
+		n, err := gifFrames(io.NewSectionReader(ra, 0, size), env, 2)
+		return n, f.classify(err)
+	case "webp", "png":
+		fr, err := f.otherFrames(input, env)
+		return fr.Count, err
+	}
+	return 0, nil
 }
 
 // gifFrames counts the frames of the GIF r, stopping at most.

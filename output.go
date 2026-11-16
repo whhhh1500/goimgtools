@@ -154,6 +154,10 @@ var ErrFileSize = errors.New("goimgtools: cannot reach the requested file size")
 // output. When even quality 1 is too large the result is an ErrFileSize;
 // shrink the image (Resize) to get further.
 //
+// It does not apply to an animation that Animated keeps, which is then an
+// error wrapping errors.ErrUnsupported (a GIF of one frame is written as a
+// still image, within the size).
+//
 // The image is encoded several times (up to about eight), so this costs
 // that many times the encoding time; decoding and the operations run once,
 // their result kept in working storage (a temporary file beyond its memory
@@ -314,14 +318,21 @@ func (m *Image) write(w io.Writer, ext string) (err error) {
 		f.Close()
 		return err
 	}
-	if m.animated && keepsAnimation(inFormat, format) {
-		defer f.Close()
-		return m.writeAnimated(w, f, m.newEnv(), format)
-	}
 	var env *pipeline.Env
 	if m.animated {
 		env = m.newEnv()
-		if err := m.refuseAnimation(f, inFormat, format, env); err != nil {
+		keeps := keepsAnimation(inFormat, format)
+		if keeps && m.maxBytes == 0 {
+			defer f.Close()
+			return m.writeAnimated(w, f, env, format)
+		}
+		var err error
+		if keeps {
+			err = m.refuseMaxSize(f, inFormat, env)
+		} else {
+			err = m.refuseAnimation(f, inFormat, format, env)
+		}
+		if err != nil {
 			f.Close()
 			return err
 		}

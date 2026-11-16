@@ -104,7 +104,7 @@ Staged data is kept in memory up to 1/8 of the memory limit (8MB by default); be
 - Contrast, gamma, levels and inversion are not built in; each takes a few lines with `Pixels` (see the grayscale example in [Extending](docs/extending.md)). Filters that depend on neighbouring pixels (median, emboss, edge detection and others) are implemented as `Pipe` stages.
 - GIF, BMP and TIFF encoding is single-threaded; LZ77 matching and the second pass of lossless WebP are sequential, so multiple threads speed it up by only 10–20%.
 - JPEG trellis quantization estimates code lengths from the standard Huffman tables (mozjpeg first collects statistics for the whole image): this library processes strips as a stream and does not retain the coefficients of the whole image for this purpose.
-- `MaxFileSize` supports JPEG and lossy WebP only (and registered formats that provide `Quality`).
+- `MaxFileSize` supports JPEG and lossy WebP only (and registered formats that provide `Quality`), and not animations.
 
 ## Versioning
 

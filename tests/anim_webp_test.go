@@ -3,6 +3,7 @@ package tests
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -283,5 +284,47 @@ func TestAnimatedWebPEverywhere(t *testing.T) {
 		image.NewPaletted(image.Rect(0, 0, 20000, 2), color.Palette{color.Black, color.White})}, Delay: []int{5, 5}}
 	if _, err := FromBytes(encodeAll(t, big)).Animated().WebP().ToBytes(); err == nil {
 		t.Error("a 20000-pixel-wide animation written as WebP")
+	}
+}
+
+// TestAnimatedStillAndSize: a GIF of one frame, or of frames all alike,
+// becomes a still WebP; MaxFileSize, which chooses the quality of one
+// picture, is refused for an animation and kept for a single frame.
+func TestAnimatedStillAndSize(t *testing.T) {
+	g := movingAnimation(120, 90, 3, false)
+	frame0 := coalesce(g)[0]
+	one := &gif.GIF{Image: g.Image[:1], Delay: g.Delay[:1], Config: g.Config}
+	same := &gif.GIF{Image: []*image.Paletted{g.Image[0], g.Image[0], g.Image[0]}, Delay: []int{5, 5, 5}, Config: g.Config}
+	for name, a := range map[string]*gif.GIF{"one frame": one, "frames alike": same} {
+		for _, o := range []WebPOptions{{Lossless: true}, {Quality: 90}} {
+			b, err := FromBytes(encodeAll(t, a)).Animated().WebP(o).ToBytes()
+			if err != nil {
+				t.Fatalf("%s %+v: %v", name, o, err)
+			}
+			if bytes.Contains(b[:40], []byte("ANIM")) || len(b) < 12 || int(binary.LittleEndian.Uint32(b[4:]))+8 != len(b) {
+				t.Errorf("%s %+v: not a still WebP file", name, o)
+			}
+			if fr, err := FromBytes(b).Frames(); err != nil || fr != (Frames{Count: 1}) {
+				t.Errorf("%s %+v: Frames %+v, %v", name, o, fr, err)
+			}
+			if o.Lossless {
+				m, err := FromBytes(b).ToImage()
+				if err != nil {
+					t.Fatal(err)
+				}
+				sameImage(t, name, m, frame0)
+			}
+		}
+	}
+
+	anim := encodeAll(t, g)
+	for _, m := range []*Image{FromBytes(anim).Animated().WebP().MaxFileSize(1 << 20), FromBytes(anim).Animated().GIF().MaxFileSize(1 << 20)} {
+		if _, err := m.ToBytes(); !errors.Is(err, errors.ErrUnsupported) || errors.Is(err, ErrFormat) {
+			t.Errorf("MaxFileSize with an animation: %v", err)
+		}
+	}
+	b, err := FromReader(bytes.NewReader(encodeAll(t, one))).Animated().WebP(WebPOptions{Quality: 95}).MaxFileSize(2000).ToBytes()
+	if err != nil || len(b) > 2000 {
+		t.Errorf("MaxFileSize with one frame: %d bytes, %v", len(b), err)
 	}
 }

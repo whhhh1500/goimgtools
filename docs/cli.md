@@ -81,7 +81,7 @@ Operations run in a fixed order: rotate → flip → trim → crop → resize �
 | `-jpeg-trellis` | JPEG: trellis quantization (smaller files at the same perceived quality; pixels change; can be combined with the two options above) |
 | `-jpeg-quant-table N` | JPEG: quantization tables 0–8, numbered as mozjpeg's `-quant-table`; 0 (the default) the standard's, 3 mozjpeg's default (see [Compression](compression.md)) |
 | `-png-colors N`, `-no-dither` | PNG: reduce to N colours (2–256); disable dithering |
-| `-max-size size` | Limit the file to this size (`200KB`, `1.5MB` or a number of bytes) by lowering the quality automatically |
+| `-max-size size` | Limit the file to this size (`200KB`, `1.5MB` or a number of bytes) by lowering the quality automatically (JPEG, lossy WebP); with `-animated`, an animation is an error |
 | `-skip-larger` | Keep the original file if the result is not smaller than it (same format); intended for compression-only jobs |
 | `-webp-lossless` | Lossless WebP |
 | `-png-level N`, `-gif-colors N`, `-gif-fixed-palette`, `-tiff-compression none\|deflate` | Format-specific options |

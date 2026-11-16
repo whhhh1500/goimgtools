@@ -84,7 +84,7 @@ Blur, sharpening, modulation and extension are streamed row by row and require o
 | `BMP()` | |
 | `TIFF(TIFFOptions{Compression})` | Uncompressed or `TIFFDeflate` |
 | `ToFormat(name, options)` | Selects the output format by name (`"jpeg"`, `"png"`, `".tif"`…, and registered formats); `options` is the format's options struct and may be omitted |
-| `MaxFileSize(n)` | Limits the output to n bytes, automatically selecting the highest quality that fits (JPEG, lossy WebP, and registered formats that provide `Quality`) |
+| `MaxFileSize(n)` | Limits the output to n bytes, automatically selecting the highest quality that fits (JPEG, lossy WebP, and registered formats that provide `Quality`). With `Animated()` on an animation it is an error wrapping `errors.ErrUnsupported`; a GIF of one frame is handled as a still image |
 | `ToFile(path)` / `ToWriter(w)` / `ToBytes()` | Runs the chain and writes the result. Without an explicit format, `ToFile` uses the file extension; the output file is produced only if the entire run succeeds |
 | `Metadata()` | Reads only the file header and describes the **input**: format, stored width and height, colour type (grayscale / palette / RGB / YCbCr / CMYK) and bit depth, presence of transparency, EXIF orientation, presence of ICC / EXIF data. Unaffected by the operations on the chain |
 | `Frames()` | The number of frames in the input, the duration of one playthrough, and the loop count (only GIF can have more than one frame). Reads the whole file without decoding pixels |

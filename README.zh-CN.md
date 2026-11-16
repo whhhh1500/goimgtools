@@ -104,7 +104,7 @@ goimgtools batch -resize 1920x1920 -no-enlarge -quality 80 -format jpeg in_dir o
 - 未内置对比度、伽马、色阶与反色调整，可用 `Pixels` 以数行代码实现（参见[扩展](docs/zh-CN/extending.md)中的灰度示例）；依赖邻域像素的滤镜（中值、浮雕、边缘检测等）需实现为 `Pipe` 环节。
 - GIF、BMP、TIFF 编码为单线程；无损 WebP 的 LZ77 匹配与第二遍分组为顺序过程，多线程仅提速 10–20%。
 - JPEG 网格量化按标准霍夫曼表估算码长（mozjpeg 先统计全图再用优化后的表估算）：本库按条带流式处理，不为此保存整图系数。
-- `MaxFileSize` 仅支持 JPEG 与有损 WebP（以及提供 `Quality` 的注册格式）。
+- `MaxFileSize` 仅支持 JPEG 与有损 WebP（以及提供 `Quality` 的注册格式），不支持动画。
 
 ## 版本
 

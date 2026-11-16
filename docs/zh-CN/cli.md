@@ -81,7 +81,7 @@ goimgtools -trim 10 -resize 1200x -extend 20,20,20,20 -background white -sharpen
 | `-jpeg-trellis` | JPEG：网格量化（同等观感下文件更小，像素会改变；可与上述两项同时使用） |
 | `-jpeg-quant-table N` | JPEG：量化表 0–8，编号与 mozjpeg 的 `-quant-table` 一致；默认 0 为标准表，3 为 mozjpeg 的默认表（见[压缩](compression.md)） |
 | `-png-colors N`、`-no-dither` | PNG：减至 N 色（2–256）；关闭抖动 |
-| `-max-size 大小` | 文件大小不超过此值（`200KB`、`1.5MB` 或字节数），自动降低质量 |
+| `-max-size 大小` | 文件大小不超过此值（`200KB`、`1.5MB` 或字节数），自动降低质量（JPEG、有损 WebP）；与 `-animated` 同用时动画报错 |
 | `-skip-larger` | 结果不小于原文件（同格式）时保留原文件；适用于仅做压缩的任务 |
 | `-webp-lossless` | 无损 WebP |
 | `-png-level N`、`-gif-colors N`、`-gif-fixed-palette`、`-tiff-compression none\|deflate` | 各格式专用选项 |

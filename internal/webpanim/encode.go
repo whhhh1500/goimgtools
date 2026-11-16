@@ -4,7 +4,7 @@
 //
 // The first frame is written whole; every later one only as the rectangle
 // that changed since the frame before, and a frame that changes nothing
-// lengthens the one before instead. When a lossless frame has no
+// lengthens the one before instead (frames all alike make a still image). When a lossless frame has no
 // transparent pixels, the pixels of its rectangle that stay as they were
 // are made transparent and the frame is blended onto the picture: they
 // cost next to nothing. The frames are encoded one at a time, as they
@@ -287,8 +287,12 @@ func (e *encoder) encode(f *frame, opaque bool) error {
 	return nil
 }
 
-// write writes the file: the header, then the frames from the spill.
+// write writes the file: the header, then the frames from the spill. A
+// single frame (one picture, or frames all alike) is a still image.
 func (e *encoder) write(w io.Writer) error {
+	if len(e.frames) == 1 {
+		return e.writeStill(w)
+	}
 	total := int64(4 + 8 + 10 + 8 + 6)
 	for _, f := range e.frames {
 		total += 8 + 16 + f.n
@@ -333,6 +337,43 @@ func (e *encoder) write(w io.Writer) error {
 		if _, err := io.Copy(bw, io.NewSectionReader(e.data, f.off, f.n)); err != nil {
 			return err
 		}
+	}
+	return bw.Flush()
+}
+
+// writeStill writes the one frame as a still WebP: its image chunks, after
+// a VP8X chunk when an ALPH chunk needs one.
+func (e *encoder) writeStill(w io.Writer) error {
+	f := e.frames[0]
+	var id [4]byte
+	if _, err := e.data.ReadAt(id[:], f.off); err != nil {
+		return err
+	}
+	alph := string(id[:]) == "ALPH"
+	total := 4 + f.n
+	if alph {
+		total += 8 + 10
+	}
+	if total > math.MaxUint32-8 {
+		return errors.New("goimgtools: the image is too large for a WebP file (4GB)")
+	}
+	bw := bufio.NewWriterSize(w, 64<<10)
+	var b [30]byte
+	copy(b[:], "RIFF")
+	binary.LittleEndian.PutUint32(b[4:], uint32(total))
+	copy(b[8:], "WEBP")
+	n := 12
+	if alph {
+		copy(b[12:], "VP8X")
+		binary.LittleEndian.PutUint32(b[16:], 10)
+		b[20] = 1 << 4 // alpha
+		b[24], b[25], b[26] = byte(e.w-1), byte((e.w-1)>>8), byte((e.w-1)>>16)
+		b[27], b[28], b[29] = byte(e.h-1), byte((e.h-1)>>8), byte((e.h-1)>>16)
+		n = 30
+	}
+	bw.Write(b[:n])
+	if _, err := io.Copy(bw, io.NewSectionReader(e.data, f.off, f.n)); err != nil {
+		return err
 	}
 	return bw.Flush()
 }
