@@ -4,6 +4,16 @@
 
 ## 未发布
 
+### 从 0.1.0 升级
+
+0.1.0 导出的内容没有删除，签名也没有改动（用 `apidiff` 核对；此后每次推送都会与上一发布版本比较）。为 0.1.0 写的代码仍可能遇到的变化：
+
+- `Animated()` 遇到无法保留的动画（GIF 转 JPEG、PNG、BMP 或 TIFF；输入为 WebP 动图或 APNG）时返回包装 `errors.ErrUnsupported` 的错误，0.1.0 会静默只写第一帧。去掉 `Animated()` 即得第一帧。
+- 有损 WebP 解码为 `*image.NRGBA` 条带，不再是 `*image.YCbCr`，以便颜色与 libwebp 一致；`Metadata()` 仍报告 `ycbcr`。对解码结果做类型断言的代码应接受任意 `image.Image`。
+- GIF 的 `Frames().LoopCount` 为播放次数（与文档一致），比 0.1.0 返回的多 1。
+- Go 1.27 下 PNG 默认级别为 7（原为 6）：文件更小，写得更慢。`PNGOptions{CompressionLevel: 6}` 可得原来的文件。
+- `Threads(n)` 不再以 3 为上限：n 更大时即用更多核心。
+
 ### 新增
 
 - 图像调整操作：`Grayscale`、`Modulate`、`Blur`、`Sharpen`（轻度锐化或反锐化掩模）、`Extend`、`Trim`、`RotateBy`（任意角度）。

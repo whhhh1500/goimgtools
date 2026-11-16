@@ -4,6 +4,16 @@ English | [中文](zh-CN/CHANGELOG.md)
 
 ## Unreleased
 
+### Upgrading from 0.1.0
+
+Nothing exported by 0.1.0 was removed or changed in its signature (checked with `apidiff`, which every push now runs against the last release). What can still surprise code written for 0.1.0:
+
+- `Animated()` returns an error wrapping `errors.ErrUnsupported` for an animation it cannot keep (a GIF to JPEG, PNG, BMP or TIFF; an animated WebP or APNG input), where 0.1.0 silently wrote the first frame. Leave out `Animated()` to get the first frame.
+- A lossy WebP is decoded to `*image.NRGBA` strips, no longer to `*image.YCbCr`, so that its colours are libwebp's; `Metadata()` still reports `ycbcr`. Code that type-asserts the decoded image should accept any `image.Image`.
+- `Frames().LoopCount` of a GIF is the number of times it plays, as documented, one more than 0.1.0 returned.
+- The default PNG level is 7 with Go 1.27 (6 before): smaller files, written more slowly. `PNGOptions{CompressionLevel: 6}` keeps the old files.
+- `Threads(n)` is no longer capped at 3: a larger n uses that many cores.
+
 ### Added
 
 - Image adjustments: `Grayscale`, `Modulate`, `Blur`, `Sharpen` (mild sharpening or unsharp masking), `Extend`, `Trim` and `RotateBy` (arbitrary angle).
