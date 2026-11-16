@@ -383,3 +383,51 @@ func TestJPEGQuantTables(t *testing.T) {
 		}
 	}
 }
+
+// textLike is text of anti-aliased glyphs in three colours on white, as on
+// screenshots: what PNG compresses better unfiltered.
+func textLike(w, h int) *image.RGBA {
+	var glyphs [12][12][8]uint8
+	for g := range glyphs {
+		for y := 0; y < 12; y++ {
+			for x := 0; x < 8; x++ {
+				n := 0
+				for sy := 0; sy < 4; sy++ {
+					for sx := 0; sx < 4; sx++ {
+						fx, fy := (4*x+sx-14)*2, (4*y+sy-22)*2 // eighths of a pixel from the centre
+						r := fx*fx + fy*fy
+						if (r > (2+g%3)*64 && r < (6+g%5)*64) || (g%4 == 1 && fx > -8 && fx < 4) {
+							n++
+						}
+					}
+				}
+				glyphs[g][y][x] = uint8(n * 255 / 16)
+			}
+		}
+	}
+	colours := [3][3]int{{32, 33, 36}, {0, 90, 140}, {200, 40, 40}}
+	m := image.NewRGBA(image.Rect(0, 0, w, h))
+	for i := range m.Pix {
+		m.Pix[i] = 255
+	}
+	seed := uint32(7)
+	for cy := 0; cy+12 <= h; cy += 16 {
+		for cx := 0; cx+8 <= w; cx += 9 {
+			seed = seed*1664525 + 1013904223
+			if seed>>29 == 0 {
+				continue
+			}
+			g, c := glyphs[seed>>24%12], colours[seed>>20%3]
+			for y := 0; y < 12; y++ {
+				for x := 0; x < 8; x++ {
+					a := int(g[y][x])
+					o := m.PixOffset(cx+x, cy+y)
+					for k := 0; k < 3; k++ {
+						m.Pix[o+k] = uint8((c[k]*a + 255*(255-a)) / 255)
+					}
+				}
+			}
+		}
+	}
+	return m
+}

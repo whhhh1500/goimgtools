@@ -24,6 +24,7 @@ English | [中文](zh-CN/CHANGELOG.md)
 
 ### Changed
 
+- From level 7, PNG output tries no filter against the filters the rows choose, every 32KB of rows, and keeps the smaller: screenshots, icons and drawings 10–19% smaller; photographs unchanged.
 - The minimum Go version is 1.26 (0.1.0 required 1.27). PNG files written with Go 1.26 and Go 1.27 differ in their bytes but not in their pixels, as Go 1.27 rewrote `compress/flate`. With Go 1.26 the default PNG level is 6 (see below).
 - Progressive JPEG chooses its scans as mozjpeg does (`optimize_scans`): files 0.4–14% smaller (2.4% on average over 18 images, 3.9% with `Trellis` and `QuantTable: QuantTableImageMagick`; with both, 0.7% smaller than mozjpeg's defaults at equal PSNR), with the same pixels. Single-threaded it takes 3–19% longer; the candidate scans are counted in parallel with `Threads`.
 - `Animated()` no longer ignores an animation it cannot keep: a GIF to an output format other than GIF and WebP, or an animated WebP or APNG input, returns an error wrapping `errors.ErrUnsupported` instead of writing the first frame. A still image passes as before. So does `MaxFileSize` with `Animated()` on an animation, which was ignored.

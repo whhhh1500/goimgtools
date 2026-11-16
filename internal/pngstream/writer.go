@@ -337,6 +337,17 @@ func (e *encoder) writeImage(w io.Writer, cb int, level int) error {
 	}
 	pr := e.pr
 
+	// From level 7 the filters are tried against no filter, a segment at a
+	// time (see filterTrial); up to 6 the file is the one png.Encode writes.
+	filtering := level != zlib.NoCompression && cb != cbP8 && cb != cbP4 && cb != cbP2 && cb != cbP1
+	var trial *filterTrial
+	if filtering && level >= 7 && !testNoTrial {
+		if trial, err = newFilterTrial(e.env, sz); err != nil {
+			return err
+		}
+		defer trial.release()
+	}
+
 	// The standard library loops over the rows of one image here; the rows
 	// now come strip by strip. sb is the current strip's bounds.
 	for {
@@ -516,7 +527,7 @@ func (e *encoder) writeImage(w io.Writer, cb int, level int) error {
 			// "filters are rarely useful on palette images" and will result
 			// in larger files (see http://www.libpng.org/pub/png/book/chapter09.html).
 			f := ftNone
-			if level != zlib.NoCompression && cb != cbP8 && cb != cbP4 && cb != cbP2 && cb != cbP1 {
+			if filtering {
 				// Since we skip paletted images we don't have to worry about
 				// bitsPerPixel not being a multiple of 8
 				bpp := bitsPerPixel / 8
@@ -524,12 +535,21 @@ func (e *encoder) writeImage(w io.Writer, cb int, level int) error {
 			}
 
 			// Write the compressed bytes.
-			if _, err := zw.Write(cr[f]); err != nil {
+			if trial != nil {
+				if err := trial.add(cr[0], cr[f], zw); err != nil {
+					return err
+				}
+			} else if _, err := zw.Write(cr[f]); err != nil {
 				return err
 			}
 
 			// The current row for y is the previous row for y+1.
 			pr, cr[0] = cr[0], pr
+		}
+	}
+	if trial != nil {
+		if err := trial.flush(zw); err != nil {
+			return err
 		}
 	}
 	return zw.Close()
