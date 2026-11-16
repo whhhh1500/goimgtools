@@ -67,6 +67,10 @@ type encoder struct {
 	// for lossless LZW (compress/lzw). lz is that encoder.
 	lossy int
 	lz    *lossyLZW
+	// clearPolicy, from 1, codes lossless frames with deferLZW, dz,
+	// clearing as clearPolicies says.
+	clearPolicy int
+	dz          *deferLZW
 }
 
 func newEncoder(w io.Writer, width, height int, global color.Palette) *encoder {
@@ -364,6 +368,13 @@ func (e *encoder) beginImage(pal color.Palette, b image.Rectangle, delay int, di
 		e.lz.reset(bw, uint(litWidth), pal, transparentIndex, e.lossy)
 		return
 	}
+	if e.clearPolicy > 0 {
+		if e.dz == nil {
+			e.dz = new(deferLZW)
+		}
+		e.dz.reset(bw, uint(litWidth), clearPolicies[e.clearPolicy])
+		return
+	}
 	if e.lzww == nil {
 		e.lzww = lzw.NewWriter(bw, lzw.LSB, litWidth).(*lzw.Writer)
 	} else {
@@ -380,6 +391,10 @@ func (e *encoder) writePixels(pix []byte) {
 		e.lz.write(pix)
 		return
 	}
+	if e.clearPolicy > 0 {
+		e.dz.write(pix)
+		return
+	}
 	_, e.err = e.lzww.Write(pix)
 }
 
@@ -388,9 +403,12 @@ func (e *encoder) endImage() {
 	if e.err != nil {
 		return
 	}
-	if e.lossy > 0 {
+	switch {
+	case e.lossy > 0:
 		e.lz.close()
-	} else {
+	case e.clearPolicy > 0:
+		e.dz.close()
+	default:
 		e.lzww.Close() // flush to bw
 	}
 	blockWriter{e: e}.close() // flush to e.w

@@ -42,11 +42,15 @@ const (
 // and expects io.EOF.
 //
 // The frames share one palette, chosen for all of them together (package
-// quant; the colours themselves when there are few enough). Pixels less
-// than half opaque become transparent. A frame after the first in which no
-// pixel turns transparent is written as the rectangle that changed, with
-// the pixels that stay as they were transparent ("leave as it is"), which
-// is what makes an animation small: only the moving parts are stored.
+// quant; the colours themselves when there are few enough), unless, with
+// no palette size asked for, they have more than 256 colours together but
+// each at most 256: then each frame gets a palette of its own, and no
+// pixel changes (see frameTee). Pixels less than half opaque become
+// transparent. A frame after the first in which no pixel turns transparent
+// is written as the rectangle that changed, with the pixels that stay as
+// they were transparent ("leave as it is"), or as they show, whichever
+// codes smallest (see waysOfIndices), which is what makes an animation
+// small: only the moving parts are stored.
 // Frames in which pixels turn transparent are written whole, on a cleared
 // picture.
 //
@@ -90,9 +94,19 @@ func EncodeAnimation(w io.Writer, env *pipeline.Env, o AnimOptions, next func() 
 	defer env.Budget.Release(need)
 	t := &animFrames{env: env, w: fw, h: fh, n: o.Frames, next: next, first: first, firstDelay: delay, k: -1,
 		infos: make([]frameInfo, 0, o.Frames)}
-	q, err := quant.Quantize(t, &quant.Options{Colors: o.Colors, NoDither: o.NoDither, FrameRows: fh})
+	// Without a palette size asked for, the frames are also staged: if
+	// each has few enough colours, they are written with palettes of their
+	// own (see frameTee).
+	var src pipeline.Source = t
+	var tee *frameTee
+	if o.Colors == 0 {
+		tee = newFrameTee(t, fh, o.Frames)
+		src = tee
+		defer tee.release()
+	}
+	q, err := quant.Quantize(src, &quant.Options{Colors: o.Colors, NoDither: o.NoDither, FrameRows: fh})
 	if err != nil {
-		t.Close()
+		src.Close()
 		return err
 	}
 	defer q.Close()
@@ -100,6 +114,31 @@ func EncodeAnimation(w io.Writer, env *pipeline.Env, o AnimOptions, next func() 
 	s, err := q.Next()
 	if err != nil {
 		return err
+	}
+	if len(t.infos) != o.Frames {
+		return io.ErrUnexpectedEOF
+	}
+	full := image.Rect(0, 0, fw, fh)
+	// What a frame is written as: its rectangle, and what it leaves behind,
+	// which depends on the frame after it: one written whole with
+	// transparent pixels needs a clear picture. After the last comes the
+	// first again.
+	plan := func(k int) (image.Rectangle, byte, int) {
+		cur := t.infos[k]
+		after := frameInfo{transparent: t.infos[0].transparent && o.Frames > 1}
+		if k+1 < o.Frames {
+			after = t.infos[k+1]
+		}
+		if !after.diff && after.transparent {
+			return full, disposalBackground, cur.delay
+		}
+		return cur.rect, disposalNone, cur.delay
+	}
+	if tee != nil {
+		if tee.local(t.infos) {
+			return tee.writeLocal(w, env, o, fw, t.infos, plan)
+		}
+		tee.release()
 	}
 	p0, ok := s.(*image.Paletted)
 	if !ok {
@@ -116,30 +155,187 @@ func EncodeAnimation(w io.Writer, env *pipeline.Env, o AnimOptions, next func() 
 	if err != nil {
 		return err
 	}
-	if len(t.infos) != o.Frames {
-		return io.ErrUnexpectedEOF
-	}
 	rows := &indexRows{src: q, cur: p0}
-	full := image.Rect(0, 0, fw, fh)
+	// What the picture shows after each frame, and room for the ways of
+	// writing a frame of changes (see bestFrame).
+	work := int64(fw) * int64(fh) * 4
+	if err := env.Budget.Reserve(work, "animation picture"); err != nil {
+		return err
+	}
+	defer env.Budget.Release(work)
+	screen := make([]byte, fw*fh)
+	for i := range screen {
+		screen[i] = byte(max(ti, 0))
+	}
+	var bufs [3][]byte
+	prevDisposal := byte(disposalBackground)
 	for k, cur := range t.infos {
-		// What the frame leaves behind depends on the frame after it: one
-		// written whole with transparent pixels needs a clear picture.
-		// After the last comes the first again.
-		after := frameInfo{transparent: t.infos[0].transparent && o.Frames > 1}
-		if k+1 < o.Frames {
-			after = t.infos[k+1]
-		}
-		rect, disposal := cur.rect, byte(disposalNone)
-		if !after.diff && after.transparent {
-			rect, disposal = full, disposalBackground
-		}
+		rect, disposal, _ := plan(k)
 		f := &frameRows{rows: rows, top: k * fh, rect: rect, y: rect.Min.Y, pal: pal, env: env}
 		info := FrameInfo{Delay: cur.delay, Disposal: disposal, Transparent: ti >= 0, TransparentIndex: byte(max(ti, 0))}
-		if err := aw.WriteFrame(f, info); err != nil {
+		pix, err := readFrame(f, bufs[0][:0])
+		if err != nil {
 			return fmt.Errorf("frame %d: %w", k+1, err)
 		}
+		bufs[0] = pix
+		ways := [][]byte{pix}
+		if k > 0 && cur.diff && ti >= 0 && prevDisposal == disposalNone && rect.Dx() > 0 {
+			// Unchanged pixels may also be written as what the picture
+			// shows: the same frame on screen.
+			ways = aw.waysOfIndices(rect, byte(ti), screen, fw, &bufs)
+		}
+		if pix, info.ClearPolicy, err = aw.smallest(pal, false, rect, ti, ways); err != nil {
+			return fmt.Errorf("frame %d: %w", k+1, err)
+		}
+		if err := aw.WriteFrame(&pixelsSource{rect: rect, pal: pal, pix: pix, env: env}, info); err != nil {
+			return fmt.Errorf("frame %d: %w", k+1, err)
+		}
+		for y := rect.Min.Y; y < rect.Max.Y; y++ {
+			row := pix[(y-rect.Min.Y)*rect.Dx():][:rect.Dx()]
+			dst := screen[y*fw+rect.Min.X:][:rect.Dx()]
+			for x, v := range row {
+				switch {
+				case disposal == disposalBackground:
+					dst[x] = byte(max(ti, 0))
+				case ti < 0 || v != byte(ti):
+					dst[x] = v
+				}
+			}
+		}
+		prevDisposal = disposal
 	}
 	return aw.Close()
+}
+
+// readFrame appends the pixels of the frame f, row after row, to dst.
+func readFrame(f *frameRows, dst []byte) ([]byte, error) {
+	for {
+		s, err := f.Next()
+		if err == io.EOF {
+			return dst, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		p := s.(*image.Paletted)
+		for y := p.Rect.Min.Y; y < p.Rect.Max.Y; y++ {
+			i := p.PixOffset(p.Rect.Min.X, y)
+			dst = append(dst, p.Pix[i:i+p.Rect.Dx()]...)
+		}
+	}
+}
+
+// waysOfIndices returns the ways a frame of changes, pix (in bufs[0]),
+// whose unchanged pixels are transparent, may be written: so, with no
+// transparency at all (the pixels the picture already shows), or with
+// transparency only over stretches of unchanged pixels of more than one
+// colour, which make runs the colours alone would not (as gifsicle's
+// optimizer does). All three show the same picture.
+func (aw *AnimWriter) waysOfIndices(r image.Rectangle, ti byte, screen []byte, sw int, bufs *[3][]byte) [][]byte {
+	pix := bufs[0]
+	n := len(pix)
+	opaque := append(bufs[1][:0], pix...)
+	runs := append(bufs[2][:0], pix...)
+	bufs[1], bufs[2] = opaque, runs
+	w := r.Dx()
+	same, start := 0, 0
+	for i, v := range pix {
+		y, x := r.Min.Y+i/w, r.Min.X+i%w
+		if v != ti {
+			same = 0
+			continue
+		}
+		shown := screen[y*sw+x]
+		opaque[i] = shown
+		switch {
+		case same == 0:
+			start, same = i, 1
+			runs[i] = shown
+		case same == 1 && shown != runs[i-1]:
+			// A second colour in the stretch: transparent from its start.
+			for j := start; j < i; j++ {
+				runs[j] = ti
+			}
+			same = 2
+			runs[i] = ti
+		case same > 1:
+			runs[i] = ti
+		default:
+			runs[i] = shown
+		}
+	}
+	return [][]byte{pix, opaque[:n], runs[:n]}
+}
+
+// clearPolicies are the fractions (in 1/256) of the pixels per code when
+// the LZW dictionary filled below which deferLZW clears it (0: never);
+// policy 0 is the encoder of compress/lzw, which clears it when it fills.
+var clearPolicies = [...]uint32{0, 0, 128, 192, 224}
+
+// smallest returns the way of writing a frame that codes smallest, and the
+// clear policy (lossless only) it codes smallest with; local says the
+// palette is the frame's own, whose table is counted.
+func (aw *AnimWriter) smallest(pal color.Palette, local bool, r image.Rectangle, ti int, ways [][]byte) ([]byte, int, error) {
+	var best []byte
+	bestPolicy, bestSize := 0, -1
+	for _, way := range ways {
+		for policy := range clearPolicies {
+			if policy > 0 && aw.e.lossy > 0 {
+				break
+			}
+			size, err := aw.codedSize(pal, local, r, ti, way, policy)
+			if err != nil {
+				return nil, 0, err
+			}
+			if bestSize < 0 || size < bestSize {
+				best, bestPolicy, bestSize = way, policy, size
+			}
+		}
+	}
+	return best, bestPolicy, nil
+}
+
+// codedSize is how many bytes the pixels of a frame take, coded as
+// AnimWriter codes them.
+func (aw *AnimWriter) codedSize(pal color.Palette, local bool, r image.Rectangle, ti int, pix []byte, policy int) (int, error) {
+	var c byteCounter
+	global := pal
+	if local {
+		global = nil
+	}
+	e := newEncoder(&c, aw.e.width, aw.e.height, global)
+	e.lossy, e.clearPolicy = aw.e.lossy, policy
+	e.beginImage(pal, r, 0, 0, ti)
+	e.writePixels(pix)
+	e.endImage()
+	e.flush()
+	return c.n, e.err
+}
+
+type byteCounter struct{ n int }
+
+func (c *byteCounter) Write(p []byte) (int, error) { c.n += len(p); return len(p), nil }
+
+// pixelsSource is a frame held whole, as one strip.
+type pixelsSource struct {
+	rect image.Rectangle
+	pal  color.Palette
+	pix  []byte
+	env  *pipeline.Env
+	done bool
+}
+
+func (s *pixelsSource) Env() *pipeline.Env      { return s.env }
+func (s *pixelsSource) Bounds() image.Rectangle { return s.rect }
+func (s *pixelsSource) ColorModel() color.Model { return s.pal }
+func (s *pixelsSource) Close() error            { return nil }
+
+func (s *pixelsSource) Next() (image.Image, error) {
+	if s.done || s.rect.Empty() {
+		return nil, io.EOF
+	}
+	s.done = true
+	return &image.Paletted{Pix: s.pix, Stride: s.rect.Dx(), Rect: s.rect, Palette: s.pal}, nil
 }
 
 // frameInfo is what the first pass finds out about a frame.
@@ -148,6 +344,7 @@ type frameInfo struct {
 	delay       int
 	diff        bool // written as what changed from the frame before
 	transparent bool // has transparent pixels of its own
+	colours     int  // its colours, transparency included, up to 257
 }
 
 // infoBytes is about what a frameInfo takes up, counted in the budget.
@@ -169,10 +366,11 @@ type animFrames struct {
 	y         int  // its next row to hand out
 	diff      bool // frame k is handed out as what changed from prev
 	prev, cur *pipeline.Scratch
-	rowP      []byte       // a row of prev
-	band      *image.NRGBA // the strip handed out, and a frame's strip converted
-	rows      int          // rows per strip handed out
-	reserved  int64        // rowP and band
+	rowP      []byte              // a row of prev
+	colours   map[uint32]struct{} // of the frame being read, up to 257
+	band      *image.NRGBA        // the strip handed out, and a frame's strip converted
+	rows      int                 // rows per strip handed out
+	reserved  int64               // rowP and band
 	err       error
 }
 
@@ -315,6 +513,10 @@ func (a *animFrames) read(src pipeline.Source, k int) (frameInfo, error) {
 	}
 	// So far no pixel turns transparent.
 	info := readState{frameInfo: frameInfo{rect: image.Rect(0, 0, a.w, a.h), diff: k > 0}, x0: a.w, y0: a.h}
+	if a.colours == nil {
+		a.colours = map[uint32]struct{}{}
+	}
+	clear(a.colours)
 	y := 0
 	for {
 		s, err := src.Next()
@@ -343,6 +545,7 @@ func (a *animFrames) read(src pipeline.Source, k int) (frameInfo, error) {
 	if y != a.h {
 		return frameInfo{}, io.ErrUnexpectedEOF
 	}
+	info.colours = len(a.colours)
 	if info.diff {
 		if info.x0 >= info.x1 {
 			// Nothing changed: one pixel left as it is.
@@ -371,6 +574,9 @@ func (a *animFrames) store(pix []byte, k int, y *int, info *readState) error {
 				info.transparent = true
 			} else {
 				row[p+3] = 255
+			}
+			if len(a.colours) <= 256 {
+				a.colours[colourKey(row[p], row[p+1], row[p+2], row[p+3])] = struct{}{}
 			}
 		}
 		off := int64(*y) * int64(stride)

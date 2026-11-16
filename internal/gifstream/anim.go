@@ -40,6 +40,10 @@ type FrameInfo struct {
 	// transparent index.
 	Transparent      bool
 	TransparentIndex byte
+	// ClearPolicy, when writing, from 1, keeps coding with the LZW
+	// dictionary once it is full instead of clearing it, until the codes
+	// get shorter (see deferLZW and clearPolicies); lossless only.
+	ClearPolicy int
 }
 
 // Animation reads an animated GIF one frame at a time. It is the standard
@@ -392,6 +396,7 @@ func (aw *AnimWriter) writeFrame(src pipeline.Source, info FrameInfo) error {
 		return errors.New("goimgtools: gif: transparent index outside the palette")
 	}
 
+	e.clearPolicy = info.ClearPolicy
 	e.beginImage(pal, b, info.Delay, info.Disposal, transparentIndex)
 	for y := b.Min.Y; strip != nil; {
 		sb := strip.Bounds()

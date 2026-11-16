@@ -326,6 +326,20 @@ func TestAnimatedColours(t *testing.T) {
 			t.Fatalf("%+v: %v", c, err)
 		}
 		o := decodeGIF(t, out)
+		if c == (GIFOptions{}) {
+			// Every frame has at most 256 colours: each is written with a
+			// palette of its own, every pixel as it is.
+			shown := coalesce(o)
+			for i := range shown {
+				if !bytes.Equal(shown[i].Pix, want[i].Pix) {
+					t.Errorf("frame %d: pixels changed", i)
+				}
+				if len(o.Image[i].Palette) > 256 {
+					t.Errorf("frame %d: a palette of %d", i, len(o.Image[i].Palette))
+				}
+			}
+			continue
+		}
 		global := o.Config.ColorModel.(color.Palette)
 		n := c.Colors
 		if n == 0 {

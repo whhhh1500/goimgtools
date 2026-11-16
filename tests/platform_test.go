@@ -100,7 +100,7 @@ func TestSameOnEveryProcessor(t *testing.T) {
 		{"gif", func() ([]byte, error) { return photo.Clone().GIF().ToBytes() }, "55ae5c4b96926b04"},
 		{"gif animation", func() ([]byte, error) {
 			return FromBytes(animationBytes(t)).Animated().Resize(90, 0).GIF(GIFOptions{Colors: 50}).ToBytes()
-		}, "12fc9505fd4a347d"},
+		}, "44ab84a9d7e62ad1"},
 		{"display p3 to srgb", func() ([]byte, error) {
 			return FromBytes(withPNGProfile(t, iccData(t, "wheel.png"), iccData(t, "p3-para.icc"))).BMP().ToBytes()
 		}, "fbab28fd9e3fd62a"},

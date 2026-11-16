@@ -17,6 +17,7 @@ English | [中文](zh-CN/CHANGELOG.md)
 - `QuantTableJpegli` (`-jpeg-quant-table 9`): JPEG quantization tables made as jpegli makes them, with its dead zone without `Trellis`; with `Progressive` and `Trellis`, 15% smaller than mozjpeg's defaults at equal SSIMULACRA2.
 - `-webp-effort`: the effort of lossless WebP on the command line (`WebPOptions.Effort` in the library).
 - `GIFOptions.Lossy` / `-gif-lossy`: lossy LZW compression for GIF, still and animated (the method of gifsicle's `--lossy`): a photographic animation 18% smaller at 16, 32% at 24.
+- Animated GIF: frames with more than 256 colours together but at most 256 each are written with a palette per frame, every pixel unchanged (they were reduced to one palette, which changed pixels and made the file larger); a frame of changes is written whichever of three ways codes smallest, and its LZW dictionary kept when full while that pays: 0.2–0.45% smaller than gifsicle `-O3` on three animations.
 - Animated WebP output: `Animated()` with WebP output writes an animated GIF as an animated WebP (lossy or lossless), storing only the rectangle that changed in each frame.
 - Animated WebP input: read as its first frame (previously rejected as an unreadable image). `Frames` counts the frames of animated WebP and PNG (APNG) files; `info` shows them.
 - `CompositeOptions.WidthRatio` / `HeightRatio`: watermark size as a fraction of the base image; `-watermark-width N%`.

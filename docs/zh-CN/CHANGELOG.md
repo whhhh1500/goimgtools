@@ -17,6 +17,7 @@
 - `QuantTableJpegli`（`-jpeg-quant-table 9`）：按 jpegli 的方法生成 JPEG 量化表，不开 `Trellis` 时采用其死区；与 `Progressive`、`Trellis` 同用时，同等 SSIMULACRA2 下比 mozjpeg 默认设置小 15%。
 - `-webp-effort`：命令行可设无损 WebP 的力度（库里为 `WebPOptions.Effort`）。
 - `GIFOptions.Lossy` / `-gif-lossy`：GIF 有损 LZW 压缩，静态与动画均可（gifsicle `--lossy` 的方法）：照片类动画取 16 时小 18%，取 24 时小 32%。
+- GIF 动图：各帧合计超过 256 色但每帧不超过 256 色时，每帧用自己的调色板，逐像素不变（以前会减成一个调色板，既改了像素又让文件变大）；变化的帧在三种写法中取编码最小者，LZW 字典写满后在划算时继续沿用：三段动画上比 gifsicle `-O3` 小 0.2–0.45%。
 - WebP 动画输出：`Animated()` 且输出为 WebP 时，将 GIF 动画写为 WebP 动画（有损或无损），每帧仅存储变化的矩形区域。
 - WebP 动画输入：读取其第一帧（此前作为无法读取的图像拒绝）。`Frames` 可统计 WebP 动画与 PNG 动画（APNG）的帧数，`info` 一并显示。
 - `CompositeOptions.WidthRatio` / `HeightRatio`：按底图的比例确定水印尺寸；`-watermark-width N%`。

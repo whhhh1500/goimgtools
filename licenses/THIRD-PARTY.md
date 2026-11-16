@@ -203,8 +203,13 @@ of it is included.
 
 ## Acknowledgements (no code taken)
 
-- **gifsicle**: `internal/gifstream/lossy.go` implements the idea of the
-  lossy LZW of gifsicle (by Kornel Lesiński, described at
+- **gifsicle**: `internal/gifstream/optimize.go` and `localpal.go` try,
+  for a frame of changes, the ways gifsicle's optimizer writes one
+  (transparency only over stretches of unchanged pixels of more than one
+  colour, or none) and keep the smallest, and `lzwdefer.go` keeps the LZW
+  dictionary when it is full as gifsicle's encoder may; the code was
+  written from these ideas. `internal/gifstream/lossy.go` implements the
+  idea of the lossy LZW of gifsicle (by Kornel Lesiński, described at
   kornel.ski/lossygif): lengthening a dictionary string with a pixel of a
   close enough colour. It was written from that description; no code of
   gifsicle (GPL) was used.
