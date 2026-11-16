@@ -158,8 +158,9 @@ func (h *histSet) build() (*codeSet, int64) {
 	cs := &codeSet{}
 	var bits int64
 	for i, l := range h.lists() {
-		cs.c[i] = newCode(l, maxCodeLen)
-		bits += cs.c[i].cost(l) + treeBits(cs.c[i])
+		var b int64
+		cs.c[i], b = bestCode(l)
+		bits += b
 	}
 	return cs, bits
 }
@@ -284,6 +285,9 @@ type tokenizer struct {
 	// The run of equal pixels the last search was in: it started at
 	// stream position runFrom, and the search was at runAt-1 (0: none).
 	runAt, runFrom int
+	// box lists the distances to the nearest pixels above and to the left
+	// whose codes are the cheapest (but 1 and width), cheapest first.
+	box []int
 }
 
 // matchEnd remembers where the match at a distance ends: a match at
@@ -469,6 +473,59 @@ func (t *tokenizer) find(pos int) (bestLen, bestDist int, value int32) {
 		cand = next
 	}
 	return
+}
+
+// boxMatch is the longest match at one of the distances of box, the
+// cheapest of those as long.
+func (t *tokenizer) boxMatch(pos int) (bestLen, bestDist int) {
+	buf := t.buf
+	p := pos - t.base
+	limit := min(maxMatch, t.n-p)
+	if limit < minMatch {
+		return 0, 0
+	}
+	for _, d := range t.box {
+		if d > p || d > t.maxDist {
+			continue
+		}
+		q := p - d
+		if chk := max(bestLen, 1) - 1; buf[q+chk] == buf[p+chk] && buf[q] == buf[p] {
+			if l := t.matchAt(p, d, limit); l > bestLen {
+				bestLen, bestDist = l, d
+				if l == limit {
+					break
+				}
+			}
+		}
+	}
+	if bestLen < minMatch {
+		return 0, 0
+	}
+	return
+}
+
+// boxDistances lists the distances whose codes are 3 to k, cheapest code
+// first (codes 1 and 2 are width and 1, which find always tries).
+func boxDistances(width, k int) []int {
+	byCode := make([]int, k+1)
+	for y := 0; y < 8; y++ {
+		for x := -8; x <= 8; x++ {
+			d := y*width + x
+			if d <= 1 || d == width {
+				continue
+			}
+			if c := int(distCode(d, width)); c <= k && byCode[c] == 0 {
+				byCode[c] = d
+			}
+		}
+	}
+	var out []int
+	for _, d := range byCode {
+		if d != 0 {
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 // runStart is where the run of equal pixels that pos is in (buf[p-1] ==

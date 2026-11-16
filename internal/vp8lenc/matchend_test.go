@@ -156,3 +156,34 @@ func refFind(t *tokenizer, pos int) (bestLen, bestDist int, value int32) {
 	}
 	return
 }
+
+// TestTreeSize: the size worked out for a tree is the size written, for
+// codes of every shape: one or two symbols, below 256 or not, few or many,
+// with runs of equal and of zero lengths, evened out or not.
+func TestTreeSize(t *testing.T) {
+	r := rand.New(rand.NewPCG(7, 8))
+	for round := 0; round < 3000; round++ {
+		n := []int{40, 256, 280, 280 + 1<<r.IntN(11)}[r.IntN(4)]
+		hist := make([]uint32, n)
+		switch used := 1 + r.IntN(n); r.IntN(4) {
+		case 0: // one or two symbols
+			for k := 0; k < 1+r.IntN(2); k++ {
+				hist[r.IntN(n)] = 1 + uint32(r.IntN(100))
+			}
+		case 1: // a smooth spread
+			for s := 0; s < used; s++ {
+				hist[s] = uint32(1000 / (1 + s))
+			}
+		default:
+			for k := 0; k < used; k++ {
+				hist[r.IntN(n)] += uint32(r.IntN(50))
+			}
+		}
+		c, bits := bestCode(hist)
+		var bw bitWriter
+		writeTree(&bw, c)
+		if got := treeBits(c); got != bw.bitLen() || bits != c.cost(hist)+got {
+			t.Fatalf("round %d: tree %d bits, written %d; total %d, want %d", round, got, bw.bitLen(), bits, c.cost(hist)+got)
+		}
+	}
+}

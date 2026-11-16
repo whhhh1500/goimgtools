@@ -76,7 +76,7 @@ Environment: Windows 10, Go 1.27.1. "Standard library approach" denotes whole-im
 | Without shrinking, to JPEG (quality 85) | 5.9MB | 6.0MB | 0.61s |
 | Without shrinking, to PNG | 43.7MB | 8.0MB | 1.66s |
 | Without shrinking, to lossy WebP (quality 75) | 3.2MB | 19.7MB | 8.81s (1.85s with 8 threads; effort 1: 3.29s, 0.79s) |
-| Without shrinking, to lossless WebP | 27.6MB | 26.7MB | 4.54s (4.20s with 8 threads) |
+| Without shrinking, to lossless WebP | 27.6MB | 26.3MB | 5.19s (4.71s with 8 threads) |
 | Without shrinking, to BMP | 72MB | 6.7MB | 0.36s |
 | Without shrinking, to TIFF (uncompressed) | 96MB | 6.4MB | 0.34s |
 | Rotate 90°, without shrinking | 6.0MB | 12.4MB | 1.24s |
@@ -86,8 +86,8 @@ Environment: Windows 10, Go 1.27.1. "Standard library approach" denotes whole-im
 | Shrink to 1536, lossy WebP output | 10KB | 9.2MB | 0.61s |
 
 - When rotating by 90° without shrinking, the 96MB of pixel data is held in a temporary file; with all data in memory (a limit of 768MB or more), the time is about 0.8s and the peak about 108MB.
-- Lossless WebP from PNG RGB 6000×4000 (41.6MB; the same image as in the table above): output 27.6MB, peak 26.6MB, 5.05s (4.30s with 8 threads). (Before the encoder stopped trying the same Huffman grouping once for every block size it asks for, when a large image makes them all the same: 32.6MB and 8.87s, for the same file.)
-- Lossy WebP with transparency (the 6000×4000 photograph in a soft round window, quality 75): 2.85MB, peak 27.3MB, 12.9s (5.9s with 8 threads; before the alpha plane was coded by the lossless encoder, 4.29MB, 20.9MB, 10.9s and 3.1s). The alpha plane is coded on one core, in up to 8MB of its own; at 24 megapixels, it is coded without the lossless encoder's optimal parse below effort 7.
+- Lossless WebP from PNG RGB 6000×4000 (41.6MB; the same image as in the table above): output 27.6MB, peak 26.6MB, 5.30s (4.62s with 8 threads). (Before the encoder stopped trying the same Huffman grouping once for every block size it asks for, when a large image makes them all the same: 32.6MB and 8.87s. Version 0.1.0, without the optimal parse: 22.2MB and 4.15s, for a file 0.004% larger: the noise of a photograph from a JPEG leaves little for the parse to find.)
+- Lossy WebP with transparency (the 6000×4000 photograph in a soft round window, quality 75): 2.85MB, peak 26.6MB, 12.9s (6.0s with 8 threads; before the alpha plane was coded by the lossless encoder, 4.29MB, 20.9MB, 10.9s and 3.1s). The alpha plane is coded on one core, in up to 8MB of its own; at 24 megapixels, it is coded without the lossless encoder's optimal parse below effort 7.
 - Before encoding, lossy WebP must convert the whole image to YUV, store it, and measure every macroblock (as required by segment-based quantization; see [Compatibility and comparisons](compatibility.md#webp-encoders)). Images of no more than 256KB after conversion are kept in memory; larger ones are written directly to a temporary file and read back only row by row. Measurements show no effect on the time.
 - GIF output without shrinking takes 2.0s (peak 11.8MB). With a fixed palette (`FixedPalette`), it takes 4.3s: the colour search order on that path has been optimized; the result is byte-for-byte identical to the standard library and is produced more than 3 times as fast as by comparing one colour at a time.
 

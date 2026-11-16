@@ -226,7 +226,18 @@ model made from the statistics, with literals weighted at 82% and colour
 cache hits at 68% of what the statistics price them at, as libwebp weighs
 them. The path is worked out differently (backward, over a stretch of the
 streamed pixels at a time, without libwebp's interval cost manager); no
-code of libwebp is included.
+code of libwebp is included. Offering, besides the hash chain's match, the
+longest one at the nearest distances with the cheapest codes is the idea
+of libwebp's `BackwardReferencesLz77Box` (the same file's
+`backward_references_enc.c`), done here at every pixel of the parse.
+
+`internal/vp8lenc/rle.go` evens out the counts of a prefix code before
+its lengths are made, as libwebp's `OptimizeHuffmanForRle`
+(`src/utils/huffman_encode_utils.c`) does, and `writeTree` in
+`internal/vp8lenc/huffman.go` leaves out the zero lengths at the end of a
+code as libwebp's `StoreFullHuffmanCode` (`src/enc/vp8l_enc.c`) does.
+Both were rewritten in Go; here each is used only when it makes the code
+smaller.
 
 The rest of the WebP encoders in `internal/vp8enc` and `internal/vp8lenc`
 is written from the format specifications (RFC 6386, RFC 9649). It uses

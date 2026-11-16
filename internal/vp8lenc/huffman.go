@@ -1,7 +1,9 @@
 package vp8lenc
 
 import (
-	"sort"
+	"cmp"
+	"slices"
+	"sync"
 )
 
 const (
@@ -22,13 +24,27 @@ type code struct {
 	used int
 }
 
+type leaf struct {
+	cnt uint32
+	sym int32
+}
+
+// lengthScratch is what codeLengths works in; a pool keeps it, as codes
+// are made by the hundred while the image is split into groups.
+type lengthScratch struct {
+	leaves        []leaf
+	weight        []uint64
+	parent, depth []int32
+}
+
+var lengthPool = sync.Pool{New: func() any { return new(lengthScratch) }}
+
 // codeLengths fills lens with length-limited Huffman code lengths for hist.
 func codeLengths(hist []uint32, maxLen int, lens []uint8) {
-	type leaf struct {
-		cnt uint32
-		sym int32
-	}
-	leaves := make([]leaf, 0, 64)
+	sc := lengthPool.Get().(*lengthScratch)
+	defer lengthPool.Put(sc)
+	leaves := sc.leaves[:0]
+	defer func() { sc.leaves = leaves[:0] }()
 	for s, c := range hist {
 		lens[s] = 0
 		if c != 0 {
@@ -43,16 +59,20 @@ func codeLengths(hist []uint32, maxLen int, lens []uint8) {
 		lens[leaves[0].sym] = 1
 		return
 	}
-	sort.Slice(leaves, func(i, j int) bool {
-		if leaves[i].cnt != leaves[j].cnt {
-			return leaves[i].cnt < leaves[j].cnt
+	slices.SortFunc(leaves, func(a, b leaf) int {
+		if a.cnt != b.cnt {
+			return cmp.Compare(a.cnt, b.cnt)
 		}
-		return leaves[i].sym < leaves[j].sym
+		return cmp.Compare(a.sym, b.sym)
 	})
 	// Two-queue Huffman construction: nodes [0,n) are the sorted leaves,
 	// [n,2n-1) the internal nodes in creation (hence weight) order.
-	weight := make([]uint64, 2*n-1)
-	parent := make([]int32, 2*n-1)
+	if cap(sc.weight) < 2*n-1 {
+		sc.weight = make([]uint64, 2*n-1)
+		sc.parent = make([]int32, 2*n-1)
+		sc.depth = make([]int32, 2*n-1)
+	}
+	weight, parent := sc.weight[:2*n-1], sc.parent[:2*n-1]
 	for i, l := range leaves {
 		weight[i] = uint64(l.cnt)
 	}
@@ -76,7 +96,8 @@ func codeLengths(hist []uint32, maxLen int, lens []uint8) {
 		weight[k] = weight[a] + weight[b]
 		parent[a], parent[b] = int32(k), int32(k)
 	}
-	depth := make([]int32, 2*n-1)
+	depth := sc.depth[:2*n-1]
+	depth[2*n-2] = 0
 	for k := 2*n - 3; k >= 0; k-- {
 		depth[k] = depth[parent[k]] + 1
 	}
@@ -122,8 +143,14 @@ func reverseBits(v uint32, n uint) uint32 {
 
 // newCode builds the canonical code for hist.
 func newCode(hist []uint32, maxLen int) *code {
-	c := &code{lens: make([]uint8, len(hist)), enc: make([]uint32, len(hist))}
-	codeLengths(hist, maxLen, c.lens)
+	lens := make([]uint8, len(hist))
+	codeLengths(hist, maxLen, lens)
+	return codeOf(lens)
+}
+
+// codeOf is the canonical code with the code lengths lens, which it keeps.
+func codeOf(lens []uint8) *code {
+	c := &code{lens: lens, enc: make([]uint32, len(lens))}
 	var count [maxCodeLen + 1]uint32
 	for _, l := range c.lens {
 		if l != 0 {
@@ -253,6 +280,105 @@ func writeTree(bw *bitWriter, c *code) {
 	}
 	bw.put(0, 1)
 	toks := clTokens(c.lens, make([]clToken, 0, 64))
+	// The zeros at the end can be left out, the number of tokens written
+	// given instead (max_symbol), when that is shorter (as libwebp does,
+	// src/enc/vp8l_enc.c: StoreFullHuffmanCode).
+	if trim := trimTokens(toks); trim < len(toks) {
+		writeLengths(bw, toks[:trim], true)
+		return
+	}
+	writeLengths(bw, toks, false)
+}
+
+// trimTokens is how many of toks writeTree writes: all of them, or fewer
+// when leaving out the zeros at the end and counting the rest is shorter.
+func trimTokens(toks []clToken) int {
+	trim := len(toks)
+	for trim > 2 && (toks[trim-1].sym == 0 || toks[trim-1].sym >= 17) {
+		trim--
+	}
+	if trim < len(toks) && lengthsBits(toks[:trim], true) < lengthsBits(toks, false) {
+		return trim
+	}
+	return len(toks)
+}
+
+// lengthsBits is the size writeLengths gives toks.
+func lengthsBits(toks []clToken, counted bool) int64 {
+	var hist [19]uint32
+	for _, t := range toks {
+		hist[t.sym]++
+	}
+	var lens [19]uint8
+	codeLengths(hist[:], 7, lens[:])
+	used, n := 0, 4
+	for i, s := range codeLengthOrder {
+		if lens[s] != 0 {
+			used++
+			n = max(n, i+1)
+		}
+	}
+	bits := int64(4 + 3*n + 1)
+	if counted {
+		m := uint32(len(toks) - 2)
+		pairs := 1
+		for m >= 1<<(2*pairs) {
+			pairs++
+		}
+		bits += 3 + 2*int64(pairs)
+	}
+	for _, t := range toks {
+		if used > 1 { // a code of one symbol takes no bits
+			bits += int64(lens[t.sym])
+		}
+		bits += int64(t.nbits)
+	}
+	return bits
+}
+
+// treeScratch holds what sizing a tree needs, so that the many trees
+// priced while the image is split into groups leave no garbage.
+type treeScratch struct {
+	toks []clToken
+	even []uint32
+	good []bool
+	lens []uint8
+}
+
+var treePool = sync.Pool{New: func() any { return new(treeScratch) }}
+
+// treeSize is the size writeTree gives a code with the lengths lens.
+func treeSize(lens []uint8, sc *treeScratch) int64 {
+	used := 0
+	var syms [2]int
+	for s, l := range lens {
+		if l != 0 {
+			if used < 2 {
+				syms[used] = s
+			}
+			used++
+		}
+	}
+	if used <= 2 && (used == 0 || syms[used-1] < 256) {
+		bits := int64(3) // simple, the number of symbols, the size of the first
+		if syms[0] < 2 {
+			bits++
+		} else {
+			bits += 8
+		}
+		if used == 2 {
+			bits += 8
+		}
+		return bits
+	}
+	sc.toks = clTokens(lens, sc.toks[:0])
+	trim := trimTokens(sc.toks)
+	return 1 + lengthsBits(sc.toks[:trim], trim < len(sc.toks))
+}
+
+// writeLengths writes the code lengths of a code in the normal form, as
+// the tokens toks, which are all of them or (counted) the first ones.
+func writeLengths(bw *bitWriter, toks []clToken, counted bool) {
 	var hist [19]uint32
 	for _, t := range toks {
 		hist[t.sym]++
@@ -268,7 +394,19 @@ func writeTree(bw *bitWriter, c *code) {
 	for _, s := range codeLengthOrder[:n] {
 		bw.put(uint32(cl.lens[s]), 3)
 	}
-	bw.put(0, 1) // every code length is coded: no max_symbol
+	if counted {
+		// max_symbol: 2 + a number of 2 to 16 bits, in pairs.
+		m := uint32(len(toks) - 2)
+		pairs := uint(1)
+		for m >= 1<<(2*pairs) {
+			pairs++
+		}
+		bw.put(1, 1)
+		bw.put(uint32(pairs-1), 3)
+		bw.put(m, 2*pairs)
+	} else {
+		bw.put(0, 1) // every code length is coded
+	}
 	for _, t := range toks {
 		cl.put(bw, uint32(t.sym))
 		if t.nbits != 0 {
@@ -279,7 +417,7 @@ func writeTree(bw *bitWriter, c *code) {
 
 // treeBits is the size writeTree gives the code.
 func treeBits(c *code) int64 {
-	var bw bitWriter
-	writeTree(&bw, c)
-	return bw.bitLen()
+	sc := treePool.Get().(*treeScratch)
+	defer treePool.Put(sc)
+	return treeSize(c.lens, sc)
 }

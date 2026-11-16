@@ -26,12 +26,26 @@ import "math"
 // a drawing or an alpha plane) the search passes over the run's own
 // pixels (find). The copies of up to 32 pixels are priced together, from
 // the least cost to the end after each length.
+//
+// Besides the match the hash chain finds (the one that saves the most going
+// by the statistics), the longest match at the nearest distances above and
+// to the left, whose codes are the cheapest, is offered at every pixel (as
+// libwebp's LZ77 "box" searches those distances, in
+// src/enc/backward_references_enc.c): the hash chain, which goes through
+// the latest pixels first, rarely gets as far as the rows above in a
+// smooth area, where the residuals repeat those a few rows up. A gradient
+// mask 16% smaller, a drawing 2%, photographs and game artwork 0.1 to 1%.
 
 // optimalStretch is the most pixels parsed at once.
 const optimalStretch = 8 << 10
 
 // optimalBytes is the memory of the optimal parse, per tokenizer.
-const optimalBytes = (optimalStretch+2)*(4+4+4+4+4+2+4) + 4<<maxCacheBits + 4*(4*256+1<<maxCacheBits)
+const optimalBytes = (optimalStretch+2)*(4+4+4+4+4+4+4+2+4) + 4<<maxCacheBits + 4*(4*256+1<<maxCacheBits)
+
+// boxCodes: the distances whose codes are 3 to boxCodes (the pixels a few
+// rows above, a few columns to either side) are searched at every pixel
+// for a second match, besides the one the hash chain finds.
+const boxCodes = 16
 
 // maxCacheBits is the largest colour cache tried.
 const maxCacheBits = 10
@@ -39,6 +53,7 @@ const maxCacheBits = 10
 type optimal struct {
 	weigh     bool           // weigh literals and hits as libwebp does
 	ml, md    []int32        // the match at each pixel of the stretch: length (0: none), distance
+	bl, bd    []int32        // the longest match at a near distance (box), if any
 	lit       []uint32       // the cost of each pixel as a literal
 	cte       []uint32       // the least cost from each pixel to the end of the stretch
 	choice    []uint16       // the length taken at each pixel (0: a literal)
@@ -53,7 +68,7 @@ func newOptimal(weigh bool) *optimal {
 	n := optimalStretch + 1
 	return &optimal{
 		weigh: weigh,
-		ml:    make([]int32, n), md: make([]int32, n),
+		ml:    make([]int32, n), md: make([]int32, n), bl: make([]int32, n), bd: make([]int32, n),
 		lit: make([]uint32, n), cte: make([]uint32, n),
 		choice: make([]uint16, n), cd: make([]int32, n), nextBreak: make([]int32, n+1),
 		sim: make([]uint32, 0, 1<<maxCacheBits), hitc: make([]uint32, 0, 1<<maxCacheBits),
@@ -84,6 +99,7 @@ func (t *tokenizer) processOptimal(final bool) {
 		}
 		n := min(stop, t.cur+optimalStretch) - t.cur
 		ml, md, lit, cte, choice, cd, nb := o.ml[:n+1], o.md[:n+1], o.lit[:n+1], o.cte[:n+1], o.choice[:n+1], o.cd[:n+1], o.nextBreak[:n+2]
+		bl, bd := o.bl[:n+1], o.bd[:n+1]
 		for i := 0; i < n; i++ {
 			t.insertTo(t.cur + i)
 			l, dist, _ := t.find(t.cur + i)
@@ -91,6 +107,13 @@ func (t *tokenizer) processOptimal(final bool) {
 				l = 0
 			}
 			ml[i], md[i] = int32(min(l, n-i)), int32(dist)
+			bl[i] = 0
+			if len(t.box) > 0 {
+				l, dist := t.boxMatch(t.cur + i)
+				if dist != 0 && !(int32(dist) == md[i] && ml[i] > 0) {
+					bl[i], bd[i] = int32(min(l, n-i)), int32(dist)
+				}
+			}
 		}
 		t.insertTo(t.cur + n)
 		// Where a match stops just continuing the one before: the places
@@ -147,6 +170,10 @@ func (t *tokenizer) processOptimal(final bool) {
 			if L >= minMatch {
 				K = min(L, 32)
 			}
+			B := int(bl[i])
+			if B >= minMatch {
+				K = max(K, min(B, 32))
+			}
 			for si, d := range short {
 				if d <= t.maxDist && p >= d && buf[p] == buf[p-d] {
 					reach[si] = min(reach[si]+1, 32)
@@ -184,6 +211,16 @@ func (t *tokenizer) processOptimal(final bool) {
 						try(j-i, dc, md[i])
 					}
 					try(L, dc, md[i])
+				}
+			}
+			// The match at a near distance.
+			if B >= minMatch {
+				dc := distc(int(bd[i]))
+				if c := dc + pmc[min(B, 32)]; c < best {
+					best, ch, chd = c, pmk[min(B, 32)], bd[i]
+				}
+				if B > 32 {
+					try(B, dc, bd[i])
 				}
 			}
 			// Short copies from the left and from above.

@@ -250,6 +250,7 @@ func (f *frontend) init(palette []uint32, sg int, share int64) error {
 		}
 		f.passOne += optimalBytes
 		f.tok.opt = newOptimal(!raw)
+		f.tok.box = boxDistances(f.sw, boxCodes)
 	}
 	f.tok.lit1 = litBytes == 1
 	f.tok.chain, f.tok.nice, f.tok.lazy = e.p.chain, e.p.nice, e.p.lazy
