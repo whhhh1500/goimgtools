@@ -45,7 +45,14 @@ type frontend struct {
 	sg      bool
 	sgKnown bool
 	modeSet []uint8 // the predictors tried
-	res     []uint32
+	// With the cross-color transform: its multipliers by block, and what
+	// chooses them.
+	cross    bool
+	cbits    uint // log2 of its block size
+	ctw, cth int
+	ccodes   []uint32
+	cc       *crossColor
+	res      []uint32
 	// With the predictor: the band's residuals, and a row of scratch for
 	// each of its block rows (see flush).
 	resBand []uint32
@@ -85,7 +92,7 @@ func (f *frontend) close() {
 		f.tokens.Close()
 		f.tokens = nil
 	}
-	f.band, f.res, f.resBand, f.tmps, f.modes, f.tok = nil, nil, nil, nil, nil, nil
+	f.band, f.res, f.resBand, f.tmps, f.modes, f.tok, f.ccodes, f.cc = nil, nil, nil, nil, nil, nil, nil, nil
 	f.e.unreserve(f.mem)
 	f.mem = 0
 }
@@ -108,7 +115,7 @@ func predictorBits(w, h int64, least uint) uint {
 // newFrontend starts a variant. share is the number of variants that still
 // have to fit in the budget, this one included.
 func (e *encoder) newFrontend(s spec, palette []uint32, share int) (*frontend, error) {
-	f := &frontend{e: e, kind: s.kind, pred: s.pred, w: e.w, h: e.h, sw: e.w, modeSet: e.p.modes}
+	f := &frontend{e: e, kind: s.kind, pred: s.pred, cross: s.cross && s.pred && s.kind == kindARGB, w: e.w, h: e.h, sw: e.w, modeSet: e.p.modes}
 	if s.simple {
 		f.modeSet = modesFast
 	}
@@ -187,6 +194,18 @@ func (f *frontend) init(palette []uint32, sg int, share int64) error {
 			f.tw, f.th = int((sw+1<<bits-1)>>bits), int((h+1<<bits-1)>>bits)
 			f.maxRows = int(rowsFor(bits))
 			rows += bandMem(bits) - (int64(f.maxRows)+1)*sw*4 + tiles(bits)
+			if f.cross {
+				// The cross-color blocks are 16x16 at least, as libwebp's
+				// (finer, their multipliers cost more than they save), and
+				// the band holds whole rows of them.
+				f.cbits = max(bits, ccMinBits)
+				f.ctw, f.cth = int((sw+1<<f.cbits-1)>>f.cbits), int((h+1<<f.cbits-1)>>f.cbits)
+				if r := int(rowsFor(f.cbits)); r != f.maxRows {
+					rows += int64(r-f.maxRows) * (2*sw*4 + sw*4/int64(1<<bits))
+					f.maxRows = r
+				}
+				rows += sw*4 + tiles(f.cbits)*4 + ccBytes
+			}
 		}
 		rows += int64(f.maxRows+1) * sw * 4
 	}
@@ -200,12 +219,19 @@ func (f *frontend) init(palette []uint32, sg int, share int64) error {
 	}
 	if f.pred {
 		f.resBand = make([]uint32, f.maxRows*f.sw)
+		if f.cross {
+			// Row 0 is the last of the band before, which the choice of
+			// the multipliers looks back into.
+			f.resBand = make([]uint32, (f.maxRows+1)*f.sw)
+			f.ccodes = make([]uint32, f.ctw*f.cth)
+			f.cc = &crossColor{}
+		}
 		f.tmps = make([][]uint32, (f.maxRows+1<<f.bits-1)>>f.bits)
 		for i := range f.tmps {
 			f.tmps[i] = make([]uint32, f.sw)
 		}
 		f.modes = make([]uint8, f.tw*f.th)
-		f.passOne -= int64(len(f.modes))
+		f.passOne -= int64(len(f.modes)) + int64(len(f.ccodes))*4
 	}
 
 	window := e.p.window
@@ -415,9 +441,13 @@ func (f *frontend) flush() error {
 		r0 := 1 + i<<f.bits
 		f.chooseModes(r0, min(r0+1<<f.bits, f.nrows+1), &cm, f.tmps[i])
 	})
+	off := 0
+	if f.cross {
+		off = w
+	}
 	env.Parallel(f.nrows, func(i int) {
 		r := i + 1
-		res := f.resBand[i*w : (i+1)*w]
+		res := f.resBand[off+i*w : off+(i+1)*w]
 		cur := f.band[r*w : (r+1)*w]
 		if f.y0+r-1 == 0 {
 			// The first row is predicted from the left, its first pixel
@@ -433,8 +463,11 @@ func (f *frontend) flush() error {
 			residuals(m, cur, up, max(tx<<f.bits, 1), min(w, (tx+1)<<f.bits), res)
 		}
 	})
+	if f.cross {
+		f.crossBand()
+	}
 	for i := 0; i < f.nrows; i++ {
-		if err := f.tok.push(f.resBand[i*w : (i+1)*w]); err != nil {
+		if err := f.tok.push(f.resBand[off+i*w : off+(i+1)*w]); err != nil {
 			return err
 		}
 	}
@@ -467,4 +500,45 @@ func (f *frontend) dropBuf() {
 	f.e.unreserve(f.bufMem)
 	f.mem -= f.bufMem
 	f.bufMem = 0
+}
+
+// ccMinBits is log2 of the smallest cross-color blocks.
+const ccMinBits = 4
+
+// ccBytes is the memory of a crossColor.
+const ccBytes = 2*256*4 + 256*4 + 256 + 3*256*4 + 64
+
+// crossBand chooses the multipliers of the band's blocks, in order, and
+// transforms the band's residuals (rows 1 on of resBand) with them.
+func (f *frontend) crossBand() {
+	w := f.sw
+	buf := f.resBand
+	lowest := 0
+	if f.y0 == 0 {
+		lowest = w // no row before the first
+	}
+	var rows [][]uint32
+	cb := f.cbits
+	for r0 := 1; r0 <= f.nrows; r0 += 1 << cb {
+		r1 := min(r0+1<<cb, f.nrows+1)
+		ty := (f.y0 + r0 - 1) >> cb
+		rows = rows[:0]
+		for r := r0; r < r1; r++ {
+			rows = append(rows, buf[r*w:(r+1)*w])
+		}
+		for tx := 0; tx < f.ctw; tx++ {
+			x0, x1 := tx<<cb, min(w, (tx+1)<<cb)
+			var up multipliers
+			if ty > 0 {
+				up = multipliersOf(f.ccodes[(ty-1)*f.ctw+tx])
+			}
+			m := f.cc.choose(rows, x0, x1, up)
+			f.ccodes[ty*f.ctw+tx] = m.code()
+			for _, r := range rows {
+				m.apply(r[x0:x1])
+			}
+			f.cc.accumulate(buf, w, lowest, r0, r1, x0, x1)
+		}
+	}
+	copy(buf[:w], buf[f.nrows*w:(f.nrows+1)*w])
 }

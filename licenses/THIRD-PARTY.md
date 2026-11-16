@@ -236,6 +236,12 @@ longest one at the nearest distances with the cheapest codes is the idea
 of libwebp's `BackwardReferencesLz77Box` (the same file's
 `backward_references_enc.c`), done here at every pixel of the parse.
 
+`internal/vp8lenc/crosscolor.go` is libwebp's cross-color transform
+(`src/enc/predictor_enc.c`: `VP8LColorSpaceTransform`,
+`GetBestColorTransformForTile`, `GetBestGreenToRed`,
+`GetBestGreenRedToBlue`, `PredictionCostCrossColor`; `src/dsp/lossless_enc.c`:
+`VP8LTransformColor`), rewritten in Go with its costs in fixed point.
+
 `internal/vp8lenc/rle.go` evens out the counts of a prefix code before
 its lengths are made, as libwebp's `OptimizeHuffmanForRle`
 (`src/utils/huffman_encode_utils.c`) does, and `writeTree` in

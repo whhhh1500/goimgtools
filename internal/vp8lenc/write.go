@@ -75,6 +75,15 @@ type plan struct {
 	totalBits int64 // exact size of the VP8L bitstream
 }
 
+// weighed is the size of the plan as the variants are compared by: that of
+// one with the cross-color transform counts for a percent more.
+func (p *plan) weighed() float64 {
+	if p.f.cross {
+		return float64(p.totalBits) * crossPlanMargin
+	}
+	return float64(p.totalBits)
+}
+
 // plan builds the header of variant f and works out the size of its
 // bitstream with one Huffman group.
 func (e *encoder) plan(f *frontend, alpha bool) (*plan, error) {
@@ -128,6 +137,14 @@ func (e *encoder) plan(f *frontend, alpha bool) (*plan, error) {
 		err := e.subImage(bw, pix, f.tw, true, 0xff000000)
 		e.unreserve(need)
 		if err != nil {
+			return nil, err
+		}
+	}
+	if f.cross {
+		bw.put(1, 1)
+		bw.put(1, 2) // cross-color
+		bw.put(uint32(f.cbits-2), 3)
+		if err := e.subImage(bw, f.ccodes, f.ctw, false, 0); err != nil {
 			return nil, err
 		}
 	}
@@ -275,7 +292,7 @@ func (e *encoder) write(rc *race, alpha bool) error {
 		if err != nil {
 			return err
 		}
-		if best == nil || p.totalBits < best.totalBits {
+		if best == nil || p.weighed() < best.weighed() {
 			if best != nil {
 				best.f.close()
 			}

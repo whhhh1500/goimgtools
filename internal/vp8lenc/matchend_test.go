@@ -1,6 +1,8 @@
 package vp8lenc
 
 import (
+	"image"
+	"image/color"
 	"io"
 	"math"
 	"math/rand/v2"
@@ -186,4 +188,56 @@ func TestTreeSize(t *testing.T) {
 			t.Fatalf("round %d: tree %d bits, written %d; total %d, want %d", round, got, bw.bitLen(), bits, c.cost(hist)+got)
 		}
 	}
+}
+
+// TestCrossColorInverse: what the decoder does (the specification's
+// inverse transform) undoes transformRed and transformBlue, for every
+// green and red and any multipliers.
+func TestCrossColorInverse(t *testing.T) {
+	r := rand.New(rand.NewPCG(9, 10))
+	for k := 0; k < 200; k++ {
+		m := multipliers{uint8(r.IntN(256)), uint8(r.IntN(256)), uint8(r.IntN(256))}
+		if multipliersOf(m.code()) != m {
+			t.Fatalf("%v packs to %#x", m, m.code())
+		}
+		for g := 0; g < 256; g++ {
+			red, blue := uint8(r.IntN(256)), uint8(r.IntN(256))
+			p := 0xff000000 | uint32(red)<<16 | uint32(g)<<8 | uint32(blue)
+			q := []uint32{p}
+			m.apply(q)
+			tr, tb := uint8(q[0]>>16), uint8(q[0])
+			dr := tr + uint8(uint32(int32(int8(m.g2r))*int32(int8(g)))>>5)
+			db := tb + uint8(uint32(int32(int8(m.g2b))*int32(int8(g)))>>5) + uint8(uint32(int32(int8(m.r2b))*int32(int8(dr)))>>5)
+			if dr != red || db != blue || q[0]&0xff00ff00 != p&0xff00ff00 {
+				t.Fatalf("%v on %#x: %#x decodes to red %d blue %d", m, p, q[0], dr, db)
+			}
+		}
+	}
+}
+
+// TestCrossColor codes images with the cross-color variant alone: the
+// files decode to the same pixels, whatever the strips (the variant
+// carries the last row of a band into the next).
+func TestCrossColor(t *testing.T) {
+	grad := image.NewNRGBA(image.Rect(0, 0, 97, 70))
+	r := rand.New(rand.NewPCG(11, 12))
+	for y := 0; y < 70; y++ {
+		for x := 0; x < 97; x++ {
+			g := uint8(x*2 + y + r.IntN(3))
+			grad.SetNRGBA(x, y, color.NRGBA{uint8(int(g) * 3 / 4), g, uint8(255 - int(g)/2), uint8(255 - r.IntN(2)*40)})
+		}
+	}
+	imgs := testutil.Images(67, 45)
+	imgs["gradient"] = grad
+	testCrossOnly = true
+	defer func() { testCrossOnly = false }()
+	sizes := map[string]int{}
+	for name, m := range imgs {
+		for _, n := range []int{1, 7, 64} {
+			sizes[name] = len(roundTrip(t, name, m, n, &Options{Effort: 5}))
+		}
+	}
+	testCrossOnly = false
+	plain := len(roundTrip(t, "gradient", grad, 7, &Options{Effort: 5}))
+	t.Logf("gradient: %d bytes with the transform, %d without", sizes["gradient"], plain)
 }

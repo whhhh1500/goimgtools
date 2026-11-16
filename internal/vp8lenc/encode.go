@@ -82,6 +82,7 @@ type params struct {
 	optimal    bool    // the optimal parse for the predictor and colour table variants
 	optimalRaw bool    // and for the others
 	predBits   uint    // log2 of the smallest predictor blocks, if not the default
+	cross      bool    // a variant with the cross-color transform, for images of many colours
 }
 
 // The predictor modes in the order they are tried; on a tie the earlier
@@ -93,7 +94,8 @@ var (
 )
 
 func paramsFor(effort int) params {
-	p := params{lazy: effort >= 3, variants: 5, dropRatio: 1.15, optimal: effort >= DefaultEffort, optimalRaw: effort >= DefaultEffort}
+	p := params{lazy: effort >= 3, variants: 5, dropRatio: 1.15, optimal: effort >= DefaultEffort, optimalRaw: effort >= DefaultEffort,
+		cross: effort >= DefaultEffort}
 	switch {
 	case effort <= 1:
 		p.modes, p.dropRatio = modesFast, 1
@@ -233,8 +235,8 @@ func (e *encoder) encode(src pipeline.Source) error {
 	if rr.gray {
 		// Gray needs no palette and always gains from subtract green: red
 		// and blue become zero.
-		if rc, err = e.newRace(nil, spec{kindGray, true, sgOn, false}, spec{kindGray, false, sgOn, false},
-			spec{kindGray, true, sgOn, true}); err != nil {
+		if rc, err = e.newRace(nil, spec{kindGray, true, sgOn, false, false}, spec{kindGray, false, sgOn, false, false},
+			spec{kindGray, true, sgOn, true, false}); err != nil {
 			return err
 		}
 		for y := 0; y < e.h; y++ {
@@ -282,17 +284,24 @@ func (e *encoder) feedColour(rr *rowReader, row []uint32) (*race, error) {
 	paletted := y == e.h
 	switch {
 	case !paletted:
-		rc, err = e.newRace(nil, spec{kindARGB, true, sgOn, false}, spec{kindARGB, false, sgAuto, false},
-			spec{kindARGB, true, sgOff, false}, spec{kindARGB, true, sgAuto, true})
+		specs := []spec{{kindARGB, true, sgOn, false, false}, {kindARGB, false, sgAuto, false, false},
+			{kindARGB, true, sgOff, false, false}, {kindARGB, true, sgAuto, true, false}}
+		if e.p.cross && int64(e.w)*int64(e.h) <= crossMaxPixels {
+			specs = append(specs, spec{kindARGB, true, sgAuto, false, true})
+		}
+		if testCrossOnly {
+			specs = []spec{{kindARGB, true, sgAuto, false, true}}
+		}
+		rc, err = e.newRace(nil, specs...)
 	case pr.n <= 16:
 		// Few enough colours to pack several pixels into one.
-		rc, err = e.newRace(pr.pal[:pr.n], spec{kindIndex, false, sgOff, false})
+		rc, err = e.newRace(pr.pal[:pr.n], spec{kindIndex, false, sgOff, false, false})
 	case pr.wantPalette():
-		rc, err = e.newRace(pr.pal[:pr.n], spec{kindIndex, false, sgOff, false}, spec{kindARGB, true, sgAuto, false},
-			spec{kindIndex, true, sgOff, false}, spec{kindARGB, false, sgAuto, false}, spec{kindARGB, true, sgAuto, true})
+		rc, err = e.newRace(pr.pal[:pr.n], spec{kindIndex, false, sgOff, false, false}, spec{kindARGB, true, sgAuto, false, false},
+			spec{kindIndex, true, sgOff, false, false}, spec{kindARGB, false, sgAuto, false, false}, spec{kindARGB, true, sgAuto, true, false})
 	default:
-		rc, err = e.newRace(pr.pal[:pr.n], spec{kindARGB, true, sgAuto, false}, spec{kindIndex, false, sgOff, false},
-			spec{kindIndex, true, sgOff, false}, spec{kindARGB, false, sgAuto, false}, spec{kindARGB, true, sgAuto, true})
+		rc, err = e.newRace(pr.pal[:pr.n], spec{kindARGB, true, sgAuto, false, false}, spec{kindIndex, false, sgOff, false, false},
+			spec{kindIndex, true, sgOff, false, false}, spec{kindARGB, false, sgAuto, false, false}, spec{kindARGB, true, sgAuto, true, false})
 	}
 	if err != nil {
 		return nil, err
@@ -346,6 +355,9 @@ type spec struct {
 	// images those three leave residuals that repeat, which LZ77 turns
 	// into far less than the prefix codes could.
 	simple bool
+	// cross follows the predictor with the cross-color transform (see
+	// crosscolor.go).
+	cross bool
 }
 
 const (
@@ -366,6 +378,28 @@ type race struct {
 // raceMem is the budget a variant should have to itself; with less than
 // that per variant fewer are started.
 const raceMem = 3 << 19
+
+// crossMaxPixels bounds the images the cross-color variant runs for: the
+// interfaces, icons and drawings it helps (up to 7% smaller) are seldom
+// larger, and on a large photograph, which it does not help, the variant
+// would add 2MB to the peak of memory, all variants starting together.
+const crossMaxPixels = 1 << 22
+
+// testCrossOnly makes the cross-color variant the only one, for tests.
+var testCrossOnly bool
+
+// crossRaceMargin and crossPlanMargin are how far ahead the cross-color
+// variant has to be: of its family in the race, and of the others when the
+// smallest is written (the split into Huffman groups, which comes after,
+// changes the sizes by a percent or so).
+const (
+	crossRaceMargin = 1.03
+	crossPlanMargin = 1.01
+)
+
+// raceMinBits is the least a variant must have coded (in bits) for the
+// variants to be compared.
+const raceMinBits = 4 << 13
 
 // raceFirst is the number of pixels after which variants are first compared.
 const raceFirst = 1 << 18
@@ -448,24 +482,44 @@ func (rc *race) feed(row []uint32, idx []byte) error {
 // so far and drops the ones that are too far behind the best.
 func (rc *race) compare() {
 	proj := make([]float64, len(rc.alive))
-	best := math.Inf(1)
+	best, least := math.Inf(1), math.Inf(1)
 	for i, f := range rc.alive {
 		done := f.tok.cur
 		if done < raceFirst/8 {
 			return // not enough coded yet to judge; try again after the next row
 		}
-		proj[i] = f.tok.st.estimate() * float64(f.total) / float64(done)
+		est := f.tok.st.estimate()
+		if f.cc != nil {
+			est += f.cc.bits()
+		}
+		least = min(least, est)
+		proj[i] = est * float64(f.total) / float64(done)
 		best = min(best, proj[i])
 	}
 	rc.next *= 2
+	if least < raceMinBits {
+		// What was coded so far is too little to tell the variants apart
+		// (the top of a picture that is mostly blank): judge later.
+		return
+	}
 	// Of the variants of one family only the best goes on: what has been
 	// coded is enough to tell them apart, and they all run the predictor
 	// search, the expensive part.
 	drop := make([]bool, len(rc.alive))
+	// Within a family, the cross-color transform has to be well ahead
+	// to win: what is coded so far misjudges it (a photograph whose first
+	// quarter it codes 2% smaller can come out 0.6% larger).
+	fam := make([]float64, len(rc.alive))
+	for i, f := range rc.alive {
+		fam[i] = proj[i]
+		if f.cross {
+			fam[i] *= crossRaceMargin
+		}
+	}
 	for i, f := range rc.alive {
 		drop[i] = proj[i] > best*rc.e.p.dropRatio
 		for j, o := range rc.alive {
-			if j != i && family(f, o) && (proj[j] < proj[i] || proj[j] == proj[i] && j < i) {
+			if j != i && family(f, o) && (fam[j] < fam[i] || fam[j] == fam[i] && j < i) {
 				drop[i] = true
 			}
 		}
