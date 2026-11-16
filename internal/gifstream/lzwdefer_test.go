@@ -42,7 +42,7 @@ func TestDeferLZW(t *testing.T) {
 		{"short", 300, 8, func(i int) byte { return byte(r.IntN(7)) }},
 		{"two colours", 5000, 2, func(i int) byte { return byte(i / 13 % 2) }},
 		{"long random", 200000, 8, func(i int) byte { return byte(r.IntN(256)) }},
-		{"long patterned", 300000, 4, func(i int) byte { return byte((i*i/7 + i/300) % 16) }},
+		{"long patterned", 300000, 4, func(i int) byte { return byte((int64(i)*int64(i)/7 + int64(i)/300) % 16) }},
 		{"one pixel", 1, 2, func(i int) byte { return 1 }},
 		{"none", 0, 2, func(i int) byte { return 0 }},
 	} {
