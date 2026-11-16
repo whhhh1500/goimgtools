@@ -12,7 +12,7 @@ go get github.com/whhhh1500/goimgtools
 import "github.com/whhhh1500/goimgtools"
 ```
 
-需要 Go 1.26 及以上版本（依赖的 `golang.org/x/image` 的最低要求）。Go 1.27 重写了 `compress/flate`，因此 Go 1.26 与 Go 1.27 写出的 PNG 文件字节不同，像素相同。编写扩展时另须引入 `github.com/whhhh1500/goimgtools/pipeline`。
+需要 Go 1.26 及以上版本（依赖的 `golang.org/x/image` 的最低要求）。Go 1.27 重写了 `compress/flate`，因此 Go 1.26 与 Go 1.27 写出的 PNG 文件字节不同，像素相同（8、9 级除外，它们用自己的压缩器）。编写扩展时另须引入 `github.com/whhhh1500/goimgtools/pipeline`。
 
 API 采用与 [sharp](https://sharp.pixelplumbing.com/) 类似的链式调用：打开输入、追加操作、选择输出格式、写出。操作按调用顺序执行，错误由最后一步统一返回。
 
@@ -78,7 +78,7 @@ err := goimgtools.Open("in.jpg").
 | 方法 | 说明 |
 |---|---|
 | `JPEG(quality, JPEGOptions{Optimize, Progressive, Trellis, QuantTable})` | 质量 1–100，0 表示 80。`Optimize`、`Progressive` 在像素不变的前提下减小文件；`Trellis`、`QuantTable`（0–8，编号同 mozjpeg 的 `-quant-table`；或 `QuantTableJpegli`）会改变像素（见[压缩](compression.md)） |
-| `PNG(PNGOptions{CompressionLevel, Colors, NoDither})` | 压缩级别 1（最快）至 9（最小）；`Colors` 将颜色减至最多 256 色（见[压缩](compression.md)） |
+| `PNG(PNGOptions{CompressionLevel, Colors, NoDither})` | 压缩级别 1（最快）至 9（最小；8、9 级搜索最小文件，耗时约为 7 级的 10 倍和 20 倍）；`Colors` 将颜色减至最多 256 色（见[压缩](compression.md)） |
 | `WebP(WebPOptions{Quality, Lossless, Effort})` | 有损（质量 1–100，默认 75）或无损（`Effort` 1 最快至 9 最小，默认 5） |
 | `GIF(GIFOptions{Colors, NoDither, FixedPalette})` | 最多 256 色，按图像内容选取；`FixedPalette` 改用标准库的固定调色板 |
 | `BMP()` | |

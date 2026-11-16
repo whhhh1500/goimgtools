@@ -25,6 +25,7 @@
 ### 变更
 
 - PNG 7 级起每 32KB 的行比较「不滤波」与各行自选的滤波，保留较小者：截图、图标、绘图类小 10–19%，照片不变。
+- PNG 8、9 级改为搜索最小文件：各行按 oxipng 的 Brute 策略滤波（每种滤波都试），数据改用 libdeflate「接近最优解析」的 Go 移植压缩，不再用 `compress/flate`。17 张截图、照片与游戏美术图上比 7 级小 13.3%（8 级）和 14.6%（9 级），oxipng `-o max` 为 14.8%，耗时约为它的八分之一；各 Go 版本输出同一文件。每线程多占约 4MB 内存。
 - 最低 Go 版本降为 1.26（0.1.0 要求 1.27）。Go 1.27 重写了 `compress/flate`，因此 Go 1.26 与 Go 1.27 写出的 PNG 文件字节不同，像素相同。Go 1.26 下 PNG 默认级别为 6（见下文）。
 - 渐进式 JPEG 按 mozjpeg 的方法（`optimize_scans`）选择扫描：文件小 0.4–14%（18 张图平均 2.4%，与 `Trellis`、`QuantTable: QuantTableImageMagick` 同用时平均 3.9%；四者同用时同等 PSNR 下比 mozjpeg 默认设置小 0.7%），像素不变。单线程多用 3–19% 的时间；候选扫描的统计随 `Threads` 并行。
 - `Animated()` 不再忽略无法保留的动画：GIF 输出为 GIF、WebP 以外的格式，或输入为 WebP 动画、APNG 时，返回包装了 `errors.ErrUnsupported` 的错误，而不是写出第一帧。静态图像不受影响。`MaxFileSize` 与 `Animated()` 同用于动画时同样报错（此前被忽略）。

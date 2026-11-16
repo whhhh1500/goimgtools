@@ -341,8 +341,15 @@ func (e *encoder) writeImage(w io.Writer, cb int, level int) error {
 	// time (see filterTrial); up to 6 the file is the one png.Encode writes.
 	filtering := level != zlib.NoCompression && cb != cbP8 && cb != cbP4 && cb != cbP2 && cb != cbP1
 	var trial *filterTrial
+	var brute *bruteFilter
+	if filtering && level >= 8 && !testNoTrial {
+		if brute, err = newBruteFilter(e.env, sz); err != nil {
+			return err
+		}
+		defer brute.release()
+	}
 	if filtering && level >= 7 && !testNoTrial {
-		if trial, err = newFilterTrial(e.env, sz); err != nil {
+		if trial, err = newFilterTrial(e.env, sz, brute != nil); err != nil {
 			return err
 		}
 		defer trial.release()
@@ -536,7 +543,11 @@ func (e *encoder) writeImage(w io.Writer, cb int, level int) error {
 
 			// Write the compressed bytes.
 			if trial != nil {
-				if err := trial.add(cr[0], cr[f], zw); err != nil {
+				var b []byte
+				if brute != nil {
+					b = brute.choose(cr[0][1:], pr[1:], bitsPerPixel/8)
+				}
+				if err := trial.add(cr[0], cr[f], b, zw); err != nil {
 					return err
 				}
 			} else if _, err := zw.Write(cr[f]); err != nil {

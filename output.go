@@ -293,6 +293,16 @@ const DefaultPNGLevel = pngstream.DefaultLevel
 type PNGOptions struct {
 	// CompressionLevel is 1 (fastest) to 9 (smallest); 0 means
 	// DefaultPNGLevel.
+	//
+	// Levels 8 and 9 search for the smallest file: each row's filter is
+	// chosen by trying them all, as oxipng's Brute strategy does, and the
+	// data is compressed with a port of libdeflate's near-optimal parsing
+	// (its levels 10 and 12). On screenshots, photographs and game artwork
+	// the files are 13% (8) and 15% (9) smaller than at level 7, within
+	// 0.2% of oxipng -o max at 9; level 8 takes about 10 times as long as
+	// level 7, level 9 about 20 times (with several Threads, less). They
+	// take about 4MB more memory per thread, and give the same file with
+	// every Go version.
 	CompressionLevel int
 	// Colors, 2 to 256, reduces the image to that many colours, chosen for
 	// this image, and writes a paletted PNG. This is how PNG files are made

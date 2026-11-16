@@ -96,6 +96,37 @@ adaptive part. The tables are copied from those files; the code was
 rewritten in Go, and the tables it makes were checked against the ones
 cjpegli writes.
 
+## libdeflate
+
+MIT License, copyright 2016 Eric Biggers and 2024 Google LLC. The full
+text, as libdeflate distributes it (commit c7e5386), is in
+`LICENSE-LIBDEFLATE`, next to this file.
+
+`internal/deflate` is a Go port of libdeflate's near-optimal parsing, the
+compressor of its levels 10 to 12 (`lib/deflate_compress.c`:
+`deflate_compress_near_optimal` and what it calls, the block splitting,
+the Huffman code construction and the block output;
+`lib/find_min_cost_path_template.h`; `lib/bt_matchfinder.h`;
+`lib/matchfinder_common.h`), with the tables of `deflate_compress.c`
+generated from that file. The code was rewritten in Go; what was added is
+a dictionary (the data before) and ending with a sync flush instead of a
+final block, so that a stream can be compressed in pieces. Without a
+dictionary, with libdeflate's settings, its output is byte for byte
+libdeflate's (checked at levels 10, 11 and 12).
+
+## oxipng
+
+MIT License, copyright (c) 2016 Joshua Holmer. The full text is in
+`LICENSE-OXIPNG`, next to this file.
+
+`internal/pngstream/brute.go` chooses the filter of each row of a PNG as
+oxipng's Brute strategy does (`src/filters/strategies.rs`:
+`BruteEvaluator`, with `src/png/mod.rs`: `filter_image`): every filter is
+tried, and the one with which the last rows compress smallest wins. oxipng
+compresses the rows with libdeflate for every filter; this package
+estimates the size of the row alone after the rows before it instead (see
+the comment of `bruteFilter`). No code of oxipng is included.
+
 ## Pillow
 
 `internal/ops/blur.go` contains Go ports of two routines of Pillow 12.1.1,

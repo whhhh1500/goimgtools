@@ -2,6 +2,7 @@ package pngstream
 
 import (
 	"container/heap"
+	"encoding/binary"
 	"io"
 	mbits "math/bits"
 
@@ -21,6 +22,11 @@ import (
 // (up to trialSkipMax), so that a photograph pays little for the trials; a
 // segment where no filter wins, or nearly, starts the trials again.
 //
+// From level 8 the rows are also filtered as oxipng's Brute strategy
+// filters them (see bruteFilter), and every segment is tried three ways,
+// with no skipping: the smallest of the rows' own filters, Brute's and no
+// filter is kept (in that order on a tie).
+//
 // A segment is whole rows, about trialBytes of them, and every choice
 // depends on the pixels alone, in integer arithmetic: the file is the same
 // for any number of helpers, any memory limit and on every processor. The
@@ -30,7 +36,8 @@ type filterTrial struct {
 	env      *pipeline.Env
 	none     []byte // the segment unfiltered
 	filtered []byte // the segment as the rows filtered themselves
-	est      estimator
+	brute    []byte // the segment as bruteFilter filtered it, from level 8
+	est      *estimator
 	skip     int // segments to take filtered without a trial
 	streak   int // clear wins of filtering in a row
 	reserved int64
@@ -44,26 +51,39 @@ const (
 	trialSkipMax = 32
 )
 
-// newFilterTrial makes room for segments of rows of rowBytes.
-func newFilterTrial(env *pipeline.Env, rowBytes int) (*filterTrial, error) {
+// newFilterTrial makes room for segments of rows of rowBytes, and for
+// Brute's version of them when brute is set.
+func newFilterTrial(env *pipeline.Env, rowBytes int, brute bool) (*filterTrial, error) {
 	seg := trialBytes + rowBytes
-	need := int64(2*seg) + estimatorBytes
+	ways := int64(2)
+	if brute {
+		ways = 3
+	}
+	need := ways*int64(seg) + estimatorBytes
 	if err := env.Budget.Reserve(need, "png filter trial"); err != nil {
 		return nil, err
 	}
-	return &filterTrial{env: env, none: make([]byte, 0, seg), filtered: make([]byte, 0, seg), reserved: need}, nil
+	t := &filterTrial{env: env, none: make([]byte, 0, seg), filtered: make([]byte, 0, seg), est: newEstimator(estHashBits, estWindow), reserved: need}
+	if brute {
+		t.brute = make([]byte, 0, seg)
+	}
+	return t, nil
 }
 
 func (t *filterTrial) release() {
 	t.env.Budget.Release(t.reserved)
-	t.reserved, t.none, t.filtered = 0, nil, nil
+	t.reserved, t.none, t.filtered, t.brute = 0, nil, nil, nil
 }
 
-// add takes a row both ways (with its filter type byte) and writes the
-// segment to w once it is full.
-func (t *filterTrial) add(none, filtered []byte, w io.Writer) error {
+// add takes a row unfiltered, filtered as it chose and, from level 8, as
+// Brute chose (each with its filter type byte), and writes the segment to
+// w once it is full.
+func (t *filterTrial) add(none, filtered, brute []byte, w io.Writer) error {
 	t.none = append(t.none, none...)
 	t.filtered = append(t.filtered, filtered...)
+	if t.brute != nil {
+		t.brute = append(t.brute, brute...)
+	}
 	if len(t.none) >= trialBytes {
 		return t.flush(w)
 	}
@@ -77,7 +97,15 @@ func (t *filterTrial) flush(w io.Writer) error {
 		return nil
 	}
 	seg := t.filtered
-	if t.skip > 0 {
+	if t.brute != nil {
+		best := t.est.estimate(t.filtered)
+		if b := t.est.estimate(t.brute); b < best {
+			best, seg = b, t.brute
+		}
+		if n := t.est.estimate(t.none); n < best {
+			seg = t.none
+		}
+	} else if t.skip > 0 {
 		t.skip--
 	} else {
 		n, f := t.est.estimate(t.none), t.est.estimate(t.filtered)
@@ -95,6 +123,9 @@ func (t *filterTrial) flush(w io.Writer) error {
 	}
 	_, err := w.Write(seg)
 	t.none, t.filtered = t.none[:0], t.filtered[:0]
+	if t.brute != nil {
+		t.brute = t.brute[:0]
+	}
 	return err
 }
 
@@ -104,19 +135,25 @@ func (t *filterTrial) flush(w io.Writer) error {
 // too), then the bits Huffman codes made for the symbols take, with the
 // extra bits of lengths and distances.
 type estimator struct {
-	head   [1 << estHashBits]int32
-	prev   [estWindow]uint16 // distance to the position before with the same hash; 0 for none
-	litLen [286]int64
-	dist   [30]int64
-	h      symHeap
+	head     []int32
+	prev     []uint16 // distance to the position before with the same hash; 0 for none
+	hashBits uint
+	window   int // the matches it looks for are at most this far back
+	litLen   [286]int64
+	dist     [30]int64
+	h        symHeap
 }
 
 const (
 	estHashBits    = 11
 	estChain       = 16
-	estWindow      = 8 << 10 // the matches it looks for are at most this far back
+	estWindow      = 8 << 10
 	estimatorBytes = 4<<estHashBits + 2*estWindow + 8*(286+30) + 8*286
 )
+
+func newEstimator(hashBits uint, window int) *estimator {
+	return &estimator{head: make([]int32, 1<<hashBits), prev: make([]uint16, window), hashBits: hashBits, window: window}
+}
 
 func (e *estimator) estimate(p []byte) int64 {
 	for i := range e.head {
@@ -128,12 +165,12 @@ func (e *estimator) estimate(p []byte) int64 {
 	n := len(p)
 	// insert enters position i and returns the one before with its hash.
 	insert := func(i int) int {
-		h := (uint32(p[i]) | uint32(p[i+1])<<8 | uint32(p[i+2])<<16 | uint32(p[i+3])<<24) * 2654435761 >> (32 - estHashBits)
+		h := binary.LittleEndian.Uint32(p[i:]) * 2654435761 >> (32 - e.hashBits)
 		c := int(e.head[h])
 		e.head[h] = int32(i)
-		e.prev[i&(estWindow-1)] = 0
-		if c >= 0 && i-c < estWindow {
-			e.prev[i&(estWindow-1)] = uint16(i - c)
+		e.prev[i&(e.window-1)] = 0
+		if c >= 0 && i-c < e.window {
+			e.prev[i&(e.window-1)] = uint16(i - c)
 		}
 		return c
 	}
@@ -141,17 +178,14 @@ func (e *estimator) estimate(p []byte) int64 {
 		if i+4 <= n {
 			c := insert(i)
 			l, m := 0, -1
-			for k := 0; k < estChain && c >= 0 && i-c < estWindow; k++ {
+			for k := 0; k < estChain && c >= 0 && i-c < e.window; k++ {
 				if p[c] == p[i] && p[c+1] == p[i+1] && p[c+2] == p[i+2] {
-					j := 3
-					for i+j < n && j < 258 && p[c+j] == p[i+j] {
-						j++
-					}
+					j := matchLen(p, i, c, 3, min(258, n-i))
 					if j > l {
 						l, m = j, c
 					}
 				}
-				d := int(e.prev[c&(estWindow-1)])
+				d := int(e.prev[c&(e.window-1)])
 				if d == 0 {
 					break
 				}
@@ -176,6 +210,21 @@ func (e *estimator) estimate(p []byte) int64 {
 	}
 	e.litLen[256]++ // end of block
 	return e.h.cost(e.litLen[:]) + e.h.cost(e.dist[:]) + extra
+}
+
+// matchLen returns how far, up to maxLen, d[p:] and d[c:] agree, knowing
+// that they do for l bytes.
+func matchLen(d []byte, p, c, l, maxLen int) int {
+	for l+8 <= maxLen {
+		if x := binary.LittleEndian.Uint64(d[p+l:]) ^ binary.LittleEndian.Uint64(d[c+l:]); x != 0 {
+			return l + mbits.TrailingZeros64(x)>>3
+		}
+		l += 8
+	}
+	for l < maxLen && d[p+l] == d[c+l] {
+		l++
+	}
+	return l
 }
 
 // lengthCode is deflate's length symbol for a match of l (3 to 258) and

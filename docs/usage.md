@@ -12,7 +12,7 @@ go get github.com/whhhh1500/goimgtools
 import "github.com/whhhh1500/goimgtools"
 ```
 
-Requires Go 1.26 or later (the minimum of the `golang.org/x/image` dependency). PNG files written with Go 1.26 and Go 1.27 differ in their bytes but not in their pixels, as Go 1.27 rewrote `compress/flate`. Extensions additionally import `github.com/whhhh1500/goimgtools/pipeline`.
+Requires Go 1.26 or later (the minimum of the `golang.org/x/image` dependency). PNG files written with Go 1.26 and Go 1.27 differ in their bytes but not in their pixels, as Go 1.27 rewrote `compress/flate` (but for levels 8 and 9, which have a compressor of their own). Extensions additionally import `github.com/whhhh1500/goimgtools/pipeline`.
 
 The API uses method chaining similar to [sharp](https://sharp.pixelplumbing.com/): open an input, append operations, select an output format, write. Operations run in the order they are called; errors are returned by the final step.
 
@@ -78,7 +78,7 @@ Blur, sharpening, modulation and extension are streamed row by row and require o
 | Method | Description |
 |---|---|
 | `JPEG(quality, JPEGOptions{Optimize, Progressive, Trellis, QuantTable})` | Quality 1–100; 0 means 80. `Optimize` and `Progressive` reduce file size without changing pixels; `Trellis` and `QuantTable` (0–8, as mozjpeg's `-quant-table`, or `QuantTableJpegli`) change pixels (see [Compression](compression.md)) |
-| `PNG(PNGOptions{CompressionLevel, Colors, NoDither})` | Compression level from 1 (fastest) to 9 (smallest); `Colors` reduces the image to at most 256 colours (see [Compression](compression.md)) |
+| `PNG(PNGOptions{CompressionLevel, Colors, NoDither})` | Compression level from 1 (fastest) to 9 (smallest; 8 and 9 search for the smallest file, at about 10 and 20 times the time of level 7); `Colors` reduces the image to at most 256 colours (see [Compression](compression.md)) |
 | `WebP(WebPOptions{Quality, Lossless, Effort})` | Lossy (quality 1–100, default 75) or lossless (`Effort` from 1, fastest, to 9, smallest; default 5) |
 | `GIF(GIFOptions{Colors, NoDither, FixedPalette})` | Up to 256 colours, selected from the image content; `FixedPalette` uses the standard library's fixed palette instead |
 | `BMP()` | |

@@ -1,13 +1,13 @@
 package pngstream
 
 import (
-	"bytes"
 	"compress/flate"
 	"encoding/binary"
 	"hash"
 	"hash/adler32"
 	"io"
 
+	"github.com/whhhh1500/goimgtools/internal/deflate"
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
@@ -18,12 +18,16 @@ import (
 // block but the last ends with a sync flush, the last is final). The
 // checksum is over all the data, in order.
 //
+// Up to level 7 the blocks are compressed with compress/flate; levels 8
+// and 9 use the near-optimal parsing of libdeflate (internal/deflate),
+// with the settings of its levels 10 and 12.
+//
 // The blocks are the same however many helpers the pipeline has (see
-// pipeline.Env.Go), and so is the file. Without helpers the blocks are
-// compressed as the data comes, straight to the output, with no buffer
-// beyond the 32KB of the dictionary; with them, they are gathered and
-// compressed on the helpers while the next ones fill. Data of up to one
-// block comes out exactly as compress/zlib writes it.
+// pipeline.Env.Go), and so is the file. Without helpers, up to level 7,
+// the blocks are compressed as the data comes, straight to the output,
+// with no buffer beyond the 32KB of the dictionary, and data of up to one
+// block comes out exactly as compress/zlib writes it; otherwise they are
+// gathered and compressed, on the helpers while the next ones fill.
 type zBlocks struct {
 	w     io.Writer
 	env   *pipeline.Env
@@ -34,14 +38,21 @@ type zBlocks struct {
 	err   error
 	held  int64 // reserved from the budget
 
-	// Without helpers: the compressor of the current block.
+	// Without helpers, up to level 7: the compressor of the current block.
 	fw *flate.Writer
 
-	// With helpers.
+	// Otherwise.
 	ways int
 	cur  *zBlock   // being filled
 	busy []*zBlock // handed out to be compressed, oldest first
 	free []*zBlock
+
+	// Levels 8 and 9: the settings, and the compressors not in use (one
+	// for each block being compressed at once, as many as the memory
+	// limit allows).
+	near  *deflate.Params
+	comps chan *deflate.Compressor
+	made  int
 }
 
 const (
@@ -49,31 +60,68 @@ const (
 	zWindow     = 32 << 10
 )
 
-// A zBlock compressed on a helper keeps its output and the sizes of the
-// writes the compressor made: written out again in those sizes, the bytes
-// are grouped into IDAT chunks as they are when the compressor writes to
-// the output itself, without helpers (the buffer that makes the chunks
-// passes a large write on whole).
+// nearLevels are the settings of levels 8 and 9: libdeflate's levels 10
+// and 12, with blocks of at most about 128KB (libdeflate's are 300000
+// bytes; the files are 0.05% larger, the compressor takes 3MB instead of
+// 8.6MB).
+var nearLevels = map[int]deflate.Params{
+	8: withBlocks(deflate.Level10),
+	9: withBlocks(deflate.Level12),
+}
+
+// nearBytes is the memory levels 8 and 9 take beyond what level 7 takes
+// without helpers, for images of the width: a compressor, and a block
+// gathered for it (for each helper too, when the limit allows; see
+// compressor), and the search of the rows' filters (see bruteFilter).
+func nearBytes(level, width int) int64 {
+	p, ok := nearLevels[level]
+	if !ok {
+		return 0
+	}
+	row := 1 + 8*width // at most
+	return p.Bytes() + zWindow + zBlockBytes + zBlockOut + bruteBytes(row) + int64(trialBytes+row)
+}
+
+func withBlocks(p deflate.Params) deflate.Params {
+	p.BlockLen, p.CachePerBlock = 128<<10, 3
+	return p
+}
+
+// A zBlock gathered to be compressed keeps its dictionary and data, one
+// after the other, its output and the sizes of the writes the compressor
+// made: written out again in those sizes, the bytes are grouped into IDAT
+// chunks as they are when the compressor writes to the output itself,
+// without helpers (the buffer that makes the chunks passes a large write
+// on whole).
 type zBlock struct {
-	data   []byte
-	dict   []byte
-	out    bytes.Buffer
+	buf    []byte // the dictionary, then the data
+	dict   int    // the length of the dictionary
+	out    []byte
 	writes []int
 	last   bool
 	err    error
 	wait   func()
 }
 
+// zBlockOut is room enough for the compressed block: stored blocks and the
+// sync flush add a few bytes to every 64KB at most.
+const zBlockOut = zBlockBytes + 1<<10
+
 // recorder appends to the output of a block and notes each write's size.
 type recorder struct{ b *zBlock }
 
 func (r recorder) Write(p []byte) (int, error) {
 	r.b.writes = append(r.b.writes, len(p))
-	return r.b.out.Write(p)
+	r.b.out = append(r.b.out, p...)
+	return len(p), nil
 }
 
 func newZBlocks(w io.Writer, level int, env *pipeline.Env) (*zBlocks, error) {
 	z := &zBlocks{w: w, env: env, level: level, sum: adler32.New(), ways: env.Helpers() + 1}
+	if p, ok := nearLevels[level]; ok {
+		z.near = &p
+		z.comps = make(chan *deflate.Compressor, z.ways)
+	}
 	if err := env.Budget.Reserve(zWindow, "png compression window"); err != nil {
 		return nil, err
 	}
@@ -81,7 +129,7 @@ func newZBlocks(w io.Writer, level int, env *pipeline.Env) (*zBlocks, error) {
 	if _, err := z.w.Write(z.header()); err != nil {
 		return z, err
 	}
-	if z.ways == 1 {
+	if z.ways == 1 && z.near == nil {
 		fw, err := flate.NewWriter(z.w, level)
 		if err != nil {
 			return z, err
@@ -147,7 +195,7 @@ func (z *zBlocks) Write(p []byte) (int, error) {
 					return 0, z.err
 				}
 			}
-			z.cur.data = append(z.cur.data, p[:k]...)
+			z.cur.buf = append(z.cur.buf, p[:k]...)
 		}
 		z.keepTail(p[:k])
 		z.n += int64(k)
@@ -156,8 +204,9 @@ func (z *zBlocks) Write(p []byte) (int, error) {
 	return n, nil
 }
 
-// next ends the full block. Without helpers: flushed, and a new compressor
-// for the next block, with the dictionary; with them, handed to a helper.
+// next ends the full block. Without helpers, up to level 7: flushed, and a
+// new compressor for the next block, with the dictionary; otherwise,
+// compressed.
 func (z *zBlocks) next() error {
 	if z.fw != nil {
 		if err := z.fw.Flush(); err != nil {
@@ -180,30 +229,74 @@ func (z *zBlocks) block() (*zBlock, error) {
 	if n := len(z.free); n > 0 {
 		b = z.free[n-1]
 		z.free = z.free[:n-1]
-		b.data, b.writes, b.last, b.err = b.data[:0], b.writes[:0], false, nil
-		b.out.Reset()
+		b.out, b.writes, b.last, b.err = b.out[:0], b.writes[:0], false, nil
 	} else {
-		// The data, its dictionary and about as much compressed again.
-		need := int64(2*zBlockBytes + zWindow)
+		// The dictionary, the data and its output.
+		need := int64(zWindow + zBlockBytes + zBlockOut)
 		if err := z.env.Budget.Reserve(need, "png compression block"); err != nil {
 			return nil, err
 		}
 		z.held += need
-		b = &zBlock{data: make([]byte, 0, zBlockBytes), dict: make([]byte, 0, zWindow)}
+		b = &zBlock{buf: make([]byte, 0, zWindow+zBlockBytes), out: make([]byte, 0, zBlockOut)}
 	}
-	b.dict = append(b.dict[:0], z.tail...)
+	b.buf = append(b.buf[:0], z.tail...)
+	b.dict = len(z.tail)
 	return b, nil
 }
 
-// send hands the current block to a helper to be compressed, and writes
-// out what is done when too many blocks are waiting.
+// compressor returns a compressor for levels 8 and 9: a free one, a new
+// one if the memory limit allows it, or the next to be free.
+func (z *zBlocks) compressor() (*deflate.Compressor, error) {
+	select {
+	case c := <-z.comps:
+		return c, nil
+	default:
+	}
+	if z.made < z.ways {
+		need := z.near.Bytes()
+		err := z.env.Budget.Reserve(need, "png compressor")
+		if err == nil {
+			z.held += need
+			z.made++
+			return deflate.New(*z.near), nil
+		}
+		if z.made == 0 {
+			return nil, err
+		}
+	}
+	// Every compressor is in use on a helper, which gives it back.
+	return <-z.comps, nil
+}
+
+// send hands the current block to a helper to be compressed (or compresses
+// it, when none is free), and writes out what is done when too many blocks
+// are waiting.
 func (z *zBlocks) send() error {
 	b := z.cur
 	z.cur = nil
 	level := z.level
-	b.wait = z.env.Go(func() { b.err = compressBlock(recorder{b}, b.data, b.dict, level, b.last) })
+	if z.near != nil {
+		c, err := z.compressor()
+		if err != nil {
+			return err
+		}
+		comps := z.comps
+		b.wait = z.env.Go(func() {
+			defer func() { comps <- c }()
+			b.out = c.Compress(b.out, b.buf, b.dict, b.last)
+			b.writes = append(b.writes, len(b.out))
+		})
+	} else {
+		b.wait = z.env.Go(func() { b.err = compressBlock(recorder{b}, b.buf[:b.dict], b.buf[b.dict:], level, b.last) })
+	}
 	z.busy = append(z.busy, b)
-	for len(z.busy) > z.ways {
+	waiting := z.ways
+	if z.ways == 1 {
+		// Without helpers the block is done: out with it, to keep one
+		// block in memory.
+		waiting = 0
+	}
+	for len(z.busy) > waiting {
 		if err := z.drain(); err != nil {
 			return err
 		}
@@ -211,7 +304,7 @@ func (z *zBlocks) send() error {
 	return nil
 }
 
-func compressBlock(out io.Writer, data, dict []byte, level int, last bool) error {
+func compressBlock(out io.Writer, dict, data []byte, level int, last bool) error {
 	var fw *flate.Writer
 	var err error
 	if len(dict) == 0 {
@@ -240,7 +333,7 @@ func (z *zBlocks) drain() error {
 	if b.err != nil {
 		return b.err
 	}
-	out := b.out.Bytes()
+	out := b.out
 	for _, n := range b.writes {
 		if _, err := z.w.Write(out[:n]); err != nil {
 			return err
@@ -288,7 +381,7 @@ func (z *zBlocks) release() {
 			b.wait()
 		}
 	}
-	z.busy, z.free, z.cur, z.fw = nil, nil, nil, nil
+	z.busy, z.free, z.cur, z.fw, z.comps = nil, nil, nil, nil, nil
 	z.env.Budget.Release(z.held)
 	z.held = 0
 }

@@ -78,6 +78,14 @@ func TestSameOnEveryProcessor(t *testing.T) {
 		{"png text level 7", func() ([]byte, error) {
 			return FromImage(textLike(320, 200)).PNG(PNGOptions{CompressionLevel: 7}).ToBytes()
 		}, byFlate("d83e8dfe83edf793", "ee8dde29d4265e21")},
+		// Levels 8 and 9 have a compressor of their own: one checksum
+		// for every Go version.
+		{"png text level 8", func() ([]byte, error) {
+			return FromImage(textLike(320, 200)).PNG(PNGOptions{CompressionLevel: 8}).ToBytes()
+		}, "b6b0f351e5b12cfb"},
+		{"png level 9", func() ([]byte, error) {
+			return photo.Clone().PNG(PNGOptions{CompressionLevel: 9}).ToBytes()
+		}, "3d613280e5c08749"},
 		{"gif lossy", func() ([]byte, error) { return photo.Clone().GIF(GIFOptions{Lossy: 24}).ToBytes() }, "0d853b8290dead48"},
 		{"jpeg jpegli tables", func() ([]byte, error) {
 			return photo.Clone().JPEG(77, JPEGOptions{QuantTable: QuantTableJpegli, Progressive: true}).ToBytes()

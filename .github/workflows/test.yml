@@ -300,3 +300,4 @@ jobs:
       - run: go test -run '^$' -fuzz '^FuzzText$' -fuzztime 30s ./tests
       - run: go test -run '^$' -fuzz '^FuzzExif$' -fuzztime 30s ./tests
       - run: go test -run '^$' -fuzz '^FuzzParse$' -fuzztime 30s ./internal/iccprof
+      - run: go test -run '^$' -fuzz '^FuzzRoundTrip$' -fuzztime 30s ./internal/deflate

@@ -47,6 +47,9 @@ func TestEncodeMatchesStdlib(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, limit := range []int64{0, 1 << 20} {
+				if limit > 0 {
+					limit += nearBytes(lv.ours, m.Bounds().Dx())
+				}
 				dir := t.TempDir()
 				env := pipeline.NewEnv(limit, dir)
 				var got bytes.Buffer
@@ -166,7 +169,9 @@ func sameFile(t *testing.T, what string, got, want []byte) {
 func TestSameWithHelpers(t *testing.T) {
 	for _, sz := range [][2]int{{301, 257}, {1000, 700}, {1, 1}, {7000, 3}} {
 		for name, m := range testutil.Images(sz[0], sz[1]) {
-			for _, level := range []int{1, 6, 7, 9} {
+			// Level 9 is level 8 but for the settings of the compressor:
+			// left out for time.
+			for _, level := range []int{1, 6, 7, 8} {
 				var want bytes.Buffer
 				if err := Encode(&want, testutil.Chopped(m, 16), &Options{Level: level}); err != nil {
 					t.Fatal(err)
@@ -265,5 +270,73 @@ func TestFilterTrial(t *testing.T) {
 	sameFilePixels(t, "text", with, without)
 	if !bytes.Equal(encode(photo, false), encode(photo, true)) {
 		t.Error("photograph: the trials changed the file")
+	}
+
+	// Levels 8 and 9 (Brute filtering and libdeflate's near-optimal
+	// parsing): the same pixels, smaller than level 7 on both images, and
+	// level 9 no larger than 8.
+	for name, m := range map[string]image.Image{"text": text, "photograph": photo} {
+		var files [10][]byte
+		for _, level := range []int{7, 8, 9} {
+			var b bytes.Buffer
+			if err := Encode(&b, opaqueSource{testutil.Chopped(m, 7)}, &Options{Level: level}); err != nil {
+				t.Fatal(err)
+			}
+			files[level] = b.Bytes()
+		}
+		t.Logf("%s: level 7 %d bytes, 8 %d, 9 %d", name, len(files[7]), len(files[8]), len(files[9]))
+		for _, level := range []int{8, 9} {
+			sameFilePixels(t, fmt.Sprintf("%s level %d", name, level), files[level], files[7])
+		}
+		if len(files[8]) >= len(files[7]) || len(files[9]) > len(files[8]) {
+			t.Errorf("%s: level 7 %d bytes, 8 %d, 9 %d", name, len(files[7]), len(files[8]), len(files[9]))
+		}
+	}
+}
+
+// TestFilterRow checks every filter of filterRow against the unfiltering
+// of the reader, for every number of bytes per pixel.
+func TestFilterRow(t *testing.T) {
+	seed := uint32(1)
+	next := func() byte {
+		seed = seed*1664525 + 1013904223
+		return byte(seed >> 24)
+	}
+	for _, bpp := range []int{1, 2, 3, 4, 6, 8} {
+		n := 13 * bpp
+		prev, cur := make([]byte, n), make([]byte, n)
+		for i := range cur {
+			prev[i], cur[i] = next(), next()
+		}
+		dst := make([]byte, n+1)
+		for f := ftNone; f <= ftPaeth; f++ {
+			filterRow(dst, cur, prev, bpp, f)
+			if dst[0] != byte(f) {
+				t.Fatalf("bpp %d filter %d: type byte %d", bpp, f, dst[0])
+			}
+			got := append([]byte(nil), dst[1:]...)
+			switch f {
+			case ftSub:
+				for i := bpp; i < n; i++ {
+					got[i] += got[i-bpp]
+				}
+			case ftUp:
+				for i := range got {
+					got[i] += prev[i]
+				}
+			case ftAverage:
+				for i := 0; i < bpp; i++ {
+					got[i] += prev[i] / 2
+				}
+				for i := bpp; i < n; i++ {
+					got[i] += uint8((int(got[i-bpp]) + int(prev[i])) / 2)
+				}
+			case ftPaeth:
+				filterPaeth(got, prev, bpp)
+			}
+			if !bytes.Equal(got, cur) {
+				t.Errorf("bpp %d filter %d: unfiltered %v, want %v", bpp, f, got, cur)
+			}
+		}
 	}
 }
