@@ -279,6 +279,7 @@ type tokenizer struct {
 	obuf    []byte
 	run     int // index in obuf of the open literal run's count, or -1
 	err     error
+	opt     *optimal // the optimal parse, if used
 }
 
 const tokenFlush = 32 << 10
@@ -486,6 +487,10 @@ func (t *tokenizer) copyRef(pos, length, dist int) {
 // process encodes the buffered pixels. Unless final, it stops short of the
 // end so that every match search sees a full look-ahead.
 func (t *tokenizer) process(final bool) {
+	if t.opt != nil {
+		t.processOptimal(final)
+		return
+	}
 	end := t.base + t.n
 	stop := end
 	if !final {

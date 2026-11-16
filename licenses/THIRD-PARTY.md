@@ -180,6 +180,15 @@ come out alike. It was rewritten in Go for this encoder (which converts and
 measures the image a macroblock row at a time, on several goroutines);
 nothing of the original files is included unchanged.
 
+`internal/vp8lenc/optimal.go` follows the idea of libwebp's lossless
+`TraceBackwards` (`src/enc/backward_references_cost_enc.c`): the LZ77
+matches are chosen by the cheapest path through the pixels under a cost
+model made from the statistics, with literals weighted at 82% and colour
+cache hits at 68% of what the statistics price them at, as libwebp weighs
+them. The path is worked out differently (backward, over a stretch of the
+streamed pixels at a time, without libwebp's interval cost manager); no
+code of libwebp is included.
+
 The rest of the WebP encoders in `internal/vp8enc` and `internal/vp8lenc`
 is written from the format specifications (RFC 6386, RFC 9649). It uses
 libwebp's colour conversion constants and its mapping from quality to

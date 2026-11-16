@@ -241,8 +241,18 @@ func (f *frontend) init(palette []uint32, sg int, share int64) error {
 	f.tokens = pipeline.NewSpill(e.env)
 	e.expect(f.tokens, f.total*litBytes+f.total*litBytes/255+64)
 	f.tok = newTokenizer(f.sw, f.total, window, nil, f.tokens, newStats(e.p.cache))
+	if e.p.optimal && (f.pred || f.kind == kindIndex) {
+		if err := f.reserve(optimalBytes, "webp optimal parse"); err != nil {
+			return err
+		}
+		f.passOne += optimalBytes
+		f.tok.opt = newOptimal()
+	}
 	f.tok.lit1 = litBytes == 1
 	f.tok.chain, f.tok.nice, f.tok.lazy = e.p.chain, e.p.nice, e.p.lazy
+	if !f.pred && f.kind != kindIndex {
+		f.tok.chain, f.tok.nice = e.p.chainRaw, e.p.niceRaw
+	}
 	return nil
 }
 
@@ -438,7 +448,7 @@ func (f *frontend) finish() error {
 		return err
 	}
 	f.band, f.res, f.resBand, f.tmps = nil, nil, nil, nil
-	f.tok.head, f.tok.prev, f.tok.obuf = nil, nil, nil
+	f.tok.head, f.tok.prev, f.tok.obuf, f.tok.opt = nil, nil, nil, nil
 	f.e.unreserve(f.passOne)
 	f.mem -= f.passOne
 	f.passOne = 0

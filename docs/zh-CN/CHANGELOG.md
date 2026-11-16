@@ -35,6 +35,7 @@
 - PNG 按 256KB 分块压缩（与 pigz 的做法相同），因而可由多核分摊。图像数据不超过一块时，文件与此前版本相同。
 - GIF 动画输出：所有帧共用一套按画面内容选取的调色板（`GIFOptions` 的 `Colors`、`NoDither` 对动画生效），自第二帧起仅存储变化的矩形区域。`GIFOptions{FixedPalette: true}` 仍使用固定调色板逐帧写出整帧。在处理任何一帧之前即检查像素上限。`FixedPalette` 下亦可使用 `NoDither`。
 - 有损 WebP：同一质量设置下文件约小 15%（分段量化）；同等 SSIM 下比 libwebp 1.6 小 2.4%。
+- 无损 WebP 对照片和调色板图按穿过像素的最便宜路径选取 LZ77 匹配（libwebp TraceBackwards 的思路），截图上搜索重复更远：17 张图小 4.5%，耗时约为原来的两倍；总量比 libwebp 最慢的设置小 4.1%。
 - 无损 WebP：每个行带的预测器依据该行带开始时的代价模型选择，以便并行选择；输出文件略有差异。
 - 命令行代码由 `cmd/goimgtools` 移至 `cli` 包；`cmd/goimgtools` 构建的仍为同一程序。
 

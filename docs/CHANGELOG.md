@@ -35,6 +35,7 @@ English | [中文](zh-CN/CHANGELOG.md)
 - PNG data is compressed in 256KB blocks (as in pigz), allowing multiple cores to share the work. When the image data fits within a single block, the file is identical to that of previous versions.
 - Animated GIF output: a single palette is chosen for all frames (`GIFOptions.Colors` and `NoDither` now apply to animations), and frames after the first store only the changed rectangle. `GIFOptions{FixedPalette: true}` continues to write full frames with the fixed palette, frame by frame. The pixel limit is checked before any frame is processed. `NoDither` also applies with `FixedPalette`.
 - Lossy WebP files are about 15% smaller at the same quality setting (segments); at equal SSIM they are 2.4% smaller than libwebp 1.6.
+- Lossless WebP chooses the LZ77 matches of photographs and palette images by the cheapest path through the pixels (the idea of libwebp’s TraceBackwards), and searches further for repeats in screenshots: 4.5% smaller over 17 images, in about twice the time; 4.1% smaller in total than libwebp’s slowest setting.
 - Lossless WebP selects each band's predictors using the cost model as it stands at the start of that band, so that they can be selected in parallel; output files differ slightly.
 - The command-line code has moved from `cmd/goimgtools` to package `cli`; `cmd/goimgtools` builds the same program.
 

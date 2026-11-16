@@ -57,6 +57,8 @@ type params struct {
 	modes     []uint8 // predictor modes tried per block
 	chain     int     // hash chain positions examined per match search
 	nice      int     // stop searching at a match this long
+	chainRaw  int     // the same for the colour variants without the predictor,
+	niceRaw   int     // which screenshots take: long repeats, cheap to search
 	lazy      bool
 	window    int     // LZ77 window in pixels (power of two) without predictor
 	predWin   int     // the same with predictor: residuals rarely repeat far back
@@ -66,6 +68,7 @@ type params struct {
 	groups    int     // most Huffman groups an image is split into
 	groupBits uint    // log2 of the block size of the entropy image
 	groupIter int     // refinement replays after the first grouping
+	optimal   bool    // the optimal parse for the predictor and colour table variants
 }
 
 // The predictor modes in the order they are tried; on a tie the earlier
@@ -77,7 +80,7 @@ var (
 )
 
 func paramsFor(effort int) params {
-	p := params{lazy: effort >= 3, variants: 5, dropRatio: 1.15}
+	p := params{lazy: effort >= 3, variants: 5, dropRatio: 1.15, optimal: effort >= DefaultEffort}
 	switch {
 	case effort <= 1:
 		p.modes, p.dropRatio = modesFast, 1
@@ -93,6 +96,11 @@ func paramsFor(effort int) params {
 	p.groupIter = [...]int{0, 0, 1, 2, 3, 4, 4, 5, 6, 8}[effort]
 	p.chain = [...]int{0, 4, 8, 16, 24, 32, 48, 64, 128, 256}[effort]
 	p.nice = [...]int{0, 32, 64, 128, 256, 256, 512, 1024, 4096, 4096}[effort]
+	p.chainRaw, p.niceRaw = p.chain, p.nice
+	if effort >= DefaultEffort {
+		// Screenshots 3 to 4% smaller, in little time.
+		p.chainRaw, p.niceRaw = max(p.chain, 256), 4096
+	}
 	p.window = 1 << [...]uint{0, 17, 17, 18, 18, 19, 19, 20, 20, 20}[effort]
 	p.predWin = 1 << [...]uint{0, 15, 15, 15, 15, 16, 16, 16, 16, 16}[effort]
 	switch {
