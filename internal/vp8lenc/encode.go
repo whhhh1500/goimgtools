@@ -49,6 +49,11 @@ type Options struct {
 	// blocks suit simple images, an alpha plane, whose predictor modes
 	// cost more than they save in small blocks.
 	PredictorBits int
+	// FastParse leaves out the optimal parse of the default effort and
+	// above (the matches are then chosen one after the other, as below
+	// the default effort): several times faster on large images, for
+	// files a few percent larger.
+	FastParse bool
 }
 
 // DefaultEffort is used when Options is nil or Effort is zero.
@@ -159,6 +164,9 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 	e := &encoder{env: pipeline.EnvOf(src), out: w, w: b.Dx(), h: b.Dy(), p: paramsFor(effort)}
 	if o != nil && o.PredictorBits > 0 {
 		e.p.predBits = uint(min(max(o.PredictorBits, 2), 9))
+	}
+	if o != nil && o.FastParse {
+		e.p.optimal, e.p.optimalRaw = false, false
 	}
 	defer e.close()
 	return e.encode(src)

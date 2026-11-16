@@ -104,7 +104,9 @@ type WebPOptions struct {
 	// does all there is (sharp colour conversion, trellis quantization and
 	// loop filter levels chosen by measuring); 1 and 2 leave them out and
 	// take less than half the time, for files about 3% larger at the same
-	// look, 3 and 4 leave out the measured loop filter.
+	// look, 3 and 4 leave out the measured loop filter. Above 5, only
+	// transparency gets more: every filter of the alpha plane is tried, and
+	// planes of more than 4 megapixels get the optimal parse too.
 	Effort int
 }
 

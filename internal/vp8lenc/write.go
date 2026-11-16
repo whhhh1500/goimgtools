@@ -160,6 +160,7 @@ func (e *encoder) group(p *plan, w *walker) error {
 	// A group costs a few hundred bytes of codes: aim at no more than a
 	// few percent of overhead.
 	tried := map[int]bool{}
+	done := map[[2]int]bool{}
 	for _, per := range e.p.groupBytes {
 		want := int(min(p.totalBits/8/int64(per), int64(e.p.groups)))
 		if want < 2 || tried[want] {
@@ -167,7 +168,7 @@ func (e *encoder) group(p *plan, w *walker) error {
 		}
 		tried[want] = true
 		for _, hbits := range e.p.groupSizes {
-			if err := e.groupBy(p, w, hbits, want); err != nil {
+			if err := e.groupBy(p, w, hbits, want, done); err != nil {
 				return err
 			}
 		}
@@ -176,8 +177,10 @@ func (e *encoder) group(p *plan, w *walker) error {
 }
 
 // groupBy is group with blocks of 1<<hbits pixels (or larger, if there
-// would be too many, or for memory).
-func (e *encoder) groupBy(p *plan, w *walker, hbits uint, want int) error {
+// would be too many, or for memory). done holds the numbers of groups and
+// block sizes tried: when the blocks have to be larger, several sizes come
+// to the same.
+func (e *encoder) groupBy(p *plan, w *walker, hbits uint, want int, done map[[2]int]bool) error {
 	f := p.f
 	st := f.tok.st
 	for hbits < 7 && int64((f.sw+1<<hbits-1)>>hbits)*int64((f.h+1<<hbits-1)>>hbits) > maxGroupBlocks {
@@ -194,6 +197,11 @@ func (e *encoder) groupBy(p *plan, w *walker, hbits uint, want int) error {
 	}
 	if need > e.avail()/2 {
 		return nil // not worth failing for
+	}
+	if k := [2]int{want, int(hbits)}; done[k] {
+		return nil
+	} else {
+		done[k] = true
 	}
 	if err := e.reserve(need, "webp Huffman groups"); err != nil {
 		return err

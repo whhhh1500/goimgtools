@@ -50,7 +50,8 @@ type Options struct {
 	// Effort trades speed for size at the same quality, 1 to 9; 0 means
 	// the default (5). From 3 on, colours are converted with sharp YUV and
 	// 4x4 blocks quantized by trellis; from 5 on, the loop filter levels
-	// are chosen by measuring. Above 5 nothing more is done.
+	// are chosen by measuring. Above 5 only the alpha plane gets more
+	// (see alphall.go).
 	Effort int
 }
 

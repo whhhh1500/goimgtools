@@ -174,7 +174,7 @@ func register(fs *flag.FlagSet) *options {
 		skipLarger:     fs.Bool("skip-larger", false, "when the result is not smaller than the input file (same format), keep the input file as it is; for runs that only compress"),
 		maxSize:        fs.String("max-size", "", "make the file at most this `size` by lowering the quality (JPEG, lossy WebP): 200KB, 1.5MB, or a number of bytes"),
 		lossless:       fs.Bool("webp-lossless", false, "WebP: write without loss"),
-		webpEffort:     fs.Int("webp-effort", 0, "WebP: effort 1 (fastest) to 9 (smallest file); default 5 (for lossy, all there is)"),
+		webpEffort:     fs.Int("webp-effort", 0, "WebP: effort 1 (fastest) to 9 (smallest file); default 5 (for lossy, all there is but for transparency)"),
 		gifColors:      fs.Int("gif-colors", 0, "largest number of colours in a GIF, 1-256 (default 256)"),
 		gifFixed:       fs.Bool("gif-fixed-palette", false, "GIF: use the standard fixed palette instead of colours chosen for the image (faster, a much worse picture)"),
 		gifLossy:       fs.Int("gif-lossy", 0, "GIF: lossy compression, the colour difference 1-255 it may accept (16-32 for photographic GIFs: 18-32% smaller); 0 keeps every pixel"),

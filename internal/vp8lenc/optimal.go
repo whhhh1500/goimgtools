@@ -22,7 +22,10 @@ import "math"
 // the others (screenshots: 1 to 3.5% smaller). Searching at every pixel
 // would go through every long repeat of a screenshot again and again; the
 // tokenizer remembers where the matches at each distance end (matchAt),
-// which makes that cheap.
+// which makes that cheap, and in a run of equal pixels (the flat areas of
+// a drawing or an alpha plane) the search passes over the run's own
+// pixels (find). The copies of up to 32 pixels are priced together, from
+// the least cost to the end after each length.
 
 // optimalStretch is the most pixels parsed at once.
 const optimalStretch = 8 << 10
@@ -91,10 +94,15 @@ func (t *tokenizer) processOptimal(final bool) {
 		}
 		t.insertTo(t.cur + n)
 		// Where a match stops just continuing the one before: the places
-		// where ending a long match can pay.
+		// where ending a long match can pay. (A match that goes on at the
+		// same distance continues the one before even when it is no
+		// shorter: the one before was cut at the longest length, as in a
+		// flat area every match is. Taken for breaks, those made the
+		// search through a long match go over every pixel of it, at every
+		// pixel.)
 		nb[n], nb[n+1] = int32(n), int32(n)
 		for j := n - 1; j >= 0; j-- {
-			if j == 0 || ml[j] == 0 || md[j] != md[j-1] || ml[j] != ml[j-1]-1 {
+			if j == 0 || ml[j] == 0 || md[j] != md[j-1] || ml[j] < ml[j-1]-1 {
 				nb[j] = int32(j)
 			} else {
 				nb[j] = nb[j+1]
@@ -103,6 +111,27 @@ func (t *tokenizer) processOptimal(final bool) {
 		o.literalCosts(t, n)
 		cte[n] = 0
 		buf := t.buf
+		// What a length of up to 32 and the distances 1 and width cost,
+		// for this stretch.
+		var lenc [33]uint32
+		for k := 1; k <= 32; k++ {
+			ls, ln, _ := prefixCode(uint32(k))
+			lenc[k] = uint32(t.cm.length[ls]) + 16*uint32(ln)
+		}
+		distc := func(d int) uint32 {
+			ds, dn, _ := prefixCode(distCode(d, t.width))
+			return uint32(t.cm.dist[ds]) + 16*uint32(dn)
+		}
+		short := [2]int{1, t.width}
+		shortc := [2]uint32{distc(1), distc(t.width)}
+		// How far the pixels from i on repeat those 1 and width before them,
+		// up to 32: worked out from the next pixel's, as i goes back.
+		var reach [2]int
+		// The cheapest way to the end with a copy of up to k pixels (of a
+		// distance that costs nothing), and its length: the copies of up
+		// to 32 pixels are priced from these.
+		var pmc [33]uint32
+		var pmk [33]uint16
 		for i := n - 1; i >= 0; i-- {
 			best := lit[i] + cte[i+1]
 			ch, chd := uint16(0), int32(0)
@@ -112,11 +141,43 @@ func (t *tokenizer) processOptimal(final bool) {
 					best, ch, chd = c, uint16(k), d
 				}
 			}
-			if L := int(ml[i]); L >= minMatch {
-				ds, dn, _ := prefixCode(distCode(int(md[i]), t.width))
-				dc := uint32(t.cm.dist[ds]) + 16*uint32(dn)
-				for k := 1; k <= min(L, 32); k++ {
-					try(k, dc, md[i])
+			p := t.cur + i - t.base
+			K := 0
+			L := int(ml[i])
+			if L >= minMatch {
+				K = min(L, 32)
+			}
+			for si, d := range short {
+				if d <= t.maxDist && p >= d && buf[p] == buf[p-d] {
+					reach[si] = min(reach[si]+1, 32)
+				} else {
+					reach[si] = 0
+				}
+				K = max(K, reach[si])
+			}
+			// (The earliest length wins a tie, as when the lengths are
+			// tried one after the other.)
+			pmc[0] = math.MaxUint32
+			for k := 1; k <= K; k++ {
+				if c := lenc[k] + cte[i+k]; c < pmc[k-1] {
+					pmc[k], pmk[k] = c, uint16(k)
+				} else {
+					pmc[k], pmk[k] = pmc[k-1], pmk[k-1]
+				}
+			}
+			if L >= minMatch {
+				d := md[i]
+				var dc uint32
+				switch int(d) {
+				case 1:
+					dc = shortc[0]
+				case t.width:
+					dc = shortc[1]
+				default:
+					dc = distc(int(d))
+				}
+				if c := dc + pmc[min(L, 32)]; c < best {
+					best, ch, chd = c, pmk[min(L, 32)], d
 				}
 				if L > 32 {
 					for j := int(nb[i+33]); j-i < L; j = int(nb[j+1]) {
@@ -126,15 +187,11 @@ func (t *tokenizer) processOptimal(final bool) {
 				}
 			}
 			// Short copies from the left and from above.
-			p := t.cur + i - t.base
-			for _, d := range [2]int{1, t.width} {
-				if d > t.maxDist || p < d || int32(d) == md[i] && ml[i] > 0 {
-					continue
-				}
-				ds, dn, _ := prefixCode(distCode(d, t.width))
-				dc := uint32(t.cm.dist[ds]) + 16*uint32(dn)
-				for k := 1; k <= min(n-i, 32) && buf[p+k-1] == buf[p+k-1-d]; k++ {
-					try(k, dc, int32(d))
+			for si, d := range short {
+				if r := reach[si]; r > 0 && !(int32(d) == md[i] && ml[i] > 0) {
+					if c := shortc[si] + pmc[r]; c < best {
+						best, ch, chd = c, pmk[r], int32(d)
+					}
 				}
 			}
 			cte[i], choice[i], cd[i] = best, ch, chd

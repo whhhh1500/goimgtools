@@ -281,6 +281,9 @@ type tokenizer struct {
 	err     error
 	opt     *optimal // the optimal parse, if used
 	ends    []matchEnd
+	// The run of equal pixels the last search was in: it started at
+	// stream position runFrom, and the search was at runAt-1 (0: none).
+	runAt, runFrom int
 }
 
 // matchEnd remembers where the match at a distance ends: a match at
@@ -410,8 +413,10 @@ func (t *tokenizer) find(pos int) (bestLen, bestDist int, value int32) {
 	}
 	avg := int32(t.cm.avg)
 	value = math.MinInt32
+	run := 0 // the length of the match at distance 1
 	if p >= 1 && buf[p-1] == buf[p] {
-		bestLen, bestDist = t.matchAt(p, 1, limit), 1
+		run = t.matchAt(p, 1, limit)
+		bestLen, bestDist = run, 1
 		value = int32(bestLen)*avg - t.matchCost(bestLen, 1)
 	}
 	if w := t.width; w > 1 && p >= w && w <= t.maxDist && buf[p-w] == buf[p] && bestLen < limit {
@@ -425,7 +430,22 @@ func (t *tokenizer) find(pos int) (bestLen, bestDist int, value int32) {
 	}
 	lowest := max(pos-t.maxDist, t.base)
 	cand := int(t.head[t.hash(p)])
-	for chain := t.chain; cand > 0 && chain > 0; chain-- {
+	chain := t.chain
+	if run >= 3 {
+		// Inside a run of equal pixels, the latest candidates are the
+		// run's own pixels behind p: their matches end where the run
+		// does, as the one at distance 1, at longer distances.
+		// The search passes over them, to the pixels before the run (the
+		// candidates of the chain that follow the run's first pixel, which
+		// has the same hash as p).
+		from := max(t.runStart(pos, lowest), lowest)
+		if pos-from >= chain || from == lowest {
+			return
+		}
+		chain -= pos - from
+		cand = int(t.prev[from&t.wmask])
+	}
+	for ; cand > 0 && chain > 0; chain-- {
 		c := cand - 1
 		if c < lowest {
 			break
@@ -449,6 +469,23 @@ func (t *tokenizer) find(pos int) (bestLen, bestDist int, value int32) {
 		cand = next
 	}
 	return
+}
+
+// runStart is where the run of equal pixels that pos is in (buf[p-1] ==
+// buf[p]) starts, or a later position: the search looks no further back
+// than lowest, nor further than the hash chain goes.
+func (t *tokenizer) runStart(pos, lowest int) int {
+	if t.runAt == pos {
+		// The last search was at pos-1, in the same run.
+		t.runAt = pos + 1
+		return t.runFrom
+	}
+	buf, p := t.buf, pos-t.base
+	q := p - 1
+	for stop := max(lowest-t.base, p-t.chain); q > stop && buf[q-1] == buf[p]; q-- {
+	}
+	t.runAt, t.runFrom = pos+1, q+t.base
+	return t.runFrom
 }
 
 // worth reports whether coding the match costs less than the literals it

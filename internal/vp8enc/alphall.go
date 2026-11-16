@@ -36,10 +36,28 @@ import (
 // simple coder of alpha.go. So under a low memory limit the alpha chunk can
 // come out larger than with the default one; the pixels are the same.
 
-// alphaEffort is the lossless encoder's effort for alpha planes: the
-// highest without the optimal parse, which on the large flat areas of
-// alpha planes takes several times longer for files 10 to 30% smaller.
-const alphaEffort = 4
+// alphaOptimalMax is the largest alpha plane, in pixels, that the lossless
+// encoder codes with its optimal parse at efforts 5 and 6: the parse makes
+// planes 1 to 13% smaller (an icon 2%, Tux 6%, a photograph in a soft
+// round window 13%), but takes several times as long as the fast one,
+// which on a plane of 24 megapixels is 2.2s more, a quarter of the whole
+// encoding (for 8%). Larger planes are coded with the fast parse, unless
+// the effort is 7 or more.
+const alphaOptimalMax = 1 << 22
+
+// alphaOptions are the lossless encoder's settings for the alpha plane:
+// its default effort (its effort 4 at efforts 1 and 2), with the optimal
+// parse as alphaOptimalMax says.
+func (e *encoder) alphaOptions() *vp8lenc.Options {
+	o := &vp8lenc.Options{Effort: vp8lenc.DefaultEffort, PredictorBits: alphaPredictorBits}
+	switch {
+	case e.effort <= 2:
+		o.Effort = 4
+	case e.effort < 7 && int64(e.w)*int64(e.h) > alphaOptimalMax:
+		o.FastParse = true
+	}
+	return o
+}
 
 // alphaPredictorBits makes the lossless encoder choose its predictors for
 // blocks of 16x16 pixels at least: an alpha plane is simple, and the modes
@@ -89,27 +107,49 @@ func (e *encoder) codeAlpha() error {
 	if e.dbg != nil && e.dbg.alphaMethod > 0 {
 		methods = []int{e.dbg.alphaMethod - 1}
 	}
+	opts := e.alphaOptions()
+	// With the optimal parse, the filter is chosen with the fast one, and
+	// the plane coded with the optimal parse once, through that filter:
+	// the fast parse ranks the filters as the optimal one does, in a
+	// fraction of the time.
+	try := opts
+	if len(methods) > 1 && opts.Effort >= vp8lenc.DefaultEffort && !opts.FastParse {
+		fast := *opts
+		fast.FastParse = true
+		try = &fast
+	}
 	for _, m := range methods {
-		ll, err := e.codeAlphaWith(m)
-		if errors.Is(err, pipeline.ErrMemoryLimit) {
-			continue
-		}
-		if err != nil {
+		if err := e.keepAlpha(e.codeAlphaWith(m, try)); err != nil {
 			return err
 		}
-		if e.alphaLL == nil || ll.n < e.alphaLL.n {
-			if e.alphaLL != nil {
-				e.alphaLL.st.Close()
-			}
-			e.alphaLL = ll
-		} else {
-			ll.st.Close()
-		}
+	}
+	if try != opts && e.alphaLL != nil {
+		return e.keepAlpha(e.codeAlphaWith(e.alphaLL.method, opts))
 	}
 	return nil
 }
 
-func (e *encoder) codeAlphaWith(method int) (*alphaLL, error) {
+// keepAlpha keeps ll if it is the smallest coding of the plane so far. A
+// coding that did not fit in memory is passed over.
+func (e *encoder) keepAlpha(ll *alphaLL, err error) error {
+	if errors.Is(err, pipeline.ErrMemoryLimit) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if e.alphaLL == nil || ll.n < e.alphaLL.n {
+		if e.alphaLL != nil {
+			e.alphaLL.st.Close()
+		}
+		e.alphaLL = ll
+	} else {
+		ll.st.Close()
+	}
+	return nil
+}
+
+func (e *encoder) codeAlphaWith(method int, opts *vp8lenc.Options) (*alphaLL, error) {
 	rows := pipeline.StripRows(4*int64(e.w), e.h)
 	need := 4*int64(e.w)*int64(rows) + 2*int64(e.w)
 	if err := e.env.Budget.Reserve(need, "webp alpha strip"); err != nil {
@@ -132,7 +172,7 @@ func (e *encoder) codeAlphaWith(method int) (*alphaLL, error) {
 		pix: make([]uint8, 4*e.w*rows), cur: make([]uint8, e.w), prev: make([]uint8, e.w)}
 	e.alpha.rewind(e.readBuf)
 	st := newStore(e.env)
-	if err := vp8lenc.Encode(st, src, &vp8lenc.Options{Effort: alphaEffort, PredictorBits: alphaPredictorBits}); err != nil {
+	if err := vp8lenc.Encode(st, src, opts); err != nil {
 		st.Close()
 		return nil, err
 	}
