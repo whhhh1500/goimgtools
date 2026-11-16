@@ -1,6 +1,7 @@
 package vp8enc
 
 import (
+	"encoding/binary"
 	"errors"
 	"io"
 	"math/bits"
@@ -63,14 +64,18 @@ type boolDec struct {
 	r, n     int
 	err      error
 
+	// As libwebp's VP8BitReader: value holds bits+8 bits of the stream
+	// not yet read (bits goes below 0 when fewer than 8 are left, and
+	// value is then refilled with 56 bits at a time), and rangeM1 is the
+	// range less 1.
+	value   uint64
+	bits    int
 	rangeM1 uint32
-	bits    uint32
-	nBits   uint8
 }
 
 // init reads bytes off..end of sp.
 func (d *boolDec) init(sp *store, off, end int64, buf []byte) {
-	*d = boolDec{sp: sp, off: off, end: end, buf: buf, rangeM1: 254}
+	*d = boolDec{sp: sp, off: off, end: end, buf: buf, rangeM1: 254, bits: -8}
 }
 
 // readModes reads a macroblock's entry in a row's modes stream: modes holds
@@ -119,32 +124,45 @@ func (d *boolDec) fill() {
 	d.n = n
 }
 
+// load adds 56 bits to value, or 8 near the end of the buffer.
+func (d *boolDec) load() {
+	if d.r+8 <= d.n {
+		d.value = d.value<<56 | binary.BigEndian.Uint64(d.buf[d.r:])>>8
+		d.r += 7
+		d.bits += 56
+		return
+	}
+	if d.r == d.n {
+		d.fill()
+	}
+	var b uint64 // past the end the stream continues with zeros
+	if d.r < d.n {
+		b = uint64(d.buf[d.r])
+		d.r++
+	}
+	d.value = d.value<<8 | b
+	d.bits += 8
+}
+
+// readBit reads a bit whose probability of being 0 is prob/256, as
+// libwebp's VP8GetBit does.
 func (d *boolDec) readBit(prob uint8) bool {
-	if d.nBits < 8 {
-		if d.r == d.n {
-			d.fill()
-		}
-		// Past the end the stream continues with zeros.
-		if d.r < d.n {
-			d.bits |= uint32(d.buf[d.r]) << (8 - d.nBits)
-			d.r++
-		}
-		d.nBits += 8
+	rng := d.rangeM1
+	if d.bits < 0 {
+		d.load()
 	}
-	split := (d.rangeM1*uint32(prob))>>8 + 1
-	bit := d.bits >= split<<8
+	pos := uint(d.bits) & 63
+	split := rng * uint32(prob) >> 8
+	bit := uint32(d.value>>pos) > split
 	if bit {
-		d.rangeM1 -= split
-		d.bits -= split << 8
+		rng -= split
+		d.value -= uint64(split+1) << pos
 	} else {
-		d.rangeM1 = split - 1
+		rng = split + 1
 	}
-	if d.rangeM1 < 127 {
-		shift := uint8(bits.LeadingZeros8(uint8(d.rangeM1 + 1)))
-		d.rangeM1 = (d.rangeM1+1)<<shift - 1
-		d.bits <<= shift
-		d.nBits -= shift
-	}
+	shift := 7 ^ (31 - bits.LeadingZeros32(rng))
+	d.rangeM1 = rng<<shift - 1
+	d.bits -= shift
 	return bit
 }
 

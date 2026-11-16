@@ -31,8 +31,8 @@ Measurements (6000×4000; output byte-for-byte identical at every thread count):
 | JPEG to PNG, without shrinking (level 7) | 2.10s | 1.89s | 1.16s | 0.49s |
 | RGB PNG to PNG, without shrinking (level 7) | 1.58s | 1.01s | 0.71s | 0.45s |
 | JPEG shrunk to 1536 | 0.41s | 0.23s | 0.22s | 0.22s |
-| JPEG to lossy WebP, without shrinking | 8.81s | — | 4.57s | 1.85s |
-| Real photograph 3840×2160 to lossy WebP | 1.51s | — | 0.80s | 0.34s |
+| JPEG to lossy WebP, without shrinking | 7.52s | — | 3.98s | 1.55s |
+| Real photograph 3840×2160 to lossy WebP | 1.74s | — | 1.02s | 0.60s |
 | 1080p enlarged to 4K | 0.24s | 0.13s | 0.13s | 0.11s |
 | 1080p enlarged to 8K | 0.84s | 0.44s | 0.36s | 0.29s |
 
@@ -76,9 +76,9 @@ Environment: Windows 10, Go 1.27.1. "Standard library approach" denotes whole-im
 
 | Operation | Output file | Peak memory | Time |
 |---|---|---|---|
-| Without shrinking, to JPEG (quality 85) | 5.9MB | 6.0MB | 0.55s |
+| Without shrinking, to JPEG (quality 85) | 5.9MB | 6.0MB | 0.23s |
 | Without shrinking, to PNG | 41.9MB | 9.2MB | 1.98s |
-| Without shrinking, to lossy WebP (quality 75) | 3.2MB | 19.7MB | 8.81s (1.85s with 8 threads; effort 1: 3.29s, 0.79s) |
+| Without shrinking, to lossy WebP (quality 75) | 3.2MB | 20.3MB | 7.52s (1.55s with 8 threads; effort 1: 3.13s, 0.71s) |
 | Without shrinking, to lossless WebP | 27.6MB | 25.6MB | 5.13s (4.70s with 8 threads) |
 | Without shrinking, to BMP | 72MB | 6.7MB | 0.28s |
 | Without shrinking, to TIFF (uncompressed) | 96MB | 6.4MB | 0.26s |

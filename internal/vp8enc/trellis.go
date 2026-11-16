@@ -60,6 +60,7 @@ func (c *mbCoder) trellis(in *[16]int16, first, ctx0, plane int, z *quantizer, l
 	for m := 0; m < 2; m++ {
 		scores[cur][m], ctxs[cur][m] = start, ctx0
 	}
+	levels := &t.level[plane]
 	for n := first; n <= last; n++ {
 		j := zigzag[n]
 		q, iq := z.q[1], z.iq[1]
@@ -67,14 +68,19 @@ func (c *mbCoder) trellis(in *[16]int16, first, ctx0, plane int, z *quantizer, l
 			q, iq = z.q[0], z.iq[0]
 		}
 		v := int32(in[j])
-		neg := v < 0
-		if neg {
+		if v < 0 {
 			v = -v
 		}
 		level0 := min((v*iq)>>17, maxLevel)
 		threshLevel := min((v*iq+1<<16)>>17, maxLevel)
 		prev := cur
 		cur ^= 1
+		// The tables of the contexts the two nodes before leave, and
+		// their scores.
+		band := &levels[bands[n]]
+		tab0, tab1 := &band[ctxs[prev][0]], &band[ctxs[prev][1]]
+		s0, s1 := scores[prev][0], scores[prev][1]
+		w := 256 * kWeightTrellis[j]
 		for m := 0; m < 2; m++ {
 			level := level0 + int32(m)
 			ctxs[cur][m] = int(min(level, 2))
@@ -83,22 +89,16 @@ func (c *mbCoder) trellis(in *[16]int16, first, ctx0, plane int, z *quantizer, l
 				continue
 			}
 			e := int64(v - level*q)
-			base := 256 * kWeightTrellis[j] * (e*e - int64(v)*int64(v))
+			base := w * (e*e - int64(v)*int64(v))
 			// The best of the nodes before.
+			fixed, vl := int64(fixedCost[level]), min(level, maxVarLevel)
 			best, bp := maxCost, 0
-			for p := 0; p < 2; p++ {
-				if scores[prev][p] >= maxCost {
-					continue
-				}
-				tab := &t.level[plane][bands[n]][ctxs[prev][p]]
-				cost := int64(fixedCost[level])
-				if level <= maxVarLevel {
-					cost += int64(tab[level])
-				} else {
-					cost += int64(tab[maxVarLevel])
-				}
-				if s := scores[prev][p] + cost*lambda; s < best {
-					best, bp = s, p
+			if s0 < maxCost {
+				best = s0 + (fixed+int64(tab0[vl]))*lambda
+			}
+			if s1 < maxCost {
+				if s := s1 + (fixed+int64(tab1[vl]))*lambda; s < best {
+					best, bp = s, 1
 				}
 			}
 			if best >= maxCost {

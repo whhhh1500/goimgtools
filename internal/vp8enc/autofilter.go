@@ -19,7 +19,7 @@ const lfLevels = 64
 
 // mbFilterBytes is the memory of measuring macroblocks, per row coded at
 // once.
-const mbFilterBytes = 3*384 + 3*200*4 + 160*4 + 3*100*4 + 256*4 + 384 + 4*lfLevels*8
+const mbFilterBytes = 3*384 + 3*200*4 + 3*100*4 + 256*4 + 384 + 4*lfLevels*8
 
 // filterStats are SSIM totals per segment and loop filter level.
 type filterStats [numSegments][lfLevels]float64
@@ -56,7 +56,6 @@ type mbFilter struct {
 	rec, flt [384]uint8 // reconstruction, and it filtered: Y 16x16, U, V 8x8
 	prev     [384]uint8 // the last filtered one measured
 	src      [3]planeSums
-	tmp      [16 * 10]uint32
 	xy, yy   [100]uint32
 	y        [100]uint32
 	prod     [256]uint32
@@ -98,11 +97,11 @@ func (m *mbFilter) measure(src *[384]uint8, sg *segment, seg int, st *filterStat
 		for i, x := range v {
 			m.prod[i] = uint32(x)
 		}
-		sepSums(m.prod[:len(v)], pl.n, pl.lo, pl.hi, m.tmp[:], s.x[:])
+		winSums(m.prod[:len(v)], pl.n, s.x[:])
 		for i, x := range v {
 			m.prod[i] = uint32(x) * uint32(x)
 		}
-		sepSums(m.prod[:len(v)], pl.n, pl.lo, pl.hi, m.tmp[:], s.xx[:])
+		winSums(m.prod[:len(v)], pl.n, s.xx[:])
 	}
 	base := m.ssim(src, &m.rec)
 	st[seg][0] += base
@@ -147,15 +146,15 @@ func (m *mbFilter) ssim(src, rec *[384]uint8) float64 {
 		for i, y := range b {
 			m.prod[i] = uint32(y)
 		}
-		sepSums(m.prod[:n2], pl.n, pl.lo, pl.hi, m.tmp[:], m.y[:])
+		winSums(m.prod[:n2], pl.n, m.y[:])
 		for i, y := range b {
 			m.prod[i] = uint32(y) * uint32(y)
 		}
-		sepSums(m.prod[:n2], pl.n, pl.lo, pl.hi, m.tmp[:], m.yy[:])
+		winSums(m.prod[:n2], pl.n, m.yy[:])
 		for i, y := range b {
 			m.prod[i] = uint32(y) * uint32(a[i])
 		}
-		sepSums(m.prod[:n2], pl.n, pl.lo, pl.hi, m.tmp[:], m.xy[:])
+		winSums(m.prod[:n2], pl.n, m.xy[:])
 		k := (pl.hi - pl.lo) * (pl.hi - pl.lo)
 		w := &windowWeights[p]
 		for i := 0; i < k; i++ {
@@ -175,42 +174,90 @@ func kernelSum(c, n int) uint32 {
 	return s
 }
 
-// sepSums sums plane v (n x n) under the window weights for each centre
-// (cx, cy) in lo..hi-1, clipping the windows at the plane's edges, into
-// out, row by row: across each row, then down each column of that.
-func sepSums(v []uint32, n, lo, hi int, tmp, out []uint32) {
-	m := hi - lo
-	for r := 0; r < n; r++ {
-		tri7(v[r*n:r*n+n], lo, hi, tmp[r*m:r*m+m])
+// winSums sums plane v (n x n, n being 16 or 8) under the window weights
+// for each centre (cx, cy) in the plane's lo..hi-1, the weights beyond the
+// plane left out, into out row by row: across each row, then down each
+// column of that. The weights 1, 2, 3, 4, 3, 2, 1 are four boxes of four,
+// one after the other, so each pass takes running sums of four twice. The
+// sums are those of libwebp's windows.
+func winSums(v []uint32, n int, out []uint32) {
+	if n == 16 {
+		winSums16((*[256]uint32)(v), (*[100]uint32)(out))
+	} else {
+		winSums8((*[64]uint32)(v), (*[36]uint32)(out))
 	}
-	var col [16]uint32
-	var res [10]uint32
-	for cx := 0; cx < m; cx++ {
-		for r := 0; r < n; r++ {
-			col[r] = tmp[r*m+cx]
+}
+
+// winSums16 is winSums for luma: the windows at centres 3..12 lie inside.
+func winSums16(v *[256]uint32, out *[100]uint32) {
+	var t [10][16]uint32 // t[cx][row]
+	var row [10]uint32
+	for r := 0; r < 16; r++ {
+		win16((*[16]uint32)(v[r*16:r*16+16]), &row)
+		for cx, x := range row {
+			t[cx][r] = x
 		}
-		tri7(col[:n], lo, hi, res[:m])
-		for cy := range m {
-			out[cy*m+cx] = res[cy]
+	}
+	for cx := range t {
+		win16(&t[cx], &row)
+		for cy, x := range row {
+			out[cy*10+cx] = x
 		}
 	}
 }
 
-// tri7 sums v (at most 16 values, zero beyond) under the weights 1, 2, 3,
-// 4, 3, 2, 1 centred at lo..hi-1. The weights are two boxes of four, one
-// after the other, so it takes running sums of four twice.
-func tri7(v []uint32, lo, hi int, out []uint32) {
-	var p [22]uint32 // three zeros, v, three zeros
-	n := copy(p[3:19], v)
-	var b [19]uint32 // b[i] = p[i] + ... + p[i+3]
-	s := p[0] + p[1] + p[2] + p[3]
+// win16 sums v under the weights at the centres 3..12.
+func win16(v *[16]uint32, out *[10]uint32) {
+	var b [13]uint32 // b[i] = v[i] + ... + v[i+3]
+	s := v[0] + v[1] + v[2] + v[3]
 	b[0] = s
-	for i := 1; i <= n+2; i++ {
+	for i := 1; i < 13; i++ {
+		s += v[i+3] - v[i-1]
+		b[i] = s
+	}
+	s = b[0] + b[1] + b[2] + b[3]
+	out[0] = s
+	for k := 1; k < 10; k++ {
+		s += b[k+3] - b[k-1]
+		out[k] = s
+	}
+}
+
+// winSums8 is winSums for chroma: centres 1..6, the windows clipped.
+func winSums8(v *[64]uint32, out *[36]uint32) {
+	var t [6][8]uint32 // t[cx][row]
+	var row [6]uint32
+	for r := 0; r < 8; r++ {
+		win8((*[8]uint32)(v[r*8:r*8+8]), &row)
+		for cx, x := range row {
+			t[cx][r] = x
+		}
+	}
+	for cx := range t {
+		win8(&t[cx], &row)
+		for cy, x := range row {
+			out[cy*6+cx] = x
+		}
+	}
+}
+
+// win8 sums v, three zeros on either side, under the weights at the
+// centres 1..6.
+func win8(v *[8]uint32, out *[6]uint32) {
+	var p [14]uint32
+	copy(p[3:11], v[:])
+	var b [10]uint32 // b[i] = p[i] + ... + p[i+3]; the windows use 1..9
+	s := p[1] + p[2] + p[3] + p[4]
+	b[1] = s
+	for i := 2; i < 10; i++ {
 		s += p[i+3] - p[i-1]
 		b[i] = s
 	}
-	for c := lo; c < hi; c++ {
-		out[c-lo] = b[c] + b[c+1] + b[c+2] + b[c+3]
+	s = b[1] + b[2] + b[3] + b[4]
+	out[0] = s
+	for k := 1; k < 6; k++ {
+		s += b[k+4] - b[k]
+		out[k] = s
 	}
 }
 

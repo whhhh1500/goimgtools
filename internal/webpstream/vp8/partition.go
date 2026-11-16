@@ -4,41 +4,19 @@
 
 package vp8
 
-import "io"
+import (
+	"encoding/binary"
+	"io"
+	"math/bits"
+)
 
 // Each VP8 frame consists of between 2 and 9 bitstream partitions.
 // Each partition is byte-aligned and is independently arithmetic-encoded.
 //
 // This file implements decoding a partition's bitstream, as specified in
-// chapter 7. The implementation follows libwebp's approach instead of the
-// specification's reference C implementation. For example, we use a look-up
-// table instead of a for loop to recalibrate the encoded range.
-
-var (
-	lutShift = [127]uint8{
-		7, 6, 6, 5, 5, 5, 5, 4, 4, 4, 4, 4, 4, 4, 4,
-		3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
-		2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
-		2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
-		1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-		1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-		1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-		1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-	}
-	lutRangeM1 = [127]uint8{
-		127,
-		127, 191,
-		127, 159, 191, 223,
-		127, 143, 159, 175, 191, 207, 223, 239,
-		127, 135, 143, 151, 159, 167, 175, 183, 191, 199, 207, 215, 223, 231, 239, 247,
-		127, 131, 135, 139, 143, 147, 151, 155, 159, 163, 167, 171, 175, 179, 183, 187,
-		191, 195, 199, 203, 207, 211, 215, 219, 223, 227, 231, 235, 239, 243, 247, 251,
-		127, 129, 131, 133, 135, 137, 139, 141, 143, 145, 147, 149, 151, 153, 155, 157,
-		159, 161, 163, 165, 167, 169, 171, 173, 175, 177, 179, 181, 183, 185, 187, 189,
-		191, 193, 195, 197, 199, 201, 203, 205, 207, 209, 211, 213, 215, 217, 219, 221,
-		223, 225, 227, 229, 231, 233, 235, 237, 239, 241, 243, 245, 247, 249, 251, 253,
-	}
-)
+// chapter 7. The implementation follows libwebp's approach (VP8GetBit)
+// instead of the specification's reference C implementation: the input is
+// taken 56 bits at a time, and the range is renormalized with one shift.
 
 // uniformProb represents a 50% probability that the next bit is 0.
 const uniformProb = 128
@@ -63,9 +41,11 @@ type partition struct {
 	// rangeM1 is range minus 1, where range is in the arithmetic coding sense,
 	// not the Go language sense.
 	rangeM1 uint32
-	// bits and nBits hold those bits shifted out of buf but not yet consumed.
-	bits  uint32
-	nBits uint8
+	// As in libwebp's VP8BitReader, value holds bits+8 bits shifted out of
+	// buf but not yet consumed; bits goes below 0 when fewer than 8 are
+	// left, and value is then refilled, 56 bits at a time.
+	value uint64
+	bits  int
 	// unexpectedEOF tells whether we tried to read past buf.
 	unexpectedEOF bool
 }
@@ -82,8 +62,8 @@ func (p *partition) init(ra io.ReaderAt, off int64, n int) {
 	p.buf = p.store[:0]
 	p.r = 0
 	p.rangeM1 = 254
-	p.bits = 0
-	p.nBits = 0
+	p.value = 0
+	p.bits = -8
 	p.unexpectedEOF = false
 }
 
@@ -107,33 +87,68 @@ func (p *partition) fill() bool {
 	return k > 0
 }
 
-// readBit returns the next bit.
-func (p *partition) readBit(prob uint8) bool {
-	if p.nBits < 8 {
-		if p.r >= len(p.buf) && !p.fill() {
-			p.unexpectedEOF = true
-			return false
-		}
-		// Expression split for 386 compiler.
-		x := uint32(p.buf[p.r])
-		p.bits |= x << (8 - p.nBits)
-		p.r++
-		p.nBits += 8
+// load adds 56 bits to value, or 8 near the end of the window, and
+// reports false when the partition has no more.
+func (p *partition) load() bool {
+	if p.r+8 <= len(p.buf) {
+		p.value = p.value<<56 | binary.BigEndian.Uint64(p.buf[p.r:])>>8
+		p.r += 7
+		p.bits += 56
+		return true
 	}
-	split := (p.rangeM1*uint32(prob))>>8 + 1
-	bit := p.bits >= split<<8
+	if p.r >= len(p.buf) && !p.fill() {
+		return false
+	}
+	p.value = p.value<<8 | uint64(p.buf[p.r])
+	p.r++
+	p.bits += 8
+	return true
+}
+
+// refill is load for a reader whose value and bits are held by the caller.
+func (p *partition) refill(value uint64, nb int) (uint64, int, bool) {
+	p.value, p.bits = value, nb
+	if !p.load() {
+		return value, nb, false
+	}
+	return p.value, p.bits, true
+}
+
+// bitOf is readBit for a reader whose value, bits and rangeM1 are held by
+// the caller in local variables (refilled first when bits is below 0),
+// small enough to be inlined: it returns the bit and the new state.
+func bitOf(value uint64, nb int, rangeM1 uint32, prob uint8) (bool, uint64, int, uint32) {
+	pos := uint(nb) & 63
+	split := rangeM1 * uint32(prob) >> 8
+	rng := split + 1
+	bit := uint32(value>>pos) > split
 	if bit {
-		p.rangeM1 -= split
-		p.bits -= split << 8
+		rng = rangeM1 - split
+		value -= uint64(split+1) << pos
+	}
+	shift := 7 ^ (31 - bits.LeadingZeros32(rng))
+	return bit, value, nb - shift, rng<<shift - 1
+}
+
+// readBit returns the next bit, as libwebp's VP8GetBit does.
+func (p *partition) readBit(prob uint8) bool {
+	rng := p.rangeM1
+	if p.bits < 0 && !p.load() {
+		p.unexpectedEOF = true
+		return false
+	}
+	pos := uint(p.bits) & 63
+	split := rng * uint32(prob) >> 8
+	bit := uint32(p.value>>pos) > split
+	if bit {
+		rng -= split
+		p.value -= uint64(split+1) << pos
 	} else {
-		p.rangeM1 = split - 1
+		rng = split + 1
 	}
-	if p.rangeM1 < 127 {
-		shift := lutShift[p.rangeM1]
-		p.rangeM1 = uint32(lutRangeM1[p.rangeM1])
-		p.bits <<= shift
-		p.nBits -= shift
-	}
+	shift := 7 ^ (31 - bits.LeadingZeros32(rng))
+	p.rangeM1 = rng<<shift - 1
+	p.bits -= shift
 	return bit
 }
 

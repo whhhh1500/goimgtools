@@ -206,66 +206,127 @@ var (
 // quant are the DC/AC quantization factors.
 // skipFirstCoeff is whether the DC coefficient has already been parsed.
 // coeffBase is the base index of d.coeff to write to.
+//
+// The partition's reader is held in local variables, and the bits read
+// most (whether there is a coefficient, whether it is zero, whether it is
+// 1, and its sign) are read with bitOf; at the end of the partition the
+// block ends there (the frame fails: see inputErr).
 func (d *Decoder) parseResiduals4(r *partition, plane int, context uint8, quant [2]uint16, skipFirstCoeff bool, coeffBase int) uint8 {
-	prob, n := &d.tokenProb[plane], 0
+	var (
+		prob  = &d.tokenProb[plane]
+		n     = 0
+		value = r.value
+		nb    = r.bits
+		rng   = r.rangeM1
+		bit   bool
+		ok    bool
+		v     uint32
+		p     *[nProb]uint8
+	)
 	if skipFirstCoeff {
 		n = 1
 	}
-	p := prob[bands[n]][context]
-	if !r.readBit(p[0]) {
+	p = &prob[bands[n]][context]
+	if nb < 0 {
+		if value, nb, ok = r.refill(value, nb); !ok {
+			goto eof
+		}
+	}
+	if bit, value, nb, rng = bitOf(value, nb, rng, p[0]); !bit {
+		r.value, r.bits, r.rangeM1 = value, nb, rng
 		return 0
 	}
 	for n != 16 {
 		n++
-		if !r.readBit(p[1]) {
-			p = prob[bands[n]][0]
+		if nb < 0 {
+			if value, nb, ok = r.refill(value, nb); !ok {
+				goto eof
+			}
+		}
+		if bit, value, nb, rng = bitOf(value, nb, rng, p[1]); !bit {
+			p = &prob[bands[n]][0]
 			continue
 		}
-		var v uint32
-		if !r.readBit(p[2]) {
-			v = 1
-			p = prob[bands[n]][1]
-		} else {
-			if !r.readBit(p[3]) {
-				if !r.readBit(p[4]) {
-					v = 2
-				} else {
-					v = 3 + r.readUint(p[5], 1)
-				}
-			} else if !r.readBit(p[6]) {
-				if !r.readBit(p[7]) {
-					// Category 1.
-					v = 5 + r.readUint(159, 1)
-				} else {
-					// Category 2.
-					v = 7 + 2*r.readUint(165, 1) + r.readUint(145, 1)
-				}
-			} else {
-				// Categories 3, 4, 5 or 6.
-				b1 := r.readUint(p[8], 1)
-				b0 := r.readUint(p[9+b1], 1)
-				cat := 2*b1 + b0
-				tab := &cat3456[cat]
-				v = 0
-				for i := 0; tab[i] != 0; i++ {
-					v *= 2
-					v += r.readUint(tab[i], 1)
-				}
-				v += 3 + (8 << cat)
+		if nb < 0 {
+			if value, nb, ok = r.refill(value, nb); !ok {
+				goto eof
 			}
-			p = prob[bands[n]][2]
+		}
+		if bit, value, nb, rng = bitOf(value, nb, rng, p[2]); !bit {
+			v = 1
+			p = &prob[bands[n]][1]
+		} else {
+			r.value, r.bits, r.rangeM1 = value, nb, rng
+			v = r.largeValue(p)
+			value, nb, rng = r.value, r.bits, r.rangeM1
+			if r.unexpectedEOF {
+				goto eof
+			}
+			p = &prob[bands[n]][2]
 		}
 		z := zigzag[n-1]
 		c := int32(v) * int32(quant[btou(z > 0)])
-		if r.readBit(uniformProb) {
+		if nb < 0 {
+			if value, nb, ok = r.refill(value, nb); !ok {
+				goto eof
+			}
+		}
+		if bit, value, nb, rng = bitOf(value, nb, rng, uniformProb); bit {
 			c = -c
 		}
 		d.coeff[coeffBase+int(z)] = int16(c)
-		if n == 16 || !r.readBit(p[0]) {
-			return 1
+		if n == 16 {
+			break
+		}
+		if nb < 0 {
+			if value, nb, ok = r.refill(value, nb); !ok {
+				goto eof
+			}
+		}
+		if bit, value, nb, rng = bitOf(value, nb, rng, p[0]); !bit {
+			break
 		}
 	}
+	r.value, r.bits, r.rangeM1 = value, nb, rng
 	return 1
+eof:
+	r.value, r.bits, r.rangeM1 = value, nb, rng
+	r.unexpectedEOF = true
+	return 0
+}
+
+// largeValue reads a coefficient's value of 2 or more, its token's
+// probabilities p.
+func (r *partition) largeValue(p *[nProb]uint8) uint32 {
+	var v uint32
+	if !r.readBit(p[3]) {
+		if !r.readBit(p[4]) {
+			v = 2
+		} else {
+			v = 3 + r.readUint(p[5], 1)
+		}
+	} else if !r.readBit(p[6]) {
+		if !r.readBit(p[7]) {
+			// Category 1.
+			v = 5 + r.readUint(159, 1)
+		} else {
+			// Category 2.
+			v = 7 + 2*r.readUint(165, 1) + r.readUint(145, 1)
+		}
+	} else {
+		// Categories 3, 4, 5 or 6.
+		b1 := r.readUint(p[8], 1)
+		b0 := r.readUint(p[9+b1], 1)
+		cat := 2*b1 + b0
+		tab := &cat3456[cat]
+		v = 0
+		for i := 0; tab[i] != 0; i++ {
+			v *= 2
+			v += r.readUint(tab[i], 1)
+		}
+		v += 3 + (8 << cat)
+	}
+	return v
 }
 
 // parseResiduals parses the residuals and returns whether inner loop filtering
