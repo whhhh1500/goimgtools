@@ -7,6 +7,8 @@ import (
 	"hash/adler32"
 	"io"
 
+	kflate "github.com/klauspost/compress/flate"
+
 	"github.com/whhhh1500/goimgtools/internal/deflate"
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
@@ -18,10 +20,14 @@ import (
 // block but the last ends with a sync flush, the last is final). The
 // checksum is over all the data, in order.
 //
-// Up to level 7 the blocks are compressed with compress/flate; levels 8
-// and 9 use the near-optimal parsing of libdeflate (internal/deflate),
-// with the settings of its levels 10 and 12, and the blocks of deflate
-// split where it saves bits, as zopfli does.
+// Up to level 7 the blocks are compressed with compress/flate; with Go
+// 1.27 or later, data of more than one block is compressed with
+// klauspost/compress's flate instead, which writes the same bytes and whose
+// writer takes a new dictionary when it is reset: compress/flate's has to
+// be made anew for each block, about 0.9MB of garbage per 256KB of data.
+// Levels 8 and 9 use the near-optimal parsing of libdeflate
+// (internal/deflate), with the settings of its levels 10 and 12, and the
+// blocks of deflate split where it saves bits, as zopfli does.
 //
 // The blocks are the same however many helpers the pipeline has (see
 // pipeline.Env.Go), and so is the file. Without helpers, up to level 7,
@@ -39,8 +45,13 @@ type zBlocks struct {
 	err   error
 	held  int64 // reserved from the budget
 
-	// Without helpers, up to level 7: the compressor of the current block.
-	fw *flate.Writer
+	// Without helpers, up to level 7: the compressor of the current block,
+	// and klauspost's, reset for each block, when there is more than one.
+	fw    flateWriter
+	kw    *kflate.Writer
+	multi bool // the data takes more than one block, for klauspost's flate
+	// With helpers, up to level 7: the compressors not in use.
+	kws chan *kflate.Writer
 
 	// Otherwise.
 	ways int
@@ -119,6 +130,21 @@ type zBlock struct {
 	wait   func()
 }
 
+// kLevel is klauspost's level for compress/flate's: its default is level 5,
+// compress/flate's is 6.
+func kLevel(level int) int {
+	if level == flate.DefaultCompression {
+		return 6
+	}
+	return level
+}
+
+// flateWriter is a deflate compressor: compress/flate's or klauspost's.
+type flateWriter interface {
+	io.WriteCloser
+	Flush() error
+}
+
 // zBlockOut is room enough for the compressed block: stored blocks and the
 // sync flush add a few bytes to every 64KB at most.
 const zBlockOut = zBlockBytes + 1<<10
@@ -132,11 +158,14 @@ func (r recorder) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func newZBlocks(w io.Writer, level int, env *pipeline.Env) (*zBlocks, error) {
-	z := &zBlocks{w: w, env: env, level: level, sum: adler32.New(), ways: env.Helpers() + 1}
+// newZBlocks starts the zlib stream of total bytes of data.
+func newZBlocks(w io.Writer, level int, env *pipeline.Env, total int64) (*zBlocks, error) {
+	z := &zBlocks{w: w, env: env, level: level, sum: adler32.New(), ways: env.Helpers() + 1, multi: kflateSame && total > zBlockBytes}
 	if p, ok := nearLevels[level]; ok {
 		z.near = &p
 		z.comps = make(chan *deflate.Compressor, z.ways)
+	} else if z.multi {
+		z.kws = make(chan *kflate.Writer, z.ways+1)
 	}
 	if err := env.Budget.Reserve(zWindow, "png compression window"); err != nil {
 		return nil, err
@@ -146,11 +175,19 @@ func newZBlocks(w io.Writer, level int, env *pipeline.Env) (*zBlocks, error) {
 		return z, err
 	}
 	if z.ways == 1 && z.near == nil {
-		fw, err := flate.NewWriter(z.w, level)
-		if err != nil {
-			return z, err
+		if z.multi {
+			kw, err := kflate.NewWriter(z.w, kLevel(level))
+			if err != nil {
+				return z, err
+			}
+			z.fw, z.kw = kw, kw
+		} else {
+			fw, err := flate.NewWriter(z.w, level)
+			if err != nil {
+				return z, err
+			}
+			z.fw = fw
 		}
-		z.fw = fw
 	}
 	return z, nil
 }
@@ -228,6 +265,10 @@ func (z *zBlocks) next() error {
 		if err := z.fw.Flush(); err != nil {
 			return err
 		}
+		if z.kw != nil {
+			z.kw.ResetDict(z.w, z.tail)
+			return nil
+		}
 		fw, err := flate.NewWriterDict(z.w, z.level, z.tail)
 		if err != nil {
 			return err
@@ -303,7 +344,7 @@ func (z *zBlocks) send() error {
 			b.writes = append(b.writes, len(b.out))
 		})
 	} else {
-		b.wait = z.env.Go(func() { b.err = compressBlock(recorder{b}, b.buf[:b.dict], b.buf[b.dict:], level, b.last) })
+		b.wait = z.env.Go(func() { b.err = z.compressBlock(recorder{b}, b.buf[:b.dict], b.buf[b.dict:], level, b.last) })
 	}
 	z.busy = append(z.busy, b)
 	waiting := z.ways
@@ -320,16 +361,41 @@ func (z *zBlocks) send() error {
 	return nil
 }
 
-func compressBlock(out io.Writer, dict, data []byte, level int, last bool) error {
-	var fw *flate.Writer
-	var err error
-	if len(dict) == 0 {
-		fw, err = flate.NewWriter(out, level)
+// compressBlock compresses a block up to level 7, with a compressor of
+// z.kws when there is more than one.
+func (z *zBlocks) compressBlock(out io.Writer, dict, data []byte, level int, last bool) error {
+	var fw flateWriter
+	if !z.multi {
+		var w *flate.Writer
+		var err error
+		if len(dict) == 0 {
+			w, err = flate.NewWriter(out, level)
+		} else {
+			w, err = flate.NewWriterDict(out, level, dict)
+		}
+		if err != nil {
+			return err
+		}
+		fw = w
 	} else {
-		fw, err = flate.NewWriterDict(out, level, dict)
-	}
-	if err != nil {
-		return err
+		var kw *kflate.Writer
+		select {
+		case kw = <-z.kws:
+			kw.ResetDict(out, dict)
+		default:
+			w, err := kflate.NewWriterDict(out, kLevel(level), dict)
+			if err != nil {
+				return err
+			}
+			kw = w
+		}
+		defer func() {
+			select {
+			case z.kws <- kw:
+			default:
+			}
+		}()
+		fw = kw
 	}
 	if _, err := fw.Write(data); err != nil {
 		return err
@@ -397,7 +463,7 @@ func (z *zBlocks) release() {
 			b.wait()
 		}
 	}
-	z.busy, z.free, z.cur, z.fw, z.comps = nil, nil, nil, nil, nil
+	z.busy, z.free, z.cur, z.fw, z.kw, z.comps = nil, nil, nil, nil, nil, nil
 	z.env.Budget.Release(z.held)
 	z.held = 0
 }

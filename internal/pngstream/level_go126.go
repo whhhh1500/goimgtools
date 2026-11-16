@@ -6,3 +6,7 @@ package pngstream
 // 1.26's compress/flate, level 7 is only 1 to 1.5% smaller than level 6
 // and takes half as long again.
 const DefaultLevel = 6
+
+// kflateSame reports that klauspost/compress's flate writes the bytes
+// compress/flate writes: not Go 1.26's, which compresses every block.
+const kflateSame = false

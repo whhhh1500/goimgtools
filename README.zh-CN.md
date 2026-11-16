@@ -25,7 +25,7 @@ goimgtools 是纯 Go 实现的流式图像处理库与命令行工具。图像�
 - **并行**：`Threads(n)` 启用多核处理，输出与单线程逐字节一致。
 - **健壮性**：运行期 panic 转为错误返回；输入与输出像素数设有上限；支持 `context` 取消；持续进行模糊测试。
 - **可扩展**：支持自定义操作、输入源、文件格式与插值滤镜；按名称注册操作；通过钩子改写内置行为；可构建包含自定义操作的命令行程序。
-- **纯 Go**：不依赖 cgo；依赖仅有 `golang.org/x/image`（及字体解析所需的 `x/text`、`x/sys`）与 `github.com/klauspost/compress`（仅用于 zlib 解压）。
+- **纯 Go**：不依赖 cgo；依赖仅有 `golang.org/x/image`（及字体解析所需的 `x/text`、`x/sys`）与 `github.com/klauspost/compress`（用于 zlib 解压，以及 Go 1.27 及以上版本中大 PNG 的 deflate 压缩，字节与标准库相同）。
 
 ## 安装
 

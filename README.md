@@ -25,7 +25,7 @@ English | [中文](README.zh-CN.md)
 - **Parallelism**: `Threads(n)` enables multi-core processing, with output byte-for-byte identical to a single thread.
 - **Robustness**: panics during a run are returned as errors; input and output pixel counts are bounded; `context` cancellation is supported; continuously fuzz-tested.
 - **Extensibility**: custom operations, input sources, file formats and interpolation filters; operations registered by name; hooks that modify built-in behaviour; command-line programs that include custom operations.
-- **Pure Go**: no cgo. Dependencies are limited to `golang.org/x/image` (with `x/text` and `x/sys` for font parsing) and `github.com/klauspost/compress` (zlib decompression only).
+- **Pure Go**: no cgo. Dependencies are limited to `golang.org/x/image` (with `x/text` and `x/sys` for font parsing) and `github.com/klauspost/compress` (zlib decompression, and with Go 1.27 or later the deflate compression of large PNGs, whose bytes are those of the standard library).
 
 ## Installation
 

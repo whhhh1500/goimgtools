@@ -45,7 +45,7 @@
 - `Animated()` 不再忽略无法保留的动画：GIF 输出为 GIF、WebP 以外的格式，或输入为 WebP 动画、APNG 时，返回包装了 `errors.ErrUnsupported` 的错误，而不是写出第一帧。静态图像不受影响。`MaxFileSize` 与 `Animated()` 同用于动画时同样报错（此前被忽略）。
 - `Threads(n)` 的上限由 3 改为 CPU 核数。自 4 线程起，缩放、模糊、锐化、色彩调整、旋转以及 JPEG、PNG、有损 WebP 编码将工作分摊至多个核。输出与线程数无关，逐字节一致。
 - Go 1.27 下 PNG 默认压缩级别由 6（标准库的默认值）改为 7（Go 1.26 下仍为 6：该版本 7 级仅小 1–1.5%，耗时多一半）：Go 1.27 的 6 级查找重复数据的能力较弱，7 级在渐变、图标类图像上约小 5 倍，照片小 4–25%。
-- PNG 按 256KB 分块压缩（与 pigz 的做法相同），因而可由多核分摊。图像数据不超过一块时，文件与此前版本相同。
+- PNG 按 256KB 分块压缩（与 pigz 的做法相同），因而可由多核分摊。图像数据不超过一块时，文件与此前版本相同。Go 1.27 及以上版本中，超过一块的数据在 7 级及以下改用 `klauspost/compress` 的 flate 压缩：它写出的字节与 Go 1.27 的 `compress/flate` 相同，复位时可换成每块自己的字典，而 `compress/flate` 的压缩器每块都得新建。2400 万像素的 PNG 分配 3MB（原为 276MB），峰值 9.2MB（原为 16.6MB；4 线程 15.0MB，原为 23.0MB），快 6%，字节不变。
 - GIF 动画输出：所有帧共用一套按画面内容选取的调色板（`GIFOptions` 的 `Colors`、`NoDither` 对动画生效），自第二帧起仅存储变化的矩形区域。`GIFOptions{FixedPalette: true}` 仍使用固定调色板逐帧写出整帧。在处理任何一帧之前即检查像素上限。`FixedPalette` 下亦可使用 `NoDither`。
 - 有损 WebP：按 libwebp 的空间噪声整形做分段量化。
 - 有损 WebP：`WebPOptions.Effort` 也作用于有损输出（原先只用于无损）。默认力度 5 按 libwebp 最好设置的做法，用 sharp YUV 换算颜色、对 4×4 块做网格量化、按测量选取环路滤波强度；所有力度都做色度直流误差扩散；量化与率失真权重按 SSIMULACRA2 与 butteraugli 调定。14 张图上，同等 SSIMULACRA2 / butteraugli 下比 libwebp 默认设置小 6.6% / 9.5%，比其最好设置（`-m 6 -af -sharp_yuv`）小 1.3% / 2.2%。编码耗时为原来的 2–2.6 倍；`Effort: 1` 保持原来的速度，仍比 libwebp 默认设置小 6.1% / 4.8%。

@@ -278,16 +278,6 @@ func filter(cr *[nFilter][]byte, pr []byte, bpp int) int {
 }
 
 func (e *encoder) writeImage(w io.Writer, cb int, level int) error {
-	// Compressed in blocks, on the helpers of the pipeline where it has
-	// any; the same file either way (see zBlocks).
-	zw, err := newZBlocks(w, level, e.env)
-	if zw != nil {
-		defer zw.release()
-	}
-	if err != nil {
-		return err
-	}
-
 	bitsPerPixel := 0
 
 	switch cb {
@@ -329,6 +319,16 @@ func (e *encoder) writeImage(w io.Writer, cb int, level int) error {
 		e.cr[i][0] = uint8(i)
 	}
 	cr := e.cr
+
+	// Compressed in blocks, on the helpers of the pipeline where it has
+	// any; the same file either way (see zBlocks).
+	zw, err := newZBlocks(w, level, e.env, int64(b.Dy())*int64(sz))
+	if zw != nil {
+		defer zw.release()
+	}
+	if err != nil {
+		return err
+	}
 	if cap(e.pr) < sz {
 		e.pr = make([]uint8, sz)
 	} else {

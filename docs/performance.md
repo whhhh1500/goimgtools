@@ -36,7 +36,7 @@ Measurements (6000×4000; output byte-for-byte identical at every thread count):
 | 1080p enlarged to 4K | 0.24s | 0.13s | 0.13s | 0.11s |
 | 1080p enlarged to 8K | 0.84s | 0.44s | 0.36s | 0.29s |
 
-**PNG block compression**: as in pigz, the filtered data is divided into 256KB blocks; each block is compressed independently, using the preceding 32KB as its dictionary, and terminated with a sync flush, and the blocks are concatenated into a single zlib stream. The block division does not depend on the thread count, and therefore neither does the output file. Without helper threads, data is compressed as it arrives and written out directly, with no additional memory. When the data fits in a single block (RGB of about 90,000 pixels), the output is byte-for-byte identical to `compress/zlib`; larger images produce slightly larger files because each block restarts its search for repeated data (measured at +0.005% on 24 MP).
+**PNG block compression**: as in pigz, the filtered data is divided into 256KB blocks; each block is compressed independently, using the preceding 32KB as its dictionary, and terminated with a sync flush, and the blocks are concatenated into a single zlib stream. The block division does not depend on the thread count, and therefore neither does the output file. Without helper threads, data is compressed as it arrives and written out directly, with no additional memory. With Go 1.27 or later, data of more than one block is compressed by one compressor reset for each block with that block's dictionary (`klauspost/compress`'s flate, which writes the bytes Go 1.27's `compress/flate` writes; the standard library's can only be made anew, 0.9MB of garbage for every block). When the data fits in a single block (RGB of about 90,000 pixels), the output is byte-for-byte identical to `compress/zlib`; larger images produce slightly larger files because each block restarts its search for repeated data (measured at +0.005% on 24 MP).
 
 ## Shrinking JPEGs while decoding (optional)
 
@@ -75,7 +75,7 @@ Environment: Windows 10, Go 1.27.1. "Standard library approach" denotes whole-im
 | Operation | Output file | Peak memory | Time |
 |---|---|---|---|
 | Without shrinking, to JPEG (quality 85) | 5.9MB | 6.0MB | 0.55s |
-| Without shrinking, to PNG | 43.7MB | 8.0MB | 1.66s |
+| Without shrinking, to PNG | 41.9MB | 9.2MB | 1.98s |
 | Without shrinking, to lossy WebP (quality 75) | 3.2MB | 19.7MB | 8.81s (1.85s with 8 threads; effort 1: 3.29s, 0.79s) |
 | Without shrinking, to lossless WebP | 27.6MB | 25.6MB | 5.13s (4.70s with 8 threads) |
 | Without shrinking, to BMP | 72MB | 6.7MB | 0.28s |
@@ -116,7 +116,7 @@ Times for this library include decoding and encoding. The Pillow column gives th
 Evaluated but not implemented:
 
 - Resizing directly on the three YCbCr planes (the chroma planes are only a quarter of the size, so the resizing stage could be nearly twice as fast). The output would no longer be byte-for-byte identical to `x/image`, so this could only be offered under an option such as `FastShrinkOnLoad`, where "pixels differ slightly"; in that mode, resizing accounts for only about one sixth of the time, so the estimated overall gain is about 9%, while the change would be substantial.
-- Replacing PNG compression with `klauspost/compress`: compression in the Go 1.27 standard library is already a fast implementation of the same kind, so the replacement would bring no gain.
+- Replacing PNG compression with `klauspost/compress` for speed: compression in the Go 1.27 standard library is the same implementation (it writes the same bytes), so the replacement would bring no gain. It is used for data of more than one block only because its writer takes a new dictionary when it is reset (see [PNG block compression](#cpu-and-threads)).
 
 To reproduce the measurements:
 
