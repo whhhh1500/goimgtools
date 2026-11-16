@@ -41,7 +41,7 @@ The WebP encoders were written for this module. As there is no standard library 
   | Effort 3 | 7.1% / 8.5% smaller | 4.9% / 5.8% smaller | 1.0% / 0.9% smaller |
   | Effort 1 | 6.1% / 4.8% smaller | 3.6% / 1.4% smaller | 0.2% / 2.4% larger |
 
-  On 11 interface pictures, screenshots and icons (converted to RGB), effort 5 is as small as libwebp's best at the same SSIMULACRA2 (27.4% smaller than libwebp's default, libwebp's best 27.2%; per image from 1.5% larger to 6% smaller).
+  On 11 interface pictures, screenshots and icons (converted to RGB), effort 5 is as small as libwebp's best at the same SSIMULACRA2 (27.4% smaller than libwebp's default, libwebp's best 27.2%; per image from 4% larger to 11% smaller).
 
   At the same quality setting, files are about 2.5% smaller than those of libwebp's default and score higher. Time for a 3840×2160 photograph on one thread: 0.70s at effort 1, 0.82s at effort 3, 1.50s at effort 5 (8 threads: 0.34s); `cwebp` takes 0.45s at its default, 0.71s at method 6 and 2.93s at its best settings.
   - Segment-based quantization is ported from libwebp (macroblocks are divided into 4 segments according to the distribution of their coefficients, with finer quantization in flat areas and coarser quantization in textured areas, at libwebp's default strength).
