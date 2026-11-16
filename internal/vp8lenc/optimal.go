@@ -17,10 +17,12 @@ import "math"
 // say. The rest is written for this package: a backward pass over a
 // stretch at a time, as the pixels stream through the window.
 //
-// From the default effort it is used for the variants with the predictor
-// and with the colour table (photographs, palette images); from effort 7
-// for the others too (screenshots: 1.5 to 2% smaller, in several times the
-// time, as every pixel of their long repeats is searched).
+// From the default effort it is used for every variant: those with the
+// predictor and with the colour table (photographs, palette images) and
+// the others (screenshots: 1 to 3.5% smaller). Searching at every pixel
+// would go through every long repeat of a screenshot again and again; the
+// tokenizer remembers where the matches at each distance end (matchAt),
+// which makes that cheap.
 
 // optimalStretch is the most pixels parsed at once.
 const optimalStretch = 8 << 10

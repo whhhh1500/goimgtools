@@ -82,7 +82,7 @@ var (
 )
 
 func paramsFor(effort int) params {
-	p := params{lazy: effort >= 3, variants: 5, dropRatio: 1.15, optimal: effort >= DefaultEffort, optimalRaw: effort >= 7}
+	p := params{lazy: effort >= 3, variants: 5, dropRatio: 1.15, optimal: effort >= DefaultEffort, optimalRaw: effort >= DefaultEffort}
 	switch {
 	case effort <= 1:
 		p.modes, p.dropRatio = modesFast, 1

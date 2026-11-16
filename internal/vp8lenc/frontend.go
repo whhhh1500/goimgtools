@@ -224,7 +224,7 @@ func (f *frontend) init(palette []uint32, sg int, share int64) error {
 		window /= 2
 	}
 	bufMem, hashMem := mem(window)
-	hashMem += tokenFlush + 1024
+	hashMem += tokenFlush + 1024 + matchEndBytes
 	if err := f.reserve(bufMem+hashMem, "webp LZ77 window"); err != nil {
 		return err
 	}

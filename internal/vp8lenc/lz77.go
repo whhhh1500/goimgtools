@@ -280,7 +280,27 @@ type tokenizer struct {
 	run     int // index in obuf of the open literal run's count, or -1
 	err     error
 	opt     *optimal // the optimal parse, if used
+	ends    []matchEnd
 }
+
+// matchEnd remembers where the match at a distance ends: a match at
+// distance d that ends at position e (the first pixel that differs from
+// the one d before it) ends there whichever position before e it starts
+// from. So a search going on through the same long repeat, as one at every
+// pixel does (the optimal parse, see optimal.go), finds the lengths again
+// without comparing the pixels again. exact is false when the end was not
+// seen, the comparison having stopped at its limit: e is then where it is
+// known to go on to at least.
+type matchEnd struct {
+	d, e  int32
+	exact bool
+}
+
+// matchEnds is the number of distances remembered, a power of two.
+const (
+	matchEnds     = 4096
+	matchEndBytes = matchEnds * 12
+)
 
 const tokenFlush = 32 << 10
 
@@ -318,8 +338,26 @@ func newTokenizer(width int, total int64, window int, buf []uint32, out io.Write
 		t.buf = make([]uint32, nbuf)
 	}
 	t.obuf = make([]byte, 0, tokenFlush+1024)
+	t.ends = make([]matchEnd, matchEnds)
 	t.cm.init()
 	return t
+}
+
+// matchAt is the length, up to limit, of the match of the pixels at p
+// (an index in buf) with those d before them.
+func (t *tokenizer) matchAt(p, d, limit int) int {
+	pos := p + t.base
+	m := &t.ends[d&(matchEnds-1)]
+	k := 0
+	if int(m.d) == d && int(m.e) > pos {
+		k = int(m.e) - pos
+		if m.exact || k >= limit {
+			return min(k, limit)
+		}
+	}
+	l := k + matchLen(t.buf, p-d+k, p+k, limit-k)
+	m.d, m.e, m.exact = int32(d), int32(pos+l), l < limit
+	return l
 }
 
 func (t *tokenizer) hash(p int) uint32 {
@@ -373,11 +411,11 @@ func (t *tokenizer) find(pos int) (bestLen, bestDist int, value int32) {
 	avg := int32(t.cm.avg)
 	value = math.MinInt32
 	if p >= 1 && buf[p-1] == buf[p] {
-		bestLen, bestDist = matchLen(buf, p-1, p, limit), 1
+		bestLen, bestDist = t.matchAt(p, 1, limit), 1
 		value = int32(bestLen)*avg - t.matchCost(bestLen, 1)
 	}
 	if w := t.width; w > 1 && p >= w && w <= t.maxDist && buf[p-w] == buf[p] && bestLen < limit {
-		l := matchLen(buf, p-w, p, limit)
+		l := t.matchAt(p, w, limit)
 		if v := int32(l)*avg - t.matchCost(l, w); v > value {
 			bestLen, bestDist, value = l, w, v
 		}
@@ -395,7 +433,7 @@ func (t *tokenizer) find(pos int) (bestLen, bestDist int, value int32) {
 		q := c - t.base
 		// Only candidates at least as long as the best so far are measured.
 		if chk := max(bestLen-1, 0); buf[q+chk] == buf[p+chk] && buf[q] == buf[p] {
-			if l := matchLen(buf, q, p, limit); l >= bestLen && l >= minMatch {
+			if l := t.matchAt(p, pos-c, limit); l >= bestLen && l >= minMatch {
 				if v := int32(l)*avg - t.matchCost(l, pos-c); v > value {
 					bestLen, bestDist, value = l, pos-c, v
 					if l >= t.nice || l == limit {

@@ -58,7 +58,7 @@ func subImageMem(total int64, green bool) int64 {
 	if !green {
 		tokens *= 4
 	}
-	return int64(nhead+nprev)*4 + tokens + 2*tokenFlush
+	return int64(nhead+nprev)*4 + tokens + 2*tokenFlush + matchEndBytes
 }
 
 // plan is how one variant is going to be written.
