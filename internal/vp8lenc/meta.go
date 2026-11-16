@@ -55,7 +55,17 @@ func (g *grouper) offsets() [6]int {
 	return [6]int{0, g.green, g.green + 256, g.green + 512, g.green + 768, g.alpha}
 }
 
-func newGrouper(width, height int, hbits uint, cacheBits uint, ngroups int, lit1 bool) *grouper {
+// grouperScratch is what one grouper after another works in: the
+// encoder tries a dozen splits or more, and each would otherwise leave
+// megabytes behind for the collector.
+type grouperScratch struct {
+	row     []uint16
+	touched [][]uint16
+	hists   [][]uint32
+	costs   [][]uint16
+}
+
+func newGrouper(width, height int, hbits uint, cacheBits uint, ngroups int, lit1 bool, sc *grouperScratch) *grouper {
 	g := &grouper{hbits: hbits, binning: true, last: noGroup}
 	g.tw, g.th = (width+1<<hbits-1)>>hbits, (height+1<<hbits-1)>>hbits
 	g.green = numLiteral + numLength
@@ -63,11 +73,33 @@ func newGrouper(width, height int, hbits uint, cacheBits uint, ngroups int, lit1
 		g.green += 1 << cacheBits
 	}
 	g.alpha = g.green + 3*256 + numDistance
-	g.row = make([]uint16, g.tw*g.alpha)
-	g.touched = make([][]uint16, g.tw)
-	g.assign = make([]uint16, g.tw*g.th)
+	if n := g.tw * g.alpha; cap(sc.row) < n {
+		sc.row = make([]uint16, n)
+	} else {
+		sc.row = sc.row[:n]
+		clear(sc.row)
+	}
+	g.row = sc.row
+	for len(sc.touched) < g.tw {
+		sc.touched = append(sc.touched, nil)
+	}
+	g.touched = sc.touched[:g.tw]
+	for i := range g.touched {
+		g.touched[i] = g.touched[i][:0]
+	}
+	g.assign = make([]uint16, g.tw*g.th) // kept by the split chosen
 	for i := 0; i < ngroups; i++ {
-		g.groups = append(g.groups, &group{hist: make([]uint32, g.alpha), cost: make([]uint16, g.alpha)})
+		if i == len(sc.hists) {
+			sc.hists, sc.costs = append(sc.hists, nil), append(sc.costs, nil)
+		}
+		if cap(sc.hists[i]) < g.alpha {
+			sc.hists[i], sc.costs[i] = make([]uint32, g.alpha), make([]uint16, g.alpha)
+		} else {
+			sc.hists[i], sc.costs[i] = sc.hists[i][:g.alpha], sc.costs[i][:g.alpha]
+			clear(sc.hists[i])
+			clear(sc.costs[i])
+		}
+		g.groups = append(g.groups, &group{hist: sc.hists[i], cost: sc.costs[i]})
 	}
 	// A block's own entropy tops out near log2 of its size per alphabet,
 	// and a colour pixel has three or four alphabets that vary.

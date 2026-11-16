@@ -83,6 +83,7 @@ type params struct {
 	optimalRaw bool    // and for the others
 	predBits   uint    // log2 of the smallest predictor blocks, if not the default
 	cross      bool    // a variant with the cross-color transform, for images of many colours
+	regroup    bool    // the split into Huffman groups is tried without the colour cache too
 }
 
 // The predictor modes in the order they are tried; on a tie the earlier
@@ -95,7 +96,7 @@ var (
 
 func paramsFor(effort int) params {
 	p := params{lazy: effort >= 3, variants: 5, dropRatio: 1.15, optimal: effort >= DefaultEffort, optimalRaw: effort >= DefaultEffort,
-		cross: effort >= DefaultEffort}
+		cross: effort >= DefaultEffort, regroup: effort >= DefaultEffort}
 	switch {
 	case effort <= 1:
 		p.modes, p.dropRatio = modesFast, 1
@@ -183,6 +184,7 @@ type encoder struct {
 	probe    *probe
 	fes      []*frontend // every variant started, closed or not
 	opt      *optimal    // the optimal parse, shared by the variants
+	gs       *grouperScratch
 }
 
 func (e *encoder) reserve(n int64, what string) error {

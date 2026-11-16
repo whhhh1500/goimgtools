@@ -75,6 +75,11 @@ type plan struct {
 	totalBits int64 // exact size of the VP8L bitstream
 }
 
+// regroupMaxPixels bounds the images whose split into Huffman groups is
+// tried without the colour cache too: on a photograph of 24 megapixels the
+// second split takes 2s and 4MB more, and has not been seen to pay.
+const regroupMaxPixels = 1 << 22
+
 // weighed is the size of the plan as the variants are compared by: that of
 // one with the cross-color transform counts for a percent more.
 func (p *plan) weighed() float64 {
@@ -87,12 +92,20 @@ func (p *plan) weighed() float64 {
 // plan builds the header of variant f and works out the size of its
 // bitstream with one Huffman group.
 func (e *encoder) plan(f *frontend, alpha bool) (*plan, error) {
+	return e.planCache(f, alpha, true)
+}
+
+// planCache is plan, without a colour cache unless cache is set.
+func (e *encoder) planCache(f *frontend, alpha, cache bool) (*plan, error) {
 	st := f.tok.st
 	p := &plan{f: f, cache: -1}
 	// Pick the colour cache size that makes the stream smallest.
 	hs := st.histograms(-1)
 	cs, bits := hs.build()
 	for i := range st.cands {
+		if !cache {
+			break
+		}
 		h := st.histograms(i)
 		c, b := h.build()
 		if b+4 < bits {
@@ -223,7 +236,10 @@ func (e *encoder) groupBy(p *plan, w *walker, hbits uint, want int, done map[[2]
 	if err := e.reserve(need, "webp Huffman groups"); err != nil {
 		return err
 	}
-	g := newGrouper(f.sw, f.h, hbits, cacheBits, want, f.tok.lit1)
+	if e.gs == nil {
+		e.gs = &grouperScratch{}
+	}
+	g := newGrouper(f.sw, f.h, hbits, cacheBits, want, f.tok.lit1, e.gs)
 	size := f.tokens.Size()
 	for i := 0; i <= e.p.groupIter; i++ {
 		if i > 0 {
@@ -304,27 +320,55 @@ func (e *encoder) write(rc *race, alpha bool) error {
 	if best == nil {
 		return errors.New("goimgtools: webp: internal error: no variant left")
 	}
-	f, bw := best.f, best.bw
+	f := best.f
 	st := f.tok.st
-	wk := &walker{width: f.sw, lit1: f.tok.lit1, hi: f.hi}
-	if best.cache >= 0 {
-		// Replays follow the copies through the window to keep the cache
-		// in step with the decoder.
-		wk.cacheBits = st.cands[best.cache].bits
-		wk.cache = make([]uint32, 1<<wk.cacheBits)
-		wk.ring = f.tok.buf
-		wk.ringMask = f.tok.wmask
-	} else {
+	walkerFor := func(p *plan) *walker {
+		wk := &walker{width: f.sw, lit1: f.tok.lit1, hi: f.hi}
+		if p.cache >= 0 {
+			// Replays follow the copies through the window to keep the
+			// cache in step with the decoder.
+			wk.cacheBits = st.cands[p.cache].bits
+			wk.cache = make([]uint32, 1<<wk.cacheBits)
+			wk.ring = f.tok.buf
+			wk.ringMask = f.tok.wmask
+		}
+		return wk
+	}
+	if best.cache < 0 {
 		f.dropBuf()
 	}
 	if err := e.reserve(2*bitFlush+replayReadBuf, "webp output buffers"); err != nil {
 		return err
 	}
 	if e.p.groups > 1 {
-		if err := e.group(best, wk); err != nil {
+		if err := e.group(best, walkerFor(best)); err != nil {
 			return err
 		}
+		// The colour cache is chosen for one Huffman group. Split into
+		// groups, the stream can come out smaller without it (an icon 4%:
+		// the cache's symbols make every group's codes larger, so fewer
+		// groups pay): the split is tried without it too, for images of
+		// up to regroupMaxPixels.
+		if best.cache >= 0 && e.p.regroup && int64(e.w)*int64(e.h) <= regroupMaxPixels {
+			alt, err := e.planCache(f, alpha, false)
+			if err != nil {
+				return err
+			}
+			if err := e.group(alt, walkerFor(alt)); err != nil {
+				return err
+			}
+			if alt.totalBits < best.totalBits {
+				e.unreserve(best.groupMem)
+				best = alt
+			} else {
+				e.unreserve(alt.groupMem)
+			}
+		}
 	}
+	if best.cache < 0 && f.bufMem > 0 {
+		f.dropBuf()
+	}
+	bw, wk := best.bw, walkerFor(best)
 
 	// The size of the chunk is known exactly before any of it is written.
 	size := (best.totalBits + 7) / 8
