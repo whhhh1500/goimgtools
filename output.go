@@ -99,8 +99,12 @@ type WebPOptions struct {
 	Quality int
 	// Lossless keeps every pixel exactly. Quality is then not used.
 	Lossless bool
-	// Effort, for lossless output, trades time for size: 1 is the fastest,
-	// 9 gives the smallest files; 0 means the default.
+	// Effort trades time for size: 1 is the fastest, 9 gives the smallest
+	// files; 0 means the default, 5. For lossy output, effort 5 already
+	// does all there is (sharp colour conversion, trellis quantization and
+	// loop filter levels chosen by measuring); 1 and 2 leave them out and
+	// take less than half the time, for files about 3% larger at the same
+	// look, 3 and 4 leave out the measured loop filter.
 	Effort int
 }
 

@@ -6,30 +6,32 @@ import (
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
-// Tuning constants. They were set by measuring PSNR against file size on
-// photographs; none of them affects the validity of the output.
+// Tuning constants. They were set by measuring file size at equal
+// SSIMULACRA2 and equal butteraugli (decoded by libwebp) on photographs,
+// against libwebp's best settings (cwebp -m 6 -af -sharp_yuv); none of
+// them affects the validity of the output.
 const (
 	// The Lagrange multiplier that trades one bit for squared error is
-	// lambdaScale/256 times the square of the AC quantizer step. Chroma
-	// uses a quarter of that: an error in a chroma sample is spread over
-	// four pixels.
-	lambdaScale   = 8
-	lambdaScaleUV = 2
+	// lambdaScale/2560 times the square of the AC quantizer step for luma,
+	// and lambdaScaleUV/256 times that of the chroma step for chroma.
+	lambdaScale   = 32
+	lambdaScaleUV = 4
 	// i4Tries is how many of the ten 4x4 modes get the full
 	// transform-quantize-reconstruct evaluation; the rest are ruled out by
 	// the size of their prediction error.
 	i4Tries = 4
-	// The loop filter level is filterScale/64 times the luma AC step.
-	filterScale = 20
+	// The loop filter level is filterScale/64 times the luma AC step (the
+	// level the measuring starts from, see autofilter.go).
+	filterScale = 16
 	// The chroma quantizer index is uvDeltaQ/10 below the luma one (at most
-	// 15, the format's limit), for the same reason as lambdaScaleUV.
-	uvDeltaQ = 3
+	// 15, the format's limit).
+	uvDeltaQ = 1
 )
 
 // Rounding offsets of the quantizer, out of 256, for the DC and the AC
 // coefficients: 128 would round to nearest, less favours smaller values.
 var (
-	biasY1 = [2]int32{110, 86}
+	biasY1 = [2]int32{110, 70}
 	biasY2 = [2]int32{96, 90}
 	biasUV = [2]int32{115, 90}
 )
@@ -129,6 +131,7 @@ type candUV struct {
 	last  [8]int8
 	rec   [2][64]uint8
 	score int64
+	derr  [2][3]int8 // DC errors to diffuse (dcdiffuse.go)
 }
 
 type encoder struct {
@@ -138,6 +141,11 @@ type encoder struct {
 	mbw  int
 	mbh  int
 	dbg  *debug
+
+	effort     int
+	sharp      bool // convert colours with sharp YUV (sharp.go)
+	trellis    bool // quantize 4x4 blocks by trellis (trellis.go)
+	autoFilter bool // choose the filter levels by measuring (autofilter.go)
 
 	fixed int64 // budget reserved for the buffers below
 
@@ -157,7 +165,10 @@ type encoder struct {
 	topY []uint8
 	topU []uint8
 	topV []uint8
-	up   []mbCtx
+	// The chroma DC errors each macroblock leaves to the one below, with
+	// diffusion (dcdiffuse.go), or nil.
+	topDerr [][2][2]int8
+	up      []mbCtx
 
 	// The source's rows, their conversion to Y, U and V, and the converted
 	// macroblock rows (see readAll).
@@ -173,9 +184,10 @@ type encoder struct {
 	skipStats tokenStats // "end of block" bits that skipped macroblocks would need
 	nSkip     int
 	usedI4    int
-	modeBits  int64 // bits (1/256) of the modes
-	modeMax   int64 // what all modes together may use (modeBudget)
-	mbShare   int64 // a macroblock's share of modeMax
+	lf        filterStats // with autoFilter: SSIM per segment and filter level
+	modeBits  int64       // bits (1/256) of the modes
+	modeMax   int64       // what all modes together may use (modeBudget)
+	mbShare   int64       // a macroblock's share of modeMax
 
 	// Alpha plane, one byte per pixel, when the source may be transparent.
 	alpha      *alphaSpool
@@ -223,11 +235,15 @@ func (e *encoder) init(quality int, rr *pipeline.RowReader, src pipeline.Source)
 		return err
 	}
 	wantAlpha := hasAlphaChannel(first) && !pipeline.IsOpaque(src)
+	e.sharp = e.effort >= 3 && useSharp(first) && (e.dbg == nil || !e.dbg.noSharp)
+	e.trellis = e.effort >= 3
+	e.autoFilter = e.effort >= 5 && (e.dbg == nil || !e.dbg.noFilter && !e.dbg.noAutoFilter)
 
 	w16 := e.mbw * 16
 	e.fixed = converterBytes(e.w, wantAlpha) +
 		int64(w16+4) + int64(w16) + // top rows
 		int64(e.mbw)*6 + // contexts
+		int64(e.mbw)*4 + // chroma DC errors (dcdiffuse.go)
 		int64(e.mbh)*rowBytes + // per row: its place in the spool, mode budget
 		ioBufSize + readBufSize
 	if err := e.env.Budget.Reserve(e.fixed, "webp encoder rows"); err != nil {
@@ -248,6 +264,9 @@ func (e *encoder) init(quality int, rr *pipeline.RowReader, src pipeline.Source)
 	e.topY = make([]uint8, w16+4)
 	e.topU = make([]uint8, w16/2)
 	e.topV = make([]uint8, w16/2)
+	if quality <= dcDiffuseQuality && (e.dbg == nil || !e.dbg.noDiffuse) {
+		e.topDerr = make([][2][2]int8, e.mbw)
+	}
 	e.up = make([]mbCtx, e.mbw)
 	e.rows = make([]rowSpan, e.mbh)
 	e.ioBuf = make([]byte, ioBufSize)

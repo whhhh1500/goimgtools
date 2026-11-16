@@ -232,10 +232,10 @@ func TestWebPOutput(t *testing.T) {
 	opaque := image.NewRGBA(smooth.Bounds())
 	stddraw.Draw(opaque, opaque.Bounds(), image.NewUniform(color.White), image.Point{}, stddraw.Src)
 	stddraw.Draw(opaque, opaque.Bounds(), smooth, image.Point{}, stddraw.Over)
-	// The x/image decoder, with the colour range of lossy images put right.
+	// The x/image decoder, with the colours of lossy images as libwebp's.
 	xdecode := func(b []byte) image.Image {
 		t.Helper()
-		m, err := webpFullRange(bytes.NewReader(b))
+		m, err := webpRGB(bytes.NewReader(b))
 		if err != nil {
 			t.Fatal(err)
 		}

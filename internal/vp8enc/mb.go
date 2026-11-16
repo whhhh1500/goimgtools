@@ -37,6 +37,11 @@ type mbCoder struct {
 	// What the row adds to the frame's totals.
 	stats, skipStats tokenStats
 	nSkip, usedI4    int
+	leftDerr         [2][2]int8   // chroma DC errors from the left (dcdiffuse.go)
+	err0             [2]int8      // the error of the first chroma block of each plane
+	lf               *filterStats // SSIM per segment and filter level, or nil
+	mf               *mbFilter
+	mbSrc            [384]uint8
 	grant            int64 // what the row's modes may take, in 1/256 bit
 	rowBits          int64 // what they take
 }
@@ -45,13 +50,14 @@ type mbCoder struct {
 func mbCoderBytes(w16 int) int64 {
 	return int64(w16)*16 + int64(w16/2)*8*2 + // input row
 		int64(w16/16)*2 + // contexts
-		2*ioBufSize + 24<<10 // buffers, and the fixed scratch above
+		2*ioBufSize + 24<<10 + // buffers, and the fixed scratch above
+		mbFilterBytes
 }
 
 func newMBCoder(e *encoder) *mbCoder {
 	w16 := e.mbw * 16
 	buf := make([]uint8, e.yuvRowBytes())
-	return &mbCoder{
+	c := &mbCoder{
 		e:      e,
 		buf:    buf,
 		y:      buf[:w16*16],
@@ -62,6 +68,10 @@ func newMBCoder(e *encoder) *mbCoder {
 		ctxs:   make([]byte, 2*e.mbw),
 		ioBufs: [2][]byte{make([]byte, ioBufSize), make([]byte, ioBufSize)},
 	}
+	if e.autoFilter {
+		c.lf, c.mf = new(filterStats), new(mbFilter)
+	}
+	return c
 }
 
 func (c *mbCoder) release() {
@@ -74,8 +84,12 @@ func (c *mbCoder) release() {
 func (c *mbCoder) startRow(costs *costTables, grant int64) {
 	c.costs, c.grant, c.rowBits = costs, grant, 0
 	c.left = mbCtx{}
+	c.leftDerr = [2][2]int8{}
 	c.stats, c.skipStats = tokenStats{}, tokenStats{}
 	c.nSkip, c.usedI4 = 0, 0
+	if c.lf != nil {
+		*c.lf = filterStats{}
+	}
 	c.modes.reset()
 	c.coeffs.reset()
 	c.mw.init(&c.modes, c.ioBufs[0])
@@ -200,6 +214,9 @@ func (c *mbCoder) encodeMB(mbx, mby int) {
 		bits = c.modeCost(i4, best, uv, up)
 	}
 	c.rowBits += bits
+	if e.topDerr != nil {
+		c.storeDerr(mbx, uv)
+	}
 
 	// Put the reconstruction in the workspace and keep its edges for the
 	// macroblocks to the right and below.
@@ -226,7 +243,23 @@ func (c *mbCoder) encodeMB(mbx, mby int) {
 		}
 	}
 
-	c.emitMB(mbx, up, i4, best, uv)
+	// A decoder filters the edges inside a macroblock unless it has
+	// 16x16 prediction and no coefficients.
+	if skip := c.emitMB(mbx, up, i4, best, uv); c.lf != nil && (i4 || !skip) {
+		m := c.mf
+		for j := 0; j < 16; j++ {
+			copy(m.rec[j*16:j*16+16], ws[wsY+j*bps:])
+		}
+		for j := 0; j < 8; j++ {
+			copy(m.rec[256+j*8:256+j*8+8], ws[wsB+j*bps:])
+			copy(m.rec[320+j*8:320+j*8+8], ws[wsR+j*bps:])
+		}
+		copy(c.mbSrc[:256], c.ysrc[:])
+		copy(c.mbSrc[256:320], c.usrc[:])
+		copy(c.mbSrc[320:], c.vsrc[:])
+		s := int(e.segMap[mby*e.mbw+mbx])
+		m.measure(&c.mbSrc, c.seg, s, c.lf)
+	}
 }
 
 // modeCost is the cost of a macroblock's prediction modes in the first
@@ -285,9 +318,9 @@ func (c *mbCoder) evalI16(cd *cand16, mode uint8, mbx, mby int, up *mbCtx) {
 	for n := 0; n < 16; n++ {
 		bx, by := uint(n&3), uint(n>>2)
 		off := (n>>2)*64 + (n&3)*4
+		ctx := int(unz>>bx&1 + lnz>>by&1)
 		last := c.seg.qY1.quantize(&coef[n], 1, &cd.lv[n], &deq)
 		cd.last[n] = int8(last)
-		ctx := int(unz>>bx&1 + lnz>>by&1)
 		rate += c.costs.blockCost(planeY1WithY2, 1, ctx, last, &cd.lv[n])
 		nz := uint8(0)
 		if last >= 1 {
@@ -357,16 +390,19 @@ func (c *mbCoder) searchI4(up *mbCtx, limit int64) bool {
 		for _, m := range order[:tries] {
 			p := c.pred4[m][:]
 			fdct(src, 16, p, 4, &coef)
-			last := sg.qY1.quantize(&coef, 0, &lv, &deq)
+			var last int
+			if c.e.trellis {
+				last = c.trellis(&coef, 0, ctx, planeY1SansY2, &sg.qY1, sg.lamT, &lv, &deq)
+			} else {
+				last = sg.qY1.quantize(&coef, 0, &lv, &deq)
+			}
 			rate := int(mc[m]) + c.costs.blockCost(planeY1SansY2, 0, ctx, last, &lv)
-			var dist int
+			out := p
 			if last >= 0 {
 				idctAdd(&deq, p, 4, rec[:], 4)
-				dist = sse4(src, 16, rec[:], 4)
-			} else {
-				dist = sse4(src, 16, p, 4)
+				out = rec[:]
 			}
-			score := int64(dist)<<16 + int64(rate)*sg.lamY
+			score := int64(sse4(src, 16, out, 4))<<16 + int64(rate)*sg.lamY
 			if best < 0 || score < best {
 				best = score
 				c4.modes[n] = m
@@ -413,6 +449,9 @@ func (c *mbCoder) evalUV(cd *candUV, mode uint8, mbx, mby int, up *mbCtx) {
 			bx, by := uint(pl*2+n&1), uint(pl*2+n>>1)
 			off := (n>>1)*32 + (n&1)*4
 			fdct(src[off:], 8, pred[off:], 8, &coef)
+			if c.e.topDerr != nil {
+				c.diffuseDC(&coef, pl, n, mbx, cd)
+			}
 			lv := &cd.lv[pl*4+n]
 			last := c.seg.qUV.quantize(&coef, 0, lv, &deq)
 			cd.last[pl*4+n] = int8(last)
@@ -436,14 +475,14 @@ func (c *mbCoder) evalUV(cd *candUV, mode uint8, mbx, mby int, up *mbCtx) {
 // emitMB records the final coding of macroblock mbx: it counts its tokens,
 // appends it to the row's streams and leaves the contexts for its
 // neighbours.
-func (c *mbCoder) emitMB(mbx int, up *mbCtx, i4 bool, c16 *cand16, uv *candUV) {
+func (c *mbCoder) emitMB(mbx int, up *mbCtx, i4 bool, c16 *cand16, uv *candUV) (skip bool) {
 	lv, lasts := &c16.lv, &c16.last
 	if i4 {
 		lv, lasts = &c.c4.lv, &c.c4.last
 	}
 	// quantize returns -1 for an empty block whether it starts at
 	// coefficient 0 or (below a Y2 block) at 1.
-	skip := i4 || c16.y2last < 0
+	skip = i4 || c16.y2last < 0
 	for _, l := range lasts {
 		skip = skip && l < 0
 	}
@@ -499,4 +538,5 @@ func (c *mbCoder) emitMB(mbx int, up *mbCtx, i4 bool, c16 *cand16, uv *candUV) {
 		putCoeffs(&c.cw, &defaultTokenProb[plane], first, ctx, last, b)
 		return last >= 0
 	})
+	return skip
 }

@@ -111,7 +111,7 @@ func TestEveryFormat(t *testing.T) {
 		".gif":  {"gif", gif.Decode},
 		".bmp":  {"bmp", bmp.Decode},
 		".tiff": {"tiff", tiff.Decode},
-		".webp": {"webp", webpFullRange},
+		".webp": {"webp", webpRGB},
 	}
 	seen := map[string]int{}
 	for _, dir := range []string{goDir, xDir, filepath.Join(goDir, "..", "png", "testdata", "pngsuite")} {
@@ -295,10 +295,11 @@ func TestNotImages(t *testing.T) {
 	}
 }
 
-// webpFullRange is the x/image decoder followed by the stretch from WebP's
-// video range to full range that this module applies to lossy images
-// (x/image leaves it out, which makes its colours differ from libwebp's).
-func webpFullRange(r io.Reader) (image.Image, error) {
+// webpRGB is the x/image decoder followed by the conversion to RGB that
+// this module applies to lossy images, libwebp's (x/image leaves the
+// samples in video range and each chroma sample over its 2x2 block, which
+// makes its colours differ from libwebp's).
+func webpRGB(r io.Reader) (image.Image, error) {
 	m, err := webp.Decode(r)
 	if err != nil {
 		return nil, err
@@ -306,7 +307,7 @@ func webpFullRange(r io.Reader) (image.Image, error) {
 	if m.Bounds().Empty() {
 		return m, nil
 	}
-	return pipeline.Collect(webpstream.FullRange(pipeline.FromImage(m, nil)))
+	return pipeline.Collect(webpstream.ToRGB(pipeline.FromImage(m, nil)))
 }
 
 // pngLikeStdlib requires got to be want, png.Encode's file (at the same

@@ -206,7 +206,17 @@ func (m *Image) Metadata() (info Info, err error) {
 		format = f.kind
 	}
 	b, meta := src.Bounds(), pipeline.MetaOf(src)
-	kind, bits := colorOf(src.ColorModel())
+	model := src.ColorModel()
+	// A decoder that converts the pixels (lossy WebP's Y'CbCr into RGB)
+	// tells how they are stored.
+	inner := src
+	if d, ok := src.(*decoded); ok {
+		inner = d.Source
+	}
+	if s, ok := inner.(interface{ StoredColorModel() color.Model }); ok {
+		model = s.StoredColorModel()
+	}
+	kind, bits := colorOf(model)
 	return Info{Format: format, Width: b.Dx(), Height: b.Dy(), HasAlpha: !pipeline.IsOpaque(src), Color: kind, Bits: bits,
 		Orientation: pipeline.ExifOrientation(meta.Exif), HasProfile: len(meta.ICC) > 0, HasExif: len(meta.Exif) > 0}, nil
 }

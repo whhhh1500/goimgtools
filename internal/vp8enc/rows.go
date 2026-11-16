@@ -132,6 +132,9 @@ func (e *encoder) firstPass() error {
 		}
 		return errors.New("goimgtools: webp: rows were left uncoded")
 	}
+	if e.autoFilter {
+		e.lf.best(e.segs[:e.nSegs])
+	}
 	if e.dbg != nil {
 		e.dbg.usedI4 = e.usedI4
 		e.dbg.segments = e.nSegs
@@ -235,6 +238,9 @@ func (p *pass1) commit(c *mbCoder, r int) error {
 	defer p.mu.Unlock()
 	e.stats.add(&c.stats)
 	e.skipStats.add(&c.skipStats)
+	if c.lf != nil {
+		e.lf.add(c.lf)
+	}
 	e.nSkip += c.nSkip
 	e.usedI4 += c.usedI4
 	e.modeBits += c.rowBits

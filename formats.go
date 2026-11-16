@@ -209,9 +209,9 @@ var builtin = []*formatDef{
 			if err != nil {
 				return nil, err
 			}
-			// Lossy WebP samples are in video range; make them mean the
-			// colours libwebp shows (see webpstream.FullRange).
-			return webpstream.FullRange(src), nil
+			// Lossy WebP is Y'CbCr; turn it into the RGB libwebp, and
+			// so the browsers, show (see webpstream.ToRGB).
+			return webpstream.ToRGB(src), nil
 		},
 		encode: func(w io.Writer, src pipeline.Source, o EncodeOptions) error {
 			wo, err := optionsOf[WebPOptions](o.Options, "webp")
@@ -232,7 +232,7 @@ var builtin = []*formatDef{
 				if q == 0 {
 					q = wo.Quality
 				}
-				err = vp8enc.Encode(w, src, &vp8enc.Options{Quality: q})
+				err = vp8enc.Encode(w, src, &vp8enc.Options{Quality: q, Effort: wo.Effort})
 			}
 			if err == nil && mw != nil {
 				err = mw.Finish()

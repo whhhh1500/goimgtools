@@ -30,8 +30,8 @@ Measurements (6000×4000; output byte-for-byte identical at every thread count):
 | JPEG to PNG, without shrinking (level 7) | 2.10s | 1.89s | 1.16s | 0.49s |
 | RGB PNG to PNG, without shrinking (level 7) | 1.58s | 1.01s | 0.71s | 0.45s |
 | JPEG shrunk to 1536 | 0.41s | 0.23s | 0.22s | 0.22s |
-| JPEG to lossy WebP, without shrinking | 3.29s | — | 1.79s | 0.77s |
-| Real photograph 3840×2160 to lossy WebP | 0.87s | — | 0.55s | 0.34s |
+| JPEG to lossy WebP, without shrinking | 8.81s | — | 4.57s | 1.85s |
+| Real photograph 3840×2160 to lossy WebP | 1.51s | — | 0.80s | 0.34s |
 | 1080p enlarged to 4K | 0.24s | 0.13s | 0.13s | 0.11s |
 | 1080p enlarged to 8K | 0.84s | 0.44s | 0.36s | 0.29s |
 
@@ -62,7 +62,7 @@ Environment: Windows 10, Go 1.27.1. "Standard library approach" denotes whole-im
 | TIFF uncompressed 6000×4000 | JPEG | 8.4MB / 10.5MB | 535MB | 0.23s | 0.18s | 0.67s |
 | TIFF LZW 6000×4000 | JPEG | 8.6MB / 10.6MB | 535MB | 0.74s | 0.57s | 1.18s |
 | TIFF Deflate 6000×4000 | JPEG | 13.2MB / 14.2MB | 461MB | 0.58s | 0.40s | 1.08s |
-| WebP lossy 6000×4000 | JPEG | 8.9MB / 11.1MB | 243MB | 0.94s | 0.73s | 1.42s |
+| WebP lossy 6000×4000 | JPEG | 9.5MB / 11.9MB | 243MB | 1.07s | 0.85s | 1.42s |
 | WebP lossless 6000×4000 | JPEG | 14.2MB / 15.0MB | 300MB | 1.00s | 0.80s | 1.52s |
 
 - Total CPU time does not vary with the thread count (2 threads merely distribute the same work across two cores).
@@ -75,7 +75,7 @@ Environment: Windows 10, Go 1.27.1. "Standard library approach" denotes whole-im
 |---|---|---|---|
 | Without shrinking, to JPEG (quality 85) | 5.9MB | 6.0MB | 0.61s |
 | Without shrinking, to PNG | 43.7MB | 8.0MB | 1.66s |
-| Without shrinking, to lossy WebP (quality 75) | 2.6MB | 18.1MB | 3.29s (0.77s with 8 threads) |
+| Without shrinking, to lossy WebP (quality 75) | 3.2MB | 19.7MB | 8.81s (1.85s with 8 threads; effort 1: 3.29s, 0.79s) |
 | Without shrinking, to lossless WebP | 27.6MB | 23.2MB | 3.74s (3.36s with 8 threads) |
 | Without shrinking, to BMP | 72MB | 6.7MB | 0.36s |
 | Without shrinking, to TIFF (uncompressed) | 96MB | 6.4MB | 0.34s |
@@ -83,7 +83,7 @@ Environment: Windows 10, Go 1.27.1. "Standard library approach" denotes whole-im
 | Rotate 90°, then shrink to 1536 | 0.1MB | 15.5MB | 0.39s |
 | Shrink to 1536, GIF output | 0.5MB | 12.9MB | 0.62s |
 | Without shrinking, outlined text watermark tiled across the whole image | 6.2MB | 10.6MB | 0.75s |
-| Shrink to 1536, lossy WebP output | 8KB | 8.8MB | 0.44s |
+| Shrink to 1536, lossy WebP output | 10KB | 9.2MB | 0.61s |
 
 - When rotating by 90° without shrinking, the 96MB of pixel data is held in a temporary file; with all data in memory (a limit of 768MB or more), the time is about 0.8s and the peak about 108MB.
 - Lossless WebP from PNG RGB 6000×4000 (41.6MB; the same image as in the table above): output 27.6MB, peak 25.7MB, 3.96s (3.29s with 8 threads).

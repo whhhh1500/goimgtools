@@ -91,7 +91,7 @@ func (s *source) onCanvas(canvas image.Rectangle) pipeline.Source {
 	if s.frame == canvas {
 		return s
 	}
-	return &placed{src: pipeline.Map(FullRange(s), func(*image.NRGBA) error { return nil }),
+	return &placed{src: pipeline.Map(ToRGB(s), func(*image.NRGBA) error { return nil }),
 		env: s.env, meta: s.meta, canvas: canvas, frame: s.frame,
 		rows: pipeline.StripRows(4*int64(canvas.Dx()), canvas.Dy())}
 }

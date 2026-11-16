@@ -26,11 +26,13 @@
 // chroma prediction chosen by rate-distortion cost, segments that spend
 // the bits where errors show (flat areas finer, texture coarser, as
 // libwebp's spatial noise shaping), token probabilities adapted to the
-// image, the macroblock skip flag, a finer quantizer for chroma than for
-// luma, and loop filter levels that follow the quantizers. Trellis
-// quantization of the coefficients was tried (as libwebp's) and left out:
-// on photographs it gained nothing at the same SSIM or PSNR, the quantizer
-// already rounding towards zero.
+// image, the macroblock skip flag, and chroma DC errors diffused to the
+// blocks after (dcdiffuse.go). From effort 3 on, colours are converted
+// with sharp YUV (sharp.go) and 4x4 blocks quantized by trellis
+// (trellis.go); from effort 5, the default, the loop filter levels are
+// chosen by measuring (autofilter.go), as libwebp does at its best
+// settings. The tuning constants (frame.go) were set on SSIMULACRA2 and
+// butteraugli.
 package vp8enc
 
 import (
@@ -45,16 +47,27 @@ import (
 type Options struct {
 	// Quality ranges from 1 to 100; higher is better and larger. 0 means 75.
 	Quality int
+	// Effort trades speed for size at the same quality, 1 to 9; 0 means
+	// the default (5). From 3 on, colours are converted with sharp YUV and
+	// 4x4 blocks quantized by trellis; from 5 on, the loop filter levels
+	// are chosen by measuring. Above 5 nothing more is done.
+	Effort int
 }
 
 // DefaultQuality is used when Options is nil or Quality is 0.
 const DefaultQuality = 75
 
+// DefaultEffort is used when Options is nil or Effort is 0.
+const DefaultEffort = 5
+
 const maxDimension = 16383 // 14 bits in the frame header
 
 // debug carries test hooks.
 type debug struct {
-	noFilter bool // signal loop filter level 0
+	noFilter     bool // signal loop filter level 0
+	noSharp      bool // convert colours without sharp YUV
+	noAutoFilter bool // keep the filter levels that follow the quantizers
+	noDiffuse    bool // no chroma DC error diffusion
 	// When rec is set the encoder's reconstruction is stored here: planes
 	// of whole macroblocks, luma stride 16*mbw, chroma stride 8*mbw.
 	rec     bool
@@ -89,6 +102,13 @@ func encode(w io.Writer, src pipeline.Source, o *Options, dbg *debug) error {
 	if quality < 1 || quality > 100 {
 		return fmt.Errorf("goimgtools: webp quality %d out of range 1..100", quality)
 	}
+	effort := DefaultEffort
+	if o != nil && o.Effort != 0 {
+		effort = o.Effort
+	}
+	if effort < 1 || effort > 9 {
+		return fmt.Errorf("goimgtools: webp effort %d out of range 1..9", effort)
+	}
 	b := src.Bounds()
 	if b.Dx() <= 0 || b.Dy() <= 0 {
 		return errors.New("goimgtools: webp: image has no pixels")
@@ -96,7 +116,7 @@ func encode(w io.Writer, src pipeline.Source, o *Options, dbg *debug) error {
 	if b.Dx() > maxDimension || b.Dy() > maxDimension {
 		return fmt.Errorf("goimgtools: webp: image %dx%d is larger than %d pixels a side", b.Dx(), b.Dy(), maxDimension)
 	}
-	e := &encoder{env: pipeline.EnvOf(src), b: b, w: b.Dx(), h: b.Dy(), dbg: dbg}
+	e := &encoder{env: pipeline.EnvOf(src), b: b, w: b.Dx(), h: b.Dy(), dbg: dbg, effort: effort}
 	e.mbw, e.mbh = (e.w+15)>>4, (e.h+15)>>4
 	defer e.release()
 	// The rows are pulled straight from the source's strips; an early end

@@ -117,8 +117,9 @@ func main() {
 		} else if strings.HasSuffix(lo, ".png") && os.Getenv("GOIMG_COLORS") != "" {
 			n, _ := strconv.Atoi(os.Getenv("GOIMG_COLORS"))
 			im.PNG(goimgtools.PNGOptions{Colors: n})
-		} else if strings.HasSuffix(lo, ".webp") && os.Getenv("GOIMG_LOSSLESS") != "" {
-			im.WebP(goimgtools.WebPOptions{Lossless: true})
+		} else if strings.HasSuffix(lo, ".webp") {
+			effort, _ := strconv.Atoi(os.Getenv("GOIMG_EFFORT")) // 0: the default
+			im.WebP(goimgtools.WebPOptions{Lossless: os.Getenv("GOIMG_LOSSLESS") != "", Effort: effort})
 		}
 		if v, err := strconv.Atoi(os.Getenv("GOIMG_MAXSIZE")); err == nil { // file size limit in KB
 			im.MaxFileSize(int64(v) << 10)

@@ -256,6 +256,13 @@ func TestRoundTrip(t *testing.T) {
 				if d.w != sz[0] || d.h != sz[1] {
 					t.Fatalf("%s %v q%d: decoded size %dx%d", name, sz, q, d.w, d.h)
 				}
+				// The PSNR is of the luma against the source's, and sharp
+				// YUV moves luma away from that on purpose (to make the
+				// colours right after a decoder's chroma interpolation;
+				// see sharp_test.go), so it is measured without.
+				if useSharp(m) {
+					d = decodeX(t, mustEncode(t, pipeline.FromImage(m, pipeline.NewEnv(0, t.TempDir())), q, &debug{noSharp: true}))
+				}
 				p := lumaPSNR(d, want)
 				if testing.Verbose() && sz[0] == 640 {
 					t.Logf("%s %v q%d: %d bytes, luma %.2f dB", name, sz, q, len(ref), p)
@@ -801,7 +808,8 @@ func TestSmallBudget(t *testing.T) {
 			}
 		}
 	}
-	if p := lumaPSNR(d, srcLuma(m)); p < 33 {
+	// (Against the luma of the source, which sharp YUV moves away from.)
+	if p := lumaPSNR(d, srcLuma(m)); p < 30 {
 		t.Errorf("luma PSNR %.2f dB", p)
 	}
 }
@@ -892,7 +900,7 @@ func TestLargeImage(t *testing.T) {
 			sum += e * e
 		}
 	}
-	if p := 10 * math.Log10(255*255*w*h/sum); p < 36 {
+	if p := 10 * math.Log10(255*255*w*h/sum); p < 32 { // sharp YUV moves luma
 		t.Errorf("luma PSNR %.2f dB", p)
 	} else {
 		t.Logf("luma PSNR %.2f dB", p)
@@ -992,7 +1000,11 @@ func TestBounds(t *testing.T) {
 		if d.w != r.Dx() || d.h != r.Dy() {
 			t.Fatalf("%s: decoded %dx%d", name, d.w, d.h)
 		}
-		if p := lumaPSNR(d, srcLuma(sub)); p < 32 {
+		min := 32.0
+		if useSharp(sub) {
+			min = 26 // sharp YUV moves luma away from the source's
+		}
+		if p := lumaPSNR(d, srcLuma(sub)); p < min {
 			t.Errorf("%s: luma PSNR %.2f dB", name, p)
 		}
 	}

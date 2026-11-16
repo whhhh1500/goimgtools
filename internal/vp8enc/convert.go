@@ -36,17 +36,24 @@ func init() {
 	}
 }
 
-// converter turns rows of the source into one macroblock row of Y, U and V
-// samples, padded to whole macroblocks by repeating the edges. The samples
-// go to the buffers of the row's mbCoder (see into).
+// converter turns rows of the source into macroblock rows of Y, U and V
+// samples, padded to whole macroblocks by repeating the edges, in the
+// buffers given to into; flush is called when a macroblock row is
+// complete in them.
+//
+// Sources of Y'CbCr or gray are converted sample by sample. Colour
+// sources are converted with sharp YUV (sharp.go) when sharp is set, which
+// hands out each pair of rows eight rows after it took it in.
 type converter struct {
 	b      image.Rectangle
-	w      int // image width
+	w, h   int // image size
 	w16    int // width padded to a multiple of 16
 	y      []uint8
 	u, v   []uint8
+	flush  func() error
 	rows   [2][]uint8  // two rows of non-premultiplied RGBA, padded to even width
 	alpha  *alphaSpool // receives the alpha rows, or nil
+	sharp  *sharpYUV   // or nil
 	arow   []uint8
 	acc    []uint16
 	pal    [256][4]uint8
@@ -61,9 +68,20 @@ func converterBytes(w int, alpha bool) int64 {
 	return n
 }
 
+// useSharp tells whether a source whose first strip is m is converted
+// with sharp YUV: one of colours, not of Y'CbCr (whose chroma is kept as
+// it is) or gray.
+func useSharp(m image.Image) bool {
+	switch m.(type) {
+	case *image.YCbCr, *image.NYCbCrA, *image.Gray, *image.Gray16:
+		return false
+	}
+	return true
+}
+
 func newConverter(b image.Rectangle, w16 int, alpha *alphaSpool) *converter {
 	w := b.Dx()
-	c := &converter{b: b, w: w, w16: w16, alpha: alpha}
+	c := &converter{b: b, w: w, h: b.Dy(), w16: w16, alpha: alpha}
 	c.rows[0] = make([]uint8, (w+1)*4)
 	c.rows[1] = make([]uint8, (w+1)*4)
 	if alpha != nil {
@@ -72,14 +90,106 @@ func newConverter(b image.Rectangle, w16 int, alpha *alphaSpool) *converter {
 	return c
 }
 
-// into makes the next macroblock row go to y, u and v.
-func (c *converter) into(y, u, v []uint8) { c.y, c.u, c.v = y, u, v }
+// into makes the macroblock rows go to y, u and v, and flush be called
+// when one is complete there.
+func (c *converter) into(y, u, v []uint8, flush func() error) {
+	c.y, c.u, c.v, c.flush = y, u, v, flush
+}
 
-// row converts row y of the image, which is row k (0..15) of the current
-// macroblock row and lies in strip m. last tells that y is the image's
-// bottom row. Chroma comes from pairs of rows, so an even row is only kept
-// until its partner arrives (the two may be in different strips).
-func (c *converter) row(m image.Image, y, k int, last bool) error {
+// row converts row y of the image, which lies in strip m. Chroma comes
+// from pairs of rows, so an even row is only kept until its partner
+// arrives (the two may be in different strips).
+func (c *converter) row(m image.Image, y int) error {
+	k := (y - c.b.Min.Y) & 15
+	last := y == c.b.Max.Y-1
+	if c.sharp != nil {
+		return c.sharpRow(m, y, k, last)
+	}
+	if err := c.direct(m, y, k, last); err != nil {
+		return err
+	}
+	if k == 15 || last {
+		c.pad(k + 1)
+		return c.flush()
+	}
+	return nil
+}
+
+// sharpRow takes row y in, and hands its pair to sharp YUV once both rows
+// are in (the bottom row twice when the height is odd).
+func (c *converter) sharpRow(m image.Image, y, k int, last bool) error {
+	if pm, ok := m.(*image.Paletted); ok {
+		c.loadPalette(pm.Palette, k == 0)
+	}
+	cur := c.rows[k&1]
+	c.fetch(m, y, cur)
+	if err := c.alphaOf(cur); err != nil {
+		return err
+	}
+	if k&1 == 0 && !last {
+		return nil
+	}
+	r0 := c.rows[0]
+	if k&1 == 0 {
+		r0 = cur
+	}
+	if c.alpha != nil {
+		unbleed(r0, cur, c.w)
+	}
+	return c.sharp.push(r0, cur, last, c.put)
+}
+
+// put collects pair p from sharp YUV into the macroblock row, and flushes
+// the row when p completes it.
+func (c *converter) put(p int) error {
+	k := 2 * p & 15
+	cw, cw16 := (c.w+1)/2, c.w16/2
+	y0 := c.y[k*c.w16 : k*c.w16+c.w]
+	y1 := c.y[(k+1)*c.w16 : (k+1)*c.w16+c.w]
+	o := k / 2 * cw16
+	c.sharp.yuv(p, y0, y1, c.u[o:o+cw], c.v[o:o+cw])
+	if bottom := 2*p+2 >= c.h; k == 14 || bottom {
+		c.pad(min(16, c.h-2*p&^15))
+		return c.flush()
+	}
+	return nil
+}
+
+// unbleed gives the invisible pixels of each 2x2 block of two rows of RGBA
+// the colour of the visible ones, weighted by their alpha, so that sharp
+// YUV, which does not look at alpha, does not mix the colour of invisible
+// pixels into visible ones (the plain conversion weights by alpha).
+func unbleed(r0, r1 []uint8, w int) {
+	for x := 0; x < w; x += 2 {
+		p, q := r0[4*x:4*x+8], r1[4*x:4*x+8]
+		px := [4][]uint8{p[:4], p[4:], q[:4], q[4:]}
+		var sum [3]int32
+		var a, zero int32
+		for _, c := range px {
+			if c[3] == 0 {
+				zero++
+			}
+			a += int32(c[3])
+			for i := range sum {
+				sum[i] += int32(c[i]) * int32(c[3])
+			}
+		}
+		if zero == 0 || a == 0 {
+			continue
+		}
+		for _, c := range px {
+			if c[3] == 0 {
+				for i := range sum {
+					c[i] = uint8((sum[i] + a/2) / a)
+				}
+			}
+		}
+	}
+}
+
+// direct converts row y, which is row k (0..15) of its macroblock row,
+// sample by sample; last tells that y is the image's bottom row.
+func (c *converter) direct(m image.Image, y, k int, last bool) error {
 	x0 := c.b.Min.X
 	switch p := m.(type) {
 	case *image.YCbCr:

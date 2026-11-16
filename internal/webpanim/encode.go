@@ -33,8 +33,8 @@ import (
 type Options struct {
 	// LoopCount is how often the animation plays: 0 for ever.
 	LoopCount int
-	// Lossless writes every frame without loss; Effort is then the
-	// lossless encoder's, Quality the lossy one's otherwise.
+	// Lossless writes every frame without loss, Quality is that of lossy
+	// frames otherwise; Effort is the encoder's in either case.
 	Lossless bool
 	Quality  int
 	Effort   int
@@ -258,7 +258,7 @@ func (e *encoder) encode(f *frame, opaque bool) error {
 	if e.o.Lossless {
 		err = vp8lenc.Encode(file, src, &vp8lenc.Options{Effort: e.o.Effort})
 	} else {
-		err = vp8enc.Encode(file, src, &vp8enc.Options{Quality: e.o.Quality})
+		err = vp8enc.Encode(file, src, &vp8enc.Options{Quality: e.o.Quality, Effort: e.o.Effort})
 	}
 	if err != nil {
 		return err

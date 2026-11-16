@@ -83,7 +83,7 @@ Operations run in a fixed order: rotate → flip → trim → crop → resize �
 | `-png-colors N`, `-no-dither` | PNG: reduce to N colours (2–256); disable dithering |
 | `-max-size size` | Limit the file to this size (`200KB`, `1.5MB` or a number of bytes) by lowering the quality automatically (JPEG, lossy WebP); with `-animated`, an animation is an error |
 | `-skip-larger` | Keep the original file if the result is not smaller than it (same format); intended for compression-only jobs |
-| `-webp-lossless`, `-webp-effort N` | Lossless WebP; effort 1 (fastest) to 9 (smallest file), 5 by default |
+| `-webp-lossless`, `-webp-effort N` | Lossless WebP; effort 1 (fastest) to 9 (smallest file), 5 by default. The effort also applies to lossy WebP, where 5 already does all there is and 1 takes about half the time |
 | `-png-level N`, `-gif-colors N`, `-gif-fixed-palette`, `-tiff-compression none\|deflate` | Format-specific options |
 | `-gif-lossy N` | GIF: lossy compression, the colour difference 1–255 it may accept (16–32 for photographic animations, 8–16 for dithered stills; see [Compression](compression.md)) |
 | `-animated` | Process every frame of an animated GIF and write an animated GIF or WebP (by the output); `-gif-colors` and `-no-dither` also apply to GIF, the WebP options to WebP. Another output format, or an animated WebP or APNG input, is an error |

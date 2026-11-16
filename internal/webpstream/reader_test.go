@@ -377,7 +377,7 @@ func TestAnimated(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		frame, err := pipeline.Collect(pipeline.Map(FullRange(ref), func(*image.NRGBA) error { return nil }))
+		frame, err := pipeline.Collect(pipeline.Map(ToRGB(ref), func(*image.NRGBA) error { return nil }))
 		ref.Close()
 		if err != nil {
 			t.Fatal(err)

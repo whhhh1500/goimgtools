@@ -38,6 +38,7 @@ type segment struct {
 	qY1, qY2    quantizer
 	qUV         quantizer
 	lamY, lamUV int64
+	lamT        int64 // lambda of trellis quantization (trellis.go)
 	filter      int
 }
 
@@ -54,26 +55,30 @@ func (e *encoder) readAll() error {
 		return err
 	}
 	defer e.env.Budget.Release(n)
+	if e.sharp {
+		s := sharpBytes(e.w)
+		if err := e.env.Budget.Reserve(s, "webp sharp yuv"); err != nil {
+			return err
+		}
+		defer e.env.Budget.Release(s)
+		e.conv.sharp = newSharpYUV(e.w)
+		defer func() { e.conv.sharp = nil }()
+	}
 	buf := make([]uint8, n)
 	y, u, v := buf[:w16*16], buf[w16*16:w16*20], buf[w16*20:]
-	e.conv.into(y, u, v)
-	for r := 0; r < e.mbh; r++ {
-		rows := min(16, e.h-r*16)
-		for k := 0; k < rows; k++ {
-			yy := e.b.Min.Y + r*16 + k
-			m, err := e.rr.Row(yy)
-			if err != nil {
-				return err
-			}
-			if mb := m.Bounds(); mb.Min.X != e.b.Min.X || mb.Max.X != e.b.Max.X {
-				return errors.New("goimgtools: webp: strip does not span the image width")
-			}
-			if err := e.conv.row(m, yy, k, yy == e.b.Max.Y-1); err != nil {
-				return err
-			}
+	e.conv.into(y, u, v, func() error {
+		_, err := e.yuv.Write(buf)
+		return err
+	})
+	for yy := e.b.Min.Y; yy < e.b.Max.Y; yy++ {
+		m, err := e.rr.Row(yy)
+		if err != nil {
+			return err
 		}
-		e.conv.pad(rows)
-		if _, err := e.yuv.Write(buf); err != nil {
+		if mb := m.Bounds(); mb.Min.X != e.b.Min.X || mb.Max.X != e.b.Max.X {
+			return errors.New("goimgtools: webp: strip does not span the image width")
+		}
+		if err := e.conv.row(m, yy); err != nil {
 			return err
 		}
 	}
@@ -477,8 +482,12 @@ func (e *encoder) setQuant(s *segment) {
 	s.qY2.set(dc*2, max(ac*155/100, 8), biasY2)
 	uvq := min(max(q+e.uvDQ, 0), 127)
 	s.qUV.set(int(dequantTableDC[min(uvq, 117)]), int(dequantTableAC[uvq]), biasUV)
-	s.lamY = lambdaScale * int64(ac*ac)
+	s.lamY = lambdaScale * int64(ac*ac) / 10
 	s.lamUV = lambdaScaleUV * int64(s.qUV.q[1]*s.qUV.q[1])
+	// libwebp's lambda_trellis_i4, from the mean step of the 16
+	// coefficients.
+	qi4 := int64((dc + 15*ac + 8) >> 4)
+	s.lamT = max(7*qi4*qi4>>3, 1)
 	// Segments of flatter macroblocks are filtered less (as libwebp does).
 	s.filter = min(ac*filterScale*384/(64*(256+s.beta)), 63)
 	if e.dbg != nil && e.dbg.noFilter {

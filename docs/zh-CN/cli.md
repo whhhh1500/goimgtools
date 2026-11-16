@@ -83,7 +83,7 @@ goimgtools -trim 10 -resize 1200x -extend 20,20,20,20 -background white -sharpen
 | `-png-colors N`、`-no-dither` | PNG：减至 N 色（2–256）；关闭抖动 |
 | `-max-size 大小` | 文件大小不超过此值（`200KB`、`1.5MB` 或字节数），自动降低质量（JPEG、有损 WebP）；与 `-animated` 同用时动画报错 |
 | `-skip-larger` | 结果不小于原文件（同格式）时保留原文件；适用于仅做压缩的任务 |
-| `-webp-lossless`、`-webp-effort N` | 无损 WebP；力度 1（最快）至 9（文件最小），默认 5 |
+| `-webp-lossless`、`-webp-effort N` | 无损 WebP；力度 1（最快）至 9（文件最小），默认 5。力度也作用于有损 WebP：5 已用上全部手段，1 耗时约减半 |
 | `-png-level N`、`-gif-colors N`、`-gif-fixed-palette`、`-tiff-compression none\|deflate` | 各格式专用选项 |
 | `-gif-lossy N` | GIF：有损压缩，可接受的颜色差 1–255（照片类动画 16–32，带抖动的静态图 8–16；见[压缩](compression.md)） |
 | `-animated` | 处理 GIF 动画的每一帧，按输出格式写为 GIF 或 WebP 动画；`-gif-colors`、`-no-dither` 适用于 GIF，WebP 的选项适用于 WebP。输出为其他格式，或输入为 WebP 动画、APNG 时报错 |
