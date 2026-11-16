@@ -245,11 +245,13 @@ func (f *frontend) init(palette []uint32, sg int, share int64) error {
 	e.expect(f.tokens, f.total*litBytes+f.total*litBytes/255+64)
 	f.tok = newTokenizer(f.sw, f.total, window, nil, f.tokens, newStats(e.p.cache))
 	if raw := !f.pred && f.kind != kindIndex; e.p.optimal && !raw || e.p.optimalRaw && raw {
-		if err := f.reserve(optimalBytes, "webp optimal parse"); err != nil {
-			return err
+		if e.opt == nil {
+			if err := e.reserve(optimalBytes, "webp optimal parse"); err != nil {
+				return err
+			}
+			e.opt = newOptimal()
 		}
-		f.passOne += optimalBytes
-		f.tok.opt = newOptimal(!raw)
+		f.tok.opt, f.tok.weigh = e.opt, !raw
 		f.tok.box = boxDistances(f.sw, boxCodes)
 	}
 	f.tok.lit1 = litBytes == 1

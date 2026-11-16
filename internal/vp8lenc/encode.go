@@ -180,6 +180,7 @@ type encoder struct {
 	reserved int64
 	probe    *probe
 	fes      []*frontend // every variant started, closed or not
+	opt      *optimal    // the optimal parse, shared by the variants
 }
 
 func (e *encoder) reserve(n int64, what string) error {

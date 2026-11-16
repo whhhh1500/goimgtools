@@ -39,7 +39,9 @@ import "math"
 // optimalStretch is the most pixels parsed at once.
 const optimalStretch = 8 << 10
 
-// optimalBytes is the memory of the optimal parse, per tokenizer.
+// optimalBytes is the memory of the optimal parse. The variants are fed
+// one after the other and each parses a stretch at a time, from start to
+// end: they share it.
 const optimalBytes = (optimalStretch+2)*(4+4+4+4+4+4+4+2+4) + 4<<maxCacheBits + 4*(4*256+1<<maxCacheBits)
 
 // boxCodes: the distances whose codes are 3 to boxCodes (the pixels a few
@@ -51,7 +53,6 @@ const boxCodes = 16
 const maxCacheBits = 10
 
 type optimal struct {
-	weigh     bool           // weigh literals and hits as libwebp does
 	ml, md    []int32        // the match at each pixel of the stretch: length (0: none), distance
 	bl, bd    []int32        // the longest match at a near distance (box), if any
 	lit       []uint32       // the cost of each pixel as a literal
@@ -64,11 +65,10 @@ type optimal struct {
 	hitc      []uint32       // the cost of a hit, by cache index
 }
 
-func newOptimal(weigh bool) *optimal {
+func newOptimal() *optimal {
 	n := optimalStretch + 1
 	return &optimal{
-		weigh: weigh,
-		ml:    make([]int32, n), md: make([]int32, n), bl: make([]int32, n), bd: make([]int32, n),
+		ml: make([]int32, n), md: make([]int32, n), bl: make([]int32, n), bd: make([]int32, n),
 		lit: make([]uint32, n), cte: make([]uint32, n),
 		choice: make([]uint16, n), cd: make([]int32, n), nextBreak: make([]int32, n+1),
 		sim: make([]uint32, 0, 1<<maxCacheBits), hitc: make([]uint32, 0, 1<<maxCacheBits),
@@ -253,7 +253,7 @@ func (t *tokenizer) processOptimal(final bool) {
 func (o *optimal) literalCosts(t *tokenizer, n int) {
 	lit := o.lit[:n]
 	weigh := func(c, pct uint32) uint32 {
-		if o.weigh {
+		if t.weigh {
 			return (c*pct + 50) / 100
 		}
 		return c

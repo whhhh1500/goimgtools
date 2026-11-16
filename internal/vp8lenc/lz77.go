@@ -281,6 +281,7 @@ type tokenizer struct {
 	run     int // index in obuf of the open literal run's count, or -1
 	err     error
 	opt     *optimal // the optimal parse, if used
+	weigh   bool     // the optimal parse weighs literals and hits as libwebp does
 	ends    []matchEnd
 	// The run of equal pixels the last search was in: it started at
 	// stream position runFrom, and the search was at runAt-1 (0: none).
