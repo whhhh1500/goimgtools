@@ -147,9 +147,9 @@ const (
 	// with an angle, Flip, Flop) are done before it, and the EXIF turn
 	// (Rotate without one) after it.
 	ResizeLibvips
-	// ResizePillow is Pillow's Image.resize, to the byte (with ReducingGap,
-	// Image.thumbnail's: FitInside then also sizes as thumbnail does, by
-	// the nearest aspect ratio): across and then
+	// ResizePillow is Pillow's Image.resize, to the byte, its fits those of
+	// ImageOps (FitInside contain, FitOutside cover, FitContain pad,
+	// FitCover fit) and with ReducingGap Image.thumbnail's: across and then
 	// down, each output pixel weighing the source within the kernel's
 	// reach (scaled when reducing) in double precision, the weights in
 	// 22-bit fixed point, each pass rounded to 8 bits; an image with

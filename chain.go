@@ -90,6 +90,11 @@ type resizeSpec struct {
 
 // target returns the size a sw × sh image is resized to.
 func (r resizeSpec) target(sw, sh int) (dw, dh int) {
+	if r.o.Method == ResizePillow && r.width > 0 && r.height > 0 {
+		if w, h, ok := r.pillowSize(sw, sh); ok {
+			return w, h
+		}
+	}
 	if r.o.Method == ResizePillow && r.o.Fit == FitInside {
 		return r.thumbSize(sw, sh)
 	}
@@ -115,6 +120,58 @@ func (r resizeSpec) target(sw, sh int) (dw, dh int) {
 		}
 	}
 	return max(1, int(math.Round(fsw*fx))), max(1, int(math.Round(fsh*fy)))
+}
+
+// pillowSize is the size ResizePillow resizes a sw × sh image to for a box
+// of both sides: Pillow's ImageOps.contain (FitInside without ReducingGap,
+// and FitContain, before ImageOps.pad pads it), ImageOps.cover
+// (FitOutside), ImageOps.fit (FitCover: the box itself) and Image.thumbnail
+// (FitInside with ReducingGap); the other side rounded half to even, as
+// Python's round. ok is false for FitFill, and where WithoutEnlargement
+// leaves the image as it is.
+func (r resizeSpec) pillowSize(sw, sh int) (w, h int, ok bool) {
+	w, h = r.width, r.height
+	imRatio, destRatio := float64(sw)/float64(sh), float64(w)/float64(h)
+	switch {
+	case r.o.Fit == FitInside && r.o.ReducingGap > 0:
+		w, h = r.thumbSize(sw, sh)
+	case r.o.Fit == FitInside || r.o.Fit == FitContain || r.o.Fit == FitOutside:
+		contain := r.o.Fit != FitOutside
+		if imRatio != destRatio {
+			if (imRatio > destRatio) == contain {
+				h = max(1, int(math.RoundToEven(float64(float64(sh)/float64(sw))*float64(w))))
+			} else {
+				w = max(1, int(math.RoundToEven(float64(float64(sw)/float64(sh))*float64(h))))
+			}
+		}
+	case r.o.Fit == FitCover && r.o.Interesting == InterestingNone:
+	default:
+		return 0, 0, false
+	}
+	if r.o.WithoutEnlargement && (w > sw || h > sh) {
+		return 0, 0, false
+	}
+	return w, h, true
+}
+
+// fitBox is the part of a sw × sh image Pillow's ImageOps.fit resizes to
+// the box: the largest of the box's aspect ratio, placed by Position (its
+// centering).
+func (r resizeSpec) fitBox(sw, sh int) [4]float64 {
+	gx, gy := r.o.Position.gridOr(1, 1)
+	cx, cy := float64(gx)/2, float64(gy)/2
+	W, H := float64(sw), float64(sh)
+	live, out := W/H, float64(r.width)/float64(r.height)
+	cw, ch := W, H
+	switch {
+	case live == out:
+	case live >= out:
+		cw = float64(out * H)
+	default:
+		ch = W / out
+	}
+	left, top := float64((W-cw)*cx), float64((H-ch)*cy)
+	return [4]float64{left, top, left + cw, top + ch}
 }
 
 // thumbSize is FitInside with ResizePillow: the size Pillow's
@@ -265,9 +322,33 @@ func (z resizeOp) resizePillow(src pipeline.Source, turn ops.Orientation, pre pr
 		// says the image is: its size over the factor.
 		o.Box = [4]float64{0, 0, float64(pre.orig.X) / float64(pre.k), float64(pre.orig.Y) / float64(pre.k)}
 	}
+	spec := z.spec
+	pillowFit := spec.width > 0 && spec.height > 0 && turn == ops.Upright && !(spec.o.WithoutEnlargement && (dw > b.Dx() || dh > b.Dy()))
+	if pillowFit && spec.o.Fit == FitCover && spec.o.Interesting == InterestingNone {
+		// ImageOps.fit: the part of the image of the box's aspect ratio,
+		// resized to the box.
+		o.Box = spec.fitBox(b.Dx(), b.Dy())
+		return resize.Pillow(src, iw, ih, z.pillow, o)
+	}
 	out, err := resize.Pillow(src, iw, ih, z.pillow, o)
 	if err != nil {
 		return nil, err
+	}
+	if pillowFit && spec.o.Fit == FitContain && (dw != spec.width || dh != spec.height) {
+		// ImageOps.pad: the image placed by Position (its centering),
+		// across if it is narrower, else down, rounded half to even.
+		gx, gy := spec.o.Position.gridOr(1, 1)
+		x, y := 0, 0
+		if dw != spec.width {
+			x = int(math.RoundToEven(float64(spec.width-dw) * float64(gx) / 2))
+		} else {
+			y = int(math.RoundToEven(float64(spec.height-dh) * float64(gy) / 2))
+		}
+		var bg color.Color = color.Black
+		if spec.o.Background != nil {
+			bg = spec.o.Background
+		}
+		return ops.Extend(out, x, y, max(0, spec.width-dw-x), max(0, spec.height-dh-y), bg)
 	}
 	return z.fitBox(ops.Orient(out, turn), dw, dh)
 }
