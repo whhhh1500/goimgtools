@@ -383,9 +383,12 @@ func FuzzChain(f *testing.F) {
 		case 5:
 			m.GIF(GIFOptions{Colors: 1 + int(h%256), NoDither: bit(27), Lossy: int(w%48) * int(more>>15)})
 		case 6:
-			if bit(26) {
+			switch {
+			case bit(26):
 				m.Animated().WebP(WebPOptions{Lossless: bit(27), Quality: 1 + int(w%100)})
-			} else {
+			case bit(27):
+				m.Animated().PNG(PNGOptions{CompressionLevel: 1 + int(h%9)})
+			default:
 				m.Animated().GIF()
 			}
 		case 7:
