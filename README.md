@@ -101,7 +101,6 @@ Staged data is kept in memory up to 1/8 of the memory limit (8MB by default); be
 - EXIF in TIFF files is neither read nor written (ICC profiles are).
 - A grey profile on an image that is no longer grey (after a coloured overlay, say) is written unchanged.
 - Entropy decoding in JPEG is sequential, and the IDCT is not yet parallelized (the conversion of colour is); with many threads this is the slowest stage when shrinking JPEGs.
-- In GIF output, identical consecutive frames are not merged (each is still stored, at a few dozen bytes).
 - Colour curves are not built in; a per-pixel adjustment takes a few lines with `Pixels` (see the grayscale example in [Extending](docs/extending.md)), and a filter that needs neighbouring pixels can be a `Pipe` stage or a `Convolve` kernel.
 - GIF, BMP and TIFF encoding is single-threaded; LZ77 matching and the second pass of lossless WebP are sequential, so multiple threads speed it up by only 10–20%.
 - JPEG trellis quantization estimates code lengths from the standard Huffman tables (mozjpeg first collects statistics for the whole image): this library processes strips as a stream and does not retain the coefficients of the whole image for this purpose.

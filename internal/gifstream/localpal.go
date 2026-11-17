@@ -154,6 +154,9 @@ func (t *frameTee) writeLocal(w io.Writer, env *pipeline.Env, o AnimOptions, fw 
 				keys = append(keys, colourKey(seg[i], seg[i+1], seg[i+2], seg[i+3]))
 			}
 		}
+		if infos[k].merged {
+			continue // the frame before shows longer
+		}
 		// The ways to write the frame, as colour keys: as it is, and, for
 		// a frame of changes, with no transparency or with it over runs.
 		ways := [][]uint32{keys}

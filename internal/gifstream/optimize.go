@@ -134,6 +134,16 @@ func EncodeAnimation(w io.Writer, env *pipeline.Env, o AnimOptions, next func() 
 		}
 		return cur.rect, disposalNone, cur.delay
 	}
+	// A frame that changes nothing and leaves the picture as it is
+	// lengthens the frame before instead, as long as a GIF's delay can be
+	// (a frame that changes nothing leaves the frame before as it is too).
+	for k := o.Frames - 1; k > 0; k-- {
+		cur, before := &t.infos[k], &t.infos[k-1]
+		if _, disposal, _ := plan(k); cur.same && disposal == disposalNone && before.delay+cur.delay <= math.MaxUint16 {
+			before.delay += cur.delay
+			cur.merged = true
+		}
+	}
 	if tee != nil {
 		if tee.local(t.infos) {
 			return tee.writeLocal(w, env, o, fw, t.infos, plan)
@@ -170,6 +180,9 @@ func EncodeAnimation(w io.Writer, env *pipeline.Env, o AnimOptions, next func() 
 	var bufs [3][]byte
 	prevDisposal := byte(disposalBackground)
 	for k, cur := range t.infos {
+		if cur.merged {
+			continue
+		}
 		rect, disposal, _ := plan(k)
 		f := &frameRows{rows: rows, top: k * fh, rect: rect, y: rect.Min.Y, pal: pal, env: env}
 		info := FrameInfo{Delay: cur.delay, Disposal: disposal, Transparent: ti >= 0, TransparentIndex: byte(max(ti, 0))}
@@ -345,6 +358,8 @@ type frameInfo struct {
 	diff        bool // written as what changed from the frame before
 	transparent bool // has transparent pixels of its own
 	colours     int  // its colours, transparency included, up to 257
+	same        bool // the picture of the frame before
+	merged      bool // not written: the frame before shows longer instead
 }
 
 // infoBytes is about what a frameInfo takes up, counted in the budget.
@@ -550,6 +565,7 @@ func (a *animFrames) read(src pipeline.Source, k int) (frameInfo, error) {
 		if info.x0 >= info.x1 {
 			// Nothing changed: one pixel left as it is.
 			info.x0, info.y0, info.x1, info.y1 = 0, 0, 1, 1
+			info.same = true
 		}
 		info.rect = image.Rect(info.x0, info.y0, info.x1, info.y1)
 	}

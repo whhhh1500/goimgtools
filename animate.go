@@ -60,7 +60,9 @@ import (
 // than that keeps them exactly), and every frame after the first as the
 // rectangle that changed, with the pixels that stay as they were left
 // transparent: the file holds only what moves. A frame in which pixels
-// turn transparent is written whole, on a cleared picture.
+// turn transparent is written whole, on a cleared picture. A frame that
+// changes nothing lengthens the one before (up to a GIF's longest delay,
+// 655.35s).
 //
 // For that every frame is processed before the first GIF frame is
 // written. The frames are kept in working storage (a temporary file beyond

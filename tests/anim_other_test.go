@@ -212,8 +212,9 @@ func TestOtherAnimations(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", c.what, err)
 		}
-		// Two frames alike: the WebP lengthens the first.
-		want := Frames{Count: 2, Duration: 400 * time.Millisecond, LoopCount: 2}
+		// Two frames alike: the first shows longer (a WebP of one frame is
+		// a still image).
+		want := Frames{Count: 1, Duration: 400 * time.Millisecond, LoopCount: 2}
 		if c.what != "APNG to GIF" {
 			want = Frames{Count: 1}
 		}

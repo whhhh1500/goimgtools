@@ -55,6 +55,7 @@
 - `Filter`（类型 `ImageFilter`）：Pillow 的内置滤镜（模糊、轮廓、细节、边缘增强、浮雕、找边、锐化、平滑），以及 `Convolution.Method` 的 `ConvolvePillow`：其 `ImageFilter.Kernel`，逐字节一致；按名字调用 `filter NAME` 与 `convolve …,pillow`。
 - `BoxBlur(radius)`（`boxblur`）：即 Pillow 的 `ImageFilter.BoxBlur`，逐字节一致，含小数半径。
 - `RotateBy` 的 `RotateOptions`（`Method`：`RotateLibvips` 即 sharp 的，或 `RotatePillow` 即 Pillow 的 `Image.rotate`，逐字节一致；`Interpolator`；`Expand`）；按名字调用 `rotate DEGREES[,BACKGROUND][,pillow][,nearest|bilinear|bicubic][,expand]`。
+- GIF 动画输出：没有任何变化的帧不再写出，而是延长前一帧（最长 655.35 秒），与 WebP、APNG 输出一致。
 - `MaxFileSize` 支持 PNG 与 GIF：选用能满足的最多颜色数（PNG 先试无损）；`-max-size` 同。
 - `Transform(width, height, t, TransformOptions)`：即 Pillow 的 `Image.transform`，逐字节一致，配合 `TransformAffine`、`TransformExtent`、`TransformPerspective` 与 `TransformQuad`，以及 `TransformPerspectiveQuad`（由四个点算出把输出四角映射到这四点的透视变换）；按名字调用 `transform WIDTH,HEIGHT,KIND,NUMBERS...[,INTERPOLATOR][,BACKGROUND]`。
 - Pillow 的 `ImageOps` 与 `ImageEnhance`，逐字节一致：`Posterize`、`Solarize`、`Equalize`、`AutoContrast`（`AutoContrastOptions`）与 `Enhance`（类型 `Enhancement`：`EnhanceColor`、`EnhanceContrast`、`EnhanceBrightness`、`EnhanceSharpness`）；按名字调用 posterize、solarize、equalize、autocontrast、enhance。
