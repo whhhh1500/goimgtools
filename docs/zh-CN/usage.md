@@ -59,6 +59,7 @@ err := goimgtools.Open("in.jpg").
 | `Threshold(level, ThresholdOptions{PerChannel})` | 黑白二值：灰度（按线性光计算，与 sharp 相同）不小于 `level` 的像素变白，其余变黑。不含透明的图像与 sharp 的 `threshold` 逐字节一致，并输出为单通道文件。`PerChannel` 让红、绿、蓝各自取 0 或 255（即 sharp 的 `threshold(level, {greyscale: false})`，逐字节一致） |
 | `Tint(color)` | 着色：按每个像素的亮度赋予该颜色，越接近黑白越淡（sharp 的 `tint`，与其相差不超过 1）：`Tint(color.RGBA{112, 66, 20, 255})` 为褐色调 |
 | `Normalize(NormalizeOptions{Lower, Upper})` | 拉伸明度（L*a*b* 中的 L*），使最暗的 `Lower`% 变黑、最亮的 `100-Upper`% 变白（默认 1 与 99），保持色相与饱和度；即 sharp 的 `normalise`，相差不超过 1（百分位与其完全相同）。需先读完整幅图像并保存在工作区 |
+| `Filter(f)` | Pillow 的内置滤镜，同 `im.filter(f)`，逐字节一致：`FilterBlur`、`FilterContour`、`FilterDetail`、`FilterEdgeEnhance`、`FilterEdgeEnhanceMore`、`FilterEmboss`、`FilterFindEdges`、`FilterSharpen`、`FilterSmooth`、`FilterSmoothMore`。`Convolve` 设 `Method: ConvolvePillow` 即 `ImageFilter.Kernel`（3×3 或 5×5）：用 Pillow 的运算，核上下颠倒，边缘像素保留，带透明的图像与 Pillow 一样连 alpha 一起滤 |
 | `Enhance(e, factor)` | Pillow 的 `ImageEnhance`，逐字节一致（torchvision 的 `ColorJitter` 与 `adjust_*` 对图像正是用它）：按 `factor` 调整 `EnhanceColor`（饱和度）、`EnhanceContrast`、`EnhanceBrightness` 或 `EnhanceSharpness`，可为任意数，1 不变：每个色阶从退化图像（灰色；平均明度的灰；黑色；经 Pillow `SMOOTH` 平滑的图像）向原图走 `factor` 倍的距离。`EnhanceContrast` 需先读完整幅图像以求平均明度 |
 | `AutoContrast(AutoContrastOptions{CutoffLow, CutoffHigh, Ignore, PreserveTone})` | 把红、绿、蓝各自拉伸到最暗为黑、最亮为白，两端各去掉 `CutoffLow`、`CutoffHigh` 百分比的像素，不计 `Ignore` 中的色阶；`PreserveTone` 按明度拉伸、三个通道共用一张表，颜色不偏。即 Pillow 的 `ImageOps.autocontrast`，逐字节一致。需先读完整幅图像 |
 | `Equalize()` | 均衡各通道的色阶，使其出现次数大致相同：Pillow 的 `ImageOps.equalize`，逐字节一致。需先读完整幅图像 |

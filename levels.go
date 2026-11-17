@@ -5,6 +5,7 @@ import (
 	"image/color"
 	"math"
 	"strconv"
+	"strings"
 
 	"github.com/whhhh1500/goimgtools/internal/ops"
 	"github.com/whhhh1500/goimgtools/pipeline"
@@ -226,7 +227,27 @@ type Convolution struct {
 	Scale float64
 	// Offset is added after.
 	Offset float64
+	// Method is the arithmetic: ConvolveLibvips, the default, or
+	// ConvolvePillow.
+	Method ConvolveMethod
 }
+
+// ConvolveMethod is the arithmetic of Convolve.
+type ConvolveMethod int
+
+const (
+	// ConvolveLibvips is sharp's convolve (libvips' conv), to the byte:
+	// the window reaches past the edges onto copies of the edge pixels,
+	// the sum is rounded, transparency is kept.
+	ConvolveLibvips ConvolveMethod = iota
+	// ConvolvePillow is Pillow's ImageFilter.Kernel, to the byte: a 3 x 3
+	// or 5 x 5 window whose first row of weights falls on the row below
+	// the pixel (Pillow turns the kernel upside down), in single
+	// precision with the fraction dropped; the pixels within half the
+	// window of the edges are kept as they are; with transparency alpha
+	// is filtered too, as Pillow does.
+	ConvolvePillow
+)
 
 // Convolve gives each pixel the weighted sum of the window around it (see
 // Convolution), divided by the scale, plus the offset, rounded and kept
@@ -239,6 +260,15 @@ type Convolution struct {
 func (m *Image) Convolve(c Convolution) *Image {
 	if c.Width < 1 || c.Height < 1 || c.Width > ops.MaxWindow || c.Height > ops.MaxWindow || c.Width%2 == 0 || c.Height%2 == 0 {
 		return m.fail(errors.New("goimgtools: Convolve sides must be odd, 1 to 99"))
+	}
+	switch c.Method {
+	case ConvolveLibvips:
+	case ConvolvePillow:
+		if c.Width != c.Height || (c.Width != 3 && c.Width != 5) {
+			return m.fail(errors.New("goimgtools: ConvolvePillow takes a 3 x 3 or 5 x 5 window"))
+		}
+	default:
+		return m.fail(errors.New("goimgtools: unknown ConvolveMethod"))
 	}
 	if len(c.Weights) != c.Width*c.Height {
 		return m.fail(errors.New("goimgtools: Convolve wants Width x Height weights"))
@@ -387,6 +417,9 @@ func (o convolveOp) apply(src pipeline.Source, r *run) (pipeline.Source, error) 
 	if r.sizeOnly {
 		return src, nil
 	}
+	if o.c.Method == ConvolvePillow {
+		return ops.PillowKernel(src, o.c.Width, o.c.Weights, o.c.Scale, o.c.Offset)
+	}
 	return ops.Convolve(src, o.c.Width, o.c.Height, o.c.Weights, o.c.Scale, o.c.Offset)
 }
 
@@ -396,7 +429,11 @@ func (o convolveOp) words() []string {
 	for _, v := range o.c.Weights {
 		w = append(w, f(v))
 	}
-	return append(w, f(o.c.Scale), f(o.c.Offset))
+	w = append(w, f(o.c.Scale), f(o.c.Offset))
+	if o.c.Method == ConvolvePillow {
+		w = append(w, "pillow")
+	}
+	return w
 }
 
 // morphStep reads the words of dilate and erode.
@@ -558,8 +595,12 @@ var levelOps = map[string]OperationDef{
 		builtIn: func(m *Image, a []string) error { return morphStep(m, a, true) }},
 	"erode": {Name: "erode", Usage: "[WIDTH]", Help: "Erode: black shapes shrink by WIDTH pixels (1 by default), as sharp's erode",
 		builtIn: func(m *Image, a []string) error { return morphStep(m, a, false) }},
-	"convolve": {Name: "convolve", Usage: "W,H,WEIGHTS...[,SCALE[,OFFSET]]", Help: "Convolve: a W x H window of weights, row by row",
+	"convolve": {Name: "convolve", Usage: "W,H,WEIGHTS...[,SCALE[,OFFSET[,pillow]]]", Help: "Convolve: a W x H window of weights, row by row; pillow: Pillow's ImageFilter.Kernel (3 x 3 or 5 x 5)",
 		builtIn: func(m *Image, a []string) error {
+			pillow := len(a) > 0 && strings.EqualFold(a[len(a)-1], "pillow")
+			if pillow {
+				a = a[:len(a)-1]
+			}
 			if len(a) < 3 {
 				return wantArgs(a, 3, 3)
 			}
@@ -576,6 +617,9 @@ var levelOps = map[string]OperationDef{
 				return err
 			}
 			c := Convolution{Width: wh[0], Height: wh[1], Weights: v[:n]}
+			if pillow {
+				c.Method = ConvolvePillow
+			}
 			if len(v) > n {
 				c.Scale = v[n]
 			}

@@ -351,6 +351,9 @@ func FuzzChain(f *testing.F) {
 		if extra2>>12&7 == 7 {
 			m.Enhance(Enhancement(h%4), float64(int16(w))/1000)
 		}
+		if extra2>>15&7 == 7 {
+			m.Filter(ImageFilter(w % 10))
+		}
 		if bit(22) {
 			m.KeepExif()
 		}

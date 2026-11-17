@@ -99,7 +99,48 @@ func (m *Image) Enhance(e Enhancement, factor float64) *Image {
 	return m.add(pillowOp{name: "enhance", n: int(e), f: factor})
 }
 
-// pillowOp is Posterize, Solarize, Equalize, AutoContrast or Enhance.
+// ImageFilter is one of Pillow's built-in filters, for Filter.
+type ImageFilter int
+
+const (
+	// FilterBlur is ImageFilter.BLUR: the 5 x 5 ring around the pixel.
+	FilterBlur ImageFilter = iota
+	// FilterContour is CONTOUR: dark lines on white where the image
+	// changes.
+	FilterContour
+	// FilterDetail is DETAIL: a light sharpening.
+	FilterDetail
+	// FilterEdgeEnhance and FilterEdgeEnhanceMore are EDGE_ENHANCE and
+	// EDGE_ENHANCE_MORE: edges made stronger.
+	FilterEdgeEnhance
+	FilterEdgeEnhanceMore
+	// FilterEmboss is EMBOSS: relief on grey.
+	FilterEmboss
+	// FilterFindEdges is FIND_EDGES: light edges on black.
+	FilterFindEdges
+	// FilterSharpen is SHARPEN.
+	FilterSharpen
+	// FilterSmooth and FilterSmoothMore are SMOOTH and SMOOTH_MORE.
+	FilterSmooth
+	FilterSmoothMore
+)
+
+// Filter applies one of Pillow's built-in filters, as im.filter(f) does,
+// to the byte (see ConvolvePillow: the edge pixels stay, and with
+// transparency alpha is filtered too). The memory it takes is a few rows.
+func (m *Image) Filter(f ImageFilter) *Image {
+	if f < FilterBlur || f > FilterSmoothMore {
+		return m.fail(errors.New("goimgtools: unknown ImageFilter"))
+	}
+	return m.add(pillowOp{name: "filter", n: int(f)})
+}
+
+var filterNames = map[ImageFilter]string{FilterBlur: "blur", FilterContour: "contour", FilterDetail: "detail",
+	FilterEdgeEnhance: "edge-enhance", FilterEdgeEnhanceMore: "edge-enhance-more", FilterEmboss: "emboss",
+	FilterFindEdges: "find-edges", FilterSharpen: "sharpen", FilterSmooth: "smooth", FilterSmoothMore: "smooth-more"}
+
+// pillowOp is Posterize, Solarize, Equalize, AutoContrast, Enhance or
+// Filter.
 type pillowOp struct {
 	name string
 	n    int
@@ -120,6 +161,8 @@ func (o pillowOp) apply(src pipeline.Source, r *run) (pipeline.Source, error) {
 		return ops.Equalize(src)
 	case "autocontrast":
 		return ops.AutoContrast(src, o.ac.CutoffLow, o.ac.CutoffHigh, o.ac.Ignore, o.ac.PreserveTone)
+	case "filter":
+		return ops.PillowFilter(src, o.n)
 	}
 	return ops.Enhance(src, o.n, o.f)
 }
@@ -144,11 +187,25 @@ func (o pillowOp) words() []string {
 		return w
 	case "enhance":
 		return []string{enhanceNames[Enhancement(o.n)], f(o.f)}
+	case "filter":
+		return []string{filterNames[ImageFilter(o.n)]}
 	}
 	return nil
 }
 
 var pillowOps = map[string]OperationDef{
+	"filter": {Name: "filter", Usage: "NAME", Help: "Filter: one of Pillow's built-in filters: blur, contour, detail, edge-enhance, edge-enhance-more, emboss, find-edges, sharpen, smooth, smooth-more",
+		builtIn: func(m *Image, a []string) error {
+			if err := wantArgs(a, 1, 1); err != nil {
+				return err
+			}
+			f, err := pick(filterNames, a[0], "filter")
+			if err != nil {
+				return err
+			}
+			m.Filter(f)
+			return nil
+		}},
 	"posterize": {Name: "posterize", Usage: "BITS", Help: "Posterize: keep the BITS (1-8) highest bits of each level (Pillow's ImageOps.posterize)",
 		builtIn: func(m *Image, a []string) error {
 			if err := wantArgs(a, 1, 1); err != nil {
