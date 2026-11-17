@@ -5,6 +5,7 @@
 package tiffstream
 
 import (
+	"bytes"
 	"compress/zlib"
 	"encoding/binary"
 	"errors"
@@ -419,6 +420,41 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 			return zw
 		}
 		strips = &stripWriter{sp: sp, comp: comp, size: rowsPerStrip * rowLen}
+		if h := env.Helpers(); h > 0 {
+			// The strips are compressed on helpers, a few at a time, each
+			// with a compressor of its own, and go into the spill in order.
+			slots := h + 1
+			need := int64(slots) * 2 * strips.size
+			if err := env.Budget.Reserve(need, "tiff strips in flight"); err != nil {
+				return err
+			}
+			defer env.Budget.Release(need)
+			strips.env = env
+			strips.slots = make([]stripSlot, slots)
+			for i := range strips.slots {
+				sl := &strips.slots[i]
+				sl.raw = make([]byte, 0, strips.size)
+				if compression == cLZW {
+					sl.comp = func(w io.Writer) io.WriteCloser {
+						if sl.lw == nil {
+							sl.lw = lzw.NewWriter(w)
+						} else {
+							sl.lw.Reset(w)
+						}
+						return sl.lw
+					}
+				} else {
+					sl.comp = func(w io.Writer) io.WriteCloser {
+						if sl.zw == nil {
+							sl.zw = zlib.NewWriter(w)
+						} else {
+							sl.zw.Reset(w)
+						}
+						return sl.zw
+					}
+				}
+			}
+		}
 		dst = strips
 		if predict {
 			if err := env.Budget.Reserve(rowLen, "tiff predictor row"); err != nil {
@@ -656,9 +692,30 @@ type stripWriter struct {
 	start   int64
 	offsets []uint32
 	counts  []uint32
+	// With helpers, slots of strips compressed on them, used in turn: the
+	// strip being filled is the raw of slots[next].
+	env   *pipeline.Env
+	slots []stripSlot
+	next  int
+	busy  int // slots handed out and not yet written, the oldest first from next-busy
+}
+
+// stripSlot is a strip compressed on a helper: its pixel data, the
+// compressed bytes, the compressor, and the wait for it.
+type stripSlot struct {
+	raw  []byte
+	out  bytes.Buffer
+	comp func(io.Writer) io.WriteCloser
+	zw   *zlib.Writer
+	lw   *lzw.Writer
+	wait func()
+	err  error
 }
 
 func (s *stripWriter) Write(p []byte) (int, error) {
+	if s.slots != nil {
+		return s.writeSlots(p)
+	}
 	total := len(p)
 	for len(p) > 0 {
 		if s.cur == nil {
@@ -695,8 +752,80 @@ func (s *stripWriter) end() error {
 }
 
 func (s *stripWriter) Close() error {
+	if s.slots != nil {
+		if sl := &s.slots[s.next]; len(sl.raw) > 0 {
+			s.launch()
+		}
+		for s.busy > 0 {
+			if err := s.collect(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	if s.cur == nil {
 		return nil
 	}
 	return s.end()
+}
+
+// writeSlots fills the strip of the current slot, and hands it to a helper
+// when it is full.
+func (s *stripWriter) writeSlots(p []byte) (int, error) {
+	total := len(p)
+	for len(p) > 0 {
+		sl := &s.slots[s.next]
+		k := int(min(int64(len(p)), s.size-int64(len(sl.raw))))
+		sl.raw = append(sl.raw, p[:k]...)
+		p = p[k:]
+		if int64(len(sl.raw)) == s.size {
+			s.launch()
+			// The slot filled next must have been written out.
+			if s.busy == len(s.slots) {
+				if err := s.collect(); err != nil {
+					return total - len(p), err
+				}
+			}
+		}
+	}
+	return total, nil
+}
+
+// launch has the current slot's strip compressed on a helper.
+func (s *stripWriter) launch() {
+	sl := &s.slots[s.next]
+	sl.out.Reset()
+	sl.wait = s.env.Go(func() {
+		c := sl.comp(&sl.out)
+		_, err := c.Write(sl.raw)
+		if cerr := c.Close(); err == nil {
+			err = cerr
+		}
+		sl.err = err
+	})
+	s.next = (s.next + 1) % len(s.slots)
+	s.busy++
+}
+
+// collect waits for the oldest strip handed out and writes it to the spill.
+func (s *stripWriter) collect() error {
+	i := (s.next - s.busy + len(s.slots)) % len(s.slots)
+	sl := &s.slots[i]
+	sl.wait()
+	s.busy--
+	sl.raw = sl.raw[:0]
+	if sl.err != nil {
+		return sl.err
+	}
+	start := s.sp.Size()
+	if _, err := s.sp.Write(sl.out.Bytes()); err != nil {
+		return err
+	}
+	end := s.sp.Size()
+	if end > math.MaxUint32-8 {
+		return errTooLarge
+	}
+	s.offsets = append(s.offsets, uint32(start))
+	s.counts = append(s.counts, uint32(end-start))
+	return nil
 }

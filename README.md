@@ -100,7 +100,7 @@ Staged data is kept in memory up to 1/8 of the memory limit (8MB by default); be
 - AVIF and HEIC are not supported.
 - Entropy decoding in JPEG is sequential (from `Threads(5)` the inverse DCT and the conversion of colour go to the other cores); with many threads it is the slowest stage of decoding a JPEG.
 - A per-pixel adjustment of your own (beyond `Curves` and the other level operations) takes a few lines with `Pixels` (see the grayscale example in [Extending](docs/extending.md)), and a filter that needs neighbouring pixels can be a `Pipe` stage or a `Convolve` kernel.
-- GIF, BMP and TIFF encoding is single-threaded; LZ77 matching and the second pass of lossless WebP are sequential, so multiple threads speed it up by only 10–20%.
+- GIF and BMP encoding is single-threaded (the strips of a compressed TIFF are compressed on the other cores); LZ77 matching and the second pass of lossless WebP are sequential, so multiple threads speed it up by only 10–20%.
 - JPEG trellis quantization estimates code lengths from the standard Huffman tables (mozjpeg first collects statistics for the whole image): this library processes strips as a stream and does not retain the coefficients of the whole image for this purpose.
 - `MaxFileSize` supports JPEG, lossy WebP, PNG and GIF (and registered formats that provide `Quality`), not lossless WebP, BMP, TIFF or animations.
 
