@@ -123,7 +123,7 @@ func TestOverlay(t *testing.T) {
 	for name, m := range testutil.Images(97, 131) {
 		for i, at := range []image.Point{{0, 0}, {60, 100}, {-10, -5}, {90, 125}, {200, 200}, {40, 55}} {
 			env := pipeline.NewEnv(0, "")
-			src, err := Overlay(testutil.ChoppedEnv(m, []int{1, 7, 16, 500, 13, 3}[i], env), top, at.X, at.Y)
+			src, err := Overlay(testutil.ChoppedEnv(m, []int{1, 7, 16, 500, 13, 3}[i], env), top, at.X, at.Y, BlendOver)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -136,7 +136,7 @@ func TestOverlay(t *testing.T) {
 	}
 	// The overlay is charged to the budget.
 	env := pipeline.NewEnv(1<<10, "")
-	if _, err := Overlay(testutil.ChoppedEnv(top, 4, env), top, 0, 0); err == nil {
+	if _, err := Overlay(testutil.ChoppedEnv(top, 4, env), top, 0, 0, BlendOver); err == nil {
 		t.Error("overlay larger than the budget: no error")
 	}
 }

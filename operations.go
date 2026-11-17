@@ -185,6 +185,44 @@ type CompositeOptions struct {
 	// and at most 10. (The overlay is resized with Resize's default kernel,
 	// enlarged if need be.)
 	WidthRatio, HeightRatio float64
+	// Blend is how the overlay's colours mix with those under it: BlendOver
+	// (the default) puts them over; the others are the blend modes of CSS,
+	// PDF and sharp (see BlendMode).
+	Blend BlendMode
+}
+
+// BlendMode is how an overlay's colours mix with the image's under them,
+// where both are there: as CSS's mix-blend-mode and PDF define them (and
+// libvips' composite, so sharp's blend). The mix is then put over the
+// image as BlendOver puts the overlay, with its transparency.
+type BlendMode int
+
+// The blend modes.
+const (
+	BlendOver       BlendMode = iota // the overlay's colour (normal)
+	BlendMultiply                    // the product: darker, white leaves it be
+	BlendScreen                      // the inverse of the product of inverses: lighter
+	BlendOverlay                     // multiply or screen by the image's colour: more contrast
+	BlendDarken                      // the darker of the two, channel by channel
+	BlendLighten                     // the lighter of the two
+	BlendColorDodge                  // the image brightened to reflect the overlay
+	BlendColorBurn                   // the image darkened to reflect the overlay
+	BlendHardLight                   // multiply or screen by the overlay's colour
+	BlendSoftLight                   // a softer hard light
+	BlendDifference                  // the difference, larger less smaller
+	BlendExclusion                   // like difference, of lower contrast
+)
+
+var blendNames = [...]string{"over", "multiply", "screen", "overlay", "darken", "lighten",
+	"color-dodge", "color-burn", "hard-light", "soft-light", "difference", "exclusion"}
+
+// String returns the CSS name of the mode ("multiply", "color-dodge"), or
+// "BlendMode(n)" for no mode.
+func (b BlendMode) String() string {
+	if b >= 0 && int(b) < len(blendNames) {
+		return blendNames[b]
+	}
+	return fmt.Sprintf("BlendMode(%d)", int(b))
 }
 
 // point resolves p to pixels from the top-left corner of a w × h overlay.

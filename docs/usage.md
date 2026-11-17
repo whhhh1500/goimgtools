@@ -190,6 +190,7 @@ Measured (batch mode, 42 photographs): peak memory 19.5MB at concurrency 3, 32MB
 Additional options:
 
 - `Opacity`: 0–1, overall opacity, multiplied by the watermark's own alpha; if unset, the watermark is used unchanged.
+- `Blend`: how the overlay's colours mix with the image's: `BlendOver` (the default, as `image/draw`'s `Over`), `BlendMultiply`, `BlendScreen`, `BlendOverlay`, `BlendDarken`, `BlendLighten`, `BlendColorDodge`, `BlendColorBurn`, `BlendHardLight`, `BlendSoftLight`, `BlendDifference`, `BlendExclusion`; computed as sharp's `blend` (libvips' composite), within 1 level on an opaque image. On the command line: `-watermark-blend multiply`.
 - `Tile`, `TileGapX`, `TileGapY`: tiles the watermark across the whole image with configurable gaps. With `Angle`, each watermark is rotated individually, while rows and columns remain horizontal and vertical.
 - `WidthRatio`, `HeightRatio`: first scales the watermark to this fraction of the base image's width (height), preserving its aspect ratio; when both are given, it is fitted within both. When batch-processing images of varying sizes, the watermark therefore appears the same size on every image. On the command line: `-watermark-width 20%`.
 

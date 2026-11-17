@@ -231,6 +231,10 @@ func (c compositeOp) apply(src pipeline.Source, r *run) (pipeline.Source, error)
 	if !(o.Opacity >= 0 && o.Opacity <= 1) {
 		return nil, errors.New("goimgtools: Composite opacity must be 0 to 1")
 	}
+	mode, ok := blendModes[o.Blend]
+	if !ok {
+		return nil, errors.New("goimgtools: unknown Composite blend mode")
+	}
 	place := func(m image.Image, x, y int) (pipeline.Source, error) {
 		// Faded last: a turned overlay is resampled first, at full
 		// strength, so its edges cannot come out stronger than asked.
@@ -241,9 +245,9 @@ func (c compositeOp) apply(src pipeline.Source, r *run) (pipeline.Source, error)
 			// A gap beyond any image leaves the one copy; capped so that
 			// adding it to a size cannot overflow.
 			const far = 1 << 30
-			return ops.OverlayTiled(src, m, x, y, min(o.TileGapX, far), min(o.TileGapY, far))
+			return ops.OverlayTiled(src, m, x, y, min(o.TileGapX, far), min(o.TileGapY, far), mode)
 		}
-		return ops.Overlay(src, m, x, y)
+		return ops.Overlay(src, m, x, y, mode)
 	}
 	b, tb := src.Bounds(), top.Bounds()
 	gx, gy := 0, 0 // the top-left corner
@@ -394,4 +398,12 @@ func shrinkFactor(src pipeline.Source, z resizeSpec, turn ops.Orientation) int {
 		}
 	}
 	return 1
+}
+
+// blendModes are the blend modes of ops for those of the package.
+var blendModes = map[BlendMode]int{
+	BlendOver: ops.BlendOver, BlendMultiply: ops.BlendMultiply, BlendScreen: ops.BlendScreen,
+	BlendOverlay: ops.BlendOverlay, BlendDarken: ops.BlendDarken, BlendLighten: ops.BlendLighten,
+	BlendColorDodge: ops.BlendColorDodge, BlendColorBurn: ops.BlendColorBurn, BlendHardLight: ops.BlendHardLight,
+	BlendSoftLight: ops.BlendSoftLight, BlendDifference: ops.BlendDifference, BlendExclusion: ops.BlendExclusion,
 }

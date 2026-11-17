@@ -184,21 +184,46 @@ type overlay struct {
 	// stepX and stepY, when positive, repeat top that far apart over the
 	// whole image, with one copy at "at".
 	stepX, stepY int
+	// mode is the blend mode (see blend.go); for one but BlendOver, top is
+	// an *image.NRGBA.
+	mode int
 }
 
 // Overlay draws top over src with its top-left corner at (x, y) relative to
-// src's top-left corner. top is held in memory whole (it is charged to the
-// budget), so it should be small, like a watermark. Parts of top that fall
-// outside src are clipped. The result is RGBA.
-func Overlay(src pipeline.Source, top image.Image, x, y int) (pipeline.Source, error) {
+// src's top-left corner, in the blend mode given (BlendOver and the others
+// of blend.go). top is held in memory whole (it is charged to the budget),
+// so it should be small, like a watermark. Parts of top that fall outside
+// src are clipped. The result is RGBA.
+func Overlay(src pipeline.Source, top image.Image, x, y, mode int) (pipeline.Source, error) {
+	if !ValidBlend(mode) {
+		return nil, errors.New("goimgtools: unknown blend mode")
+	}
 	env := pipeline.EnvOf(src)
 	need := pipeline.BandBytes(top, top.Bounds())
+	if mode != BlendOver {
+		if _, ok := top.(*image.NRGBA); !ok {
+			need = 4 * int64(top.Bounds().Dx()) * int64(top.Bounds().Dy())
+			n := image.NewNRGBA(top.Bounds())
+			draw.Draw(n, n.Rect, top, n.Rect.Min, draw.Src)
+			top = n
+		}
+	}
 	if err := env.Budget.Reserve(need, "overlay image"); err != nil {
 		return nil, err
 	}
 	b := src.Bounds()
 	at := top.Bounds().Sub(top.Bounds().Min).Add(b.Min).Add(image.Pt(x, y))
-	return &overlay{src: src, env: env, top: top, at: at, band: rgbaBand{env: env}, reserved: need}, nil
+	return &overlay{src: src, env: env, top: top, at: at, band: rgbaBand{env: env}, reserved: need, mode: mode}, nil
+}
+
+// put draws the part in of the copy of top at "at" over out.
+func (o *overlay) put(out *image.RGBA, in, at image.Rectangle) {
+	sp := o.top.Bounds().Min.Add(in.Min.Sub(at.Min))
+	if o.mode == BlendOver {
+		draw.Draw(out, in, o.top, sp, draw.Over)
+		return
+	}
+	drawBlend(out, in, o.top.(*image.NRGBA), sp, o.mode)
 }
 
 // OverlayTiled is Overlay with top repeated over the whole image: one copy
@@ -206,12 +231,12 @@ func Overlay(src pipeline.Source, top image.Image, x, y int) (pipeline.Source, e
 // top-width + gapX pixels across and top-height + gapY pixels down, in all
 // directions. A gap may be negative (copies overlap) as long as the step
 // stays positive.
-func OverlayTiled(src pipeline.Source, top image.Image, x, y, gapX, gapY int) (pipeline.Source, error) {
+func OverlayTiled(src pipeline.Source, top image.Image, x, y, gapX, gapY, mode int) (pipeline.Source, error) {
 	stepX, stepY := top.Bounds().Dx()+gapX, top.Bounds().Dy()+gapY
 	if stepX < 1 || stepY < 1 {
 		return nil, errors.New("goimgtools: tile gap leaves no room between copies")
 	}
-	s, err := Overlay(src, top, x, y)
+	s, err := Overlay(src, top, x, y, mode)
 	if err != nil {
 		return nil, err
 	}
@@ -276,7 +301,7 @@ func (o *overlay) Next() (image.Image, error) {
 			for i := i0; i <= i1; i++ {
 				at := o.at.Add(image.Pt(i*o.stepX, j*o.stepY))
 				if in := r.Intersect(at); !in.Empty() {
-					draw.Draw(out, in, o.top, o.top.Bounds().Min.Add(in.Min.Sub(at.Min)), draw.Over)
+					o.put(out, in, at)
 				}
 			}
 		}
@@ -292,7 +317,7 @@ func (o *overlay) Next() (image.Image, error) {
 	}
 	draw.Draw(out, r, s, r.Min, draw.Src)
 	if !in.Empty() {
-		draw.Draw(out, in, o.top, o.top.Bounds().Min.Add(in.Min.Sub(o.at.Min)), draw.Over)
+		o.put(out, in, o.at)
 	}
 	return out, nil
 }

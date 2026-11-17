@@ -240,3 +240,31 @@ func (s *single) Next() (image.Image, error) {
 	s.done = true
 	return s.m, nil
 }
+
+// TestBlendModes: every blend mode of Composite within a level of sharp's
+// composite blend (libvips), on a 24x16 patch of the Pillow source with a
+// translucent overlay over it; the reference holds the twelve results one
+// under the other.
+func TestBlendModes(t *testing.T) {
+	src := sourcePNG(t, "pillow/source.png")
+	over := FromBytes(sourcePNG(t, "sharp/blend-overlay.png"))
+	ref := readPNG(t, "sharp/blend.png")
+	for mode := BlendOver; mode <= BlendExclusion; mode++ {
+		out, err := FromBytes(src).Extract(40, 30, 24, 16).Composite(over, CompositeOptions{Blend: mode}).PNG().ToBytes()
+		if err != nil {
+			t.Fatalf("%v: %v", mode, err)
+		}
+		want := ref.(interface {
+			SubImage(image.Rectangle) image.Image
+		}).SubImage(image.Rect(0, 16*int(mode), 24, 16*int(mode)+16))
+		if maxd, mean, _ := channelDiff(t, decodePNG(t, out), want); maxd > 1 {
+			t.Errorf("%v: differs from sharp by up to %d (mean %.3f)", mode, maxd, mean)
+		}
+	}
+	if s := BlendColorDodge.String(); s != "color-dodge" {
+		t.Errorf("BlendColorDodge is %q", s)
+	}
+	if _, err := FromBytes(src).Composite(over, CompositeOptions{Blend: BlendExclusion + 1}).PNG().ToBytes(); err == nil {
+		t.Error("an unknown blend mode: no error")
+	}
+}

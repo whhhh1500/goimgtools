@@ -144,6 +144,9 @@ func TestSmallestThroughOperations(t *testing.T) {
 		{"logo turned and tiled", func(m *Image, w, h int) *Image {
 			return m.Composite(logo, CompositeOptions{Gravity: SouthEast, Angle: 33, Opacity: 0.5, Tile: true})
 		}, same},
+		{"logo blended, turned and tiled", func(m *Image, w, h int) *Image {
+			return m.Composite(logo, CompositeOptions{Gravity: SouthEast, Angle: 33, Opacity: 0.5, Tile: true, Blend: BlendSoftLight})
+		}, same},
 		{"text", func(m *Image, w, h int) *Image {
 			return m.Composite(Text("Ag", TextOptions{Size: 9, StrokeWidth: 1, ShadowColor: color.Black, ShadowBlur: 2}), CompositeOptions{LeftRatio: 0.5, TopRatio: 0.5, Anchor: Center})
 		}, same},
