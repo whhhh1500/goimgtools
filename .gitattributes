@@ -9,3 +9,5 @@
 # Go fuzz corpus entries are parsed line by line: LF everywhere.
 tests/testdata/fuzz/** text eol=lf
 *.avif binary
+*.heic binary
+*.icc binary

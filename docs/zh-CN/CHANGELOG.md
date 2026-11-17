@@ -55,6 +55,7 @@
 - `Filter`（类型 `ImageFilter`）：Pillow 的内置滤镜（模糊、轮廓、细节、边缘增强、浮雕、找边、锐化、平滑），以及 `Convolution.Method` 的 `ConvolvePillow`：其 `ImageFilter.Kernel`，逐字节一致；按名字调用 `filter NAME` 与 `convolve …,pillow`。
 - `BoxBlur(radius)`（`boxblur`）：即 Pillow 的 `ImageFilter.BoxBlur`，逐字节一致，含小数半径。
 - `RotateBy` 的 `RotateOptions`（`Method`：`RotateLibvips` 即 sharp 的，或 `RotatePillow` 即 Pillow 的 `Image.rotate`，逐字节一致；`Interpolator`；`Expand`）；按名字调用 `rotate DEGREES[,BACKGROUND][,pillow][,nearest|bilinear|bicubic][,expand]`。
+- 模块 `github.com/whhhh1500/goimgtools/heic`：用 gen2brain/h265（纯 Go 的 HEVC 编解码器，解码与一致性测试集逐位一致；有 SIMD，`-tags noasm` 时不用，像素相同）读写 HEIC：网格、透明、irot/imir/clap（随后 EXIF 方向设为 1）、EXIF、XMP、色彩配置（nclx 声明 Display P3 时补上 P3 配置）均读出并可写入；`heic.Options{Quality, Effort, Lossless, Chroma444}`，MaxFileSize 按其质量。
 - 模块 `github.com/whhhh1500/goimgtools/avif`：读写 AVIF（libavif 配 dav1d 与 aom，编译为 WebAssembly，经 gen2brain/avif；无需 cgo），导入即注册；`avif.Options{Quality, Effort, Lossless, Chroma444}`，MaxFileSize 按其质量；按 irot、imir 转正。
 - TIFF 输出使用 Deflate 或 LZW 时，各条带交给其他核心压缩（`Threads(4)` 及以上），文件不变；6000×4000 的照片用 8 线程写成 Deflate 只需 0.49 秒，原为 1.73 秒。
 - `Curves(points, CurvesOptions)`：色调曲线（经过各点的单调三次样条），作用于全部颜色通道或单个通道；按名字调用 `curves`。

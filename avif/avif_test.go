@@ -157,3 +157,26 @@ func must[T any](v T, err error) T {
 	}
 	return v
 }
+
+// TestMatch: AVIF as the major brand, or among the compatible ones of a
+// general HEIF file; not HEIC.
+func TestMatch(t *testing.T) {
+	head := func(major string, compat ...string) []byte {
+		b := []byte("\x00\x00\x00\x20ftyp" + major + "\x00\x00\x00\x00")
+		for _, c := range compat {
+			b = append(b, c...)
+		}
+		return b
+	}
+	for _, c := range []struct {
+		h    []byte
+		want bool
+	}{
+		{head("avif"), true}, {head("avis"), true}, {head("mif1", "mif1", "avif"), true},
+		{head("mif1", "mif1", "heic"), false}, {head("heic", "mif1"), false}, {[]byte("\x00\x00\x00\x20ftypisom"), false},
+	} {
+		if avif.Match(c.h) != c.want {
+			t.Errorf("Match(%q) = %v", c.h, !c.want)
+		}
+	}
+}

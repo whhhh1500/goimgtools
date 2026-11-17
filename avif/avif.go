@@ -69,7 +69,7 @@ func init() { goimgtools.RegisterFormat(Codec()) }
 func Codec() goimgtools.Codec {
 	return goimgtools.Codec{
 		Format: goimgtools.Format{Name: "avif", Extensions: []string{".avif"}},
-		Match:  match,
+		Match:  Match,
 		Decode: decode,
 		Encode: encode,
 		Quality: func(options any) (int, bool) {
@@ -85,13 +85,26 @@ func Codec() goimgtools.Codec {
 	}
 }
 
-// match reports an ISO media file whose brand is AVIF.
-func match(head []byte) bool {
+// Match reports a file whose ftyp box names AVIF: as its major brand, or
+// among the compatible ones of a general HEIF (mif1, msf1) file within the
+// head.
+func Match(head []byte) bool {
 	if len(head) < 12 || string(head[4:8]) != "ftyp" {
 		return false
 	}
-	brand := string(head[8:12])
-	return brand == "avif" || brand == "avis"
+	major := string(head[8:12])
+	if major == "avif" || major == "avis" {
+		return true
+	}
+	if major != "mif1" && major != "msf1" {
+		return false
+	}
+	for i := 16; i+4 <= len(head); i += 4 {
+		if b := string(head[i : i+4]); b == "avif" || b == "avis" {
+			return true
+		}
+	}
+	return false
 }
 
 // source is a decoded AVIF, handed out in strips.
