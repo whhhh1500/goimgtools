@@ -181,6 +181,8 @@ func describe(op operation) (string, []string) {
 		return "affine", o.words()
 	case transformOp:
 		return "transform", o.words()
+	case curvesOp:
+		return "curves", o.words()
 	case levelsOp:
 		return o.name, o.words()
 	case tintOp:
@@ -661,6 +663,9 @@ var builtInOps = map[string]OperationDef{
 			m.Affine(v[0], v[1], v[2], v[3], o)
 			return nil
 		}},
+	"curves": {Name: "curves", Usage: "[X:Y...][,red=X:Y/X:Y...][,green=...][,blue=...]",
+		Help:    "Curves: red, green and blue through the smooth curve through the points X:Y (levels 0 to 255); red=, green=, blue=: a curve of one channel after it",
+		builtIn: curvesStep},
 	"transform": {Name: "transform", Usage: "WIDTH,HEIGHT,affine|extent|perspective|quad|perspective-quad,NUMBERS...[,nearest|bilinear|bicubic][,BACKGROUND]",
 		Help: "Transform: Pillow's Image.transform to WIDTH x HEIGHT, with 6, 4, 8, 8 or 8 numbers (TransformAffine, TransformExtent, TransformPerspective, TransformQuad, TransformPerspectiveQuad)",
 		builtIn: func(m *Image, a []string) error {

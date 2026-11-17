@@ -55,6 +55,7 @@
 - `Filter`（类型 `ImageFilter`）：Pillow 的内置滤镜（模糊、轮廓、细节、边缘增强、浮雕、找边、锐化、平滑），以及 `Convolution.Method` 的 `ConvolvePillow`：其 `ImageFilter.Kernel`，逐字节一致；按名字调用 `filter NAME` 与 `convolve …,pillow`。
 - `BoxBlur(radius)`（`boxblur`）：即 Pillow 的 `ImageFilter.BoxBlur`，逐字节一致，含小数半径。
 - `RotateBy` 的 `RotateOptions`（`Method`：`RotateLibvips` 即 sharp 的，或 `RotatePillow` 即 Pillow 的 `Image.rotate`，逐字节一致；`Interpolator`；`Expand`）；按名字调用 `rotate DEGREES[,BACKGROUND][,pillow][,nearest|bilinear|bicubic][,expand]`。
+- `Curves(points, CurvesOptions)`：色调曲线（经过各点的单调三次样条），作用于全部颜色通道或单个通道；按名字调用 `curves`。
 - 灰度图像变成彩色后（叠加彩色内容、`Tint`）不再保留其灰度色彩配置（彩色像素无法使用）：各通道按配置的曲线转到 sRGB。
 - TIFF 文件的 EXIF：从第一个目录及其指向的 EXIF、GPS 目录读出（于是 `Rotate()` 按 TIFF 的方向转正，同 Pillow 的 `exif_transpose` 与 sharp；`KeepExif`、`inspect.ReadExif` 都能看到），使用 `KeepExif` 时也写到那里；Pillow 读回写入的标签不变。
 - JPEG 解码在 `Threads(5)` 及以上时，顺序式 JPEG 的反 DCT 交给其他核心，与下一行块的熵解码同时进行；6000×4000 的 JPEG 解码从 172ms 降到 122–142ms（像素不变）。

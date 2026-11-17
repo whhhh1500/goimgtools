@@ -255,6 +255,7 @@ func FuzzChain(f *testing.F) {
 		}
 		if has(4) {
 			m.Sharpen(SharpenOptions{Sigma: 0.5 + float64(more>>12), Amount: float64(h%40) / 10, Threshold: int(w % 20)})
+			m.Curves([][2]uint8{{uint8(w), uint8(h)}, {uint8(w >> 8), uint8(h >> 8)}, {uint8(more), uint8(more >> 8)}}, CurvesOptions{Blue: [][2]uint8{{0, uint8(w)}, {255, uint8(h)}}})
 		}
 		if has(5) {
 			m.Extend(int(w%7), int(h%9), int(w%5), int(h%3), color.NRGBA{uint8(w), uint8(h), 9, uint8(more)})

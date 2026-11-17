@@ -56,6 +56,7 @@ err := goimgtools.Open("in.jpg").
 | `Modulate(brightness, saturation, hue, ModulateOptions{Lightness})` | 在 LCh 色彩空间中将亮度、饱和度乘以系数，并将色相旋转指定度数（与 sharp 的做法相同）；`Lightness` 随后加到明度上（L\*，0–100），即 sharp 的 `lightness`。每个像素与 sharp 的结果相差不超过 1：`Modulate(1.2, 0.8, 0)` 使亮度提高 20%、色彩略淡 |
 | `Negate(NegateOptions{Alpha})` | 反色：每个颜色取其相反值（255 − 色阶），透明度不变；指定 `Alpha` 时透明度也取反。与 sharp 的 `negate({alpha: false})` 及 `negate()` 逐字节一致 |
 | `Linear(a, b)` | 每个红、绿、蓝色阶 v 变为 a·v + b，舍去小数并限制在 0–255，与 sharp 的 `linear` 逐字节一致：`Linear(1.2, -25)` 提高对比度 |
+| `Curves(points, CurvesOptions{Red, Green, Blue})` | 按色调曲线映射红、绿、蓝各级，同图像编辑器的“曲线”：经过 `points`（`{输入, 输出}`，0–255）的平滑曲线，单调三次样条（Fritsch–Carlson：不过冲），首尾点之外保持水平；`Red`、`Green`、`Blue` 为单个通道的曲线，在其后应用。透明度保持不变。按名字调用 `curves X:Y...[,red=X:Y/X:Y...]` |
 | `Gamma(g)` | 每个色阶 v 变为 255·(v/255)^(1/g)，与 ImageMagick 的 `-gamma` 相同：大于 1 提亮中间调，小于 1 压暗；黑白不变 |
 | `Threshold(level, ThresholdOptions{PerChannel})` | 黑白二值：灰度（按线性光计算，与 sharp 相同）不小于 `level` 的像素变白，其余变黑。不含透明的图像与 sharp 的 `threshold` 逐字节一致，并输出为单通道文件。`PerChannel` 让红、绿、蓝各自取 0 或 255（即 sharp 的 `threshold(level, {greyscale: false})`，逐字节一致） |
 | `Tint(color)` | 着色：按每个像素的亮度赋予该颜色，越接近黑白越淡（sharp 的 `tint`，与其相差不超过 1）：`Tint(color.RGBA{112, 66, 20, 255})` 为褐色调 |

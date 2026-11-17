@@ -55,6 +55,7 @@ Nothing exported by 0.1.0 was removed or changed in its signature (checked with 
 - `Filter` (type `ImageFilter`): Pillow's built-in filters (blur, contour, detail, edge enhance, emboss, find edges, sharpen, smooth), and `Convolution.Method` `ConvolvePillow`: its `ImageFilter.Kernel`, to the byte; by name `filter NAME` and `convolve …,pillow`.
 - `BoxBlur(radius)` (`boxblur`): Pillow's `ImageFilter.BoxBlur`, to the byte, fractional radii included.
 - `RotateOptions` for `RotateBy` (`Method`: `RotateLibvips`, sharp's, or `RotatePillow`, Pillow's `Image.rotate` to the byte; `Interpolator`; `Expand`); by name `rotate DEGREES[,BACKGROUND][,pillow][,nearest|bilinear|bicubic][,expand]`.
+- `Curves(points, CurvesOptions)`: tone curves, a monotone cubic through the points, for all colour channels and for each; by name `curves`.
 - A grey image made coloured (a coloured overlay, `Tint`) no longer keeps its grey colour profile, which colour pixels cannot carry: each channel is taken through the profile's curve to sRGB.
 - EXIF in TIFF files: read from the first directory and the EXIF and GPS directories it points to (so `Rotate()` turns a TIFF by its orientation, as Pillow's `exif_transpose` and sharp do, and `KeepExif` and `inspect.ReadExif` see it), and written there with `KeepExif`; Pillow reads the written tags back unchanged.
 - JPEG decoding with `Threads(5)` or more: the inverse DCTs of a sequential JPEG are made on the other cores while the next row of blocks is decoded; a 6000×4000 JPEG decodes in 122–142ms instead of 172ms (pixels unchanged).
