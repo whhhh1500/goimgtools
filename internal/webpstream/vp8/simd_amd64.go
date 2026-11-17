@@ -23,3 +23,15 @@ func filterV6(p, p2 *byte, stride, level, ilevel, hlevel int)
 
 //go:noescape
 func filterV4(p, p2 *byte, stride, level, ilevel, hlevel int)
+
+// AVX2 reports whether InnerH and InnerV may be called: the inner-edge
+// loop filter (four pixels) with AVX2, for the encoder's filter search.
+var AVX2 = useAVX2
+
+// InnerH is filterH4 and InnerV filterV4, for package vp8enc.
+func InnerH(p, p2 *byte, stride, level, ilevel, hlevel int) {
+	filterH4(p, p2, stride, level, ilevel, hlevel)
+}
+func InnerV(p, p2 *byte, stride, level, ilevel, hlevel int) {
+	filterV4(p, p2, stride, level, ilevel, hlevel)
+}

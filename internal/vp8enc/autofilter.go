@@ -15,6 +15,8 @@ package vp8enc
 // to the frame's in row order, so the levels do not depend on how many
 // rows were coded at once.
 
+import "github.com/whhhh1500/goimgtools/internal/webpstream/vp8"
+
 const lfLevels = 64
 
 // mbFilterBytes is the memory of measuring macroblocks, per row coded at
@@ -59,6 +61,30 @@ type mbFilter struct {
 	xy, yy   [100]uint32
 	y        [100]uint32
 	prod     [256]uint32
+	// For the AVX2 sums of a chroma plane: it and its source, set in a
+	// 16x16 frame of zeros at row and column 3, and the sums of that.
+	padA, padB   [256]uint8
+	py, pyy, pxy [100]uint32
+}
+
+// sums sets y, yy and xy to the sums winSums makes of b, b*b and a*b over
+// plane p (a and b n x n, n that of the plane), with AVX2.
+func (m *mbFilter) sums(p int, a, b []uint8, y, yy, xy *[100]uint32) {
+	if p == 0 {
+		ssimSumsAVX2(&a[0], &b[0], y, yy, xy)
+		return
+	}
+	for r := 0; r < 8; r++ {
+		copy(m.padA[16*(r+3)+3:16*(r+3)+11], a[8*r:8*r+8])
+		copy(m.padB[16*(r+3)+3:16*(r+3)+11], b[8*r:8*r+8])
+	}
+	ssimSumsAVX2(&m.padA[0], &m.padB[0], &m.py, &m.pyy, &m.pxy)
+	// The windows at chroma centres 1..6 are those at 4..9 of the frame.
+	for cy := 0; cy < 6; cy++ {
+		copy(y[6*cy:6*cy+6], m.py[10*(cy+1)+1:])
+		copy(yy[6*cy:6*cy+6], m.pyy[10*(cy+1)+1:])
+		copy(xy[6*cy:6*cy+6], m.pxy[10*(cy+1)+1:])
+	}
 }
 
 // planeSums are the weighted sums of the source over each window of a
@@ -94,6 +120,10 @@ func (m *mbFilter) measure(src *[384]uint8, sg *segment, seg int, st *filterStat
 	for p, pl := range mbPlanes {
 		s := &m.src[p]
 		v := src[pl.off : pl.off+pl.n*pl.n]
+		if useAVX2 {
+			m.sums(p, v, v, &s.x, &s.xx, &m.xy)
+			continue
+		}
 		for i, x := range v {
 			m.prod[i] = uint32(x)
 		}
@@ -143,18 +173,22 @@ func (m *mbFilter) ssim(src, rec *[384]uint8) float64 {
 		a := src[pl.off : pl.off+pl.n*pl.n]
 		b := rec[pl.off : pl.off+pl.n*pl.n]
 		n2 := len(a)
-		for i, y := range b {
-			m.prod[i] = uint32(y)
+		if useAVX2 {
+			m.sums(p, a, b, &m.y, &m.yy, &m.xy)
+		} else {
+			for i, y := range b {
+				m.prod[i] = uint32(y)
+			}
+			winSums(m.prod[:n2], pl.n, m.y[:])
+			for i, y := range b {
+				m.prod[i] = uint32(y) * uint32(y)
+			}
+			winSums(m.prod[:n2], pl.n, m.yy[:])
+			for i, y := range b {
+				m.prod[i] = uint32(y) * uint32(a[i])
+			}
+			winSums(m.prod[:n2], pl.n, m.xy[:])
 		}
-		winSums(m.prod[:n2], pl.n, m.y[:])
-		for i, y := range b {
-			m.prod[i] = uint32(y) * uint32(y)
-		}
-		winSums(m.prod[:n2], pl.n, m.yy[:])
-		for i, y := range b {
-			m.prod[i] = uint32(y) * uint32(a[i])
-		}
-		winSums(m.prod[:n2], pl.n, m.xy[:])
 		k := (pl.hi - pl.lo) * (pl.hi - pl.lo)
 		w := &windowWeights[p]
 		for i := 0; i < k; i++ {
@@ -292,6 +326,21 @@ func filterInner(b *[384]uint8, level int) bool {
 		hev = 2
 	} else if level >= 15 {
 		hev = 1
+	}
+	if vp8.AVX2 {
+		// The decoder's filter of inner edges: its threshold on
+		// 2|p0-q0| + |p1-q1|/2 is that on 4|p0-q0| + |p1-q1| here.
+		before := *b
+		l := 2*level + ilevel
+		for x := 4; x < 16; x += 4 {
+			vp8.InnerV(&b[x], &b[x+8*16], 16, l, ilevel, hev)
+		}
+		vp8.InnerV(&b[256+4], &b[320+4], 8, l, ilevel, hev)
+		for y := 4; y < 16; y += 4 {
+			vp8.InnerH(&b[16*y], &b[16*y+8], 16, l, ilevel, hev)
+		}
+		vp8.InnerH(&b[256+32], &b[320+32], 8, l, ilevel, hev)
+		return *b != before
 	}
 	changed := false
 	// Across the vertical edges, then the horizontal ones.

@@ -197,7 +197,8 @@ patent grant by Google. Both texts, as libwebp 1.6.0 distributes them
 `internal/webpstream/yuv_amd64.s` and `internal/webpstream/vp8/filter_amd64.s`
 compute libwebp's upsampling, conversion of colour and loop filter (as the Go
 code of those packages computes them) after the approach of its SSE2 code
-(`src/dsp/upsampling_sse2.c`, `yuv_sse2.h`, `dec_sse2.c`).
+(`src/dsp/upsampling_sse2.c`, `yuv_sse2.h`, `dec_sse2.c`);
+`internal/vp8enc/ssim_amd64.s` the window sums of its SSIM (`ssim_sse2.c`).
 
 `internal/vp8enc/analysis.go` follows the segmentation of libwebp's lossy
 encoder (`src/enc/analysis_enc.c`, and `VP8SetSegmentParams` and

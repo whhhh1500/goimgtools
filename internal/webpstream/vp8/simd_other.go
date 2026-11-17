@@ -8,3 +8,8 @@ func filterH6(p, p2 *byte, stride, level, ilevel, hlevel int) { panic("unreachab
 func filterH4(p, p2 *byte, stride, level, ilevel, hlevel int) { panic("unreachable") }
 func filterV6(p, p2 *byte, stride, level, ilevel, hlevel int) { panic("unreachable") }
 func filterV4(p, p2 *byte, stride, level, ilevel, hlevel int) { panic("unreachable") }
+
+const AVX2 = false
+
+func InnerH(p, p2 *byte, stride, level, ilevel, hlevel int) { panic("unreachable") }
+func InnerV(p, p2 *byte, stride, level, ilevel, hlevel int) { panic("unreachable") }
