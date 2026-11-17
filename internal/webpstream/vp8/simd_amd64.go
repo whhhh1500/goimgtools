@@ -35,3 +35,14 @@ func InnerH(p, p2 *byte, stride, level, ilevel, hlevel int) {
 func InnerV(p, p2 *byte, stride, level, ilevel, hlevel int) {
 	filterV4(p, p2, stride, level, ilevel, hlevel)
 }
+
+// idctAddAsm adds the inverse transform of coef to the 4x4 block at ref
+// into the one at dst (inverseDCT4's arithmetic; they may be the same).
+//
+//go:noescape
+func idctAddAsm(coef *[16]int16, ref *byte, rStride int, dst *byte, dStride int)
+
+// IDCTAdd is idctAddAsm, for package vp8enc: only where SIMD is true.
+func IDCTAdd(coef *[16]int16, ref *byte, rStride int, dst *byte, dStride int) {
+	idctAddAsm(coef, ref, rStride, dst, dStride)
+}

@@ -1,5 +1,7 @@
 package vp8enc
 
+import "github.com/whhhh1500/goimgtools/internal/webpstream/vp8"
+
 // The inverse transforms here repeat the decoder's arithmetic step for step
 // (RFC 6386 sections 14.3 and 14.4): the encoder predicts later blocks from
 // its own reconstruction, which therefore has to equal the decoder's output
@@ -114,7 +116,7 @@ func iwht(in *[16]int16, out *[16]int16) {
 func idctAdd(coef *[16]int16, ref []uint8, rStride int, dst []uint8, dStride int) {
 	if useSIMD {
 		_, _ = ref[3*rStride+3], dst[3*dStride+3]
-		idctAddSIMD(coef, &ref[0], rStride, &dst[0], dStride)
+		vp8.IDCTAdd(coef, &ref[0], rStride, &dst[0], dStride)
 		return
 	}
 	idctAddGo(coef, ref, rStride, dst, dStride)

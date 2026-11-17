@@ -59,3 +59,45 @@ func TestFilterSIMD(t *testing.T) {
 		}
 	}
 }
+
+// TestIDCTSIMD: the SIMD inverse transform adds to the prediction what
+// inverseDCT4 adds, for coefficients a stream can hold (any 16-bit value)
+// and those of the narrow lanes' bound.
+func TestIDCTSIMD(t *testing.T) {
+	if !useSIMD {
+		t.Skip("no SIMD")
+	}
+	defer func() { useSIMD = true }()
+	rng := rand.New(rand.NewPCG(9, 10))
+	var want, got Decoder
+	for i := range 200000 {
+		for k := 0; k < 16; k++ {
+			var v int16
+			switch i % 4 {
+			case 0:
+				v = int16(rng.IntN(65536) - 32768)
+			case 1:
+				v = int16(rng.IntN(4097) - 2048)
+			case 2:
+				v = []int16{-32768, 32767, 2048, -2048, 2049, -2049, 0}[rng.IntN(7)]
+			default:
+				if rng.IntN(3) == 0 {
+					v = int16(rng.IntN(200) - 100)
+				}
+			}
+			want.coeff[16+k] = v
+		}
+		for y := range want.ybr {
+			for x := range want.ybr[y] {
+				want.ybr[y][x] = uint8(rng.IntN(256))
+			}
+		}
+		got.coeff, got.ybr = want.coeff, want.ybr
+		y, x := 1+rng.IntN(len(want.ybr)-4), rng.IntN(len(want.ybr[0])-3)
+		want.inverseDCT4Go(y, x, 16)
+		got.inverseDCT4(y, x, 16)
+		if got.ybr != want.ybr {
+			t.Fatalf("case %d at %d,%d: %v", i, y, x, want.coeff[16:32])
+		}
+	}
+}

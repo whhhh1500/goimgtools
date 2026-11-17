@@ -10,10 +10,6 @@ func fdctSIMD(src *byte, sStride int, ref *byte, rStride int, out *[16]int16) {
 	panic("unreachable")
 }
 
-func idctAddSIMD(coef *[16]int16, ref *byte, rStride int, dst *byte, dStride int) {
-	panic("unreachable")
-}
-
 func sse4SIMD(a *byte, aStride int, b *byte, bStride int) int { panic("unreachable") }
 
 func quantizeSIMD(in *[16]int16, v *quantVec, lv, deq *[16]int16) int { panic("unreachable") }

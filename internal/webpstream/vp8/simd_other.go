@@ -13,3 +13,12 @@ const SIMD = false
 
 func InnerH(p, p2 *byte, stride, level, ilevel, hlevel int) { panic("unreachable") }
 func InnerV(p, p2 *byte, stride, level, ilevel, hlevel int) { panic("unreachable") }
+
+func idctAddAsm(coef *[16]int16, ref *byte, rStride int, dst *byte, dStride int) {
+	panic("unreachable")
+}
+
+// IDCTAdd is not to be called without SIMD.
+func IDCTAdd(coef *[16]int16, ref *byte, rStride int, dst *byte, dStride int) {
+	panic("unreachable")
+}

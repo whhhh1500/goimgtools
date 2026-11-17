@@ -18,6 +18,16 @@ func clip8(i int32) uint8 {
 }
 
 func (z *Decoder) inverseDCT4(y, x, coeffBase int) {
+	if useSIMD {
+		_ = z.ybr[y+3][x+3]
+		p := &z.ybr[y][x]
+		idctAddAsm((*[16]int16)(z.coeff[coeffBase:coeffBase+16]), p, len(z.ybr[0]), p, len(z.ybr[0]))
+		return
+	}
+	z.inverseDCT4Go(y, x, coeffBase)
+}
+
+func (z *Decoder) inverseDCT4Go(y, x, coeffBase int) {
 	const (
 		c1 = 85627 // 65536 * cos(pi/8) * sqrt(2).
 		c2 = 35468 // 65536 * sin(pi/8) * sqrt(2).

@@ -7,11 +7,6 @@ package vp8enc
 //go:noescape
 func fdctSIMD(src *byte, sStride int, ref *byte, rStride int, out *[16]int16)
 
-// idctAddSIMD is idctAddGo with the 4x4 blocks at ref and dst.
-//
-//go:noescape
-func idctAddSIMD(coef *[16]int16, ref *byte, rStride int, dst *byte, dStride int)
-
 // sse4SIMD is sse4Go of the 4x4 blocks at a and b.
 //
 //go:noescape

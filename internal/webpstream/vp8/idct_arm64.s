@@ -1,0 +1,115 @@
+// The inverse transform of idct.go (inverseDCT4, which the encoder's
+// reconstruction repeats) with NEON, in 32-bit lanes, wrapping where the
+// Go code wraps: every byte that of the Go code.
+
+//go:build arm64 && go1.27 && !purego
+
+#include "textflag.h"
+
+// func idctAddAsm(coef *[16]int16, ref *byte, rStride int, dst *byte, dStride int)
+TEXT ·idctAddAsm(SB), NOSPLIT, $0-40
+	MOVD coef+0(FP), R0
+	MOVD ref+8(FP), R1
+	MOVD rStride+16(FP), R2
+	MOVD dst+24(FP), R3
+	MOVD dStride+32(FP), R4
+	MOVD $85627, R5
+	VDUP R5, V28.S4 // c1
+	MOVD $35468, R5
+	VDUP R5, V29.S4 // c2
+	MOVD $4, R5
+	VDUP R5, V27.S4
+	VLD1 (R0), [V0.H8, V1.H8]
+	// Pass 1: rows of coefficients, lanes the columns i.
+	VSXTL V0.H4, V2.S4  // c0
+	VSXTL2 V0.H8, V3.S4 // c4
+	VSXTL V1.H4, V4.S4  // c8
+	VSXTL2 V1.H8, V5.S4 // c12
+	VADD V4.S4, V2.S4, V6.S4 // a
+	VSUB V4.S4, V2.S4, V7.S4 // b
+	VMUL V29.S4, V3.S4, V8.S4
+	VMUL V28.S4, V5.S4, V9.S4
+	VSSHR $16, V8.S4, V8.S4
+	VSSHR $16, V9.S4, V9.S4
+	VSUB V9.S4, V8.S4, V10.S4 // c
+	VMUL V28.S4, V3.S4, V8.S4
+	VMUL V29.S4, V5.S4, V9.S4
+	VSSHR $16, V8.S4, V8.S4
+	VSSHR $16, V9.S4, V9.S4
+	VADD V9.S4, V8.S4, V11.S4 // d
+	VADD V11.S4, V6.S4, V12.S4
+	VADD V10.S4, V7.S4, V13.S4
+	VSUB V10.S4, V7.S4, V14.S4
+	VSUB V11.S4, V6.S4, V15.S4
+	// Transposed: lanes j of m[0][j], ..., m[3][j].
+	VTRN1 V13.S4, V12.S4, V16.S4
+	VTRN2 V13.S4, V12.S4, V17.S4
+	VTRN1 V15.S4, V14.S4, V18.S4
+	VTRN2 V15.S4, V14.S4, V19.S4
+	VTRN1 V18.D2, V16.D2, V12.D2
+	VTRN2 V18.D2, V16.D2, V14.D2
+	VTRN1 V19.D2, V17.D2, V13.D2
+	VTRN2 V19.D2, V17.D2, V15.D2
+	// Pass 2.
+	VADD V27.S4, V12.S4, V12.S4
+	VADD V14.S4, V12.S4, V6.S4 // a
+	VSUB V14.S4, V12.S4, V7.S4 // b
+	VMUL V29.S4, V13.S4, V8.S4
+	VMUL V28.S4, V15.S4, V9.S4
+	VSSHR $16, V8.S4, V8.S4
+	VSSHR $16, V9.S4, V9.S4
+	VSUB V9.S4, V8.S4, V10.S4 // c
+	VMUL V28.S4, V13.S4, V8.S4
+	VMUL V29.S4, V15.S4, V9.S4
+	VSSHR $16, V8.S4, V8.S4
+	VSSHR $16, V9.S4, V9.S4
+	VADD V9.S4, V8.S4, V11.S4 // d
+	VADD V11.S4, V6.S4, V12.S4
+	VADD V10.S4, V7.S4, V13.S4
+	VSUB V10.S4, V7.S4, V14.S4
+	VSUB V11.S4, V6.S4, V15.S4
+	VSSHR $3, V12.S4, V12.S4
+	VSSHR $3, V13.S4, V13.S4
+	VSSHR $3, V14.S4, V14.S4
+	VSSHR $3, V15.S4, V15.S4
+	// Transposed: the rows of the residual.
+	VTRN1 V13.S4, V12.S4, V16.S4
+	VTRN2 V13.S4, V12.S4, V17.S4
+	VTRN1 V15.S4, V14.S4, V18.S4
+	VTRN2 V15.S4, V14.S4, V19.S4
+	VTRN1 V18.D2, V16.D2, V12.D2
+	VTRN2 V18.D2, V16.D2, V14.D2
+	VTRN1 V19.D2, V17.D2, V13.D2
+	VTRN2 V19.D2, V17.D2, V15.D2
+	// Plus ref, then saturated to 16 and to 8 bits: clipped as clip8 does.
+	VLD1 (R1), V0.S[0]
+	ADD R2, R1, R1
+	VLD1 (R1), V0.S[1]
+	ADD R2, R1, R1
+	VLD1 (R1), V0.S[2]
+	ADD R2, R1, R1
+	VLD1 (R1), V0.S[3]
+	VUXTL V0.B8, V1.H8
+	VUXTL2 V0.B16, V2.H8
+	VUXTL V1.H4, V3.S4
+	VUXTL2 V1.H8, V4.S4
+	VUXTL V2.H4, V5.S4
+	VUXTL2 V2.H8, V6.S4
+	VADD V3.S4, V12.S4, V12.S4
+	VADD V4.S4, V13.S4, V13.S4
+	VADD V5.S4, V14.S4, V14.S4
+	VADD V6.S4, V15.S4, V15.S4
+	VSQXTN V12.S4, V16.H4
+	VSQXTN2 V13.S4, V16.H8
+	VSQXTN V14.S4, V17.H4
+	VSQXTN2 V15.S4, V17.H8
+	VSQXTUN V16.H8, V18.B8
+	VSQXTUN V17.H8, V19.B8
+	VST1 V18.S[0], (R3)
+	ADD R4, R3, R3
+	VST1 V18.S[1], (R3)
+	ADD R4, R3, R3
+	VST1 V19.S[0], (R3)
+	ADD R4, R3, R3
+	VST1 V19.S[1], (R3)
+	RET
