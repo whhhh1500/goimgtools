@@ -154,17 +154,22 @@ func (h *codeLUT) init(s *huffmanSpec) {
 	}
 }
 
-// emitCode emits the code of sym. A symbol without a code means the
-// statistics and the data disagree, which is a bug, not bad input.
+// emitCode emits the code of sym.
 func (e *encoder) emitCode(h *codeLUT, sym uint8) {
-	x := h[sym]
-	if x == 0 {
-		if e.err == nil {
-			e.err = errors.New("goimgtools: jpeg symbol without a Huffman code")
-		}
-		return
+	if x := e.codeOf(h, sym); x != 0 {
+		e.emit(x&(1<<24-1), x>>24)
 	}
-	e.emit(x&(1<<24-1), x>>24)
+}
+
+// codeOf is the code of sym (a huffmanLUT entry), or 0 for none. A symbol
+// without a code means the statistics and the data disagree, which is a
+// bug, not bad input.
+func (e *encoder) codeOf(h *codeLUT, sym uint8) uint32 {
+	x := h[sym]
+	if x == 0 && e.err == nil {
+		e.err = errors.New("goimgtools: jpeg symbol without a Huffman code")
+	}
+	return x
 }
 
 // writeDHTSpecs writes a Define Huffman Table marker for each of specs, as
@@ -339,28 +344,50 @@ func (e *encoder) writeOptimized(src pipeline.Source, first image.Image, size im
 	}
 	defer env.Budget.Release(stagedReadBuf)
 	rd := &stageReader{sp: sp, buf: make([]byte, stagedReadBuf)}
+	// Each symbol's code goes in with its value bits, in an accumulator of
+	// up to 64 bits held in local variables for the block (see
+	// writeQuantized).
 	recode := func(q int) {
 		dc, ac := &luts[2*q], &luts[2*q+1]
+		acc, n := e.bits, e.nBits
 		rd.need()
 		s := rd.buf[rd.r]
 		rd.r++
-		e.emitCode(dc, s)
+		x := e.codeOf(dc, s)
+		size, code := x>>24, uint64(x&(1<<24-1))
 		if s != 0 {
-			e.emit(rd.value(uint32(s)), uint32(s))
+			code, size = code<<s|uint64(rd.value(uint32(s))), size+uint32(s)
+		}
+		if n+size > 64 {
+			acc, n = e.put64(acc, n, code, size)
+		} else {
+			acc, n = acc<<(size&63)|code, n+size
 		}
 		for k := 1; k < blockSize; {
 			rd.need()
 			rs := rd.buf[rd.r]
 			rd.r++
-			e.emitCode(ac, rs)
+			x := e.codeOf(ac, rs)
+			size, code := x>>24, uint64(x&(1<<24-1))
+			if rs != 0x00 {
+				k += int(rs>>4) + 1
+				if nb := uint32(rs & 0x0f); nb != 0 {
+					code, size = code<<nb|uint64(rd.value(nb)), size+nb
+				}
+			}
+			if n+size > 64 {
+				acc, n = e.put64(acc, n, code, size)
+			} else {
+				acc, n = acc<<(size&63)|code, n+size
+			}
 			if rs == 0x00 {
 				break
 			}
-			k += int(rs>>4) + 1
-			if n := uint32(rs & 0x0f); n != 0 {
-				e.emit(rd.value(n), n)
-			}
 		}
+		for n >= 32 {
+			acc, n = e.spillAcc(acc, n)
+		}
+		e.bits, e.nBits = acc, n
 	}
 	if nComponent == 1 {
 		for n := int64((size.X+7)/8) * int64((size.Y+7)/8); n > 0 && rd.err == nil && e.err == nil; n-- {

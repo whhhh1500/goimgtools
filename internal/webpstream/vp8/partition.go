@@ -117,18 +117,34 @@ func (p *partition) refill(value uint64, nb int) (uint64, int, bool) {
 // bitOf is readBit for a reader whose value, bits and rangeM1 are held by
 // the caller in local variables (refilled first when bits is below 0),
 // small enough to be inlined: it returns the bit and the new state.
+//
+// As libwebp's VP8GetBitAlt, a range that stays at 127 or more (less 1:
+// 126) needs no renormalizing, and one below is renormalized from tables.
 func bitOf(value uint64, nb int, rangeM1 uint32, prob uint8) (bool, uint64, int, uint32) {
 	pos := uint(nb) & 63
 	split := rangeM1 * uint32(prob) >> 8
-	rng := split + 1
+	r := split
 	bit := uint32(value>>pos) > split
 	if bit {
-		rng = rangeM1 - split
+		r = rangeM1 - split - 1
 		value -= uint64(split+1) << pos
 	}
-	shift := 7 ^ (31 - bits.LeadingZeros32(rng))
-	return bit, value, nb - shift, rng<<shift - 1
+	if r <= 0x7e {
+		nb -= int(log2Range[r&0x7f])
+		r = uint32(newRange[r&0x7f])
+	}
+	return bit, value, nb, r
 }
+
+// log2Range[r] is how far a range of r+1 (below 128) is shifted to reach
+// 128 or more, and newRange[r] the range less 1 after that.
+var log2Range, newRange = func() (l, n [128]uint8) {
+	for r := range l {
+		shift := 7 ^ (31 - bits.LeadingZeros32(uint32(r+1)))
+		l[r], n[r] = uint8(shift), uint8((r+1)<<shift-1)
+	}
+	return
+}()
 
 // signedOf is libwebp's VP8GetSigned: the next bit, of probability one
 // half, as the sign of v, without a branch (the sign of a coefficient is as

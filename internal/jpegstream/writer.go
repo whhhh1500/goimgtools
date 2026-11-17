@@ -434,7 +434,9 @@ func (e *encoder) quantizeCoefs(b *block, q quantIndex, zz *qblock) {
 // prevDC, and returns its DC.
 //
 // Each value goes in with its code, the accumulator held in local variables
-// for the whole block.
+// for the whole block; within the block it fills up to 64 bits before
+// eight bytes go out (as libjpeg-turbo's put_buffer), and is left with
+// fewer than 32, as emit leaves it.
 func (e *encoder) writeQuantized(zz *qblock, q quantIndex, prevDC int32) int32 {
 	dcLUT, acLUT := theHuffmanLUT[2*q], theHuffmanLUT[2*q+1]
 	acc, n := e.bits, e.nBits
@@ -446,9 +448,11 @@ func (e *encoder) writeQuantized(zz *qblock, q quantIndex, prevDC int32) int32 {
 	nb := uint32(mbits.Len32(uint32((v ^ s) - s)))
 	x := dcLUT[nb]
 	size := x>>24 + nb
-	acc = acc<<(size&63) | uint64((x&(1<<24-1))<<nb|uint32(v+s)&(1<<nb-1))
-	if n += size; n >= 32 {
-		acc, n = e.spillAcc(acc, n)
+	code := uint64((x&(1<<24-1))<<nb | uint32(v+s)&(1<<nb-1))
+	if n+size > 64 {
+		acc, n = e.put64(acc, n, code, size)
+	} else {
+		acc, n = acc<<(size&63)|code, n+size
 	}
 	nz := nonzeros(zz) &^ 1
 	last := 0
@@ -457,9 +461,11 @@ func (e *encoder) writeQuantized(zz *qblock, q quantIndex, prevDC int32) int32 {
 		run := uint32(zig - last - 1)
 		for ; run > 15; run -= 16 {
 			x := acLUT[0xf0]
-			acc = acc<<(x>>24&63) | uint64(x&(1<<24-1))
-			if n += x >> 24; n >= 32 {
-				acc, n = e.spillAcc(acc, n)
+			size := x >> 24
+			if n+size > 64 {
+				acc, n = e.put64(acc, n, uint64(x&(1<<24-1)), size)
+			} else {
+				acc, n = acc<<(size&63)|uint64(x&(1<<24-1)), n+size
 			}
 		}
 		v := int32(zz[zig])
@@ -467,21 +473,53 @@ func (e *encoder) writeQuantized(zz *qblock, q quantIndex, prevDC int32) int32 {
 		nb := uint32(mbits.Len32(uint32((v ^ s) - s)))
 		x := acLUT[run<<4|nb]
 		size := x>>24 + nb
-		acc = acc<<(size&63) | uint64((x&(1<<24-1))<<nb|uint32(v+s)&(1<<nb-1))
-		if n += size; n >= 32 {
-			acc, n = e.spillAcc(acc, n)
+		code := uint64((x&(1<<24-1))<<nb | uint32(v+s)&(1<<nb-1))
+		if n+size > 64 {
+			acc, n = e.put64(acc, n, code, size)
+		} else {
+			acc, n = acc<<(size&63)|code, n+size
 		}
 		last = zig
 	}
 	if last != blockSize-1 {
 		x := acLUT[0x00]
-		acc = acc<<(x>>24&63) | uint64(x&(1<<24-1))
-		if n += x >> 24; n >= 32 {
-			acc, n = e.spillAcc(acc, n)
+		size := x >> 24
+		if n+size > 64 {
+			acc, n = e.put64(acc, n, uint64(x&(1<<24-1)), size)
+		} else {
+			acc, n = acc<<(size&63)|uint64(x&(1<<24-1)), n+size
 		}
+	}
+	for n >= 32 {
+		acc, n = e.spillAcc(acc, n)
 	}
 	e.bits, e.nBits = acc, n
 	return dc
+}
+
+// put64 adds the size low bits of code to the accumulator acc of n bits
+// when they do not fit: the accumulator filled to 64 bits goes out as
+// eight bytes (each 0xff followed by a stuffed 0x00), and the rest of code
+// is what is left.
+func (e *encoder) put64(acc uint64, n uint32, code uint64, size uint32) (uint64, uint32) {
+	k := 64 - n
+	w := acc<<k | code>>(size-k)
+	if (^w-0x0101010101010101)&w&0x8080808080808080 == 0 { // no 0xff byte
+		e.out = binary.BigEndian.AppendUint64(e.out, w)
+	} else {
+		for s := 56; s >= 0; s -= 8 {
+			b := byte(w >> s)
+			e.out = append(e.out, b)
+			if b == 0xff {
+				e.out = append(e.out, 0x00)
+			}
+		}
+	}
+	if len(e.out) >= 4096 {
+		e.drain()
+	}
+	n = size - k
+	return code & (1<<n - 1), n
 }
 
 // nonzeros returns the mask of the nonzero values of zz: bit k is set when
