@@ -102,7 +102,7 @@ The JPEG written here is 5% smaller (120,675 bytes against 127,372, libjpeg-turb
 | Without shrinking, to TIFF (uncompressed) | 96MB | 6.4MB | 0.10s |
 | Rotate 90°, without shrinking | 6.0MB | 12.4MB | 0.73s |
 | Rotate 90°, then shrink to 1536 | 0.1MB | 15.5MB | 0.20s |
-| Shrink to 1536, GIF output | 0.5MB | 12.9MB | 0.43s |
+| Shrink to 1536, GIF output | 0.5MB | 14.7MB | 0.42s |
 | Without shrinking, outlined text watermark tiled across the whole image | 6.3MB | 10.6MB | 0.22s |
 | Shrink to 1536, lossy WebP output | 10KB | 9.2MB | 0.30s |
 
