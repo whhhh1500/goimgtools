@@ -35,6 +35,7 @@
 - 有损 WebP 分段量化：各段使用独立的量化级别（移植自 libwebp 的空间噪声整形）。
 - `pipeline.Env.SetHelpers`、`Helpers`、`Parallel`、`Go`：供处理环节将工作分摊至多个核。
 - TIFF 输出：`TIFFLZW` 压缩（libtiff 的写法）与 `TIFFOptions.Predictor`（水平差分，sharp 的默认设置）：一张 2400 万像素照片 LZW 82 → 52MB、Deflate 67 → 45MB；`-tiff-compression lzw`、`-tiff-predictor`。
+- `SharpenOptions.Method` 新增 `SharpenLightness`，配合 `SharpenOptions.Curve`（`SharpenCurve`、`DefaultSharpenCurve`）：sharp 带 sigma 的 `sharpen`，只锐化明度（仅在少数像素上相差 1 级）；按名字调用 `sharpen SIGMA,lightness[,FLAT,JAGGED,JAGGED_FROM,MAX_BRIGHTEN,MAX_DARKEN]`，命令行 `-sharpen` 同样写法。
 - `Affine(a, b, c, d, AffineOptions{...})`：与 sharp 的 `affine` 逐字节一致（`Interpolator` 可选双线性、最近邻、双三次，含透明与不含透明）；按名字调用 `affine A,B,C,D[,BACKGROUND[,IDX,IDY,ODX,ODY]][,bilinear|nearest|bicubic]`。
 - `EnsureAlpha`（与 sharp 的 `ensureAlpha` 逐字节一致）；按名字调用 `ensure-alpha [ALPHA]`。
 - 缩放核 `KernelMKS2013` 与 `KernelMKS2021`（Magic Kernel Sharp，即 sharp 的 `mks2013`、`mks2021`）；命令行 `-kernel mks2013|mks2021`。

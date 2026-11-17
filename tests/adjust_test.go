@@ -449,6 +449,41 @@ func TestBlurKernel(t *testing.T) {
 	}
 }
 
+// TestSharpenLightness: SharpenLightness is sharp's sharpen with a sigma,
+// within a level on a few values (where sharp's cube roots, the C
+// library's, are a unit in the last place off the exact ones), with the
+// default curve, another, and with transparency.
+func TestSharpenLightness(t *testing.T) {
+	rgb, rgba := sourcePNG(t, "pillow/source.png"), sourcePNG(t, "pillow/median-rgba-source.png")
+	for _, c := range []struct {
+		name string
+		m    *Image
+	}{
+		{"sharpen-lightness-1", FromBytes(rgb).Sharpen(SharpenOptions{Sigma: 1, Method: SharpenLightness})},
+		{"sharpen-lightness-curve", FromBytes(rgb).Sharpen(SharpenOptions{Sigma: 2.5, Method: SharpenLightness,
+			Curve: &SharpenCurve{Flat: 0.5, Jagged: 3, JaggedFrom: 1.5, MaxBrighten: 15, MaxDarken: 25}})},
+		{"sharpen-lightness-rgba", FromBytes(rgba).Sharpen(SharpenOptions{Sigma: 1, Method: SharpenLightness})},
+	} {
+		got := decodePNG(t, must(c.m.PNG().ToBytes()))
+		maxd, mean, over := channelDiff(t, got, readPNG(t, "sharp/"+c.name+".png"))
+		if maxd > 1 || over > 0 || mean > 0.001 {
+			t.Errorf("%s: differs from sharp by up to %d (mean %.5f)", c.name, maxd, mean)
+		}
+	}
+	// The curve is what was asked; by name the same.
+	a := must(FromBytes(rgb).Sharpen(SharpenOptions{Sigma: 0.8, Method: SharpenLightness, Curve: &SharpenCurve{Flat: 0, Jagged: 4, JaggedFrom: 1, MaxBrighten: 5, MaxDarken: 5}}).PNG().ToBytes())
+	b := must(FromBytes(rgb).Do("sharpen", "0.8", "lightness", "0", "4", "1", "5", "5").PNG().ToBytes())
+	if !bytes.Equal(a, b) {
+		t.Error("by name: another image")
+	}
+	for _, o := range []SharpenOptions{{Method: SharpenLightness}, {Sigma: 1, Method: SharpenLightness, Amount: 2},
+		{Sigma: 1, Curve: &SharpenCurve{}}, {Sigma: 1, Method: 5}, {Sigma: 1, Method: SharpenLightness, Curve: &SharpenCurve{Flat: -1}}} {
+		if _, err := FromBytes(rgb).Sharpen(o).PNG().ToBytes(); err == nil {
+			t.Errorf("Sharpen(%+v) accepted", o)
+		}
+	}
+}
+
 // TestSharpen: the unsharp mask is Pillow's UnsharpMask to the byte; the
 // mild sharpen its 3x3 kernel as computed here.
 func TestSharpen(t *testing.T) {

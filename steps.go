@@ -139,6 +139,9 @@ func describe(op operation) (string, []string) {
 		if o.o.Sigma == 0 {
 			return "sharpen", nil
 		}
+		if c := o.o.Curve; o.o.Method == SharpenLightness {
+			return "sharpen", []string{f(o.o.Sigma), "lightness", f(c.Flat), f(c.Jagged), f(c.JaggedFrom), f(c.MaxBrighten), f(c.MaxDarken)}
+		}
 		return "sharpen", []string{f(o.o.Sigma), f(o.o.Amount), d(o.o.Threshold)}
 	case extendOp:
 		if o.from {
@@ -722,8 +725,24 @@ var builtInOps = map[string]OperationDef{
 			m.Blur(v[0], o)
 			return nil
 		}},
-	"sharpen": {Name: "sharpen", Usage: "[SIGMA[,AMOUNT[,THRESHOLD]]]", Help: "Sharpen: mild without arguments, else an unsharp mask",
+	"sharpen": {Name: "sharpen", Usage: "[SIGMA[,AMOUNT[,THRESHOLD]]] or SIGMA,lightness[,FLAT,JAGGED,JAGGED_FROM,MAX_BRIGHTEN,MAX_DARKEN]",
+		Help: "Sharpen: mild without arguments, else an unsharp mask (Pillow's), or sharp's on the lightness",
 		builtIn: func(m *Image, a []string) error {
+			if len(a) >= 2 && a[1] == "lightness" {
+				if len(a) != 2 && len(a) != 7 {
+					return errors.New("want SIGMA,lightness, then FLAT,JAGGED,JAGGED_FROM,MAX_BRIGHTEN,MAX_DARKEN")
+				}
+				v, err := argFloats(append(a[:1:1], a[2:]...))
+				if err != nil {
+					return err
+				}
+				o := SharpenOptions{Sigma: v[0], Method: SharpenLightness}
+				if len(v) == 6 {
+					o.Curve = &SharpenCurve{Flat: v[1], Jagged: v[2], JaggedFrom: v[3], MaxBrighten: v[4], MaxDarken: v[5]}
+				}
+				m.Sharpen(o)
+				return nil
+			}
 			if err := wantArgs(a, 0, 3); err != nil {
 				return err
 			}

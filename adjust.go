@@ -139,13 +139,52 @@ type SharpenOptions struct {
 	// that flat areas do not get grainy. The default is 0: every difference
 	// is sharpened. Pillow's UnsharpMask uses 3.
 	Threshold int
+	// Method is the unsharp mask a Sigma makes: SharpenChannels (the
+	// default), Pillow's UnsharpMask, which sharpens red, green and blue
+	// each with Amount and Threshold; or SharpenLightness, sharp's sharpen
+	// with a sigma, which sharpens the lightness alone (L* of L*a*b*), so
+	// that colours do not shift, by its Curve.
+	Method SharpenMethod
+	// Curve is how SharpenLightness turns the difference of the lightness
+	// to its blur into the change it makes; nil is sharp's default
+	// (DefaultSharpenCurve).
+	Curve *SharpenCurve
 }
+
+// SharpenMethod is a way Sharpen sharpens with a Sigma.
+type SharpenMethod int
+
+const (
+	// SharpenChannels is Pillow's UnsharpMask: red, green and blue each
+	// sharpened by Amount where they differ from their blur by more than
+	// Threshold.
+	SharpenChannels SharpenMethod = iota
+	// SharpenLightness is sharp's sharpen with a sigma (libvips' sharpen):
+	// the lightness alone, by SharpenCurve, colours unchanged. The result
+	// is sharp's, within a level on a few pixels (where sharp's own result
+	// depends on the system's C library).
+	SharpenLightness
+)
+
+// SharpenCurve is how SharpenLightness maps the difference of a pixel's
+// lightness to its blur (in L* units, 0 to 100) to the lightness it adds:
+// Flat times the difference up to JaggedFrom either way, Jagged times what
+// lies beyond, at most MaxBrighten and MaxDarken in all. The fields are
+// sharp's m1, m2, x1, y2 and y3, each at least 0.
+type SharpenCurve struct {
+	Flat, Jagged, JaggedFrom, MaxBrighten, MaxDarken float64
+}
+
+// DefaultSharpenCurve is sharp's: flat areas sharpened by 1, jagged ones
+// (differences of more than 2) by 2, at most 10 lighter and 20 darker.
+var DefaultSharpenCurve = SharpenCurve{Flat: 1, Jagged: 2, JaggedFrom: 2, MaxBrighten: 10, MaxDarken: 20}
 
 // Sharpen makes the image crisper. Without options it is sharp's mild
 // sharpen, a 3x3 kernel, cheap and the usual choice after making an image
 // smaller. With a Sigma it is an unsharp mask (see SharpenOptions): for an
 // image without transparency the result is that of Pillow's UnsharpMask,
-// to the byte (Amount counts in whole percent, as there).
+// to the byte (Amount counts in whole percent, as there); with Method
+// SharpenLightness, sharp's sharpen with a sigma.
 func (m *Image) Sharpen(opts ...SharpenOptions) *Image {
 	m.atMostOne("Sharpen", len(opts))
 	o := first(opts)
@@ -161,8 +200,31 @@ func (m *Image) Sharpen(opts ...SharpenOptions) *Image {
 	if o.Threshold < 0 || o.Threshold > 255 {
 		return m.fail(errors.New("goimgtools: Sharpen Threshold must be 0 to 255"))
 	}
-	if o.Sigma > 0 && o.Amount == 0 {
-		o.Amount = 1.5
+	switch o.Method {
+	case SharpenChannels:
+		if o.Curve != nil {
+			return m.fail(errors.New("goimgtools: Sharpen Curve goes with SharpenLightness"))
+		}
+		if o.Sigma > 0 && o.Amount == 0 {
+			o.Amount = 1.5
+		}
+	case SharpenLightness:
+		if o.Sigma == 0 || o.Amount != 0 || o.Threshold != 0 {
+			return m.fail(errors.New("goimgtools: SharpenLightness takes a Sigma and a Curve, not Amount and Threshold"))
+		}
+		if o.Curve == nil {
+			c := DefaultSharpenCurve
+			o.Curve = &c
+		}
+		c := *o.Curve
+		o.Curve = &c // the caller's may change
+		for _, v := range []float64{c.Flat, c.Jagged, c.JaggedFrom, c.MaxBrighten, c.MaxDarken} {
+			if !(v >= 0) || math.IsInf(v, 0) {
+				return m.fail(errors.New("goimgtools: SharpenCurve takes finite numbers, at least 0"))
+			}
+		}
+	default:
+		return m.fail(fmt.Errorf("goimgtools: unknown SharpenMethod %d", o.Method))
 	}
 	return m.add(sharpenOp{o})
 }
@@ -326,6 +388,10 @@ type sharpenOp struct{ o SharpenOptions }
 func (o sharpenOp) apply(src pipeline.Source, r *run) (pipeline.Source, error) {
 	if r.sizeOnly {
 		return src, nil
+	}
+	if o.o.Method == SharpenLightness {
+		c := o.o.Curve
+		return ops.SharpenLab(src, o.o.Sigma, c.Flat, c.Jagged, c.JaggedFrom, c.MaxBrighten, c.MaxDarken)
 	}
 	return ops.Sharpen(src, o.o.Sigma, int(math.Round(o.o.Amount*100)), o.o.Threshold)
 }

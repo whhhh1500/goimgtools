@@ -150,7 +150,7 @@ func register(fs *flag.FlagSet) *options {
 		blur:           fs.Float64("blur", 0, "Gaussian blur of this `sigma` in pixels (as Pillow's GaussianBlur, or sharp's with -blur-method kernel)"),
 		blurMethod:     fs.String("blur-method", "boxes", "how -blur works out its Gaussian: boxes (as Pillow) or kernel (as sharp)"),
 		blurMinAmp:     fs.Float64("blur-min-amplitude", 0, "cut the Gaussian of -blur-method kernel off below this `fraction` of its peak, 0.001 to 1 (0.2 by default, as sharp)"),
-		sharpen:        fs.String("sharpen", "", "sharpen: mild (a quick 3x3 sharpen, good after shrinking), or an unsharp mask `SIGMA[,AMOUNT[,THRESHOLD]]` as Pillow's (amount 1.5, threshold 0 by default)"),
+		sharpen:        fs.String("sharpen", "", "sharpen: mild (a quick 3x3 sharpen, good after shrinking), an unsharp mask `SIGMA[,AMOUNT[,THRESHOLD]]` as Pillow's (amount 1.5, threshold 0 by default), or SIGMA,lightness[,FLAT,JAGGED,JAGGED_FROM,MAX_BRIGHTEN,MAX_DARKEN] as sharp's (the lightness alone; 1,2,2,10,20 by default)"),
 		kernel:         fs.String("kernel", "cubic", "resize filter: nearest, linear, cubic, mitchell, lanczos2, lanczos3, mks2013, mks2021"),
 		noEnlarge:      fs.Bool("no-enlarge", false, "never make the image larger than it is"),
 		fast:           fs.Bool("fast-shrink", false, "let a JPEG reduced to half size or less be shrunk while it is decoded: faster, pixels differ slightly"),
@@ -575,7 +575,20 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 		im.Blur(*o.blur, goimgtools.BlurOptions{Method: method, MinAmplitude: *o.blurMinAmp})
 	}
 	if *o.sharpen != "" {
-		if strings.EqualFold(*o.sharpen, "mild") {
+		if parts := strings.Split(*o.sharpen, ","); len(parts) >= 2 && strings.EqualFold(parts[1], "lightness") {
+			if len(parts) != 2 && len(parts) != 7 {
+				return nil, fmt.Errorf("-sharpen: want SIGMA,lightness or SIGMA,lightness,FLAT,JAGGED,JAGGED_FROM,MAX_BRIGHTEN,MAX_DARKEN, got %q", *o.sharpen)
+			}
+			v, err := floats(strings.Join(append(parts[:1:1], parts[2:]...), ","), len(parts)-1)
+			if err != nil {
+				return nil, fmt.Errorf("-sharpen: %w", err)
+			}
+			so := goimgtools.SharpenOptions{Sigma: v[0], Method: goimgtools.SharpenLightness}
+			if len(v) == 6 {
+				so.Curve = &goimgtools.SharpenCurve{Flat: v[1], Jagged: v[2], JaggedFrom: v[3], MaxBrighten: v[4], MaxDarken: v[5]}
+			}
+			im.Sharpen(so)
+		} else if strings.EqualFold(*o.sharpen, "mild") {
 			im.Sharpen()
 		} else {
 			parts := strings.Split(*o.sharpen, ",")

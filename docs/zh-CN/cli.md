@@ -73,6 +73,7 @@ goimgtools -op median:3 -op normalize -op "tint:#704214" scan.jpg out.jpg
 | `-blur-method boxes\|kernel` | `boxes`（默认）：同 Pillow 的 `GaussianBlur`；`kernel`：同 sharp 的 `blur` |
 | `-blur-min-amplitude F` | `-blur-method kernel` 截断高斯核的位置，0.001–1（默认 0.2） |
 | `-sharpen mild\|SIGMA[,AMOUNT[,THRESHOLD]]` | `mild` 为轻度锐化；否则为反锐化掩模（`AMOUNT` 默认 1.5，`THRESHOLD` 默认 0） |
+| `-sharpen SIGMA,lightness[,FLAT,JAGGED,JAGGED_FROM,MAX_BRIGHTEN,MAX_DARKEN]` | sharp 带 sigma 的锐化：只锐化明度，按其曲线（即 sharp 的 m1、m2、x1、y2、y3，默认 1,2,2,10,20） |
 | `-flatten 颜色` | 以指定颜色铺底 |
 | `-watermark 文件` / `-watermark-text 文字` | 图片水印 / 文字水印（`\n` 表示换行） |
 | `-watermark-width N\|N%` | 将水印缩放至 N 像素宽，或主图宽度的 N%（批量处理尺寸不一的图像时水印大小一致） |

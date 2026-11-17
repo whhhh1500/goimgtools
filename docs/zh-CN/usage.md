@@ -67,6 +67,7 @@ err := goimgtools.Open("in.jpg").
 | `Blur(sigma, BlurOptions{Method, MinAmplitude})` | 高斯模糊，sigma 须大于 0 且不超过 1000 像素。默认（`BlurBoxes`）为 Pillow 的 `GaussianBlur`：三次方框模糊，不含透明的图像与 Pillow 逐字节一致。`BlurKernel` 与 sharp 的 `blur` 逐字节一致（含透明图像）：直接用高斯核，权重为 libvips 的整数权重，在低于峰值的 `MinAmplitude` 处截断（默认 0.2，即 sharp 的 `minAmplitude`，因此同一 sigma 下比 Pillow 模糊得轻）。两种方式的耗时都几乎不随 sigma 变化 |
 | `Sharpen()` | 轻度锐化（sharp 的 3×3 卷积核），适用于缩小之后 |
 | `Sharpen(SharpenOptions{Sigma, Amount, Threshold})` | 反锐化掩模（Pillow 的 `UnsharpMask`），`Amount` 默认为 1.5 |
+| `Sharpen(SharpenOptions{Sigma, Method: SharpenLightness, Curve})` | sharp 带 sigma 的 `sharpen`：只锐化明度（L\*a\*b\* 的 L\*），颜色不偏移；`Curve`（`SharpenCurve{Flat, Jagged, JaggedFrom, MaxBrighten, MaxDarken}`，即 sharp 的 m1、m2、x1、y2、y3；nil 为 sharp 的默认值）把与模糊的差映射为改变量。与 sharp 的结果仅在少数像素上相差 1 级 |
 | `Flatten(color)` | 去除透明，铺底色 |
 | `Recomb(matrix)` | 按矩阵重组通道：3 行 3 列（或 4 行 4 列，第四行生成透明度），每行给出结果的一个通道，即各通道值乘以该行各数之和，舍去小数。与 sharp 的 `recomb` 逐字节一致；`{{0.393, 0.769, 0.189}, {0.349, 0.686, 0.168}, {0.272, 0.534, 0.131}}` 为褐色调 |
 | `Unflatten()` | 白色像素变为透明（灰度按 sharp 的方式计算为 255 的像素）；在 `Threshold` 之后使用，则达到阈值的像素全部变透明。与 sharp 的 `unflatten` 逐字节一致 |
