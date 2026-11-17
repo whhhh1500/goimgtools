@@ -66,6 +66,9 @@ func TestSameWithHelpers(t *testing.T) {
 		"mild sharpen": func(m *Image) *Image { return m.Sharpen() },
 		"modulate":     func(m *Image) *Image { return m.Modulate(1.1, 1.4, 33) },
 		"median 5":     func(m *Image) *Image { return m.Median(5) },
+		"rank 5, 3":    func(m *Image) *Image { return m.Rank(5, 3) },
+		"dilate 2":     func(m *Image) *Image { return m.Dilate(2) },
+		"erode 30":     func(m *Image) *Image { return m.Erode(30) },
 		"resize in linear light": func(m *Image) *Image {
 			return m.Resize(1100, 37, ResizeOptions{Fit: FitFill, LinearLight: true})
 		},

@@ -295,6 +295,31 @@ func Median(src pipeline.Source, size int) (pipeline.Source, error) {
 	})
 }
 
+// Rank gives each pixel, channel by channel, the value of the given rank
+// (0 the smallest) among the size x size window around it (size odd, 1 to
+// MaxWindow), as Pillow's RankFilter, to the byte; transparency is
+// filtered as a channel too (an opaque image stays opaque).
+func Rank(src pipeline.Source, size, rank int) (pipeline.Source, error) {
+	if size < 1 || size > MaxWindow || size%2 == 0 {
+		return nil, errors.New("goimgtools: Rank size must be odd, 1 to 99")
+	}
+	if rank < 0 || rank >= size*size {
+		return nil, errors.New("goimgtools: Rank rank must be 0 to size*size-1")
+	}
+	if size == 3 && rank == 4 {
+		return Median(src, 3)
+	}
+	r := size / 2
+	width := src.Bounds().Dx()
+	channels := 4
+	if pipeline.IsOpaque(src) {
+		channels = 3
+	}
+	return newWindow(src, r, func() func(win [][]uint8, dst []uint8) {
+		return func(win [][]uint8, dst []uint8) { medianRow(win, dst, width, r, rank, channels) }
+	})
+}
+
 // median3Row is medianRow for 3x3 windows: the median of nine is the
 // middle of the largest of the smallest, the middle of the middles and the
 // smallest of the largest of the window's three columns, each sorted, and

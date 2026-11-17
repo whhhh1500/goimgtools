@@ -168,6 +168,52 @@ func (m *Image) Median(size int) *Image {
 	return m.add(medianOp{size})
 }
 
+// Rank gives each pixel, channel by channel, the value of the given rank
+// among the size x size square around it, 0 the smallest: Pillow's
+// RankFilter, to the byte (the square reaching past the edges onto copies
+// of the edge pixels). Rank 0 is Pillow's MinFilter, which grows the dark
+// parts of the image and shrinks the light ones; size*size-1 is its
+// MaxFilter, the other way round; size*size/2 is Median. size is odd, 1 to
+// 99, and rank 0 to size*size-1. Transparency is filtered as a channel
+// too, as Pillow does. The memory it takes is size rows of the image.
+func (m *Image) Rank(size, rank int) *Image {
+	if size < 1 || size > ops.MaxWindow || size%2 == 0 {
+		return m.fail(errors.New("goimgtools: Rank size must be odd, 1 to 99"))
+	}
+	if rank < 0 || rank >= size*size {
+		return m.fail(errors.New("goimgtools: Rank rank must be 0 to size*size-1"))
+	}
+	return m.add(rankOp{size, rank})
+}
+
+// Dilate is sharp's dilate, to the byte: each channel of each pixel
+// becomes the bitwise AND of that channel over the square of 2·width+1
+// pixels around it (the square reaching past the edges onto copies of the
+// edge pixels). On a black-and-white image, as Threshold makes, that is the
+// darkest pixel of the square: black shapes, such as text on white, grow
+// by width pixels, and white ones shrink. On other images the AND of the
+// bits makes levels that no pixel had; Rank(2*width+1, 0) takes the
+// darkest instead. width is 1 (sharp's default) to 65536. Transparency is
+// a channel too, as with sharp. The time it takes hardly grows with width;
+// the memory it takes is 2·width+1 rows of the image.
+func (m *Image) Dilate(width int) *Image {
+	if width < 1 || width > ops.MaxMorphWidth {
+		return m.fail(errors.New("goimgtools: Dilate width must be 1 to 65536"))
+	}
+	return m.add(morphOp{width, true})
+}
+
+// Erode is sharp's erode, to the byte: as Dilate, with the bitwise OR,
+// which on a black-and-white image is the lightest pixel of the square:
+// black shapes shrink by width pixels and white ones grow. Rank with rank
+// size*size-1 takes the lightest on other images.
+func (m *Image) Erode(width int) *Image {
+	if width < 1 || width > ops.MaxMorphWidth {
+		return m.fail(errors.New("goimgtools: Erode width must be 1 to 65536"))
+	}
+	return m.add(morphOp{width, false})
+}
+
 // Convolution is a weighted window for Convolve.
 type Convolution struct {
 	// Width and Height are the sides of the window, odd, 1 to 99.
@@ -314,6 +360,27 @@ func (o medianOp) apply(src pipeline.Source, r *run) (pipeline.Source, error) {
 	return ops.Median(src, o.size)
 }
 
+type rankOp struct{ size, rank int }
+
+func (o rankOp) apply(src pipeline.Source, r *run) (pipeline.Source, error) {
+	if r.sizeOnly {
+		return src, nil
+	}
+	return ops.Rank(src, o.size, o.rank)
+}
+
+type morphOp struct {
+	width  int
+	dilate bool
+}
+
+func (o morphOp) apply(src pipeline.Source, r *run) (pipeline.Source, error) {
+	if r.sizeOnly {
+		return src, nil
+	}
+	return ops.Morph(src, o.width, o.dilate)
+}
+
 type convolveOp struct{ c Convolution }
 
 func (o convolveOp) apply(src pipeline.Source, r *run) (pipeline.Source, error) {
@@ -330,6 +397,27 @@ func (o convolveOp) words() []string {
 		w = append(w, f(v))
 	}
 	return append(w, f(o.c.Scale), f(o.c.Offset))
+}
+
+// morphStep reads the words of dilate and erode.
+func morphStep(m *Image, a []string, dilate bool) error {
+	if err := wantArgs(a, 0, 1); err != nil {
+		return err
+	}
+	width := 1
+	if len(a) == 1 {
+		v, err := argInts(a)
+		if err != nil {
+			return err
+		}
+		width = v[0]
+	}
+	if dilate {
+		m.Dilate(width)
+	} else {
+		m.Erode(width)
+	}
+	return nil
 }
 
 // levelOps are the named operations of this file (see builtInOps).
@@ -454,6 +542,22 @@ var levelOps = map[string]OperationDef{
 			m.Median(size)
 			return nil
 		}},
+	"rank": {Name: "rank", Usage: "SIZE,RANK", Help: "Rank: the RANK-th smallest value (from 0) of the SIZE x SIZE square, as Pillow's RankFilter",
+		builtIn: func(m *Image, a []string) error {
+			if err := wantArgs(a, 2, 2); err != nil {
+				return err
+			}
+			v, err := argInts(a)
+			if err != nil {
+				return err
+			}
+			m.Rank(v[0], v[1])
+			return nil
+		}},
+	"dilate": {Name: "dilate", Usage: "[WIDTH]", Help: "Dilate: black shapes grow by WIDTH pixels (1 by default), as sharp's dilate",
+		builtIn: func(m *Image, a []string) error { return morphStep(m, a, true) }},
+	"erode": {Name: "erode", Usage: "[WIDTH]", Help: "Erode: black shapes shrink by WIDTH pixels (1 by default), as sharp's erode",
+		builtIn: func(m *Image, a []string) error { return morphStep(m, a, false) }},
 	"convolve": {Name: "convolve", Usage: "W,H,WEIGHTS...[,SCALE[,OFFSET]]", Help: "Convolve: a W x H window of weights, row by row",
 		builtIn: func(m *Image, a []string) error {
 			if len(a) < 3 {

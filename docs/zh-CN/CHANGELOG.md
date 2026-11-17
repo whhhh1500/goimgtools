@@ -35,6 +35,9 @@
 - 有损 WebP 分段量化：各段使用独立的量化级别（移植自 libwebp 的空间噪声整形）。
 - `pipeline.Env.SetHelpers`、`Helpers`、`Parallel`、`Go`：供处理环节将工作分摊至多个核。
 - TIFF 输出：`TIFFLZW` 压缩（libtiff 的写法）与 `TIFFOptions.Predictor`（水平差分，sharp 的默认设置）：一张 2400 万像素照片 LZW 82 → 52MB、Deflate 67 → 45MB；`-tiff-compression lzw`、`-tiff-predictor`。
+- `EnsureAlpha`（与 sharp 的 `ensureAlpha` 逐字节一致）；按名字调用 `ensure-alpha [ALPHA]`。
+- 缩放核 `KernelMKS2013` 与 `KernelMKS2021`（Magic Kernel Sharp，即 sharp 的 `mks2013`、`mks2021`）；命令行 `-kernel mks2013|mks2021`。
+- `Rank`（Pillow 的 `RankFilter`、`MinFilter`、`MaxFilter`）、`Dilate` 与 `Erode`（sharp 的 `dilate`、`erode`），均逐字节一致；按名字调用 `rank SIZE,RANK`、`dilate [WIDTH]`、`erode [WIDTH]`。dilate 与 erode 的耗时几乎不随宽度增长（libvips 随宽度的平方增长）。
 - `BlurOptions`（`Method`：默认 `BlurBoxes` 即 Pillow 的算法，或 `BlurKernel`，与 sharp 的 `blur` 逐字节一致，含透明图像；`MinAmplitude` 即 sharp 的 `minAmplitude`）；按名字调用 `blur SIGMA,kernel[,MIN_AMPLITUDE]`；命令行 `-blur-method`、`-blur-min-amplitude`。高斯核拆成至多 20 个嵌套方框计算，耗时几乎不随 sigma 增长。
 - 仿照 sharp 的选项：`NegateOptions.Alpha`（透明度也取反，sharp 的默认做法）、`ThresholdOptions.PerChannel`（即 sharp 的 `greyscale: false`）、`ModulateOptions.Lightness`（即 sharp 的 `lightness`）与 `GrayscaleOptions.Linear`（即 sharp 的 `greyscale`，逐字节一致）；按名字调用 `negate alpha`、`threshold LEVEL,channels`、`modulate B,S,H,L`、`grayscale linear`；命令行 `-grayscale-linear`，`-modulate` 可加第四个数。
 - XMP：`KeepXmp()` / `-keep-xmp` 在 JPEG、PNG、WebP、TIFF 输出中保留 XMP 数据包；`Info.HasXmp`、`inspect.ReadXmp`；自定义格式可用 `EncodeOptions.Xmp` 与 `pipeline.Meta.Xmp`。读写方式与 sharp 相同（在 sharp 写出的文件上双向核对）。

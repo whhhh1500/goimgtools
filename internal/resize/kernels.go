@@ -29,6 +29,33 @@ var (
 
 	Lanczos2 = lanczos(2)
 	Lanczos3 = lanczos(3)
+
+	// MKS2013 and MKS2021 are Magic Kernel Sharp, after John Costella
+	// ("Solving the mystery of Magic Kernel Sharp", 2021), the pieces of
+	// each as libvips has them. (Each product is rounded before it is
+	// added, so that no processor fuses the two.)
+	MKS2013 = &draw.Kernel{Support: 2.5, At: func(t float64) float64 {
+		switch {
+		case t >= 1.5:
+			return float64((t-2.5)*(t-2.5)) / -8
+		case t >= 0.5:
+			return (float64(4*t*t) - float64(11*t) + 7) / 4
+		}
+		return 17.0/16 - float64(float64(7*t*t)/4)
+	}}
+	MKS2021 = &draw.Kernel{Support: 4.5, At: func(t float64) float64 {
+		switch {
+		case t >= 3.5:
+			return (float64(4*t*t) - float64(36*t) + 81) / -1152
+		case t >= 2.5:
+			return (float64(4*t*t) - float64(27*t) + 45) / 144
+		case t >= 1.5:
+			return (float64(24*t*t) - float64(113*t) + 130) / -144
+		case t >= 0.5:
+			return (float64(140*t*t) - float64(379*t) + 239) / 144
+		}
+		return 577.0/576 - float64(float64(239*t*t)/144)
+	}}
 )
 
 func lanczos(a float64) *draw.Kernel {

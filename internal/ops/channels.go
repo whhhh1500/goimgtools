@@ -95,3 +95,17 @@ func RemoveAlpha(src pipeline.Source) pipeline.Source {
 type opaqueSource struct{ pipeline.Source }
 
 func (opaqueSource) Opaque() bool { return true }
+
+// EnsureAlpha gives the pixels of an opaque src the alpha level; a source
+// that may have transparency is left as it is (sharp's ensureAlpha).
+func EnsureAlpha(src pipeline.Source, level uint8) pipeline.Source {
+	if !pipeline.IsOpaque(src) || level == 255 {
+		return src
+	}
+	return pipeline.Map(pipeline.WithAlpha(src), func(strip *image.NRGBA) error {
+		for i := 3; i < len(strip.Pix); i += 4 {
+			strip.Pix[i] = level
+		}
+		return nil
+	})
+}

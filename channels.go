@@ -57,6 +57,18 @@ func (m *Image) Unflatten() *Image { return m.add(channelOp{name: "unflatten"}) 
 // background: what transparency hid (often black) shows.
 func (m *Image) RemoveAlpha() *Image { return m.add(channelOp{name: "remove-alpha"}) }
 
+// EnsureAlpha gives an image without transparency an alpha channel of the
+// given opacity, 0 (clear) to 1 (opaque), as sharp's ensureAlpha, to the
+// byte: alpha·255 with its fraction dropped (0.5 is 127). An image whose
+// format can hold transparency keeps the transparency it has, as with
+// sharp (Flatten or RemoveAlpha first to replace it).
+func (m *Image) EnsureAlpha(alpha float64) *Image {
+	if !(alpha >= 0 && alpha <= 1) {
+		return m.fail(errors.New("goimgtools: EnsureAlpha alpha must be 0 to 1"))
+	}
+	return m.add(channelOp{name: "ensure-alpha", alpha: alpha})
+}
+
 // Channel is a channel of the pixels of an image, for ExtractChannel.
 type Channel int
 
@@ -109,8 +121,9 @@ func (o recombOp) words() []string {
 
 // channelOp is Unflatten, RemoveAlpha or ExtractChannel.
 type channelOp struct {
-	name string
-	ch   Channel
+	name  string
+	ch    Channel
+	alpha float64 // for ensure-alpha
 }
 
 func (o channelOp) apply(src pipeline.Source, r *run) (pipeline.Source, error) {
@@ -122,13 +135,18 @@ func (o channelOp) apply(src pipeline.Source, r *run) (pipeline.Source, error) {
 		return ops.Unflatten(src), nil
 	case "remove-alpha":
 		return ops.RemoveAlpha(src), nil
+	case "ensure-alpha":
+		return ops.EnsureAlpha(src, uint8(o.alpha*255)), nil
 	}
 	return ops.Channel(src, int(o.ch)), nil
 }
 
 func (o channelOp) words() []string {
-	if o.name == "extract-channel" {
+	switch o.name {
+	case "extract-channel":
 		return []string{channelNames[o.ch]}
+	case "ensure-alpha":
+		return []string{strconv.FormatFloat(o.alpha, 'g', -1, 64)}
 	}
 	return nil
 }
@@ -171,6 +189,22 @@ var channelOps = map[string]OperationDef{
 				return err
 			}
 			m.RemoveAlpha()
+			return nil
+		}},
+	"ensure-alpha": {Name: "ensure-alpha", Usage: "[ALPHA]", Help: "EnsureAlpha: an image without transparency gets the opacity ALPHA, 0 to 1 (1 by default)",
+		builtIn: func(m *Image, a []string) error {
+			if err := wantArgs(a, 0, 1); err != nil {
+				return err
+			}
+			alpha := 1.0
+			if len(a) == 1 {
+				v, err := argFloats(a)
+				if err != nil {
+					return err
+				}
+				alpha = v[0]
+			}
+			m.EnsureAlpha(alpha)
 			return nil
 		}},
 	"extract-channel": {Name: "extract-channel", Usage: "CHANNEL", Help: "ExtractChannel: a greyscale image of CHANNEL: red, green, blue or alpha",

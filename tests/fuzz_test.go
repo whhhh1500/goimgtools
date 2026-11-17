@@ -322,6 +322,17 @@ func FuzzChain(f *testing.F) {
 		if extra>>26&3 == 3 {
 			m.ExtendWith(int(w%5), int(h%9), int(w%3), int(h%70), Extension(more%3))
 		}
+		if extra>>28&3 == 3 {
+			if w&1 == 0 {
+				m.Dilate(1 + int(h%6))
+			} else {
+				m.Erode(1 + int(h%300))
+			}
+		}
+		if extra>>30&3 == 3 {
+			n := 1 + 2*int(w%4)
+			m.Rank(n, int(h)%(n*n))
+		}
 		if bit(22) {
 			m.KeepExif()
 		}

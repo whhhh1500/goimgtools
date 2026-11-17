@@ -489,3 +489,28 @@ func TestContainAndKernels(t *testing.T) {
 		t.Error("unknown kernel accepted")
 	}
 }
+
+// TestMKSKernels: KernelMKS2013 and KernelMKS2021 are the kernels of
+// sharp's mks2013 and mks2021: of all the kernels, each comes closest to
+// sharp's shrink with it. (The rest of the resize is x/image's, not
+// libvips', so the pixels are not sharp's to the byte.)
+func TestMKSKernels(t *testing.T) {
+	rgb := sourcePNG(t, "pillow/source.png")
+	all := []Kernel{KernelCubic, KernelNearest, KernelLinear, KernelMitchell, KernelLanczos2, KernelLanczos3, KernelMKS2013, KernelMKS2021}
+	for name, k := range map[string]Kernel{"mks2013": KernelMKS2013, "mks2021": KernelMKS2021} {
+		want := readPNG(t, "sharp/resize-"+name+"-60.png")
+		best, bestMean := Kernel(-1), 1e9
+		for _, o := range all {
+			got := decodePNG(t, must(FromBytes(rgb).Resize(60, 0, ResizeOptions{Kernel: o}).PNG().ToBytes()))
+			if _, mean, _ := channelDiff(t, got, want); mean < bestMean {
+				best, bestMean = o, mean
+			}
+		}
+		if best != k || bestMean > 0.85 {
+			t.Errorf("sharp's %s is closest to kernel %d (mean %.3f), want %d", name, best, bestMean, k)
+		}
+	}
+	if _, err := FromBytes(rgb).Do("resize", "60", "0", "inside", "mks2021").PNG().ToBytes(); err != nil {
+		t.Error(err)
+	}
+}

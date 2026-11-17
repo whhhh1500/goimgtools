@@ -649,3 +649,96 @@ func TestSharpOptions(t *testing.T) {
 		}
 	}
 }
+
+// TestMorphology: Dilate and Erode are sharp's dilate and erode to the
+// byte (the AND and OR of the bits of the square), on a photo, on black
+// and white after Threshold, with transparency, and with a square wider
+// than the image; Rank is Pillow's RankFilter, MinFilter and MaxFilter.
+func TestMorphology(t *testing.T) {
+	rgb, rgba := sourcePNG(t, "pillow/source.png"), sourcePNG(t, "pillow/median-rgba-source.png")
+	for _, c := range []struct {
+		name string
+		m    *Image
+	}{
+		{"sharp/dilate-1", FromBytes(rgb).Dilate(1)},
+		{"sharp/erode-3", FromBytes(rgb).Erode(3)},
+		{"sharp/threshold-dilate-2", FromBytes(rgb).Threshold(128).Dilate(2)},
+		{"sharp/threshold-erode-1", FromBytes(rgb).Threshold(128).Erode(1)},
+		{"sharp/dilate-rgba-1", FromBytes(rgba).Dilate(1)},
+		{"sharp/erode-rgba-200", FromBytes(rgba).Erode(200)},
+		{"pillow/min-3", FromBytes(rgb).Rank(3, 0)},
+		{"pillow/max-5", FromBytes(rgb).Rank(5, 24)},
+		{"pillow/rank-rgba-5-7", FromBytes(rgba).Rank(5, 7)},
+	} {
+		got := decodePNG(t, must(c.m.PNG().ToBytes()))
+		if maxd, mean, _ := channelDiff(t, got, readPNG(t, c.name+".png")); maxd != 0 {
+			t.Errorf("%s: differs by up to %d (mean %.3f)", c.name, maxd, mean)
+		}
+	}
+	// On black and white, dilate is the darkest of the square: a white
+	// image with one black pixel gets a black square of 2·width+1.
+	dot := image.NewGray(image.Rect(0, 0, 40, 30))
+	for i := range dot.Pix {
+		dot.Pix[i] = 255
+	}
+	dot.Pix[dot.PixOffset(20, 10)] = 0
+	got := decodePNG(t, must(FromImage(dot).Dilate(3).PNG().ToBytes()))
+	for y := 0; y < 30; y++ {
+		for x := 0; x < 40; x++ {
+			black := x >= 17 && x <= 23 && y >= 7 && y <= 13
+			if v := color.GrayModel.Convert(got.At(x, y)).(color.Gray).Y; (v == 0) != black {
+				t.Fatalf("dilate of a dot at %d,%d: %d", x, y, v)
+			}
+		}
+	}
+	// By name, and the words of the steps.
+	var words [][]string
+	FromBytes(rgb).Do("dilate").Do("erode", "4").Do("rank", "3", "8").
+		Around(func(s Step, in pipeline.Source, run func(pipeline.Source) (pipeline.Source, error)) (pipeline.Source, error) {
+			words = append(words, append([]string{s.Name}, s.Args...))
+			return run(in)
+		}).PNG().ToBytes()
+	if fmt.Sprint(words) != "[[dilate 1] [erode 4] [rank 3 8]]" {
+		t.Errorf("steps %v", words)
+	}
+	for _, m := range []*Image{FromBytes(rgb).Dilate(0), FromBytes(rgb).Erode(65537), FromBytes(rgb).Rank(4, 0), FromBytes(rgb).Rank(3, 9),
+		FromBytes(rgb).Rank(3, -1), FromBytes(rgb).Rank(101, 0), FromBytes(rgb).Do("dilate", "x")} {
+		if _, err := m.PNG().ToBytes(); err == nil {
+			t.Error("no error")
+		}
+	}
+}
+
+// TestEnsureAlpha: sharp's ensureAlpha, to the byte: the opacity times
+// 255 with the fraction dropped, on an image without transparency; one
+// with transparency keeps it.
+func TestEnsureAlpha(t *testing.T) {
+	rgb, rgba := sourcePNG(t, "pillow/source.png"), sourcePNG(t, "pillow/median-rgba-source.png")
+	src := decodePNG(t, rgb)
+	for alpha, want := range map[float64]uint8{0: 0, 0.25: 63, 0.3: 76, 0.5: 127, 0.999: 254, 1: 255} {
+		got := decodePNG(t, must(FromBytes(rgb).EnsureAlpha(alpha).PNG().ToBytes()))
+		for _, p := range [][2]int{{0, 0}, {77, 50}, {149, 102}} {
+			c, s := color.NRGBAModel.Convert(got.At(p[0], p[1])).(color.NRGBA), color.NRGBAModel.Convert(src.At(p[0], p[1])).(color.NRGBA)
+			if want != 0 && (c.R != s.R || c.G != s.G || c.B != s.B) || c.A != want {
+				t.Errorf("EnsureAlpha(%v) at %v: %v, want the colour of %v with alpha %d", alpha, p, c, s, want)
+			}
+		}
+	}
+	if a, b := must(FromBytes(rgba).EnsureAlpha(0.5).PNG().ToBytes()), must(FromBytes(rgba).PNG().ToBytes()); !bytes.Equal(a, b) {
+		t.Error("an image with transparency changed")
+	}
+	var words [][]string
+	FromBytes(rgb).Do("ensure-alpha").Do("ensure-alpha", "0.4").
+		Around(func(s Step, in pipeline.Source, run func(pipeline.Source) (pipeline.Source, error)) (pipeline.Source, error) {
+			words = append(words, append([]string{s.Name}, s.Args...))
+			return run(in)
+		}).PNG().ToBytes()
+	if fmt.Sprint(words) != "[[ensure-alpha 1] [ensure-alpha 0.4]]" {
+		t.Errorf("steps %v", words)
+	}
+	for _, m := range []*Image{FromBytes(rgb).EnsureAlpha(-0.1), FromBytes(rgb).EnsureAlpha(1.01), FromBytes(rgb).EnsureAlpha(math.NaN())} {
+		if _, err := m.PNG().ToBytes(); err == nil {
+			t.Error("no error")
+		}
+	}
+}

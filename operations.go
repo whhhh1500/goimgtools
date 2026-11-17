@@ -56,6 +56,12 @@ const (
 	// KernelLanczos3 is the sharpest and the slowest.
 	KernelLanczos2
 	KernelLanczos3
+	// KernelMKS2013 and KernelMKS2021 are John Costella's Magic Kernel
+	// Sharp of 2013 and 2021, as sharp's mks2013 and mks2021: little
+	// aliasing when shrinking, with a slight sharpening built in.
+	// KernelMKS2021 keeps finer detail and is the slower.
+	KernelMKS2013
+	KernelMKS2021
 )
 
 // ResizeOptions are the optional settings of Resize.
@@ -331,6 +337,10 @@ func resizeKernel(o ResizeOptions) (*draw.Kernel, error) {
 		return resize.Lanczos2, nil
 	case KernelLanczos3:
 		return resize.Lanczos3, nil
+	case KernelMKS2013:
+		return resize.MKS2013, nil
+	case KernelMKS2021:
+		return resize.MKS2021, nil
 	}
 	return nil, errors.New("goimgtools: unknown resize kernel")
 }

@@ -157,6 +157,13 @@ func describe(op operation) (string, []string) {
 		return "normalize", []string{f(o.o.Lower), f(o.o.Upper)}
 	case medianOp:
 		return "median", []string{d(o.size)}
+	case rankOp:
+		return "rank", []string{d(o.size), d(o.rank)}
+	case morphOp:
+		if o.dilate {
+			return "dilate", []string{d(o.width)}
+		}
+		return "erode", []string{d(o.width)}
 	case claheOp:
 		return "clahe", []string{d(o.o.Width), d(o.o.Height), d(o.o.MaxSlope)}
 	case convolveOp:
@@ -179,7 +186,8 @@ func describe(op operation) (string, []string) {
 var (
 	fitNames    = map[Fit]string{FitInside: "inside", FitCover: "cover", FitOutside: "outside", FitFill: "fill", FitContain: "contain"}
 	kernelNames = map[Kernel]string{KernelCubic: "cubic", KernelNearest: "nearest", KernelLinear: "linear",
-		KernelMitchell: "mitchell", KernelLanczos2: "lanczos2", KernelLanczos3: "lanczos3"}
+		KernelMitchell: "mitchell", KernelLanczos2: "lanczos2", KernelLanczos3: "lanczos3", KernelMKS2013: "mks2013",
+		KernelMKS2021: "mks2021"}
 	positionNames = map[Position]string{NorthWest: "northwest", North: "north", NorthEast: "northeast",
 		West: "west", Center: "center", East: "east", SouthWest: "southwest", South: "south", SouthEast: "southeast"}
 	interestingNames = map[Interesting]string{InterestingEntropy: "entropy", InterestingAttention: "attention"}
