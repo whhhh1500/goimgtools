@@ -67,7 +67,6 @@ func TestIDCTSIMD(t *testing.T) {
 	if !useSIMD {
 		t.Skip("no SIMD")
 	}
-	defer func() { useSIMD = true }()
 	rng := rand.New(rand.NewPCG(9, 10))
 	var want, got Decoder
 	for i := range 200000 {
