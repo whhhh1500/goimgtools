@@ -42,30 +42,65 @@ func paeth(a, b, c uint8) uint8 {
 	return c
 }
 
+// paethOf is paeth on ints, without a branch: the comparisons become
+// conditional moves, which a Paeth row, whose choices follow the picture,
+// would otherwise mispredict.
+func paethOf(a, b, c int) int {
+	pa := b - c
+	pb := a - c
+	pc := max(pa+pb, -pa-pb)
+	pa = max(pa, -pa)
+	pb = max(pb, -pb)
+	x := c
+	if pb <= pc {
+		x = b
+	}
+	if pa <= min(pb, pc) {
+		x = a
+	}
+	return x
+}
+
 // filterPaeth applies the Paeth filter to the cdat slice.
 // cdat is the current row's data, pdat is the previous row's data.
+//
+// The channels of a pixel are undone together, each from the same channel
+// of the pixel before: the standard library undoes one channel along the
+// whole row and then the next, so that each step waits for the one before.
 func filterPaeth(cdat, pdat []byte, bytesPerPixel int) {
-	var a, b, c, pa, pb, pc int
-	for i := 0; i < bytesPerPixel; i++ {
-		a, c = 0, 0
-		for j := i; j < len(cdat); j += bytesPerPixel {
-			b = int(pdat[j])
-			pa = b - c
-			pb = a - c
-			pc = abs(pa + pb)
-			pa = abs(pa)
-			pb = abs(pb)
-			if pa <= pb && pa <= pc {
-				// No-op.
-			} else if pb <= pc {
-				a = b
-			} else {
-				a = c
-			}
-			a += int(cdat[j])
-			a &= 0xff
-			cdat[j] = uint8(a)
-			c = b
+	n := min(len(cdat), len(pdat))
+	switch bytesPerPixel {
+	case 3:
+		var a0, a1, a2, c0, c1, c2 int
+		for j := 0; j+3 <= n; j += 3 {
+			cd, pd := cdat[j:j+3:j+3], pdat[j:j+3:j+3]
+			b0, b1, b2 := int(pd[0]), int(pd[1]), int(pd[2])
+			a0 = (int(cd[0]) + paethOf(a0, b0, c0)) & 0xff
+			a1 = (int(cd[1]) + paethOf(a1, b1, c1)) & 0xff
+			a2 = (int(cd[2]) + paethOf(a2, b2, c2)) & 0xff
+			cd[0], cd[1], cd[2] = uint8(a0), uint8(a1), uint8(a2)
+			c0, c1, c2 = b0, b1, b2
+		}
+	case 4:
+		var a0, a1, a2, a3, c0, c1, c2, c3 int
+		for j := 0; j+4 <= n; j += 4 {
+			cd, pd := cdat[j:j+4:j+4], pdat[j:j+4:j+4]
+			b0, b1, b2, b3 := int(pd[0]), int(pd[1]), int(pd[2]), int(pd[3])
+			a0 = (int(cd[0]) + paethOf(a0, b0, c0)) & 0xff
+			a1 = (int(cd[1]) + paethOf(a1, b1, c1)) & 0xff
+			a2 = (int(cd[2]) + paethOf(a2, b2, c2)) & 0xff
+			a3 = (int(cd[3]) + paethOf(a3, b3, c3)) & 0xff
+			cd[0], cd[1], cd[2], cd[3] = uint8(a0), uint8(a1), uint8(a2), uint8(a3)
+			c0, c1, c2, c3 = b0, b1, b2, b3
+		}
+	default:
+		// The first pixel has nothing to its left: a and c are 0, and the
+		// prediction is b.
+		for j := 0; j < bytesPerPixel && j < n; j++ {
+			cdat[j] += pdat[j]
+		}
+		for j := bytesPerPixel; j < n; j++ {
+			cdat[j] += uint8(paethOf(int(cdat[j-bytesPerPixel]), int(pdat[j]), int(pdat[j-bytesPerPixel])))
 		}
 	}
 }
