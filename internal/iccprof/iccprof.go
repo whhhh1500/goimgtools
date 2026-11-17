@@ -14,8 +14,8 @@
 // It also converts from profiles described by lookup tables (lut8Type,
 // lut16Type, lutAToBType), RGB or CMYK, whose connection space is XYZ or
 // Lab: by their perceptual table (AToB0), as browsers and sharp convert a
-// CMYK photograph, interpolated as LittleCMS interpolates. Grey profiles
-// are not converted.
+// CMYK photograph, interpolated as LittleCMS interpolates; and from grey
+// profiles of a tone curve (those of a printing press's dot gain).
 package iccprof
 
 import (
@@ -38,13 +38,19 @@ type Profile struct {
 	lut *lut
 	lab bool
 	key [32]byte
+	// gray, of a grey profile: its tone curve, to Y (or, with a Lab
+	// connection space, to L*).
+	gray *curve
 }
 
 // Channels is how many values a pixel in the profile's colour space has:
 // 3 (RGB) or 4 (CMYK).
 func (p *Profile) Channels() int {
-	if p.lut != nil {
+	switch {
+	case p.lut != nil:
 		return p.lut.in
+	case p.gray != nil:
+		return 1
 	}
 	return 3
 }
@@ -122,7 +128,7 @@ func Parse(b []byte) (*Profile, error) {
 		return nil, errNotICC
 	}
 	space, pcs := string(b[16:20]), string(b[20:24])
-	if space != "RGB " && space != "CMYK" || pcs != "XYZ " && pcs != "Lab " {
+	if space != "RGB " && space != "CMYK" && space != "GRAY" || pcs != "XYZ " && pcs != "Lab " {
 		return nil, errUnsupported
 	}
 	n := binary.BigEndian.Uint32(b[128:])
@@ -142,6 +148,13 @@ func Parse(b []byte) (*Profile, error) {
 		if p, err := matrixProfile(tags); err == nil {
 			return p, nil
 		}
+	}
+	if space == "GRAY" {
+		c, err := readCurve(tags["kTRC"])
+		if err != nil {
+			return nil, err
+		}
+		return &Profile{gray: &c, lab: pcs == "Lab "}, nil
 	}
 	// A profile of lookup tables: its perceptual transform, or failing
 	// that another.
@@ -278,6 +291,15 @@ func (p *Profile) IsSRGB() bool {
 	if p.lut != nil {
 		return false
 	}
+	if p.gray != nil {
+		t := p.grayTable()
+		for v := range t {
+			if t[v] != uint8(v) {
+				return false
+			}
+		}
+		return true
+	}
 	for i := range p.toXYZ {
 		for j := range p.toXYZ[i] {
 			if math.Abs(p.toXYZ[i][j]-srgbXYZ[i][j]) > 0.002 {
@@ -296,8 +318,37 @@ func (p *Profile) IsSRGB() bool {
 	return true
 }
 
+// grayTable is the grey of sRGB of each value of a grey profile: the
+// white of the connection space is sRGB's white, so a grey stays a grey
+// of the same luminance.
+func (p *Profile) grayTable() *[256]uint8 {
+	var t [256]uint8
+	for v := range t {
+		y := p.gray.at(float64(v) / 255)
+		if p.lab {
+			// The curve gives L* (0 to 1 for 0 to 100).
+			f := (float64(y*100) + 16) / 116
+			if f > 6.0/29 {
+				y = float64(f*f) * f
+			} else {
+				y = float64(3*float64(6.0/29*6.0/29)) * (f - 4.0/29)
+			}
+		}
+		y = clamp01(y)
+		if y <= 0.0031308 {
+			y *= 12.92
+		} else {
+			y = float64(1.055*math.Pow(y, 1/2.4)) - 0.055
+		}
+		t[v] = uint8(math.Round(clamp01(y) * 255))
+	}
+	return &t
+}
+
 // Transform converts 8-bit values in the profile to 8-bit sRGB.
 type Transform struct {
+	// gray, for a grey profile: the sRGB grey of each value.
+	gray *[256]uint8
 	// grid, for a profile of lookup tables: the conversion at the points
 	// of a grid, which the values are interpolated in.
 	grid  *lutGrid
@@ -314,6 +365,11 @@ const gammaSteps = 1 << 14
 func (p *Profile) ToSRGB() *Transform {
 	if p.lut != nil {
 		return &Transform{grid: cachedGrid(p)}
+	}
+	if p.gray != nil {
+		t := &Transform{gray: p.grayTable()}
+		t.ident = p.IsSRGB()
+		return t
 	}
 	t := &Transform{m: mul(inverse(srgbXYZ), p.toXYZ)}
 	for c := 0; c < 3; c++ {
@@ -342,6 +398,9 @@ func (t *Transform) Identity() bool { return t.ident }
 // (the explicit conversions), so the result is the same on processors that
 // fuse a multiplication and an addition and on those that do not.
 func (t *Transform) Convert(r, g, b uint8) (uint8, uint8, uint8) {
+	if t.gray != nil {
+		return t.gray[r], t.gray[g], t.gray[b]
+	}
 	if t.grid != nil {
 		if t.grid.in != 3 {
 			return r, g, b // not an RGB profile

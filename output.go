@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"image/color"
 	"io"
 	"math"
 	"math/rand/v2"
@@ -66,10 +67,10 @@ func (m *Image) Density(dpi float64) *Image {
 // GIF and BMP output, which cannot carry a profile, is converted this way
 // without being asked. Profiles described by primaries and tone curves
 // are converted (those of cameras, phones, Display P3, Adobe RGB,
-// ProPhoto), and those of lookup tables by their perceptual table; grey
-// profiles are left as they are, kept in the output where the format can
-// carry them. (A CMYK image is turned into sRGB through its profile when
-// it is decoded, whether or not this is asked for.)
+// ProPhoto), those of lookup tables by their perceptual table, and those
+// of grey images (a dot gain) by their tone curve, the image staying grey.
+// (A CMYK image is turned into sRGB through its profile when it is
+// decoded, whether or not this is asked for.)
 func (m *Image) ToSRGB() *Image { m.toSRGB = true; return m }
 
 // manageColour converts src to sRGB when its profile asks for it: on
@@ -83,11 +84,21 @@ func (m *Image) manageColour(src pipeline.Source, icc []byte, format string) (pi
 		return src, icc
 	}
 	p, err := iccprof.Parse(icc)
-	if err != nil || p.Channels() != 3 {
+	if err != nil {
 		return src, icc // not one this package can convert from
 	}
-	if t := p.ToSRGB(); !t.Identity() {
-		src = ops.ToSRGB(src, t)
+	switch {
+	case p.Channels() == 1 && src.ColorModel() == color.GrayModel:
+		// A grey image stays grey.
+		if t := p.ToSRGB(); !t.Identity() {
+			src = ops.GrayToSRGB(src, t)
+		}
+	case p.Channels() == 3:
+		if t := p.ToSRGB(); !t.Identity() {
+			src = ops.ToSRGB(src, t)
+		}
+	default:
+		return src, icc
 	}
 	return src, nil
 }

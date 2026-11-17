@@ -195,10 +195,37 @@ func TestLookupTables(t *testing.T) {
 	}
 }
 
+// TestGrayProfile: a grey profile of a tone curve keeps white and black,
+// darkens the middle greys of a dot gain, and is not sRGB; one without its
+// curve is refused.
+func TestGrayProfile(t *testing.T) {
+	icc, err := os.ReadFile(filepath.Join("..", "..", "tests", "testdata", "icc", "gray-dotgain.icc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := Parse(icc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Channels() != 1 || p.IsSRGB() || p.ToSRGB().Identity() {
+		t.Fatalf("%d channels, sRGB %v", p.Channels(), p.IsSRGB())
+	}
+	tr := p.ToSRGB()
+	w, _, _ := tr.Convert(255, 255, 255)
+	k, _, _ := tr.Convert(0, 0, 0)
+	m, _, _ := tr.Convert(128, 128, 128)
+	if w != 255 || k != 0 || m >= 128 {
+		t.Errorf("white %d, black %d, middle grey %d", w, k, m)
+	}
+	if _, err := Parse(withAt(icc, tagEntry(icc, "kTRC"), "zzzz")); err == nil {
+		t.Error("a grey profile without its curve accepted")
+	}
+}
+
 // FuzzParse: any bytes either fail to parse or give a profile whose
 // conversion works on every value, without a panic.
 func FuzzParse(f *testing.F) {
-	for _, name := range []string{"p3-table.icc", "adobe-gamma.icc", "p3-para.icc", "cmyk-lut16.icc", "cmyk-mab.icc", "rgb-lut16.icc"} {
+	for _, name := range []string{"p3-table.icc", "adobe-gamma.icc", "p3-para.icc", "cmyk-lut16.icc", "cmyk-mab.icc", "rgb-lut16.icc", "gray-dotgain.icc"} {
 		b, err := os.ReadFile(filepath.Join("..", "..", "tests", "testdata", "icc", name))
 		if err != nil {
 			f.Fatal(err)

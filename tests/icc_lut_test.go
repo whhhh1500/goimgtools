@@ -52,6 +52,28 @@ func TestICCLookupTables(t *testing.T) {
 			}
 		}
 	}
+	// A grey JPEG with a dot gain profile: its greys mapped, still grey,
+	// with ToSRGB and for GIF output.
+	gray := must(os.ReadFile("testdata/icc/gray-dotgain.jpg"))
+	want := nrgbaOf(decodePNG(t, must(os.ReadFile("testdata/icc/gray-dotgain-lcms.png"))))
+	for _, out := range [][]byte{must(FromBytes(gray).ToSRGB().PNG().ToBytes()), must(FromBytes(gray).GIF().ToBytes())} {
+		info, err := FromBytes(out).Metadata()
+		if err != nil || info.HasProfile || info.Color != "gray" && info.Color != "palette" {
+			t.Errorf("grey output: %+v, %v", info, err)
+		}
+		m, err := FromBytes(out).ToImage()
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := nrgbaOf(m)
+		worst := 0
+		for i := range got.Pix {
+			worst = max(worst, int(got.Pix[i])-int(want.Pix[i]), int(want.Pix[i])-int(got.Pix[i]))
+		}
+		if worst > 1 {
+			t.Errorf("grey: up to %d levels from LittleCMS", worst)
+		}
+	}
 	// Without its profile the CMYK JPEG is converted as before.
 	in := must(os.ReadFile("testdata/icc/cmyk-lut16.jpg"))
 	plain := must(FromBytes(in).StripICC().PNG().ToBytes())
