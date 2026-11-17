@@ -34,6 +34,7 @@ Nothing exported by 0.1.0 was removed or changed in its signature (checked with 
 - `CompositeOptions.WidthRatio` / `HeightRatio`: watermark size as a fraction of the base image; `-watermark-width N%`.
 - Lossy WebP: segments with individual quantizers (spatial noise shaping, ported from libwebp).
 - `pipeline.Env.SetHelpers`, `Helpers`, `Parallel` and `Go`, allowing stages to distribute their work across cores.
+- Levels and filters after sharp: `Negate`, `Linear`, `Gamma`, `Threshold`, `Tint`, `Normalize` (`NormalizeOptions`), `Median` and `Convolve` (`Convolution`), and by name (`Do`, `-op`): negate, linear, gamma, threshold, tint, normalize, median, convolve. `Negate`, `Linear`, `Threshold`, `Median` and `Convolve` give sharp's results to the byte, `Normalize` within a level and `Tint` within two; `Median` is also Pillow's `MedianFilter` to the byte.
 
 ### Changed
 

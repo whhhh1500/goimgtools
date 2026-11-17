@@ -43,6 +43,10 @@ goimgtools -watermark-text "© 示例" -font-size 40 -text-color white -stroke-w
 goimgtools -trim 10 -resize 1200x -extend 20,20,20,20 -background white -sharpen mild in.jpg out.jpg
 ```
 
+```bash
+goimgtools -op median:3 -op normalize -op "tint:#704214" scan.jpg out.jpg
+```
+
 各操作按固定顺序执行：旋转 → 翻转 → 去边 → 裁剪 → 缩放 → 扩边 → 灰度化 → 色彩调整 → 模糊 → 锐化 → 各 `-op` 步骤（按指定顺序）→ 铺底色 → 水印。
 
 | 选项 | 说明 |

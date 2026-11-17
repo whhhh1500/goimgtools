@@ -51,14 +51,19 @@ func TestSameWithHelpers(t *testing.T) {
 		"narrow 9x200":        pngBytes(t, photoLike(9, 200)),
 	}
 	ops := map[string]func(*Image) *Image{
-		"blur 0.7":         func(m *Image) *Image { return m.Blur(0.7) },
-		"blur 3":           func(m *Image) *Image { return m.Blur(3) },
-		"blur 40":          func(m *Image) *Image { return m.Blur(40) },
-		"blur 600":         func(m *Image) *Image { return m.Blur(600) },
-		"unsharp 2":        func(m *Image) *Image { return m.Sharpen(SharpenOptions{Sigma: 2, Amount: 1.2, Threshold: 2}) },
-		"unsharp 25":       func(m *Image) *Image { return m.Sharpen(SharpenOptions{Sigma: 25}) },
-		"mild sharpen":     func(m *Image) *Image { return m.Sharpen() },
-		"modulate":         func(m *Image) *Image { return m.Modulate(1.1, 1.4, 33) },
+		"blur 0.7":     func(m *Image) *Image { return m.Blur(0.7) },
+		"blur 3":       func(m *Image) *Image { return m.Blur(3) },
+		"blur 40":      func(m *Image) *Image { return m.Blur(40) },
+		"blur 600":     func(m *Image) *Image { return m.Blur(600) },
+		"unsharp 2":    func(m *Image) *Image { return m.Sharpen(SharpenOptions{Sigma: 2, Amount: 1.2, Threshold: 2}) },
+		"unsharp 25":   func(m *Image) *Image { return m.Sharpen(SharpenOptions{Sigma: 25}) },
+		"mild sharpen": func(m *Image) *Image { return m.Sharpen() },
+		"modulate":     func(m *Image) *Image { return m.Modulate(1.1, 1.4, 33) },
+		"median 5":     func(m *Image) *Image { return m.Median(5) },
+		"convolve": func(m *Image) *Image {
+			return m.Convolve(Convolution{Width: 3, Height: 3, Weights: []float64{1, 2, 1, 2, 4, 2, 1, 2, 1}})
+		},
+		"normalize, tint":  func(m *Image) *Image { return m.Normalize().Tint(color.RGBA{200, 100, 0, 255}) },
 		"rotate 30":        func(m *Image) *Image { return m.RotateBy(30, color.White) },
 		"rotate -77.7":     func(m *Image) *Image { return m.RotateBy(-77.7, color.Transparent) },
 		"blur, rotate, sh": func(m *Image) *Image { return m.Blur(1.5).RotateBy(12, nil).Sharpen() },

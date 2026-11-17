@@ -43,6 +43,10 @@ goimgtools -watermark-text "© Sample" -font-size 40 -text-color white -stroke-w
 goimgtools -trim 10 -resize 1200x -extend 20,20,20,20 -background white -sharpen mild in.jpg out.jpg
 ```
 
+```bash
+goimgtools -op median:3 -op normalize -op "tint:#704214" scan.jpg out.jpg
+```
+
 Operations run in a fixed order: rotate → flip → trim → crop → resize → extend → grayscale → modulate → blur → sharpen → `-op` steps (in the order specified) → flatten → watermark.
 
 | Option | Description |

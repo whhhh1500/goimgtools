@@ -123,6 +123,16 @@ func describe(op operation) (string, []string) {
 		return "trim", []string{f(o.threshold)}
 	case rotateAnyOp:
 		return "rotate", []string{f(o.deg), colorWord(o.background)}
+	case levelsOp:
+		return o.name, o.words()
+	case tintOp:
+		return "tint", []string{colorWord(o.c)}
+	case normalizeOp:
+		return "normalize", []string{f(o.o.Lower), f(o.o.Upper)}
+	case medianOp:
+		return "median", []string{d(o.size)}
+	case convolveOp:
+		return "convolve", o.words()
 	case namedOp:
 		return o.name, o.args
 	case customOp:

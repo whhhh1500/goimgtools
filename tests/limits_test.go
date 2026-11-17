@@ -155,6 +155,13 @@ func TestSmallestThroughOperations(t *testing.T) {
 		{"mild sharpen", func(m *Image, w, h int) *Image { return m.Sharpen() }, same},
 		{"unsharp mask", func(m *Image, w, h int) *Image { return m.Sharpen(SharpenOptions{Sigma: 3, Amount: 2, Threshold: 2}) }, same},
 		{"extend", func(m *Image, w, h int) *Image { return m.Extend(1, 2, 3, 4, color.Transparent) }, func(w, h int) (int, int) { return w + 6, h + 4 }},
+		{"levels", func(m *Image, w, h int) *Image { return m.Negate().Linear(1.1, -3).Gamma(0.8).Threshold(90) }, same},
+		{"tint, normalize", func(m *Image, w, h int) *Image { return m.Tint(color.RGBA{9, 99, 199, 255}).Normalize() }, same},
+		{"median", func(m *Image, w, h int) *Image { return m.Median(3) }, same},
+		{"median larger than the image", func(m *Image, w, h int) *Image { return m.Median(99) }, same},
+		{"convolve", func(m *Image, w, h int) *Image {
+			return m.Convolve(Convolution{Width: 5, Height: 3, Weights: []float64{1, 0, -1, 2, 0, -2, 1, 0, -1, 1, 2, 3, 4, 5, 6}, Offset: 100})
+		}, same},
 		{"extend, trim", func(m *Image, w, h int) *Image { return m.Extend(1, 2, 3, 4, color.RGBA{1, 2, 3, 255}).Trim(0) }, nil},
 		{"turn 33 degrees", func(m *Image, w, h int) *Image { return m.RotateBy(33, nil) }, func(w, h int) (int, int) {
 			s, c := math.Sincos(33 * math.Pi / 180)
@@ -533,6 +540,31 @@ func TestArgumentExtremes(t *testing.T) {
 		{"extend MaxInt", func() *Image { return base().Extend(math.MaxInt, 0, 0, 0, nil) }, false},
 		{"extend MaxInt32 both", func() *Image { return base().Extend(0, math.MaxInt32, 0, math.MaxInt32, nil) }, false},
 		{"trim 255", func() *Image { return base().Trim(255) }, true},
+		{"linear 1e300", func() *Image { return base().Linear(1e300, -1e300) }, true},
+		{"linear NaN", func() *Image { return base().Linear(nan, 0) }, false},
+		{"gamma 100", func() *Image { return base().Gamma(100) }, true},
+		{"gamma 1e-300", func() *Image { return base().Gamma(1e-300) }, true},
+		{"gamma -1", func() *Image { return base().Gamma(-1) }, false},
+		{"threshold 0", func() *Image { return base().Threshold(0) }, true},
+		{"threshold 255", func() *Image { return base().Threshold(255) }, true},
+		{"normalize 0, 100", func() *Image { return base().Normalize(NormalizeOptions{Lower: 0, Upper: 100}) }, true},
+		{"normalize 99.99, 100", func() *Image { return base().Normalize(NormalizeOptions{Lower: 99.99, Upper: 100}) }, true},
+		{"normalize NaN", func() *Image { return base().Normalize(NormalizeOptions{Lower: nan, Upper: 1}) }, false},
+		{"median 99", func() *Image { return base().Median(99) }, true},
+		{"median 3", func() *Image { return base().Median(3) }, true},
+		{"median 0", func() *Image { return base().Median(0) }, false},
+		{"convolve 99x99", func() *Image {
+			return base().Convolve(Convolution{Width: 99, Height: 99, Weights: make([]float64, 99*99)})
+		}, true},
+		{"convolve 101x1", func() *Image {
+			return base().Convolve(Convolution{Width: 101, Height: 1, Weights: make([]float64, 101)})
+		}, false},
+		{"convolve scale Inf", func() *Image {
+			return base().Convolve(Convolution{Width: 1, Height: 1, Weights: []float64{1}, Scale: inf})
+		}, false},
+		{"convolve weights 1e300", func() *Image {
+			return base().Convolve(Convolution{Width: 3, Height: 1, Weights: []float64{1e300, -1e300, 1e300}})
+		}, true},
 		{"trim Inf", func() *Image { return base().Trim(inf) }, false},
 		{"turn 1e300 degrees", func() *Image { return base().RotateBy(1e300, nil) }, true},
 		{"turn 1e-300 degrees", func() *Image { return base().RotateBy(1e-300, nil) }, true},

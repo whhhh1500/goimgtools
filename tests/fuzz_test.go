@@ -263,6 +263,38 @@ func FuzzChain(f *testing.F) {
 		if has(7) {
 			m.RotateBy(float64(int16(h))/7, color.Transparent)
 		}
+		// The level and window operations, each a quarter of the time, from
+		// bits the operations above use too.
+		extra := uint32(more)>>8 ^ uint32(w)<<3 ^ uint32(h)<<7 ^ flags>>9
+		if extra&3 == 3 {
+			m.Negate()
+		}
+		if extra>>2&3 == 3 {
+			m.Linear(float64(w%30)/10, float64(int8(h)))
+		}
+		if extra>>4&3 == 3 {
+			m.Gamma(0.1 + float64(h%50)/10)
+		}
+		if extra>>6&3 == 3 {
+			m.Threshold(int(w % 256))
+		}
+		if extra>>8&3 == 3 {
+			m.Tint(color.NRGBA{uint8(h), uint8(w), 77, 255})
+		}
+		if extra>>10&3 == 3 {
+			m.Normalize(NormalizeOptions{Lower: float64(w % 40), Upper: 60 + float64(h%41)})
+		}
+		if extra>>12&3 == 3 {
+			m.Median(3 + 2*int(h%4))
+		}
+		if extra>>14&3 == 3 {
+			cw, ch := 1+2*int(w%3), 1+2*int(h%3)
+			k := make([]float64, cw*ch)
+			for i := range k {
+				k[i] = float64(int8(flags >> (i % 25)))
+			}
+			m.Convolve(Convolution{Width: cw, Height: ch, Weights: k, Offset: float64(h % 64)})
+		}
 		if bit(22) {
 			m.KeepExif()
 		}

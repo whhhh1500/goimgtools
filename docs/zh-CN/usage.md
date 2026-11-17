@@ -51,6 +51,14 @@ err := goimgtools.Open("in.jpg").
 | `Extend(top, right, bottom, left, background)` | 四周扩边，宽度按 CSS 的上、右、下、左顺序给出 |
 | `Grayscale()` | 灰度化：Rec. 601 亮度四舍五入至最近的灰阶，与 Pillow 的 `convert("L")` 逐字节一致；JPEG 直接采用文件中存储的亮度。不透明图像输出为单通道灰度文件 |
 | `Modulate(brightness, saturation, hue)` | 在 LCh 色彩空间中将亮度、饱和度乘以系数，并将色相旋转指定度数（与 sharp 的做法相同），每个像素与 sharp 的结果相差不超过 1：`Modulate(1.2, 0.8, 0)` 使亮度提高 20%、色彩略淡 |
+| `Negate()` | 反色：每个颜色取其相反值（255 − 色阶），透明度不变。与 sharp 的 `negate({alpha: false})` 逐字节一致 |
+| `Linear(a, b)` | 每个红、绿、蓝色阶 v 变为 a·v + b，舍去小数并限制在 0–255，与 sharp 的 `linear` 逐字节一致：`Linear(1.2, -25)` 提高对比度 |
+| `Gamma(g)` | 每个色阶 v 变为 255·(v/255)^(1/g)，与 ImageMagick 的 `-gamma` 相同：大于 1 提亮中间调，小于 1 压暗；黑白不变 |
+| `Threshold(level)` | 黑白二值：灰度（按线性光计算，与 sharp 相同）不小于 `level` 的像素变白，其余变黑。不含透明的图像与 sharp 的 `threshold` 逐字节一致，并输出为单通道文件 |
+| `Tint(color)` | 着色：按每个像素的亮度赋予该颜色，越接近黑白越淡（sharp 的 `tint`，与其相差不超过 2）：`Tint(color.RGBA{112, 66, 20, 255})` 为褐色调 |
+| `Normalize(NormalizeOptions{Lower, Upper})` | 拉伸明度（L*a*b* 中的 L*），使最暗的 `Lower`% 变黑、最亮的 `100-Upper`% 变白（默认 1 与 99），保持色相与饱和度；即 sharp 的 `normalise`，相差不超过 1（百分位与其完全相同）。需先读完整幅图像并保存在工作区 |
+| `Median(size)` | 中值滤波：每个像素的每个通道取其周围 size × size 方块（奇数，3–99）的中值，去除噪点而保留边缘。与 Pillow 的 `MedianFilter` 及 sharp 的 `median` 逐字节一致 |
+| `Convolve(Convolution{Width, Height, Weights, Scale, Offset})` | 自定义卷积核（边长为奇数，最大 99）：窗口加权和除以 `Scale`（默认为权重之和）再加 `Offset`。与 sharp 的 `convolve` 逐字节一致；例如权重 `0,-1,0,-1,5,-1,0,-1,0` 为锐化，`-1,-1,-1,-1,8,-1,-1,-1,-1` 配合 `Scale: 1` 为边缘检测 |
 | `Blur(sigma)` | 高斯模糊，sigma 须大于 0 且不超过 1000 像素；采用 Pillow 的 `GaussianBlur` 算法，耗时不随 sigma 变化 |
 | `Sharpen()` | 轻度锐化（sharp 的 3×3 卷积核），适用于缩小之后 |
 | `Sharpen(SharpenOptions{Sigma, Amount, Threshold})` | 反锐化掩模（Pillow 的 `UnsharpMask`），`Amount` 默认为 1.5 |
