@@ -100,3 +100,52 @@ func TestIDCTSIMD(t *testing.T) {
 		}
 	}
 }
+
+// TestDCSIMD: the SIMD DC-only transforms add to the prediction what
+// inverseDCT4DCOnly and inverseDCT8DCOnly add in Go (each pixel plus
+// (DC+4)>>3, clipped), for any 16-bit DC and those that clip.
+func TestDCSIMD(t *testing.T) {
+	if !useSIMD {
+		t.Skip("no SIMD")
+	}
+	rng := rand.New(rand.NewPCG(11, 12))
+	var want, got Decoder
+	add := func(y, x, coeffBase int) {
+		dc := (int32(want.coeff[coeffBase]) + 4) >> 3
+		for j := 0; j < 4; j++ {
+			for i := 0; i < 4; i++ {
+				want.ybr[y+j][x+i] = clip8(int32(want.ybr[y+j][x+i]) + dc)
+			}
+		}
+	}
+	for i := range 200000 {
+		for k := range want.coeff {
+			v := int16(rng.IntN(65536) - 32768)
+			if i%4 < 2 {
+				v = int16(rng.IntN(4200) - 2100)
+			}
+			want.coeff[k] = v
+		}
+		for y := range want.ybr {
+			for x := range want.ybr[y] {
+				want.ybr[y][x] = uint8(rng.IntN(256))
+			}
+		}
+		got.coeff, got.ybr = want.coeff, want.ybr
+		if i%2 == 0 {
+			y, x, cb := 1+rng.IntN(len(want.ybr)-4), rng.IntN(len(want.ybr[0])-3), 16*rng.IntN(24)
+			add(y, x, cb)
+			got.inverseDCT4DCOnly(y, x, cb)
+		} else {
+			y, x, cb := 1+rng.IntN(len(want.ybr)-8), rng.IntN(len(want.ybr[0])-7), bCoeffBase+64*rng.IntN(2)
+			add(y, x, cb)
+			add(y, x+4, cb+16)
+			add(y+4, x, cb+32)
+			add(y+4, x+4, cb+48)
+			got.inverseDCT8DCOnly(y, x, cb)
+		}
+		if got.ybr != want.ybr {
+			t.Fatalf("case %d", i)
+		}
+	}
+}

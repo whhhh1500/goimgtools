@@ -197,8 +197,9 @@ var (
 )
 
 // parseResiduals4 parses a 4x4 region of residual coefficients, as specified
-// in section 13.3, and returns a 0/1 value indicating whether there was at
-// least one non-zero coefficient.
+// in section 13.3, and returns, as libwebp's GetCoeffs, the position (in
+// zigzag order) after the last coefficient read: the first position when
+// there is none, more than 1 when there is one besides the DC, 16 at most.
 // r is the partition to read bits from.
 // plane and context describe which token probability table to use. context is
 // either 0, 1 or 2, and equals how many of the macroblock left and macroblock
@@ -212,6 +213,29 @@ var (
 // 1, and its sign) are read with bitOf; at the end of the partition the
 // block ends there (the frame fails: see inputErr).
 func (d *Decoder) parseResiduals4(r *partition, plane int, context uint8, quant [2]uint16, skipFirstCoeff bool, coeffBase int) uint8 {
+	if parseAsm && len(r.buf)-r.r >= asmMargin {
+		st := asmState{r.value, int64(r.bits), uint64(r.rangeM1), int64(r.r)}
+		first := 0
+		if skipFirstCoeff {
+			first = 1
+		}
+		nz := parseBlockAsm(&st, &r.buf[0], &d.tokenProb[plane], (*[16]int16)(d.coeff[coeffBase:coeffBase+16]), first, int(context), uint32(quant[0])|uint32(quant[1])<<16)
+		r.value, r.bits, r.rangeM1, r.r = st.value, int(st.bits), uint32(st.rng), int(st.r)
+		return nz
+	}
+	return d.parseResiduals4Go(r, plane, context, quant, skipFirstCoeff, coeffBase)
+}
+
+// asmMargin is how many bytes parseBlockAsm may need from where it starts.
+// A block reads at most 1 + 16*19 = 305 bits (for each coefficient two
+// token bits, 15 for a value of category 6, its sign and the end of
+// block), and each takes at most 7 off bits (which start at -8 or more):
+// 2143 in all, which 39 refills of 56 bits cover, the last reading 8 bytes
+// 7*38 bytes on.
+const asmMargin = 7*38 + 8 + 14
+
+// parseResiduals4Go is parseResiduals4 in Go.
+func (d *Decoder) parseResiduals4Go(r *partition, plane int, context uint8, quant [2]uint16, skipFirstCoeff bool, coeffBase int) uint8 {
 	var (
 		prob  = &d.tokenProb[plane]
 		n     = 0
@@ -234,7 +258,7 @@ func (d *Decoder) parseResiduals4(r *partition, plane int, context uint8, quant 
 	}
 	if bit, value, nb, rng = bitOf(value, nb, rng, p[0]); !bit {
 		r.value, r.bits, r.rangeM1 = value, nb, rng
-		return 0
+		return uint8(n)
 	}
 	for n != 16 {
 		n++
@@ -286,7 +310,7 @@ func (d *Decoder) parseResiduals4(r *partition, plane int, context uint8, quant 
 		}
 	}
 	r.value, r.bits, r.rangeM1 = value, nb, rng
-	return 1
+	return uint8(n)
 eof:
 	r.value, r.bits, r.rangeM1 = value, nb, rng
 	r.unexpectedEOF = true
@@ -336,10 +360,19 @@ func (d *Decoder) parseResiduals(mbx, mby int) (skip bool) {
 
 	// Parse the DC coefficient of each 4x4 luma region.
 	if d.usePredY16 {
-		nz := d.parseResiduals4(partition, planeY2, d.leftMB.nzY16+d.upMB[mbx].nzY16, quant.y2, false, whtCoeffBase)
+		n := d.parseResiduals4(partition, planeY2, d.leftMB.nzY16+d.upMB[mbx].nzY16, quant.y2, false, whtCoeffBase)
+		nz := btou(n > 0)
 		d.leftMB.nzY16 = nz
 		d.upMB[mbx].nzY16 = nz
-		d.inverseWHT16()
+		if n > 1 {
+			d.inverseWHT16()
+		} else {
+			// Only the DC: the transform gives each block the same.
+			dc := int16((int32(d.coeff[whtCoeffBase]) + 3) >> 3)
+			for i := 0; i < 256; i += 16 {
+				d.coeff[i] = dc
+			}
+		}
 		plane = planeY1WithY2
 	}
 
@@ -349,15 +382,19 @@ func (d *Decoder) parseResiduals(mbx, mby int) (skip bool) {
 		coeffBase          int
 	)
 
-	// Parse the luma coefficients.
+	// Parse the luma coefficients. A block's context is whether it has a
+	// coefficient (past the DC from the WHT); it is transformed whole when
+	// it has one besides the DC, by the DC alone when that is not 0.
 	lnz := unpack[d.leftMB.nzMask&0x0f]
 	unz := unpack[d.upMB[mbx].nzMask&0x0f]
+	first := btou(d.usePredY16)
 	for y := 0; y < 4; y++ {
 		nz := lnz[y]
 		for x := 0; x < 4; x++ {
-			nz = d.parseResiduals4(partition, plane, nz+unz[x], quant.y1, d.usePredY16, coeffBase)
+			n := d.parseResiduals4(partition, plane, nz+unz[x], quant.y1, d.usePredY16, coeffBase)
+			nz = btou(n > first)
 			unz[x] = nz
-			nzAC[x] = nz
+			nzAC[x] = btou(n > 1)
 			nzDC[x] = btou(d.coeff[coeffBase] != 0)
 			coeffBase += 16
 		}
@@ -375,9 +412,10 @@ func (d *Decoder) parseResiduals(mbx, mby int) (skip bool) {
 		for y := 0; y < 2; y++ {
 			nz := lnz[y+c]
 			for x := 0; x < 2; x++ {
-				nz = d.parseResiduals4(partition, planeUV, nz+unz[x+c], quant.uv, false, coeffBase)
+				n := d.parseResiduals4(partition, planeUV, nz+unz[x+c], quant.uv, false, coeffBase)
+				nz = btou(n > 0)
 				unz[x+c] = nz
-				nzAC[y*2+x] = nz
+				nzAC[y*2+x] = btou(n > 1)
 				nzDC[y*2+x] = btou(d.coeff[coeffBase] != 0)
 				coeffBase += 16
 			}

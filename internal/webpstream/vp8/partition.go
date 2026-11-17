@@ -118,8 +118,9 @@ func (p *partition) refill(value uint64, nb int) (uint64, int, bool) {
 // the caller in local variables (refilled first when bits is below 0),
 // small enough to be inlined: it returns the bit and the new state.
 //
-// As libwebp's VP8GetBitAlt, a range that stays at 127 or more (less 1:
-// 126) needs no renormalizing, and one below is renormalized from tables.
+// The range is renormalized from tables after every bit, without a branch
+// (a range of 128 or more is left as it is), as libwebp's VP8GetBit does
+// with a shift.
 func bitOf(value uint64, nb int, rangeM1 uint32, prob uint8) (bool, uint64, int, uint32) {
 	pos := uint(nb) & 63
 	split := rangeM1 * uint32(prob) >> 8
@@ -129,18 +130,14 @@ func bitOf(value uint64, nb int, rangeM1 uint32, prob uint8) (bool, uint64, int,
 		r = rangeM1 - split - 1
 		value -= uint64(split+1) << pos
 	}
-	if r <= 0x7e {
-		nb -= int(log2Range[r&0x7f])
-		r = uint32(newRange[r&0x7f])
-	}
-	return bit, value, nb, r
+	return bit, value, nb - int(renormShift[uint8(r)]), uint32(renormRange[uint8(r)])
 }
 
-// log2Range[r] is how far a range of r+1 (below 128) is shifted to reach
-// 128 or more, and newRange[r] the range less 1 after that.
-var log2Range, newRange = func() (l, n [128]uint8) {
-	for r := range l {
-		shift := 7 ^ (31 - bits.LeadingZeros32(uint32(r+1)))
+// renormShift[r] is how far a range of r+1 is shifted to reach 128 or more
+// (0 for one that is), and renormRange[r] the range less 1 after that.
+var renormShift, renormRange = func() (l, n [256]uint8) {
+	for r := range 256 {
+		shift := 7 ^ min(7, 31-bits.LeadingZeros32(uint32(r+1)))
 		l[r], n[r] = uint8(shift), uint8((r+1)<<shift-1)
 	}
 	return
@@ -169,15 +166,13 @@ func (p *partition) readBit(prob uint8) bool {
 	pos := uint(p.bits) & 63
 	split := rng * uint32(prob) >> 8
 	bit := uint32(p.value>>pos) > split
+	r := split
 	if bit {
-		rng -= split
+		r = rng - split - 1
 		p.value -= uint64(split+1) << pos
-	} else {
-		rng = split + 1
 	}
-	shift := 7 ^ (31 - bits.LeadingZeros32(rng))
-	p.rangeM1 = rng<<shift - 1
-	p.bits -= shift
+	p.bits -= int(renormShift[uint8(r)])
+	p.rangeM1 = uint32(renormRange[uint8(r)])
 	return bit
 }
 

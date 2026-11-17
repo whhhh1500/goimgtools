@@ -59,6 +59,11 @@ func (z *Decoder) inverseDCT4Go(y, x, coeffBase int) {
 
 func (z *Decoder) inverseDCT4DCOnly(y, x, coeffBase int) {
 	dc := (int32(z.coeff[coeffBase+0]) + 4) >> 3
+	if useSIMD {
+		_ = z.ybr[y+3][x+3]
+		dcAddAsm(&z.ybr[y][x], len(z.ybr[0]), int(dc))
+		return
+	}
 	for j := 0; j < 4; j++ {
 		for i := 0; i < 4; i++ {
 			z.ybr[y+j][x+i] = clip8(int32(z.ybr[y+j][x+i]) + dc)
@@ -74,6 +79,12 @@ func (z *Decoder) inverseDCT8(y, x, coeffBase int) {
 }
 
 func (z *Decoder) inverseDCT8DCOnly(y, x, coeffBase int) {
+	if useSIMD {
+		_ = z.ybr[y+7][x+7]
+		dc := z.coeff[coeffBase : coeffBase+49]
+		dcAdd8Asm(&z.ybr[y][x], len(z.ybr[0]), int((int32(dc[0])+4)>>3), int((int32(dc[16])+4)>>3), int((int32(dc[32])+4)>>3), int((int32(dc[48])+4)>>3))
+		return
+	}
 	z.inverseDCT4DCOnly(y+0, x+0, coeffBase+0*16)
 	z.inverseDCT4DCOnly(y+0, x+4, coeffBase+1*16)
 	z.inverseDCT4DCOnly(y+4, x+0, coeffBase+2*16)

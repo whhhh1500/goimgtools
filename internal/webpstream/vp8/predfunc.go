@@ -4,6 +4,8 @@
 
 package vp8
 
+import "encoding/binary"
+
 // This file implements the prediction functions, as specified in chapter 12.
 //
 // For each macroblock (of 1x16x16 luma and 2x8x8 chroma coefficients), the
@@ -124,20 +126,60 @@ var predFunc16 = [...]func(*Decoder, int, int){
 	predFunc16DCTopLeft,
 }
 
-func predFunc4DC(z *Decoder, y, x int) {
-	sum := uint32(4)
-	for i := 0; i < 4; i++ {
-		sum += uint32(z.ybr[y-1][x+i])
+// The DC, VE and HE predictors and their variants work a row at a time
+// (4, 8 or 16 bytes in one or two words), with the same results.
+
+// sum4 is the sum of the four bytes of w.
+func sum4(w uint32) uint32 {
+	w = w&0x00ff00ff + w>>8&0x00ff00ff
+	return w&0xffff + w>>16
+}
+
+// sum8 is the sum of the eight bytes of w.
+func sum8(w uint64) uint32 {
+	w = w&0x00ff00ff00ff00ff + w>>8&0x00ff00ff00ff00ff
+	return uint32(w * 0x0001000100010001 >> 48)
+}
+
+// top is the sum of the n (8 or 16) bytes from ybr[y][x].
+func (z *Decoder) top(y, x, n int) uint32 {
+	s := sum8(binary.LittleEndian.Uint64(z.ybr[y][x:]))
+	if n == 16 {
+		s += sum8(binary.LittleEndian.Uint64(z.ybr[y][x+8:]))
 	}
-	for j := 0; j < 4; j++ {
-		sum += uint32(z.ybr[y+j][x-1])
+	return s
+}
+
+// left is the sum of the n bytes of column x-1 from row y.
+func (z *Decoder) left(y, x, n int) uint32 {
+	var s uint32
+	for j := y; j < y+n; j++ {
+		s += uint32(z.ybr[j][x-1])
 	}
-	avg := uint8(sum / 8)
-	for j := 0; j < 4; j++ {
-		for i := 0; i < 4; i++ {
-			z.ybr[y+j][x+i] = avg
+	return s
+}
+
+// fill sets the n×n block at y, x (n 8 or 16) to v.
+func (z *Decoder) fill(y, x, n int, v uint8) {
+	w := uint64(v) * 0x0101010101010101
+	for j := y; j < y+n; j++ {
+		r := z.ybr[j][x:]
+		binary.LittleEndian.PutUint64(r, w)
+		if n == 16 {
+			binary.LittleEndian.PutUint64(r[8:], w)
 		}
 	}
+}
+
+func predFunc4DC(z *Decoder, y, x int) {
+	_ = z.ybr[y+3]
+	sum := 4 + sum4(binary.LittleEndian.Uint32(z.ybr[y-1][x:])) +
+		uint32(z.ybr[y][x-1]) + uint32(z.ybr[y+1][x-1]) + uint32(z.ybr[y+2][x-1]) + uint32(z.ybr[y+3][x-1])
+	w := sum / 8 * 0x01010101
+	binary.LittleEndian.PutUint32(z.ybr[y][x:], w)
+	binary.LittleEndian.PutUint32(z.ybr[y+1][x:], w)
+	binary.LittleEndian.PutUint32(z.ybr[y+2][x:], w)
+	binary.LittleEndian.PutUint32(z.ybr[y+3][x:], w)
 }
 
 func predFunc4TM(z *Decoder, y, x int) {
@@ -399,19 +441,7 @@ func predFunc4HU(z *Decoder, y, x int) {
 }
 
 func predFunc8DC(z *Decoder, y, x int) {
-	sum := uint32(8)
-	for i := 0; i < 8; i++ {
-		sum += uint32(z.ybr[y-1][x+i])
-	}
-	for j := 0; j < 8; j++ {
-		sum += uint32(z.ybr[y+j][x-1])
-	}
-	avg := uint8(sum / 16)
-	for j := 0; j < 8; j++ {
-		for i := 0; i < 8; i++ {
-			z.ybr[y+j][x+i] = avg
-		}
-	}
+	z.fill(y, x, 8, uint8((8+z.top(y-1, x, 8)+z.left(y, x, 8))/16))
 }
 
 func predFunc8TM(z *Decoder, y, x int) {
@@ -426,69 +456,32 @@ func predFunc8TM(z *Decoder, y, x int) {
 }
 
 func predFunc8VE(z *Decoder, y, x int) {
-	for j := 0; j < 8; j++ {
-		for i := 0; i < 8; i++ {
-			z.ybr[y+j][x+i] = z.ybr[y-1][x+i]
-		}
+	w := binary.LittleEndian.Uint64(z.ybr[y-1][x:])
+	for j := y; j < y+8; j++ {
+		binary.LittleEndian.PutUint64(z.ybr[j][x:], w)
 	}
 }
 
 func predFunc8HE(z *Decoder, y, x int) {
-	for j := 0; j < 8; j++ {
-		for i := 0; i < 8; i++ {
-			z.ybr[y+j][x+i] = z.ybr[y+j][x-1]
-		}
+	for j := y; j < y+8; j++ {
+		binary.LittleEndian.PutUint64(z.ybr[j][x:], uint64(z.ybr[j][x-1])*0x0101010101010101)
 	}
 }
 
 func predFunc8DCTop(z *Decoder, y, x int) {
-	sum := uint32(4)
-	for j := 0; j < 8; j++ {
-		sum += uint32(z.ybr[y+j][x-1])
-	}
-	avg := uint8(sum / 8)
-	for j := 0; j < 8; j++ {
-		for i := 0; i < 8; i++ {
-			z.ybr[y+j][x+i] = avg
-		}
-	}
+	z.fill(y, x, 8, uint8((4+z.left(y, x, 8))/8))
 }
 
 func predFunc8DCLeft(z *Decoder, y, x int) {
-	sum := uint32(4)
-	for i := 0; i < 8; i++ {
-		sum += uint32(z.ybr[y-1][x+i])
-	}
-	avg := uint8(sum / 8)
-	for j := 0; j < 8; j++ {
-		for i := 0; i < 8; i++ {
-			z.ybr[y+j][x+i] = avg
-		}
-	}
+	z.fill(y, x, 8, uint8((4+z.top(y-1, x, 8))/8))
 }
 
 func predFunc8DCTopLeft(z *Decoder, y, x int) {
-	for j := 0; j < 8; j++ {
-		for i := 0; i < 8; i++ {
-			z.ybr[y+j][x+i] = 0x80
-		}
-	}
+	z.fill(y, x, 8, 0x80)
 }
 
 func predFunc16DC(z *Decoder, y, x int) {
-	sum := uint32(16)
-	for i := 0; i < 16; i++ {
-		sum += uint32(z.ybr[y-1][x+i])
-	}
-	for j := 0; j < 16; j++ {
-		sum += uint32(z.ybr[y+j][x-1])
-	}
-	avg := uint8(sum / 32)
-	for j := 0; j < 16; j++ {
-		for i := 0; i < 16; i++ {
-			z.ybr[y+j][x+i] = avg
-		}
-	}
+	z.fill(y, x, 16, uint8((16+z.top(y-1, x, 16)+z.left(y, x, 16))/32))
 }
 
 func predFunc16TM(z *Decoder, y, x int) {
@@ -503,51 +496,32 @@ func predFunc16TM(z *Decoder, y, x int) {
 }
 
 func predFunc16VE(z *Decoder, y, x int) {
-	for j := 0; j < 16; j++ {
-		for i := 0; i < 16; i++ {
-			z.ybr[y+j][x+i] = z.ybr[y-1][x+i]
-		}
+	w0 := binary.LittleEndian.Uint64(z.ybr[y-1][x:])
+	w1 := binary.LittleEndian.Uint64(z.ybr[y-1][x+8:])
+	for j := y; j < y+16; j++ {
+		r := z.ybr[j][x:]
+		binary.LittleEndian.PutUint64(r, w0)
+		binary.LittleEndian.PutUint64(r[8:], w1)
 	}
 }
 
 func predFunc16HE(z *Decoder, y, x int) {
-	for j := 0; j < 16; j++ {
-		for i := 0; i < 16; i++ {
-			z.ybr[y+j][x+i] = z.ybr[y+j][x-1]
-		}
+	for j := y; j < y+16; j++ {
+		w := uint64(z.ybr[j][x-1]) * 0x0101010101010101
+		r := z.ybr[j][x:]
+		binary.LittleEndian.PutUint64(r, w)
+		binary.LittleEndian.PutUint64(r[8:], w)
 	}
 }
 
 func predFunc16DCTop(z *Decoder, y, x int) {
-	sum := uint32(8)
-	for j := 0; j < 16; j++ {
-		sum += uint32(z.ybr[y+j][x-1])
-	}
-	avg := uint8(sum / 16)
-	for j := 0; j < 16; j++ {
-		for i := 0; i < 16; i++ {
-			z.ybr[y+j][x+i] = avg
-		}
-	}
+	z.fill(y, x, 16, uint8((8+z.left(y, x, 16))/16))
 }
 
 func predFunc16DCLeft(z *Decoder, y, x int) {
-	sum := uint32(8)
-	for i := 0; i < 16; i++ {
-		sum += uint32(z.ybr[y-1][x+i])
-	}
-	avg := uint8(sum / 16)
-	for j := 0; j < 16; j++ {
-		for i := 0; i < 16; i++ {
-			z.ybr[y+j][x+i] = avg
-		}
-	}
+	z.fill(y, x, 16, uint8((8+z.top(y-1, x, 16))/16))
 }
 
 func predFunc16DCTopLeft(z *Decoder, y, x int) {
-	for j := 0; j < 16; j++ {
-		for i := 0; i < 16; i++ {
-			z.ybr[y+j][x+i] = 0x80
-		}
-	}
+	z.fill(y, x, 16, 0x80)
 }

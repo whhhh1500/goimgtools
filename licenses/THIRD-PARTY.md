@@ -203,8 +203,12 @@ code of those packages computes them) after the approach of its SSE2 code
 `FTransform_SSE2` (`enc_sse2.c`), with the quantization, squared error and
 coefficient histogram as the Go code computes them, and
 `internal/webpstream/vp8/idct_amd64.s` the inverse transform of decoder and
-encoder; the files of the same names ending in `_arm64.s` do the same with
-NEON.
+encoder, and `dc_amd64.s` that of a block with only its DC coefficient; the
+files of the same names ending in `_arm64.s` do the same with NEON.
+`internal/webpstream/vp8/parse_amd64.s` and `parse_arm64.s` read the
+coefficients of a block as libwebp's `GetCoeffsFast` (`src/dec/vp8_dec.c`)
+does, with its `VP8GetBit` and `VP8GetSigned` (`src/utils/bit_reader_inl_utils.h`),
+returning, as it does, the position after the last coefficient.
 
 `internal/vp8enc/analysis.go` follows the segmentation of libwebp's lossy
 encoder (`src/enc/analysis_enc.c`, and `VP8SetSegmentParams` and

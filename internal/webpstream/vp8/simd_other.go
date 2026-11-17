@@ -22,3 +22,6 @@ func idctAddAsm(coef *[16]int16, ref *byte, rStride int, dst *byte, dStride int)
 func IDCTAdd(coef *[16]int16, ref *byte, rStride int, dst *byte, dStride int) {
 	panic("unreachable")
 }
+
+func dcAddAsm(dst *byte, stride, dc int)              { panic("unreachable") }
+func dcAdd8Asm(dst *byte, stride, d0, d1, d2, d3 int) { panic("unreachable") }

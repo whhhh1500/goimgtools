@@ -46,3 +46,13 @@ func idctAddAsm(coef *[16]int16, ref *byte, rStride int, dst *byte, dStride int)
 func IDCTAdd(coef *[16]int16, ref *byte, rStride int, dst *byte, dStride int) {
 	idctAddAsm(coef, ref, rStride, dst, dStride)
 }
+
+// dcAddAsm adds dc to the 4x4 block at dst, clipped (inverseDCT4DCOnly);
+// dcAdd8Asm adds d0, d1, d2 and d3 to the four 4x4 blocks of the 8x8 one
+// at dst (inverseDCT8DCOnly).
+//
+//go:noescape
+func dcAddAsm(dst *byte, stride, dc int)
+
+//go:noescape
+func dcAdd8Asm(dst *byte, stride, d0, d1, d2, d3 int)
