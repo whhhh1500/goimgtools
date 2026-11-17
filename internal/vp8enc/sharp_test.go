@@ -44,47 +44,53 @@ func TestSharpLibwebp(t *testing.T) {
 		{"strokes 67x41", sharpTestImage(67, 41), 0xa882b5f6e32428cc},
 		{"noise 33x9", testutil.Images(33, 9)["rgba-opaque"], 0x923c16a43b3c67d8},
 	} {
-		b := c.m.Bounds()
-		w, h := b.Dx(), b.Dy()
-		uw, uh := (w+1)/2, (h+1)/2
-		Y, U, V := make([]uint8, w*h), make([]uint8, uw*uh), make([]uint8, uw*uh)
-		s := newSharpYUV(w)
-		rows := [2][]uint8{make([]uint8, 4*(w+1)), make([]uint8, 4*(w+1))}
-		fill := func(dst []uint8, y int) {
-			for x := 0; x < w; x++ {
-				r, g, bl, _ := c.m.At(b.Min.X+x, b.Min.Y+y).RGBA()
-				dst[4*x], dst[4*x+1], dst[4*x+2], dst[4*x+3] = uint8(r>>8), uint8(g>>8), uint8(bl>>8), 255
+		for _, parts := range []int{1, 3, 4} {
+			b := c.m.Bounds()
+			w, h := b.Dx(), b.Dy()
+			uw, uh := (w+1)/2, (h+1)/2
+			Y, U, V := make([]uint8, w*h), make([]uint8, uw*uh), make([]uint8, uw*uh)
+			env := pipeline.NewEnv(0, "")
+			env.SetHelpers(parts - 1)
+			s := newSharpYUV(w, env)
+			// The columns shared out among parts as on a wide image.
+			s.parts = parts
+			rows := [2][]uint8{make([]uint8, 4*(w+1)), make([]uint8, 4*(w+1))}
+			fill := func(dst []uint8, y int) {
+				for x := 0; x < w; x++ {
+					r, g, bl, _ := c.m.At(b.Min.X+x, b.Min.Y+y).RGBA()
+					dst[4*x], dst[4*x+1], dst[4*x+2], dst[4*x+3] = uint8(r>>8), uint8(g>>8), uint8(bl>>8), 255
+				}
+				copy(dst[4*w:4*w+4], dst[4*w-4:4*w])
 			}
-			copy(dst[4*w:4*w+4], dst[4*w-4:4*w])
-		}
-		put := func(p int) error {
-			y1 := make([]uint8, w)
-			if 2*p+1 < h {
-				y1 = Y[(2*p+1)*w : (2*p+2)*w]
+			put := func(p int) error {
+				y1 := make([]uint8, w)
+				if 2*p+1 < h {
+					y1 = Y[(2*p+1)*w : (2*p+2)*w]
+				}
+				s.yuv(p, Y[2*p*w:2*p*w+w], y1, U[p*uw:(p+1)*uw], V[p*uw:(p+1)*uw])
+				return nil
 			}
-			s.yuv(p, Y[2*p*w:2*p*w+w], y1, U[p*uw:(p+1)*uw], V[p*uw:(p+1)*uw])
-			return nil
-		}
-		for y := 0; y < h; y += 2 {
-			fill(rows[0], y)
-			if y+1 < h {
-				fill(rows[1], y+1)
-			} else {
-				copy(rows[1], rows[0])
+			for y := 0; y < h; y += 2 {
+				fill(rows[0], y)
+				if y+1 < h {
+					fill(rows[1], y+1)
+				} else {
+					copy(rows[1], rows[0])
+				}
+				if err := s.push(rows[0], rows[1], y+2 >= h, put); err != nil {
+					t.Fatal(err)
+				}
 			}
-			if err := s.push(rows[0], rows[1], y+2 >= h, put); err != nil {
-				t.Fatal(err)
+			if s.emitted != uh {
+				t.Fatalf("%s: %d pairs given out, want %d", c.name, s.emitted, uh)
 			}
-		}
-		if s.emitted != uh {
-			t.Fatalf("%s: %d pairs given out, want %d", c.name, s.emitted, uh)
-		}
-		f := fnv.New64a()
-		f.Write(Y)
-		f.Write(U)
-		f.Write(V)
-		if got := f.Sum64(); got != c.want {
-			t.Errorf("%s: sum %016x, want %016x", c.name, got, c.want)
+			f := fnv.New64a()
+			f.Write(Y)
+			f.Write(U)
+			f.Write(V)
+			if got := f.Sum64(); got != c.want {
+				t.Errorf("%s, %d parts: sum %016x, want %016x", c.name, parts, got, c.want)
+			}
 		}
 	}
 }

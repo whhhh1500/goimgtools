@@ -233,3 +233,61 @@ func TestIdctAddSIMDBounds(t *testing.T) {
 		}
 	}
 }
+
+// TestSharpSIMD: the SIMD loops of sharp YUV give the Go code's samples,
+// for chroma anywhere in int16 and W anywhere in 10 bits, over ranges of
+// every alignment.
+func TestSharpSIMD(t *testing.T) {
+	if !useSIMD {
+		t.Skip("no SIMD")
+	}
+	defer func() { useSIMD = true }()
+	rng := rand.New(rand.NewPCG(23, 24))
+	for i := range 3000 {
+		n := 1 + rng.IntN(60)
+		a, b := make([]int16, n), make([]int16, n)
+		wide := i%3 == 0
+		for k := range a {
+			if wide {
+				a[k], b[k] = int16(rng.IntN(65536)-32768), int16(rng.IntN(65536)-32768)
+			} else {
+				a[k], b[k] = int16(rng.IntN(2047)-1023), int16(rng.IntN(2047)-1023)
+			}
+		}
+		wy := make([]uint16, 2*n)
+		for k := range wy {
+			wy[k] = uint16(rng.IntN(1024))
+		}
+		x0 := 2 * rng.IntN(n)
+		x1 := x0 + 2*(1+rng.IntN(n-x0/2))
+		want, got := make([]uint16, 2*n), make([]uint16, 2*n)
+		useSIMD = false
+		filterRow(a, b, wy, want, x0, x1)
+		useSIMD = true
+		filterRow(a, b, wy, got, x0, x1)
+		for k := range want {
+			if got[k] != want[k] {
+				t.Fatalf("case %d, filterRow %d..%d of %d: sample %d is %d, want %d", i, x0, x1, 2*n, k, got[k], want[k])
+			}
+		}
+		m := 16 * (1 + rng.IntN(8))
+		by, ty, y := make([]uint16, m), make([]uint16, m), make([]uint16, m)
+		cur, tuv, uv := make([]int16, m), make([]int16, m), make([]int16, m)
+		for k := 0; k < m; k++ {
+			by[k], ty[k], y[k] = uint16(rng.IntN(1024)), uint16(rng.IntN(1024)), uint16(rng.IntN(1024))
+			cur[k], tuv[k], uv[k] = int16(rng.IntN(65536)-32768), int16(rng.IntN(65536)-32768), int16(rng.IntN(65536)-32768)
+		}
+		wantBy, wantCur := append([]uint16(nil), by...), append([]int16(nil), cur...)
+		for k := range wantBy {
+			wantBy[k] = clip10(int32(wantBy[k]) + int32(ty[k]) - int32(y[k]))
+			wantCur[k] += tuv[k] - uv[k]
+		}
+		updateBySIMD(&by[0], &ty[0], &y[0], m)
+		updateUVSIMD(&cur[0], &tuv[0], &uv[0], m)
+		for k := range by {
+			if by[k] != wantBy[k] || cur[k] != wantCur[k] {
+				t.Fatalf("case %d, updates: sample %d is %d %d, want %d %d", i, k, by[k], cur[k], wantBy[k], wantCur[k])
+			}
+		}
+	}
+}

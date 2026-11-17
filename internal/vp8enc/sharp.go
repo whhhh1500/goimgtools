@@ -1,5 +1,7 @@
 package vp8enc
 
+import "github.com/whhhh1500/goimgtools/pipeline"
+
 // sharpYUV converts RGB to Y'CbCr as libwebp's "sharp YUV" does
 // (sharpyuv/sharpyuv.c and sharpyuv_dsp.c, with the gamma tables of
 // sharpyuv_gamma.c in sharp_tables.go). Plain conversion averages the
@@ -38,6 +40,11 @@ type sharpYUV struct {
 	src   [2][]uint16
 	rgbY  []uint16
 	rgbUV []int16
+	// With helpers the columns of each step are shared out among parts:
+	// every sample depends on its own column and on chroma next to it
+	// that the step only reads, so the result is the same.
+	env   *pipeline.Env
+	parts int
 }
 
 const (
@@ -46,7 +53,25 @@ const (
 	// one coming in.
 	sharpRing = 6
 	sharpMax  = 1<<10 - 1
+	// sharpPartMin is the fewest columns a part of a step is given.
+	sharpPartMin = 512
 )
+
+// split calls fn for even columns x0 to x1 covering the width: once, or
+// for each part at the same time.
+func (s *sharpYUV) split(fn func(x0, x1 int)) {
+	if s.parts <= 1 {
+		fn(0, s.w)
+		return
+	}
+	s.env.Parallel(s.parts, func(k int) {
+		x0, x1 := k*s.w/s.parts&^1, (k+1)*s.w/s.parts&^1
+		if k == s.parts-1 {
+			x1 = s.w
+		}
+		fn(x0, x1)
+	})
+}
 
 func sharpBytes(width int) int64 {
 	w := int64(width+1) &^ 1
@@ -54,9 +79,12 @@ func sharpBytes(width int) int64 {
 	return sharpRing*(8*w+6*w) + 2*6*w + 4*w + 3*w
 }
 
-func newSharpYUV(width int) *sharpYUV {
+func newSharpYUV(width int, env *pipeline.Env) *sharpYUV {
 	w := (width + 1) &^ 1
-	s := &sharpYUV{w: w, uvw: w / 2, last: -1}
+	s := &sharpYUV{w: w, uvw: w / 2, last: -1, env: env, parts: 1}
+	if env != nil {
+		s.parts = max(1, min(env.Helpers()+1, w/sharpPartMin))
+	}
 	for i := range s.by {
 		s.by[i] = make([]uint16, 2*w)
 		s.ty[i] = make([]uint16, 2*w)
@@ -79,14 +107,16 @@ func (s *sharpYUV) push(r0, r1 []uint8, final bool, put func(p int) error) error
 	p := s.n
 	i := p % sharpRing
 	w := s.w
-	importRow(r0, s.src[0], w)
-	importRow(r1, s.src[1], w)
 	by, ty := s.by[i], s.ty[i]
-	storeGray(s.src[0], by[:w], w)
-	storeGray(s.src[1], by[w:], w)
-	updateW(s.src[0], ty[:w], w)
-	updateW(s.src[1], ty[w:], w)
-	updateChroma(s.src[0], s.src[1], s.tuv[i], s.uvw)
+	s.split(func(x0, x1 int) {
+		importRow(r0, s.src[0], w, x0, x1)
+		importRow(r1, s.src[1], w, x0, x1)
+		storeGray(s.src[0], by[:w], w, x0, x1)
+		storeGray(s.src[1], by[w:], w, x0, x1)
+		updateW(s.src[0], ty[:w], w, x0, x1)
+		updateW(s.src[1], ty[w:], w, x0, x1)
+		updateChroma(s.src[0], s.src[1], s.tuv[i], s.uvw, x0/2, x1/2)
+	})
 	copy(s.buv[i], s.tuv[i])
 	s.n++
 	s.done[0] = s.n
@@ -129,21 +159,38 @@ func (s *sharpYUV) pass(q int) {
 		next = s.buv[(q+1)%sharpRing]
 	}
 	w, uvw := s.w, s.uvw
-	by := s.by[i]
-	for c := 0; c < 3; c++ {
-		a := cur[c*uvw : (c+1)*uvw]
-		filterRow(a, prev[c*uvw:(c+1)*uvw], by[:w], s.src[0][c*w:(c+1)*w])
-		filterRow(a, next[c*uvw:(c+1)*uvw], by[w:], s.src[1][c*w:(c+1)*w])
-	}
-	updateW(s.src[0], s.rgbY[:w], w)
-	updateW(s.src[1], s.rgbY[w:], w)
-	updateChroma(s.src[0], s.src[1], s.rgbUV, uvw)
-	ty := s.ty[i]
-	for j, v := range by {
-		by[j] = clip10(int32(v) + int32(ty[j]) - int32(s.rgbY[j]))
-	}
+	by, ty := s.by[i], s.ty[i]
+	// The chroma is only read until every part is done with it.
+	s.split(func(x0, x1 int) {
+		for c := 0; c < 3; c++ {
+			a := cur[c*uvw : (c+1)*uvw]
+			filterRow(a, prev[c*uvw:(c+1)*uvw], by[:w], s.src[0][c*w:(c+1)*w], x0, x1)
+			filterRow(a, next[c*uvw:(c+1)*uvw], by[w:], s.src[1][c*w:(c+1)*w], x0, x1)
+		}
+		updateW(s.src[0], s.rgbY[:w], w, x0, x1)
+		updateW(s.src[1], s.rgbY[w:], w, x0, x1)
+		updateChroma(s.src[0], s.src[1], s.rgbUV, uvw, x0/2, x1/2)
+		for _, j0 := range [2]int{x0, w + x0} {
+			j := j0
+			if useSIMD {
+				if n := (x1 - x0) &^ 15; n > 0 {
+					updateBySIMD(&by[j], &ty[j], &s.rgbY[j], n)
+					j += n
+				}
+			}
+			for ; j < j0+x1-x0; j++ {
+				by[j] = clip10(int32(by[j]) + int32(ty[j]) - int32(s.rgbY[j]))
+			}
+		}
+	})
 	tuv := s.tuv[i]
-	for j := range cur {
+	j := 0
+	if useSIMD {
+		if j = len(cur) &^ 15; j > 0 {
+			updateUVSIMD(&cur[0], &tuv[0], &s.rgbUV[0], j)
+		}
+	}
+	for ; j < len(cur); j++ {
 		cur[j] += tuv[j] - s.rgbUV[j]
 	}
 }
@@ -156,26 +203,29 @@ func (s *sharpYUV) yuv(p int, y0, y1, u, v []uint8) {
 	by, buv := s.by[i], s.buv[i]
 	uvw := s.uvw
 	cr, cg, cb := buv[:uvw], buv[uvw:2*uvw], buv[2*uvw:]
-	for row, dst := range [2][]uint8{y0, y1} {
-		wr := by[row*s.w:]
-		for x := range dst {
-			o := x >> 1
-			W := int32(wr[x])
-			r, g, b := int32(cr[o])+W, int32(cg[o])+W, int32(cb[o])+W
-			dst[x] = clip8((16839*r + 33059*g + 6420*b + 16<<18 + 1<<17) >> 18)
+	s.split(func(x0, x1 int) {
+		for row, dst := range [2][]uint8{y0, y1} {
+			wr := by[row*s.w:]
+			for x := x0; x < min(x1, len(dst)); x++ {
+				o := x >> 1
+				W := int32(wr[x])
+				r, g, b := int32(cr[o])+W, int32(cg[o])+W, int32(cb[o])+W
+				dst[x] = clip8((16839*r + 33059*g + 6420*b + 16<<18 + 1<<17) >> 18)
+			}
 		}
-	}
-	for x := range u {
-		r, g, b := int32(cr[x]), int32(cg[x]), int32(cb[x])
-		u[x] = clip8((-9719*r - 19081*g + 28800*b + 128<<18 + 1<<17) >> 18)
-		v[x] = clip8((28800*r - 24116*g - 4684*b + 128<<18 + 1<<17) >> 18)
-	}
+		for x := x0 / 2; x < min(x1/2, len(u)); x++ {
+			r, g, b := int32(cr[x]), int32(cg[x]), int32(cb[x])
+			u[x] = clip8((-9719*r - 19081*g + 28800*b + 128<<18 + 1<<17) >> 18)
+			v[x] = clip8((28800*r - 24116*g - 4684*b + 128<<18 + 1<<17) >> 18)
+		}
+	})
 }
 
-// importRow spreads w pixels of RGBA into R, G and B planes, two bits up.
-func importRow(rgba []uint8, dst []uint16, w int) {
+// importRow spreads pixels x0 to x1 of RGBA into R, G and B planes of w
+// samples, two bits up.
+func importRow(rgba []uint8, dst []uint16, w, x0, x1 int) {
 	r, g, b := dst[:w], dst[w:2*w], dst[2*w:3*w]
-	for x := range r {
+	for x := x0; x < x1; x++ {
 		px := rgba[4*x : 4*x+3]
 		r[x], g[x], b[x] = uint16(px[0])<<2, uint16(px[1])<<2, uint16(px[2])<<2
 	}
@@ -201,18 +251,20 @@ func gray(r, g, b int64) int64 {
 	return (13933*r + 46871*g + 4732*b + 1<<15) >> 16
 }
 
-// storeGray sets W to the gray of the gamma-coded colours.
-func storeGray(rgb, y []uint16, w int) {
+// storeGray sets W to the gray of the gamma-coded colours (samples x0 to
+// x1).
+func storeGray(rgb, y []uint16, w, x0, x1 int) {
 	r, g, b := rgb[:w], rgb[w:2*w], rgb[2*w:3*w]
-	for i := range y[:w] {
+	for i := x0; i < x1; i++ {
 		y[i] = uint16(gray(int64(r[i]), int64(g[i]), int64(b[i])))
 	}
 }
 
-// updateW sets W to the gray of the colours taken in linear light.
-func updateW(rgb, y []uint16, w int) {
+// updateW sets W to the gray of the colours taken in linear light
+// (samples x0 to x1).
+func updateW(rgb, y []uint16, w, x0, x1 int) {
 	r, g, b := rgb[:w], rgb[w:2*w], rgb[2*w:3*w]
-	for i := range y[:w] {
+	for i := x0; i < x1; i++ {
 		l := gray(int64(toLinear(r[i])), int64(toLinear(g[i])), int64(toLinear(b[i])))
 		y[i] = uint16(fromLinear(uint32(l)))
 	}
@@ -223,11 +275,11 @@ func scaleDown(a, b, c, d uint16) int64 {
 	return int64(fromLinear((toLinear(a) + toLinear(b) + toLinear(c) + toLinear(d) + 2) >> 2))
 }
 
-// updateChroma sets the chroma of each 2x2 block of two rows: its colour
-// averaged in linear light, less the gray of that colour.
-func updateChroma(rgb1, rgb2 []uint16, dst []int16, uvw int) {
+// updateChroma sets the chroma of each 2x2 block of two rows (blocks c0 to
+// c1): its colour averaged in linear light, less the gray of that colour.
+func updateChroma(rgb1, rgb2 []uint16, dst []int16, uvw, c0, c1 int) {
 	w := 2 * uvw
-	for i := 0; i < uvw; i++ {
+	for i := c0; i < c1; i++ {
 		x := 2 * i
 		r := scaleDown(rgb1[x], rgb1[x+1], rgb2[x], rgb2[x+1])
 		g := scaleDown(rgb1[w+x], rgb1[w+x+1], rgb2[w+x], rgb2[w+x+1])
@@ -239,18 +291,44 @@ func updateChroma(rgb1, rgb2 []uint16, dst []int16, uvw int) {
 
 // filterRow upsamples one plane of a chroma row between row a, the nearer,
 // and row b, as a decoder does (9-3-3-1), and adds it to the W row wy
-// (libwebp's InterpolateTwoRows for one plane).
-func filterRow(a, b []int16, wy, out []uint16) {
+// (libwebp's InterpolateTwoRows for one plane): samples x0 to x1, both
+// even.
+func filterRow(a, b []int16, wy, out []uint16, x0, x1 int) {
 	n := len(a)
-	out[0] = filter2(a[0], b[0], wy[0])
-	for i := 0; i < n-1; i++ {
+	x := x0
+	if x == 0 {
+		out[0] = filter2(a[0], b[0], wy[0])
+	} else {
+		// The second sample of the pair of chroma x/2-1 and x/2.
+		i := x/2 - 1
+		a0, a1, b0, b1 := int32(a[i]), int32(a[i+1]), int32(b[i]), int32(b[i+1])
+		out[x] = clip10(int32(wy[x]) + (a1*9+a0*3+b1*3+b0+8)>>4)
+	}
+	x++
+	if useSIMD {
+		// Whole groups of eight pairs: x+2*np is x1-1 at most, and the
+		// pairs read the chroma up to x1/2-1.
+		if np := (x1 - x - 1) / 2 &^ 7; np > 0 {
+			i := x / 2
+			filterPairsSIMD(&a[i], &b[i], &wy[x], &out[x], np)
+			x += 2 * np
+		}
+	}
+	for ; x+1 < x1; x += 2 {
+		i := x / 2
 		a0, a1, b0, b1 := int32(a[i]), int32(a[i+1]), int32(b[i]), int32(b[i+1])
 		v0 := (a0*9 + a1*3 + b0*3 + b1 + 8) >> 4
 		v1 := (a1*9 + a0*3 + b1*3 + b0 + 8) >> 4
-		out[2*i+1] = clip10(int32(wy[2*i+1]) + v0)
-		out[2*i+2] = clip10(int32(wy[2*i+2]) + v1)
+		out[x] = clip10(int32(wy[x]) + v0)
+		out[x+1] = clip10(int32(wy[x+1]) + v1)
 	}
-	out[2*n-1] = filter2(a[n-1], b[n-1], wy[2*n-1])
+	// x is x1-1: the first of a pair, or the last sample of the row.
+	if i := x / 2; i == n-1 {
+		out[x] = filter2(a[n-1], b[n-1], wy[x])
+	} else {
+		a0, a1, b0, b1 := int32(a[i]), int32(a[i+1]), int32(b[i]), int32(b[i+1])
+		out[x] = clip10(int32(wy[x]) + (a0*9+a1*3+b0*3+b1+8)>>4)
+	}
 }
 
 func filter2(a, b int16, w uint16) uint16 {

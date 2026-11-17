@@ -62,7 +62,7 @@ func (e *encoder) readAll() error {
 			return err
 		}
 		defer e.env.Budget.Release(s)
-		e.conv.sharp = newSharpYUV(e.w)
+		e.conv.sharp = newSharpYUV(e.w, e.env)
 		defer func() { e.conv.sharp = nil }()
 	}
 	buf := make([]uint8, n)

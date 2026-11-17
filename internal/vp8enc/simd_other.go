@@ -17,3 +17,9 @@ func quantizeSIMD(in *[16]int16, v *quantVec, lv, deq *[16]int16) int { panic("u
 func histBinsSIMD(src *byte, sStride int, ref *byte, rStride int, bins *[16]uint8) uint32 {
 	panic("unreachable")
 }
+
+func filterPairsSIMD(a, b *int16, wy, out *uint16, n int) { panic("unreachable") }
+
+func updateBySIMD(by, ty, y *uint16, n int) { panic("unreachable") }
+
+func updateUVSIMD(cur, tuv, uv *int16, n int) { panic("unreachable") }
