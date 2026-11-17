@@ -86,18 +86,19 @@ goimgtools batch -resize 1920x1920 -no-enlarge -quality 80 -format jpeg in_dir o
 
 | Format | Read | Write | Reading method |
 |---|---|---|---|
-| PNG | ✓ (APNG: the default image, every frame with `Animated()`) | ✓ | Row-by-row streaming; interlaced (Adam7) images are staged pass by pass, then emitted row by row |
+| PNG | ✓ (APNG: the default image, every frame with `Animated()`) | ✓ (APNG with `Animated()`) | Row-by-row streaming; interlaced (Adam7) images are staged pass by pass, then emitted row by row |
 | JPEG | ✓ | ✓ | Baseline: row-by-row streaming; progressive: DCT coefficients are staged and rows reconstructed after the final scan |
 | WebP | ✓ (animation: the first frame) | ✓ (lossy, lossless, animation) | Lossy: streaming by macroblock row; lossless: only the maximum back-reference window defined by the format (about 4.2MB) is retained |
 | GIF | ✓ (including animation) | ✓ (including animation) | Row-by-row streaming; interlaced images handled as for PNG |
 | BMP | ✓ | ✓ | Rows read by file offset |
 | TIFF | ✓ | ✓ | Row-by-row streaming decompression; JPEG-compressed TIFFs (as libtiff, libvips and sharp write them) are read |
+| AVIF (module `goimgtools/avif`) | ✓ (the first image) | ✓ | Decoded whole by libavif compiled to WebAssembly |
 
 Staged data is kept in memory up to 1/8 of the memory limit (8MB by default); beyond that it is written to temporary files, which are deleted after use.
 
 ## Limitations
 
-- AVIF and HEIC are not supported.
+- HEIC is not supported. AVIF is read and written by the separate module `github.com/whhhh1500/goimgtools/avif` (libavif compiled to WebAssembly, no cgo: import it for its side effect), which decodes an image whole.
 - Entropy decoding in JPEG is sequential (from `Threads(5)` the inverse DCT and the conversion of colour go to the other cores); with many threads it is the slowest stage of decoding a JPEG.
 - A per-pixel adjustment of your own (beyond `Curves` and the other level operations) takes a few lines with `Pixels` (see the grayscale example in [Extending](docs/extending.md)), and a filter that needs neighbouring pixels can be a `Pipe` stage or a `Convolve` kernel.
 - GIF and BMP encoding is single-threaded (the strips of a compressed TIFF are compressed on the other cores); LZ77 matching and the second pass of lossless WebP are sequential, so multiple threads speed it up by only 10–20%.

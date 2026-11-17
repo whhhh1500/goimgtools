@@ -86,18 +86,19 @@ goimgtools batch -resize 1920x1920 -no-enlarge -quality 80 -format jpeg in_dir o
 
 | 格式 | 读 | 写 | 读取方式 |
 |---|---|---|---|
-| PNG | ✓（APNG：默认图像，使用 `Animated()` 时为每一帧） | ✓ | 逐行流式解码；隔行（Adam7）图像先将各遍扫描写入暂存区，再按行输出 |
+| PNG | ✓（APNG：默认图像，使用 `Animated()` 时为每一帧） | ✓（使用 `Animated()` 时写 APNG） | 逐行流式解码；隔行（Adam7）图像先将各遍扫描写入暂存区，再按行输出 |
 | JPEG | ✓ | ✓ | 基线式逐行流式解码；渐进式将 DCT 系数写入暂存区，末次扫描完成后按行重建 |
 | WebP | ✓（动画：第一帧） | ✓（有损、无损、动画） | 有损按宏块行流式解码；无损仅保留格式规定的最大回溯窗口（约 4.2MB） |
 | GIF | ✓（含动画） | ✓（含动画） | 逐行流式解码；隔行处理方式同 PNG |
 | BMP | ✓ | ✓ | 按文件偏移逐行读取 |
 | TIFF | ✓ | ✓ | 逐行流式解压；可读取 JPEG 压缩的 TIFF（libtiff、libvips、sharp 的写法） |
+| AVIF（模块 `goimgtools/avif`） | ✓（第一幅图像） | ✓ | 由编译为 WebAssembly 的 libavif 整图解码 |
 
 暂存区数据不超过内存上限的 1/8（默认 8MB）时驻留内存，超出部分写入临时文件，用后删除。
 
 ## 限制
 
-- 不支持 AVIF 与 HEIC。
+- 不支持 HEIC。AVIF 由独立模块 `github.com/whhhh1500/goimgtools/avif` 读写（libavif 编译为 WebAssembly，无需 cgo；以副作用方式导入即可），该模块整图解码。
 - JPEG 解码中的熵解码为顺序过程（自 `Threads(5)` 起反 DCT 与色彩换算交给其他核心）；多线程下它是 JPEG 解码最慢的环节。
 - 自定义的逐像素调整（`Curves` 等色阶操作之外）可用 `Pixels` 以数行代码实现（参见[扩展](docs/zh-CN/extending.md)中的灰度示例），依赖邻域像素的滤镜可实现为 `Pipe` 环节或 `Convolve` 卷积核。
 - GIF、BMP 编码为单线程（压缩 TIFF 的各条带交给其他核心压缩）；无损 WebP 的 LZ77 匹配与第二遍分组为顺序过程，多线程仅提速 10–20%。

@@ -55,6 +55,7 @@ Nothing exported by 0.1.0 was removed or changed in its signature (checked with 
 - `Filter` (type `ImageFilter`): Pillow's built-in filters (blur, contour, detail, edge enhance, emboss, find edges, sharpen, smooth), and `Convolution.Method` `ConvolvePillow`: its `ImageFilter.Kernel`, to the byte; by name `filter NAME` and `convolve …,pillow`.
 - `BoxBlur(radius)` (`boxblur`): Pillow's `ImageFilter.BoxBlur`, to the byte, fractional radii included.
 - `RotateOptions` for `RotateBy` (`Method`: `RotateLibvips`, sharp's, or `RotatePillow`, Pillow's `Image.rotate` to the byte; `Interpolator`; `Expand`); by name `rotate DEGREES[,BACKGROUND][,pillow][,nearest|bilinear|bicubic][,expand]`.
+- Module `github.com/whhhh1500/goimgtools/avif`: AVIF read and written (libavif with dav1d and aom, compiled to WebAssembly, through gen2brain/avif; no cgo), registered when imported; `avif.Options{Quality, Effort, Lossless, Chroma444}`, MaxFileSize by its quality; irot and imir turn the image upright.
 - TIFF output with Deflate or LZW: the strips are compressed on the other cores (`Threads(4)` and more), the file the same; a 6000×4000 photograph as Deflate in 0.49s with 8 threads instead of 1.73s.
 - `Curves(points, CurvesOptions)`: tone curves, a monotone cubic through the points, for all colour channels and for each; by name `curves`.
 - A grey image made coloured (a coloured overlay, `Tint`) no longer keeps its grey colour profile, which colour pixels cannot carry: each channel is taken through the profile's curve to sRGB.

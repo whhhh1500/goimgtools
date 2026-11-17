@@ -8,3 +8,4 @@
 *.sh   text eol=lf
 # Go fuzz corpus entries are parsed line by line: LF everywhere.
 tests/testdata/fuzz/** text eol=lf
+*.avif binary

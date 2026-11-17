@@ -24,6 +24,25 @@ jobs:
       - run: go vet ./...
       - run: go test ./...
 
+  avif:
+    # The AVIF module (a module of its own, avif/), with the WebAssembly
+    # build of libavif only (nodynamic), as its tests expect.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: avif
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.x"
+      - run: go vet -tags nodynamic ./...
+      - run: go test -tags nodynamic ./...
+
   oldest-go:
     # The oldest Go the module supports, the go line of go.mod. Its
     # compress/flate is the one before Go 1.27 rewrote it, so PNG files
