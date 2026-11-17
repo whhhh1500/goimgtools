@@ -84,3 +84,48 @@ func TestToRGB(t *testing.T) {
 		t.Error("an NRGBA source was wrapped")
 	}
 }
+
+// TestSameWithHelpers: with helpers (the loop filter of a row run while
+// the next is decoded, the conversion to RGB shared out) the pixels are
+// the same as without, in strips of any height.
+func TestSameWithHelpers(t *testing.T) {
+	paths := []string{"../../tests/testdata/webp/odd.lossy.webp", "../../tests/testdata/webp/odd-alpha.lossy.webp", "../../tests/testdata/sharp/resize-lossy.webp"}
+	if dir := testutil.XImageTestdata(); dir != "" {
+		for _, name := range []string{"blue-purple-pink-large.normal-filter.lossy.webp", "blue-purple-pink-large.simple-filter.lossy.webp", "video-001.lossy.webp", "yellow_rose.lossy-with-alpha.webp"} {
+			paths = append(paths, filepath.Join(dir, name))
+		}
+	}
+	decode := func(data []byte, helpers, rows int) []byte {
+		setBandRows(t, rows)
+		env := pipeline.NewEnv(0, t.TempDir())
+		env.SetHelpers(helpers)
+		src, err := Open(bytes.NewReader(data), int64(len(data)), env)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rgb := ToRGB(src)
+		m, err := pipeline.Collect(rgb)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rgb.Close()
+		if env.Budget.Used() != 0 {
+			t.Errorf("%d bytes still reserved", env.Budget.Used())
+		}
+		return m.(*image.NRGBA).Pix
+	}
+	for _, p := range paths {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := decode(data, 0, 0)
+		for _, h := range []int{1, 3} {
+			for _, rows := range []int{0, 16, 48} {
+				if got := decode(data, h, rows); !bytes.Equal(got, want) {
+					t.Errorf("%s, %d helpers, strips of %d rows: other pixels", filepath.Base(p), h, rows)
+				}
+			}
+		}
+	}
+}

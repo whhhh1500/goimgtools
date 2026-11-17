@@ -118,9 +118,14 @@ type Decoder struct {
 	useSkipProb bool
 	skipProb    uint8
 	// Loop filter parameters. perMBFilterParams covers the macroblock row
-	// being decoded.
+	// being decoded, and the row before (whose filter may still run, see
+	// SetAsync): row mby uses perMBFilterParams[mby&1].
 	filterParams      [nSegment][2]filterParam
-	perMBFilterParams []filterParam
+	perMBFilterParams [2][]filterParam
+	// async, when set, runs the loop filter of a macroblock row while the
+	// next one is reconstructed; filtered waits for the filter running.
+	async    func(func()) (wait func())
+	filtered func()
 	// noFilter: the loop filter is skipped (SkipLoopFilter).
 	noFilter bool
 
@@ -398,6 +403,13 @@ func (d *Decoder) inputErr() error {
 	return nil
 }
 
+// SetAsync has the loop filter of each macroblock row run by goAsync (a
+// pipeline.Env's Go) while the next row is reconstructed, as libwebp's
+// threaded decoder does: a row's reconstruction reads the unfiltered rows
+// kept aside, never the pixels the filter changes, and each row's filter
+// waits for the one before. The pixels are the same.
+func (d *Decoder) SetAsync(goAsync func(func()) (wait func())) { d.async = goAsync }
+
 // SkipLoopFilter has the frame decoded without its loop filter, as
 // libwebp does when it scales the frame down to less than three quarters
 // of its width and height while decoding it (io->bypass_filtering).
@@ -412,7 +424,7 @@ func (d *Decoder) Start(bandMB int) error {
 	}
 	d.bandMB = max(bandMB, 1)
 	d.img = image.NewYCbCr(image.Rect(0, 0, 16*d.mbw, 16*(d.bandMB+1)), image.YCbCrSubsampleRatio420)
-	d.perMBFilterParams = make([]filterParam, d.mbw)
+	d.perMBFilterParams = [2][]filterParam{make([]filterParam, d.mbw), make([]filterParam, d.mbw)}
 	d.upMB = make([]mb, d.mbw)
 	d.topY = make([]uint8, 16*d.mbw)
 	d.topCb = make([]uint8, 8*d.mbw)
@@ -425,12 +437,13 @@ func (d *Decoder) Start(bandMB int) error {
 // the band buffer and applies the loop filter to it.
 func (d *Decoder) decodeRow(slot int) {
 	mby := d.mby
+	params := d.perMBFilterParams[mby&1]
 	d.leftMB = mb{}
 	for mbx := 0; mbx < d.mbw; mbx++ {
 		skip := d.reconstruct(mbx, mby, slot)
 		fs := d.filterParams[d.segment][btou(!d.usePredY16)]
 		fs.inner = fs.inner || !skip
-		d.perMBFilterParams[mbx] = fs
+		params[mbx] = fs
 	}
 	// Apply the loop filter.
 	//
@@ -442,12 +455,30 @@ func (d *Decoder) decodeRow(slot int) {
 	// only touches that macroblock, the one to its left and the bottom rows
 	// of the one above, so filtering each row right after reconstructing it
 	// gives the same result as filtering the whole frame at the end.
-	if d.filterHeader.level != 0 && !d.noFilter {
+	if d.filterHeader.level == 0 || d.noFilter {
+		return
+	}
+	filter := func() {
 		if d.filterHeader.simple {
-			d.simpleFilter(mby, slot)
+			d.simpleFilter(mby, slot, params)
 		} else {
-			d.normalFilter(mby, slot)
+			d.normalFilter(mby, slot, params)
 		}
+	}
+	if d.async == nil {
+		filter()
+		return
+	}
+	d.waitFilter()
+	d.filtered = d.async(filter)
+}
+
+// waitFilter waits for the loop filter running, if any.
+func (d *Decoder) waitFilter() {
+	if d.filtered != nil {
+		w := d.filtered
+		d.filtered = nil
+		w()
 	}
 }
 
@@ -479,6 +510,7 @@ func (d *Decoder) NextBand() (*image.YCbCr, error) {
 		d.mby++
 	}
 	n := slot
+	d.waitFilter()
 	if d.mby >= d.mbh {
 		if err := d.inputErr(); err != nil {
 			d.err = err

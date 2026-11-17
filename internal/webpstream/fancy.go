@@ -56,8 +56,10 @@ type toRGB struct {
 	heldY, heldA []uint8
 	held         int
 	reserved     int64
-	upU, upV     []uint8 // a row of upsampled chroma
-	started      bool
+	// up holds a row of upsampled chroma (Cb then Cr) for each part a
+	// strip is cut into when helpers share the conversion.
+	up      [][]uint8
+	started bool
 	// scaled: the decoder scales the image (ScaleOnLoad) and makes the
 	// RGB itself.
 	scaled bool
@@ -89,13 +91,17 @@ func (t *toRGB) start() error {
 	if testRGBRows > 0 {
 		t.maxRows = testRGBRows
 	}
-	n := int64(5*w+4*t.cw) + 4*int64(w)*int64(t.maxRows)
+	parts := t.env.Helpers() + 1
+	n := int64(3*w+4*t.cw) + 2*int64(w)*int64(parts) + 4*int64(w)*int64(t.maxRows)
 	if err := t.env.Budget.Reserve(n, "webp rgb rows"); err != nil {
 		return err
 	}
 	t.reserved += n
 	t.lastU, t.lastV = make([]uint8, t.cw), make([]uint8, t.cw)
-	t.upU, t.upV = make([]uint8, w), make([]uint8, w)
+	t.up = make([][]uint8, parts)
+	for i := range t.up {
+		t.up[i] = make([]uint8, 2*w)
+	}
 	t.heldY, t.heldA = make([]uint8, w), make([]uint8, w)
 	t.band = make([]uint8, 4*w*t.maxRows)
 	t.held, t.lastC = -1, -1
@@ -168,44 +174,50 @@ func (t *toRGB) Next() (image.Image, error) {
 		o := yc.COffset(t.b.Min.X, t.b.Min.Y+2*k)
 		return yc.Cb[o : o+t.cw], yc.Cr[o : o+t.cw]
 	}
-	for y := y0; y < y1; y++ {
-		var lum, a []uint8
-		if y == t.held {
-			lum = t.heldY
-			if t.al != nil {
-				a = t.heldA
+	// Rows are converted on their own; helpers share them out.
+	rows := y1 - y0
+	parts := max(1, min(len(t.up), rows, rows*w/(8<<10)))
+	t.env.Parallel(parts, func(k int) {
+		upU, upV := t.up[k][:w], t.up[k][w:]
+		for y := y0 + k*rows/parts; y < y0+(k+1)*rows/parts; y++ {
+			var lum, a []uint8
+			if y == t.held {
+				lum = t.heldY
+				if t.al != nil {
+					a = t.heldA
+				}
+			} else {
+				o := yc.YOffset(t.b.Min.X, y)
+				lum = yc.Y[o : o+w]
+				if t.al != nil {
+					o := t.al.AOffset(t.b.Min.X, y)
+					a = t.al.A[o : o+w]
+				}
 			}
-		} else {
-			o := yc.YOffset(t.b.Min.X, y)
-			lum = yc.Y[o : o+w]
-			if t.al != nil {
-				o := t.al.AOffset(t.b.Min.X, y)
-				a = t.al.A[o : o+w]
+			j := y - t.b.Min.Y
+			near, far := j>>1, j>>1-1
+			if j&1 == 1 {
+				far = j>>1 + 1
+			}
+			nu, nv := chroma(near)
+			fu, fv := chroma(far)
+			upsample(nu, fu, upU)
+			upsample(nv, fv, upV)
+			dst := out.Pix[(y-y0)*4*w : (y-y0+1)*4*w]
+			for x, v := range lum {
+				d := dst[4*x : 4*x+4]
+				u, vv := int(upU[x]), int(upV[x])
+				yy := multHi(int(v), 19077)
+				d[0] = clip8(yy + multHi(vv, 26149) - 14234)
+				d[1] = clip8(yy - multHi(u, 6419) - multHi(vv, 13320) + 8708)
+				d[2] = clip8(yy + multHi(u, 33050) - 17685)
+				d[3] = 0xff
+				if a != nil {
+					d[3] = a[x]
+				}
 			}
 		}
-		j := y - t.b.Min.Y
-		near, far := j>>1, j>>1-1
-		if j&1 == 1 {
-			far = j>>1 + 1
-		}
-		nu, nv := chroma(near)
-		fu, fv := chroma(far)
-		upsample(nu, fu, t.upU)
-		upsample(nv, fv, t.upV)
-		dst := out.Pix[(y-y0)*4*w : (y-y0+1)*4*w]
-		for x, v := range lum {
-			d := dst[4*x : 4*x+4]
-			u, vv := int(t.upU[x]), int(t.upV[x])
-			yy := multHi(int(v), 19077)
-			d[0] = clip8(yy + multHi(vv, 26149) - 14234)
-			d[1] = clip8(yy - multHi(u, 6419) - multHi(vv, 13320) + 8708)
-			d[2] = clip8(yy + multHi(u, 33050) - 17685)
-			d[3] = 0xff
-			if a != nil {
-				d[3] = a[x]
-			}
-		}
-	}
+	})
 	t.next = y1
 	if t.next == t.end {
 		t.finish()

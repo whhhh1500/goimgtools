@@ -80,10 +80,10 @@ func filter246(pix []byte, n, level, ilevel, hlevel, index, iStep, jStep int, fo
 // simpleFilter implements the simple filter, as specified in section 15.2,
 // for macroblock row mby, which is in macroblock row slot of the band buffer.
 // It also changes the bottom rows of the macroblock row above (slot-1).
-func (d *Decoder) simpleFilter(mby, slot int) {
+func (d *Decoder) simpleFilter(mby, slot int, params []filterParam) {
 	{
 		for mbx := 0; mbx < d.mbw; mbx++ {
-			f := d.perMBFilterParams[mbx]
+			f := params[mbx]
 			if f.level == 0 {
 				continue
 			}
@@ -112,10 +112,10 @@ func (d *Decoder) simpleFilter(mby, slot int) {
 // normalFilter implements the normal filter, as specified in section 15.3,
 // for macroblock row mby, which is in macroblock row slot of the band buffer.
 // It also changes the bottom rows of the macroblock row above (slot-1).
-func (d *Decoder) normalFilter(mby, slot int) {
+func (d *Decoder) normalFilter(mby, slot int, params []filterParam) {
 	{
 		for mbx := 0; mbx < d.mbw; mbx++ {
-			f := d.perMBFilterParams[mbx]
+			f := params[mbx]
 			if f.level == 0 {
 				continue
 			}
