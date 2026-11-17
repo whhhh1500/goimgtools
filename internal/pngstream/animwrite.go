@@ -30,19 +30,16 @@ type AnimOptions struct {
 // and notes whether any pixel is transparent and, up to 256, which colours
 // there are. The second writes the file: with a palette when the colours
 // fit in one (one palette for all frames), else as RGB or RGBA; the first
-// frame whole, and every later one as the rectangle that changed, either
-// as it is (blend_op SOURCE) or, when that is smaller and the pixels that
-// changed are opaque, with the pixels that stay as they were made
-// transparent and blended over the picture (blend_op OVER). The frames
-// are never disposed of: each is drawn on the one before.
+// frame whole, and every later one as the rectangle that differs from what
+// it is drawn on, either as it is (blend_op SOURCE) or, when that is
+// smaller and the pixels that change are opaque, with the pixels that stay
+// as they were made transparent and blended over (blend_op OVER). What a
+// frame is drawn on is chosen too, by the dispose_op of the frame before
+// (see write).
 
-// apngFrame is a distinct picture of the animation: how long it shows, the
-// rectangle that changed since the picture before, and whether every pixel
-// that changed is opaque (so that it can be blended over).
+// apngFrame is a distinct picture of the animation: how long it shows.
 type apngFrame struct {
-	ms           int
-	rect         image.Rectangle
-	opaqueChange bool
+	ms int
 }
 
 type apngEncoder struct {
@@ -150,7 +147,6 @@ func (e *apngEncoder) add(src pipeline.Source, ms int) error {
 	ms = max(ms, 0)
 	first := len(e.frames) == 0
 	var changed image.Rectangle
-	opaqueChange := true
 	stride := 4 * e.w
 	last, lastN := uint32(0), -1 // the colour counted last, a run of it
 	m := pipeline.Map(src, func(s *image.NRGBA) error {
@@ -202,16 +198,7 @@ func (e *apngEncoder) add(src pipeline.Source, ms int) error {
 			if bytes.Equal(row, before) {
 				continue
 			}
-			x0, x1 := e.w, 0
-			for x := 0; x < e.w; x++ {
-				if !bytes.Equal(row[4*x:4*x+4], before[4*x:4*x+4]) {
-					x0, x1 = min(x0, x), x+1
-					if row[4*x+3] != 0xff {
-						opaqueChange = false
-					}
-				}
-			}
-			changed = changed.Union(image.Rect(x0, y0+y, x1, y0+y+1))
+			changed = changed.Union(image.Rect(0, y0+y, e.w, y0+y+1))
 		}
 		return nil
 	})
@@ -237,13 +224,10 @@ func (e *apngEncoder) add(src pipeline.Source, ms int) error {
 		f.ms = min(f.ms+ms, math.MaxInt32)
 		return nil
 	}
-	if first {
-		changed = image.Rect(0, 0, e.w, e.h)
-	}
 	if err := e.env.Budget.Reserve(apngFrameBytes, "animation frame list"); err != nil {
 		return err
 	}
-	e.frames = append(e.frames, apngFrame{ms: ms, rect: changed, opaqueChange: opaqueChange && !first})
+	e.frames = append(e.frames, apngFrame{ms: ms})
 	// The picture is kept for the second pass.
 	row, err := e.rowBuf(stride)
 	if err != nil {
@@ -312,6 +296,14 @@ func (e *apngEncoder) mode() apngMode {
 }
 
 // write writes the file from the pictures kept.
+//
+// Each frame after the first is drawn on what the frame before leaves,
+// which its dispose_op chooses: the picture as it is (NONE), with the
+// frame's rectangle cleared (BACKGROUND), or with it as it was before that
+// frame (PREVIOUS). For every frame the three are tried, as apngopt tries
+// them, each with the rectangle that differs from it and both blend ops,
+// and the smallest is kept, which sets the dispose_op of the frame before:
+// a frame is written once the next is chosen.
 func (e *apngEncoder) write(w io.Writer) error {
 	mode := e.mode()
 	bw := bufio.NewWriterSize(w, 64<<10)
@@ -355,44 +347,240 @@ func (e *apngEncoder) write(w io.Writer) error {
 			cw.chunk("tRNS", trns)
 		}
 	}
+	// The pictures the frame before and this one are drawn on (the first
+	// on a transparent canvas, all zero).
+	size := int64(e.w) * int64(e.h) * 4
+	var err error
+	e.prev.Close()
+	e.cur.Close()
+	e.prev, e.cur = nil, nil
+	if e.prev, err = pipeline.NewScratch(e.env, size); err != nil {
+		return err
+	}
+	if e.cur, err = pipeline.NewScratch(e.env, size); err != nil {
+		return err
+	}
 	seq := uint32(0)
-	for i := range e.frames {
-		if cw.err != nil {
-			break
+	var pend apngChoice // the frame chosen, not yet written
+	flush := func(dispose byte) error {
+		if pend.data == nil {
+			return nil
 		}
-		f := &e.frames[i]
-		data, over, err := e.encodeFrame(i, mode)
-		if err != nil {
-			return fmt.Errorf("frame %d: %w", i+1, err)
-		}
+		defer func() { pend.data.Close(); pend.data = nil }()
 		if len(e.frames) > 1 {
 			var fctl [26]byte
 			binary.BigEndian.PutUint32(fctl[0:], seq)
 			seq++
-			binary.BigEndian.PutUint32(fctl[4:], uint32(f.rect.Dx()))
-			binary.BigEndian.PutUint32(fctl[8:], uint32(f.rect.Dy()))
-			binary.BigEndian.PutUint32(fctl[12:], uint32(f.rect.Min.X))
-			binary.BigEndian.PutUint32(fctl[16:], uint32(f.rect.Min.Y))
-			num, den := apngDelay(f.ms)
+			binary.BigEndian.PutUint32(fctl[4:], uint32(pend.rect.Dx()))
+			binary.BigEndian.PutUint32(fctl[8:], uint32(pend.rect.Dy()))
+			binary.BigEndian.PutUint32(fctl[12:], uint32(pend.rect.Min.X))
+			binary.BigEndian.PutUint32(fctl[16:], uint32(pend.rect.Min.Y))
+			num, den := apngDelay(pend.ms)
 			binary.BigEndian.PutUint16(fctl[20:], num)
 			binary.BigEndian.PutUint16(fctl[22:], den)
-			fctl[24] = 0 // dispose_op NONE: the next frame is drawn on this one
-			if over {
+			fctl[24] = dispose
+			if pend.over {
 				fctl[25] = 1 // blend_op OVER
 			}
 			cw.chunk("fcTL", fctl[:])
 		}
-		err = cw.data(data, i > 0, &seq)
-		data.Close()
+		return cw.data(pend.data, pend.i > 0, &seq)
+	}
+	defer func() {
+		if pend.data != nil {
+			pend.data.Close()
+		}
+	}()
+	for i := range e.frames {
+		if cw.err != nil {
+			break
+		}
+		c, err := e.choose(i, mode, pend)
 		if err != nil {
+			return fmt.Errorf("frame %d: %w", i+1, err)
+		}
+		if err := flush(c.dispose); err != nil {
 			return err
 		}
+		// What this frame is drawn on, for the PREVIOUS of the next.
+		if i > 0 {
+			if err := e.keepBase(i, c.dispose, pend.rect); err != nil {
+				return err
+			}
+		}
+		pend = c
+	}
+	if err := flush(0); err != nil {
+		return err
 	}
 	cw.chunk("IEND", nil)
 	if cw.err != nil {
 		return cw.err
 	}
 	return bw.Flush()
+}
+
+// apngChoice is how frame i is written: its rectangle, blend op and data,
+// and the dispose_op of the frame before that it is drawn after.
+type apngChoice struct {
+	i       int
+	ms      int
+	rect    image.Rectangle
+	over    bool
+	dispose byte
+	data    *pipeline.Spill
+}
+
+// baseRow fills buf with row y of what frame i is drawn on when the frame
+// before (whose rectangle is prev) is disposed of by dispose.
+func (e *apngEncoder) baseRow(i int, dispose byte, prev image.Rectangle, y int, buf []byte) error {
+	if dispose == 2 {
+		_, err := e.prev.ReadAt(buf, e.off(0, y))
+		return err
+	}
+	if _, err := e.store.ReadAt(buf, e.pictureAt(i-1, 0, y)); err != nil {
+		return err
+	}
+	if dispose == 1 && y >= prev.Min.Y && y < prev.Max.Y {
+		clear(buf[4*prev.Min.X : 4*prev.Max.X])
+	}
+	return nil
+}
+
+// keepBase records what frame i is drawn on (the frame before disposed of
+// by dispose), which a PREVIOUS after frame i restores: e.prev then holds
+// it, e.cur what frame i-1 was drawn on.
+func (e *apngEncoder) keepBase(i int, dispose byte, prev image.Rectangle) error {
+	if dispose == 2 {
+		// The same picture as the frame before was drawn on.
+		return nil
+	}
+	row, err := e.rowBuf(4 * e.w)
+	if err != nil {
+		return err
+	}
+	for y := 0; y < e.h; y++ {
+		if err := e.baseRow(i, dispose, prev, y, row); err != nil {
+			return err
+		}
+		if _, err := e.cur.WriteAt(row, e.off(0, y)); err != nil {
+			return err
+		}
+	}
+	e.prev, e.cur = e.cur, e.prev
+	return nil
+}
+
+func (e *apngEncoder) pictureAt(i, x, y int) int64 {
+	return int64(i)*int64(e.w)*int64(e.h)*4 + e.off(x, y)
+}
+
+// choose works out how frame i is best written, after the frame before
+// (pend) is disposed of in each of the three ways.
+func (e *apngEncoder) choose(i int, mode apngMode, pend apngChoice) (apngChoice, error) {
+	f := e.frames[i]
+	if i == 0 {
+		data, err := e.encodeRect(0, mode, image.Rect(0, 0, e.w, e.h), nil, e.o.Level)
+		return apngChoice{i: 0, ms: f.ms, rect: image.Rect(0, 0, e.w, e.h), data: data}, err
+	}
+	// The candidates: each disposal with its rectangle; both blend ops
+	// when the pixels that change are opaque and the file can be
+	// transparent.
+	type cand struct {
+		dispose byte
+		rect    image.Rectangle
+		over    bool
+	}
+	var cands []cand
+	canOver := (mode.pal != nil && mode.keep >= 0) || (mode.pal == nil && mode.alpha)
+	pic, err := e.rowBuf(8 * e.w)
+	if err != nil {
+		return apngChoice{}, err
+	}
+	pic, base := pic[:4*e.w], pic[4*e.w:]
+	for _, d := range []byte{0, 1, 2} {
+		if d == 2 && i == 1 && pend.rect == image.Rect(0, 0, e.w, e.h) {
+			// PREVIOUS after the first frame is BACKGROUND over the whole
+			// canvas, tried as BACKGROUND.
+			continue
+		}
+		var rect image.Rectangle
+		opaque := true
+		for y := 0; y < e.h; y++ {
+			if _, err := e.store.ReadAt(pic, e.pictureAt(i, 0, y)); err != nil {
+				return apngChoice{}, err
+			}
+			if err := e.baseRow(i, d, pend.rect, y, base); err != nil {
+				return apngChoice{}, err
+			}
+			if bytes.Equal(pic, base) {
+				continue
+			}
+			x0, x1 := e.w, 0
+			for x := 0; x < e.w; x++ {
+				if !bytes.Equal(pic[4*x:4*x+4], base[4*x:4*x+4]) {
+					x0, x1 = min(x0, x), x+1
+					if pic[4*x+3] != 0xff {
+						opaque = false
+					}
+				}
+			}
+			rect = rect.Union(image.Rect(x0, y, x1, y+1))
+		}
+		if rect.Empty() {
+			// Nothing to draw: one pixel as it is.
+			rect = image.Rect(0, 0, 1, 1)
+		}
+		cands = append(cands, cand{d, rect, false})
+		if canOver && opaque {
+			cands = append(cands, cand{d, rect, true})
+		}
+	}
+	// Each candidate compressed; from level 8 they are compared at level
+	// 7 and only the one chosen is compressed at the level asked for.
+	level := e.o.Level
+	if level == 0 {
+		level = DefaultLevel
+	}
+	trial := level
+	if level >= 8 {
+		trial = 7
+	}
+	var best apngChoice
+	for _, c := range cands {
+		var keep func(y int, buf []byte) error
+		if c.over {
+			d := c.dispose
+			keep = func(y int, buf []byte) error { return e.baseRow(i, d, pend.rect, y, buf) }
+		}
+		data, err := e.encodeRect(i, mode, c.rect, keep, trial)
+		if err != nil {
+			if best.data != nil {
+				best.data.Close()
+			}
+			return apngChoice{}, err
+		}
+		if best.data == nil || data.Size() < best.data.Size() {
+			if best.data != nil {
+				best.data.Close()
+			}
+			best = apngChoice{i: i, ms: f.ms, rect: c.rect, over: c.over, dispose: c.dispose, data: data}
+		} else {
+			data.Close()
+		}
+	}
+	if trial != level {
+		best.data.Close()
+		var keep func(y int, buf []byte) error
+		if best.over {
+			d := best.dispose
+			keep = func(y int, buf []byte) error { return e.baseRow(i, d, pend.rect, y, buf) }
+		}
+		if best.data, err = e.encodeRect(i, mode, best.rect, keep, level); err != nil {
+			return apngChoice{}, err
+		}
+	}
+	return best, nil
 }
 
 // apngDelay is how long a frame shows as a fraction of a second: in
@@ -420,39 +608,16 @@ func paletteDepth(n int) uint8 {
 	return 8
 }
 
-// encodeFrame compresses frame i's rectangle: as it is, or blended over
-// with the pixels that stay transparent, whichever is smaller (when it can
-// be blended). It returns the zlib stream and whether it blends.
-func (e *apngEncoder) encodeFrame(i int, mode apngMode) (*pipeline.Spill, bool, error) {
-	f := e.frames[i]
-	src, err := e.encodeRect(i, mode, false)
-	if err != nil || !f.opaqueChange || (mode.pal != nil && mode.keep < 0) || (mode.pal == nil && !mode.alpha) {
-		return src, false, err
-	}
-	over, err := e.encodeRect(i, mode, true)
-	if err != nil {
-		src.Close()
-		return nil, false, err
-	}
-	if over.Size() < src.Size() {
-		src.Close()
-		return over, true, nil
-	}
-	over.Close()
-	return src, false, nil
-}
-
-// encodeRect compresses the rectangle of frame i, with the pixels as in
-// the picture before made transparent when keep is set, and returns the
-// zlib stream (what the IDAT chunks hold).
-func (e *apngEncoder) encodeRect(i int, mode apngMode, keep bool) (*pipeline.Spill, error) {
-	f := e.frames[i]
-	src := &apngRect{e: e, i: i, rect: f.rect, keep: keep, mode: mode,
-		rows: pipeline.StripRows(4*int64(f.rect.Dx()), f.rect.Dy())}
+// encodeRect compresses rect of picture i at level, with the pixels that
+// are as in what it is drawn on (keep's rows) made transparent when keep
+// is set, and returns the zlib stream (what the IDAT chunks hold).
+func (e *apngEncoder) encodeRect(i int, mode apngMode, rect image.Rectangle, keep func(y int, buf []byte) error, level int) (*pipeline.Spill, error) {
+	src := &apngRect{e: e, i: i, rect: rect, keep: keep, mode: mode,
+		rows: pipeline.StripRows(4*int64(rect.Dx()), rect.Dy())}
 	defer src.Close()
 	file := pipeline.NewSpill(e.env)
 	defer file.Close()
-	if err := Encode(file, src, &Options{Level: e.o.Level, alpha: mode.pal == nil && mode.alpha}); err != nil {
+	if err := Encode(file, src, &Options{Level: level, alpha: mode.pal == nil && mode.alpha}); err != nil {
 		return nil, err
 	}
 	// The encoder wrote a whole file: what its IDAT chunks hold is the
@@ -480,14 +645,14 @@ func (e *apngEncoder) encodeRect(i int, mode apngMode, keep bool) (*pipeline.Spi
 	return out, nil
 }
 
-// apngRect is the rectangle of a kept picture as strips: NRGBA, or
-// paletted with the animation's palette. With keep, the pixels that are as
-// in the picture before are transparent.
+// apngRect is a rectangle of a kept picture as strips: NRGBA, or paletted
+// with the animation's palette. With keep, the pixels that are as in what
+// the frame is drawn on are transparent.
 type apngRect struct {
 	e        *apngEncoder
 	i        int
 	rect     image.Rectangle
-	keep     bool
+	keep     func(y int, buf []byte) error
 	mode     apngMode
 	rows     int
 	y        int
@@ -514,11 +679,6 @@ func (s *apngRect) Close() error {
 	return nil
 }
 
-// at is where row y of picture i is kept.
-func (s *apngRect) at(i, y int) int64 {
-	return int64(i)*int64(s.e.w)*int64(s.e.h)*4 + s.e.off(s.rect.Min.X, y)
-}
-
 func (s *apngRect) Next() (image.Image, error) {
 	h := s.rect.Dy()
 	if s.y >= h {
@@ -528,8 +688,8 @@ func (s *apngRect) Next() (image.Image, error) {
 	stride := 4 * w
 	if s.band == nil {
 		need := int64(stride) * int64(s.rows)
-		if s.keep {
-			need += int64(stride)
+		if s.keep != nil {
+			need += 4 * int64(s.e.w)
 		}
 		if s.mode.pal != nil {
 			need += int64(w) * int64(s.rows)
@@ -539,8 +699,8 @@ func (s *apngRect) Next() (image.Image, error) {
 		}
 		s.reserved = need
 		s.band = make([]byte, stride*s.rows)
-		if s.keep {
-			s.before = make([]byte, stride)
+		if s.keep != nil {
+			s.before = make([]byte, 4*s.e.w)
 		}
 		if s.mode.pal != nil {
 			s.idx = make([]byte, w*s.rows)
@@ -550,15 +710,16 @@ func (s *apngRect) Next() (image.Image, error) {
 	for r := 0; r < n; r++ {
 		row := s.band[r*stride:][:stride]
 		y := s.rect.Min.Y + s.y + r
-		if _, err := s.e.store.ReadAt(row, s.at(s.i, y)); err != nil {
+		if _, err := s.e.store.ReadAt(row, s.e.pictureAt(s.i, s.rect.Min.X, y)); err != nil {
 			return nil, err
 		}
-		if s.keep {
-			if _, err := s.e.store.ReadAt(s.before, s.at(s.i-1, y)); err != nil {
+		if s.keep != nil {
+			if err := s.keep(y, s.before); err != nil {
 				return nil, err
 			}
+			before := s.before[4*s.rect.Min.X:][:stride]
 			for x := 0; x < stride; x += 4 {
-				if bytes.Equal(row[x:x+4], s.before[x:x+4]) {
+				if bytes.Equal(row[x:x+4], before[x:x+4]) {
 					clear(row[x : x+4])
 				}
 			}

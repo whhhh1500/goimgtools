@@ -16,8 +16,8 @@ import (
 
 // apngFile is an APNG taken apart by a reader of its own: every frame's
 // chunks made into a PNG for image/png, composited as the specification
-// says (this writer only uses dispose_op NONE, and blend_op OVER over
-// pixels that are opaque or transparent).
+// says (blend_op OVER only over pixels that are opaque or transparent,
+// which is all this writer blends).
 type apngFile struct {
 	colorType byte
 	frames    int // from acTL; 0 for a still PNG
@@ -49,18 +49,19 @@ func readAPNG(t *testing.T, b []byte) apngFile {
 			return
 		}
 		w, h := int(binary.BigEndian.Uint32(ihdr[0:])), int(binary.BigEndian.Uint32(ihdr[4:]))
-		x, y, blend := 0, 0, byte(0)
+		x, y, blend, dispose := 0, 0, byte(0), byte(0)
 		ms := 0
 		if fctl != nil {
 			w, h = int(binary.BigEndian.Uint32(fctl[4:])), int(binary.BigEndian.Uint32(fctl[8:]))
 			x, y = int(binary.BigEndian.Uint32(fctl[12:])), int(binary.BigEndian.Uint32(fctl[16:]))
 			num, den := int(binary.BigEndian.Uint16(fctl[20:])), int(binary.BigEndian.Uint16(fctl[22:]))
 			ms = num * 1000 / den
-			if fctl[24] != 0 {
-				t.Errorf("dispose_op %d", fctl[24])
+			dispose, blend = fctl[24], fctl[25]
+			if dispose > 2 || blend > 1 {
+				t.Fatalf("dispose_op %d, blend_op %d", dispose, blend)
 			}
-			blend = fctl[25]
 		}
+		before := append([]byte(nil), cv.Pix...)
 		hdr := append([]byte(nil), ihdr...)
 		binary.BigEndian.PutUint32(hdr[0:], uint32(w))
 		binary.BigEndian.PutUint32(hdr[4:], uint32(h))
@@ -98,6 +99,15 @@ func readAPNG(t *testing.T, b []byte) apngFile {
 		f.pics = append(f.pics, pic)
 		f.ms = append(f.ms, ms)
 		data = nil
+		// The frame's rectangle cleared, or as it was before the frame.
+		for yy := y; yy < y+h && dispose != 0; yy++ {
+			o := cv.PixOffset(x, yy)
+			if dispose == 1 {
+				clear(cv.Pix[o : o+4*w])
+			} else {
+				copy(cv.Pix[o:o+4*w], before[o:o+4*w])
+			}
+		}
 	}
 	for p := 8; p+12 <= len(b); {
 		n := int(binary.BigEndian.Uint32(b[p:]))

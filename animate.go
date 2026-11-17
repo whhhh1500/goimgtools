@@ -45,8 +45,10 @@ import (
 // An APNG is written without loss: with one palette for all the frames
 // when they have 256 colours or fewer, else as RGB (RGBA with
 // transparency); the first frame whole, every later one as the rectangle
-// that changed, either as it is or, when that is smaller, with the pixels
-// that stay as they were transparent and blended over the picture. A
+// that differs from what it is drawn on (the frame before kept, cleared or
+// undone, whichever leaves least to draw, as apngopt chooses), either as it
+// is or with the pixels that stay as they were transparent and blended
+// over, whichever is smaller. A
 // frame that changes nothing lengthens the one before, and frames all
 // alike make a still PNG. Every frame is processed before the file is
 // written (the colours and the transparency of all of them decide how it

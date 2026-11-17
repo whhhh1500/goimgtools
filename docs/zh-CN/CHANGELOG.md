@@ -34,7 +34,7 @@
 - WebP 动画输出：`Animated()` 且输出为 WebP 时，将 GIF 动画写为 WebP 动画（有损或无损），每帧仅存储变化的矩形区域。
 - WebP 动画输入：读取其第一帧（此前作为无法读取的图像拒绝）；使用 `Animated()` 时逐帧处理并写为 GIF 或 WebP 动画：每帧按 libwebp 动画解码器的方式画到画面上（混合或直接覆盖，之后清除其矩形与否），逐像素一致；各帧时长与播放次数随之保留（写为 GIF 时以百分之一秒计，次数按首次之后的重复次数）。`Frames` 可统计 WebP 动画与 PNG 动画（APNG）的帧数，`info` 一并显示。
 - PNG 动画（APNG）输入：使用 `Animated()` 时逐帧处理并写为 GIF 或 WebP 动画，每帧按 APNG 规范绘制（直接覆盖或按 apngdis 的方式合成在上；之后清除、复原或保留），逐帧与按规范编写的渲染程序对照一致。
-- 输出 PNG 动画（APNG）：使用 `Animated()` 且输出为 PNG 时写出无损 APNG：所有帧共不超过 256 种颜色时共用一套调色板（否则为 RGB 或 RGBA），之后各帧存储变化的矩形，原样写入或把未变像素设为透明后叠加，取较小者；相同的帧合并。Pillow 读回逐像素一致；一段小球移动的 GIF 动画缩小 30%，Pillow 写出的照片类 APNG 再小 0.1–2.7%。
+- 输出 PNG 动画（APNG）：使用 `Animated()` 且输出为 PNG 时写出无损 APNG：所有帧共不超过 256 种颜色时共用一套调色板（否则为 RGB 或 RGBA），之后各帧存储与其底图不同的矩形（前一帧保留、清除或撤销，按 apngopt 的方法选择），原样写入或把未变像素设为透明后叠加，取最小者；相同的帧合并。Pillow 读回逐像素一致；一段小球移动的 GIF 动画缩小 30%，Pillow 写出的两段照片类 APNG 分别再小 0.1% 与 18%。
 - `CompositeOptions.WidthRatio` / `HeightRatio`：按底图的比例确定水印尺寸；`-watermark-width N%`。
 - 有损 WebP 分段量化：各段使用独立的量化级别（移植自 libwebp 的空间噪声整形）。
 - `pipeline.Env.SetHelpers`、`Helpers`、`Parallel`、`Go`：供处理环节将工作分摊至多个核。
