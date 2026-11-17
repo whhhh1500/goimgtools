@@ -4,28 +4,37 @@
 // the same bits read in the same way (bitOf, signedOf and largeValue, as
 // libwebp's VP8GetBit and VP8GetSigned), the same coefficients. The
 // range is renormalized after every bit from tables, without a branch.
-// The caller makes sure the window holds enough bytes for any block, so
-// that every refill takes 56 bits.
+// A block is parsed only when the window holds asmMargin bytes from where it
+// starts, so that every refill takes 56 bits; otherwise asmTooNear is
+// returned and the Go code parses it.
 
 //go:build amd64 && !purego
 
+#include "go_asm.h"
 #include "textflag.h"
 
-// func parseBlockAsm(st *asmState, buf *byte, prob *[nBand][nContext][nProb]uint8, blk *[16]int16, first, ctx int, quant uint32) uint8
-TEXT ·parseBlockAsm(SB), NOSPLIT, $8-57
+// func parseBlockAsm(r *partition, prob *[nBand][nContext][nProb]uint8, blk *[16]int16, first, ctx int, quant uint32) uint8
+TEXT ·parseBlockAsm(SB), NOSPLIT, $8-49
+	MOVQ r+0(FP), BX
+	MOVQ partition_buf+8(BX), SI
+	SUBQ partition_r(BX), SI
+	CMPQ SI, $const_asmMargin
+	JGE near
+	MOVB $const_asmTooNear, ret+48(FP)
+	RET
+near:
 	LEAQ ·asmTables(SB), R12
-	MOVQ st+0(FP), BX
-	MOVQ 0(BX), AX
-	MOVQ 8(BX), CX
-	MOVQ 16(BX), DX
-	MOVQ buf+8(FP), SI
-	ADDQ 24(BX), SI
-	MOVQ prob+16(FP), DI
-	MOVQ blk+24(FP), R11
-	MOVQ first+32(FP), R10
+	MOVQ partition_value(BX), AX
+	MOVQ partition_bits(BX), CX
+	MOVL partition_rangeM1(BX), DX
+	MOVQ partition_buf(BX), SI
+	ADDQ partition_r(BX), SI
+	MOVQ prob+8(FP), DI
+	MOVQ blk+16(FP), R11
+	MOVQ first+24(FP), R10
 	MOVBLZX 512(R12)(R10*1), BX
 	LEAQ 0(DI)(BX*1), R9
-	MOVQ ctx+40(FP), BX
+	MOVQ ctx+32(FP), BX
 	IMULQ $11, BX
 	ADDQ BX, R9
 	MOVBLZX 0(R9), R13
@@ -129,7 +138,7 @@ rf7:
 	ADDL R14, DX
 	ORL $1, DX
 	MOVBLZX 528(R12)(R10*1), BX
-	MOVL quant+48(FP), R13
+	MOVL quant+40(FP), R13
 	TESTL BX, BX
 	JZ dc
 	SHRL $16, R13
@@ -163,13 +172,13 @@ rf9:
 	SUBQ BX, CX
 	MOVBLZX 256(R12)(DX*1), DX
 some:
-	MOVB R10, ret+56(FP)
-	MOVQ st+0(FP), BX
-	MOVQ AX, 0(BX)
-	MOVQ CX, 8(BX)
-	MOVQ DX, 16(BX)
-	SUBQ buf+8(FP), SI
-	MOVQ SI, 24(BX)
+	MOVB R10, ret+48(FP)
+	MOVQ r+0(FP), BX
+	MOVQ AX, partition_value(BX)
+	MOVQ CX, partition_bits(BX)
+	MOVL DX, partition_rangeM1(BX)
+	SUBQ partition_buf(BX), SI
+	MOVQ SI, partition_r(BX)
 	RET
 large:
 	MOVBLZX 3(R9), R13

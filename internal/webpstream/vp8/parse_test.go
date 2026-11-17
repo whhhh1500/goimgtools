@@ -19,7 +19,7 @@ func TestParseAsm(t *testing.T) {
 	data := make([]byte, 1200)
 	var d Decoder
 	var cats [8]int
-	runs := 0
+	runs, nearRuns := 0, 0
 	for range 300000 {
 		for j := range data {
 			data[j] = byte(rng.Uint32())
@@ -42,13 +42,15 @@ func TestParseAsm(t *testing.T) {
 			}
 		}
 		var p partition
-		p.init(bytes.NewReader(data), 0, len(data))
+		n := 200 + rng.IntN(len(data)-200)
+		p.init(bytes.NewReader(data[:n]), 0, n)
 		for range 1 + rng.IntN(800) {
 			p.readBit(uint8(rng.IntN(256)))
 		}
-		if p.unexpectedEOF || len(p.buf)-p.r < asmMargin {
+		if p.unexpectedEOF {
 			continue
 		}
+		near := len(p.buf)-p.r < asmMargin
 		plane, ctx, first := rng.IntN(nPlane), rng.IntN(3), rng.IntN(2)
 		quant := [2]uint16{uint16(1 + rng.IntN(300)), uint16(1 + rng.IntN(300))}
 		if rng.IntN(3) == 0 {
@@ -64,12 +66,20 @@ func TestParseAsm(t *testing.T) {
 		}
 
 		clear(d.coeff[:16])
-		st := asmState{p.value, int64(p.bits), uint64(p.rangeM1), int64(p.r)}
-		nz := parseBlockAsm(&st, &p.buf[0], &d.tokenProb[plane], (*[16]int16)(d.coeff[:16]), first, ctx, uint32(quant[0])|uint32(quant[1])<<16)
+		a := p
+		nz := parseBlockAsm(&a, &d.tokenProb[plane], (*[16]int16)(d.coeff[:16]), first, ctx, uint32(quant[0])|uint32(quant[1])<<16)
 		got := [16]int16(d.coeff[:16])
-		if nz != nzGo || got != want || st.value != q.value || int(st.bits) != q.bits || uint32(st.rng) != q.rangeM1 || st.rng>>32 != 0 || int(st.r) != q.r {
+		if near {
+			// Too near the end of the window: nothing read.
+			if nz != asmTooNear || got != [16]int16{} || a.value != p.value || a.bits != p.bits || a.rangeM1 != p.rangeM1 || a.r != p.r {
+				t.Fatalf("near the end of the window: %d, state %x %d %d %d", nz, a.value, a.bits, a.rangeM1, a.r)
+			}
+			nearRuns++
+			continue
+		}
+		if nz != nzGo || got != want || a.value != q.value || a.bits != q.bits || a.rangeM1 != q.rangeM1 || a.r != q.r {
 			t.Fatalf("plane %d ctx %d first %d quant %v: nz %d %d\ngot  %v\nwant %v\nstate %x %d %d %d, want %x %d %d %d",
-				plane, ctx, first, quant, nz, nzGo, got, want, st.value, st.bits, st.rng, st.r, q.value, q.bits, q.rangeM1, q.r)
+				plane, ctx, first, quant, nz, nzGo, got, want, a.value, a.bits, a.rangeM1, a.r, q.value, q.bits, q.rangeM1, q.r)
 		}
 		if quant == [2]uint16{1, 1} {
 			for _, c := range want {
@@ -100,7 +110,10 @@ func TestParseAsm(t *testing.T) {
 		}
 		runs++
 	}
-	t.Logf("%d blocks; values by category %v", runs, cats)
+	t.Logf("%d blocks, %d near the end of the window; values by category %v", runs, nearRuns, cats)
+	if nearRuns == 0 {
+		t.Error("no block near the end of the window")
+	}
 	for i, n := range cats {
 		if n < 100 {
 			t.Errorf("category %d only %d times", i, n)

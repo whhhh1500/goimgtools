@@ -4,33 +4,43 @@
 // the same bits read in the same way (bitOf, signedOf and largeValue, as
 // libwebp's VP8GetBit and VP8GetSigned), the same coefficients. The
 // range is renormalized after every bit from tables, without a branch.
-// The caller makes sure the window holds enough bytes for any block, so
-// that every refill takes 56 bits.
+// A block is parsed only when the window holds asmMargin bytes from where it
+// starts, so that every refill takes 56 bits; otherwise asmTooNear is
+// returned and the Go code parses it.
 
 //go:build arm64 && !purego
 
+#include "go_asm.h"
 #include "textflag.h"
 
-// func parseBlockAsm(st *asmState, buf *byte, prob *[nBand][nContext][nProb]uint8, blk *[16]int16, first, ctx int, quant uint32) uint8
-TEXT ·parseBlockAsm(SB), NOSPLIT, $0-57
+// func parseBlockAsm(r *partition, prob *[nBand][nContext][nProb]uint8, blk *[16]int16, first, ctx int, quant uint32) uint8
+TEXT ·parseBlockAsm(SB), NOSPLIT, $0-49
+	MOVD r+0(FP), R23
+	MOVD partition_buf+8(R23), R10
+	MOVD partition_r(R23), R11
+	SUB R11, R10, R10
+	CMP $const_asmMargin, R10
+	BGE near
+	MOVW $const_asmTooNear, R10
+	MOVB R10, ret+48(FP)
+	RET
+near:
 	MOVD $·asmTables(SB), R9
 	ADD $256, R9, R19
 	ADD $512, R9, R20
 	ADD $528, R9, R21
-	MOVD st+0(FP), R23
-	MOVD 0(R23), R0
-	MOVD 8(R23), R1
-	MOVD 16(R23), R2
-	MOVD buf+8(FP), R24
-	MOVD 24(R23), R3
-	ADD R24, R3, R3
-	MOVD prob+16(FP), R4
-	MOVD blk+24(FP), R7
-	MOVD first+32(FP), R6
-	MOVWU quant+48(FP), R15
+	MOVD partition_value(R23), R0
+	MOVD partition_bits(R23), R1
+	MOVWU partition_rangeM1(R23), R2
+	MOVD partition_buf(R23), R24
+	ADD R24, R11, R3
+	MOVD prob+8(FP), R4
+	MOVD blk+16(FP), R7
+	MOVD first+24(FP), R6
+	MOVWU quant+40(FP), R15
 	MOVBU (R20)(R6), R10
 	ADD R10, R4, R5
-	MOVD ctx+40(FP), R10
+	MOVD ctx+32(FP), R10
 	MOVD $11, R11
 	MADD R10, R5, R11, R5
 	MOVBU 0(R5), R13
@@ -150,12 +160,12 @@ rf9:
 	SUB R10, R1, R1
 	MOVBU (R19)(R2), R2
 some:
-	MOVB R6, ret+56(FP)
-	MOVD R0, 0(R23)
-	MOVD R1, 8(R23)
-	MOVD R2, 16(R23)
+	MOVB R6, ret+48(FP)
+	MOVD R0, partition_value(R23)
+	MOVD R1, partition_bits(R23)
+	MOVW R2, partition_rangeM1(R23)
 	SUB R24, R3, R3
-	MOVD R3, 24(R23)
+	MOVD R3, partition_r(R23)
 	RET
 large:
 	MOVBU 3(R5), R13

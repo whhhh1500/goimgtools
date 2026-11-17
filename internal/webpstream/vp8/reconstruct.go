@@ -213,15 +213,11 @@ var (
 // 1, and its sign) are read with bitOf; at the end of the partition the
 // block ends there (the frame fails: see inputErr).
 func (d *Decoder) parseResiduals4(r *partition, plane int, context uint8, quant [2]uint16, skipFirstCoeff bool, coeffBase int) uint8 {
-	if parseAsm && len(r.buf)-r.r >= asmMargin {
-		st := asmState{r.value, int64(r.bits), uint64(r.rangeM1), int64(r.r)}
-		first := 0
-		if skipFirstCoeff {
-			first = 1
+	if parseAsm {
+		n := parseBlockAsm(r, &d.tokenProb[plane], (*[16]int16)(d.coeff[coeffBase:coeffBase+16]), int(btou(skipFirstCoeff)), int(context), uint32(quant[0])|uint32(quant[1])<<16)
+		if n != asmTooNear {
+			return n
 		}
-		nz := parseBlockAsm(&st, &r.buf[0], &d.tokenProb[plane], (*[16]int16)(d.coeff[coeffBase:coeffBase+16]), first, int(context), uint32(quant[0])|uint32(quant[1])<<16)
-		r.value, r.bits, r.rangeM1, r.r = st.value, int(st.bits), uint32(st.rng), int(st.r)
-		return nz
 	}
 	return d.parseResiduals4Go(r, plane, context, quant, skipFirstCoeff, coeffBase)
 }
@@ -231,8 +227,12 @@ func (d *Decoder) parseResiduals4(r *partition, plane int, context uint8, quant 
 // token bits, 15 for a value of category 6, its sign and the end of
 // block), and each takes at most 7 off bits (which start at -8 or more):
 // 2143 in all, which 39 refills of 56 bits cover, the last reading 8 bytes
-// 7*38 bytes on.
-const asmMargin = 7*38 + 8 + 14
+// 7*38 bytes on. Nearer the end of the window, parseBlockAsm returns
+// asmTooNear.
+const (
+	asmMargin  = 7*38 + 8 + 14
+	asmTooNear = 0xff
+)
 
 // parseResiduals4Go is parseResiduals4 in Go.
 func (d *Decoder) parseResiduals4Go(r *partition, plane int, context uint8, quant [2]uint16, skipFirstCoeff bool, coeffBase int) uint8 {

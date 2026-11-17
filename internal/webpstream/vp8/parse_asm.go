@@ -19,20 +19,12 @@ var asmTables = func() (t [2*256 + 17 + 16]uint8) {
 	return
 }()
 
-// asmState is a partition's reader for parseBlockAsm: value, bits,
-// rangeM1 and r.
-type asmState struct {
-	value uint64
-	bits  int64
-	rng   uint64
-	r     int64
-}
-
 // parseBlockAsm is the token loop of parseResiduals4 from position first
-// (0 or 1) with the given context, the reader st over buf, which must
-// hold asmMargin bytes from st.r on. quant is the DC factor | the AC
-// factor << 16. It returns parseResiduals4's result: the position after
-// the last coefficient.
+// (0 or 1) with the given context, reading r (its fields at the offsets
+// go_asm.h gives) when its window holds asmMargin bytes from r.r on, and
+// otherwise returning asmTooNear without reading. quant is the DC factor |
+// the AC factor << 16. It returns parseResiduals4's result: the position
+// after the last coefficient.
 //
 //go:noescape
-func parseBlockAsm(st *asmState, buf *byte, prob *[nBand][nContext][nProb]uint8, blk *[16]int16, first, ctx int, quant uint32) uint8
+func parseBlockAsm(r *partition, prob *[nBand][nContext][nProb]uint8, blk *[16]int16, first, ctx int, quant uint32) uint8
