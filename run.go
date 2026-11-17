@@ -145,8 +145,10 @@ func (m *Image) buildFrom(env *pipeline.Env, top bool, f *input, format string, 
 	r := &run{exifOrient: pipeline.ExifOrientation(meta.Exif), sizeOnly: sizeOnly, maxPixels: m.outputLimit(), hooks: m.hooks}
 	// A JPEG that the chain starts by reducing to half its size or less
 	// can be made smaller while it is decoded, when the resize allows it.
+	// Also when only the size is wanted: with ResizeLibvips the size of
+	// the result depends on it. Nothing is decoded yet.
 	var pre preShrunk
-	if format == "jpeg" && !sizeOnly {
+	if format == "jpeg" {
 		// With hooks the steps are done as written: only a resize that
 		// comes first can have the decoder's help.
 		if z, turn, ok := firstResize(m.chain, r); ok && (z.spec.o.FastShrinkOnLoad || z.spec.o.Method == ResizeLibvips) && (len(m.hooks) == 0 || turn == ops.Upright && len(m.chain) > 0 && isResize(m.chain[0])) {
@@ -199,6 +201,17 @@ func (m *Image) buildFrom(env *pipeline.Env, top bool, f *input, format string, 
 						return nil, nil, "", none, err
 					}
 					src = small
+				}
+			}
+		}
+	}
+	if format == "webp" {
+		// sharp has libwebp scale a WebP as it decodes it, with
+		// fastShrinkOnLoad (see vipsWebPScale).
+		if z, turn, ok := firstResize(m.chain, r); ok && z.spec.o.Method == ResizeLibvips && z.spec.o.FastShrinkOnLoad && (len(m.hooks) == 0 || turn == ops.Upright && len(m.chain) > 0 && isResize(m.chain[0])) && autoTurns(m.chain[:firstResizeAt(m.chain, r)]) {
+			if w, h := vipsWebPScale(src, z.spec, turn); w > 0 {
+				if j, ok := src.(interface{ ScaleOnLoad(w, h int) bool }); ok {
+					j.ScaleOnLoad(w, h)
 				}
 			}
 		}

@@ -107,6 +107,23 @@ type source struct {
 	band      []byte
 	stripRows int
 	y         int
+
+	// Scaled decoding (ScaleOnLoad): bounds is then the size out, orig the
+	// size in the file; the planes being scaled and a row of the lossless
+	// image premultiplied.
+	scaled         bool
+	orig           image.Point
+	bandRows       int
+	sy, su, sv, sa *plane
+	row            []byte
+}
+
+// fileSize is the size of the image in the file.
+func (s *source) fileSize() (int, int) {
+	if s.scaled {
+		return s.orig.X, s.orig.Y
+	}
+	return s.bounds.Dx(), s.bounds.Dy()
 }
 
 // Open reads the WebP headers from the size bytes of r and returns a Source
@@ -406,9 +423,14 @@ func (s *source) Next() (image.Image, error) {
 	}
 	var m image.Image
 	var err error
-	if s.lossy {
+	switch {
+	case s.scaled && s.lossy:
+		m, err = s.nextScaledLossy()
+	case s.scaled:
+		m, err = s.nextScaledLossless()
+	case s.lossy:
 		m, err = s.nextLossy()
-	} else {
+	default:
 		m, err = s.nextLossless()
 	}
 	if err != nil {
@@ -423,7 +445,7 @@ func (s *source) Next() (image.Image, error) {
 // startLossy allocates the lossy decoder's buffers and parses the rest of
 // its headers.
 func (s *source) startLossy() error {
-	w, h := s.bounds.Dx(), s.bounds.Dy()
+	w, h := s.fileSize()
 	mbw := (w + 15) / 16
 	// A strip is whole macroblock rows: about 256KB of them, at least one.
 	bandMB := max(pipeline.StripRows(int64(mbw)*24, h)/16, 1)
@@ -436,6 +458,7 @@ func (s *source) startLossy() error {
 	if err := s.vd.Start(bandMB); err != nil {
 		return err
 	}
+	s.bandRows = 16 * (bandMB + 1)
 	if !s.hasAlpha {
 		return nil
 	}
@@ -617,5 +640,6 @@ func (s *source) Close() error {
 	s.reserved = 0
 	s.vd, s.ld, s.alphaLD = nil, nil, nil
 	s.band, s.alphaBuf, s.alphaPrev = nil, nil, nil
+	s.sy, s.su, s.sv, s.sa, s.row = nil, nil, nil, nil, nil
 	return err
 }

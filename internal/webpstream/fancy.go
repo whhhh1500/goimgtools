@@ -58,6 +58,9 @@ type toRGB struct {
 	reserved     int64
 	upU, upV     []uint8 // a row of upsampled chroma
 	started      bool
+	// scaled: the decoder scales the image (ScaleOnLoad) and makes the
+	// RGB itself.
+	scaled bool
 }
 
 // testRGBRows, when positive, overrides the number of rows of a strip
@@ -100,7 +103,22 @@ func (t *toRGB) start() error {
 	return nil
 }
 
+// ScaleOnLoad has the decoder scale the image as libwebp does while
+// decoding it (see source.ScaleOnLoad); it then turns the Y'CbCr into RGB
+// itself, without upsampling.
+func (t *toRGB) ScaleOnLoad(w, h int) bool {
+	j, ok := t.src.(interface{ ScaleOnLoad(w, h int) bool })
+	if t.started || !ok || !j.ScaleOnLoad(w, h) {
+		return false
+	}
+	t.scaled, t.b = true, t.src.Bounds()
+	return true
+}
+
 func (t *toRGB) Next() (image.Image, error) {
+	if t.scaled {
+		return t.src.Next()
+	}
 	if !t.started {
 		if err := t.start(); err != nil {
 			return nil, err

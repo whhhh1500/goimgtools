@@ -121,6 +121,8 @@ type Decoder struct {
 	// being decoded.
 	filterParams      [nSegment][2]filterParam
 	perMBFilterParams []filterParam
+	// noFilter: the loop filter is skipped (SkipLoopFilter).
+	noFilter bool
 
 	// topY, topCb and topCr are the unfiltered bottom rows of the macroblock
 	// row above the one being decoded.
@@ -396,6 +398,11 @@ func (d *Decoder) inputErr() error {
 	return nil
 }
 
+// SkipLoopFilter has the frame decoded without its loop filter, as
+// libwebp does when it scales the frame down to less than three quarters
+// of its width and height while decoding it (io->bypass_filtering).
+func (d *Decoder) SkipLoopFilter() { d.noFilter = true }
+
 // Start parses the remaining headers and allocates the buffers for bands of
 // bandMB macroblock rows (BufferBytes(bandMB) bytes).
 func (d *Decoder) Start(bandMB int) error {
@@ -435,7 +442,7 @@ func (d *Decoder) decodeRow(slot int) {
 	// only touches that macroblock, the one to its left and the bottom rows
 	// of the one above, so filtering each row right after reconstructing it
 	// gives the same result as filtering the whole frame at the end.
-	if d.filterHeader.level != 0 {
+	if d.filterHeader.level != 0 && !d.noFilter {
 		if d.filterHeader.simple {
 			d.simpleFilter(mby, slot)
 		} else {

@@ -65,7 +65,7 @@ goimgtools -op median:3 -op normalize -op "tint:#704214" scan.jpg out.jpg
 | `-reducing-gap` | 配合 `-resize-method pillow`：Pillow 的 `reducing_gap`（2 并加 `-no-enlarge -fast-shrink` 即 Pillow 的 `thumbnail`） |
 | `-resize-method` | `draw`（默认）、`libvips`（与 sharp 的 resize 逐字节一致；sharp 默认核为 `lanczos3`）或 `pillow`（与 Pillow 的 resize 逐字节一致） |
 | `-no-enlarge` | 不放大图像 |
-| `-fast-shrink` | JPEG 缩小至一半以下时，先在解码阶段缩小 |
+| `-fast-shrink` | JPEG 缩小至一半以下时，先在解码阶段缩小（配合 `-resize-method libvips` 即 sharp 的 `fastShrinkOnLoad`，WebP 也在解码时缩放） |
 | `-extend T,R,B,L` | 四周扩边（单位为像素），颜色由 `-background` 指定 |
 | `-extend-with copy\|repeat\|mirror` | `-extend` 的边框改用图像本身：重复边缘像素、重复图像或镜像图像 |
 | `-grayscale` | 转为灰度 |

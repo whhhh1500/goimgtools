@@ -134,6 +134,13 @@ func (d *decoded) ShrinkOnLoadLibjpeg(k int) bool {
 	return is && j.ShrinkOnLoadLibjpeg(k)
 }
 
+// ScaleOnLoad passes on a request to a WebP decoder to decode the image
+// scaled to w x h as libwebp does; false where the decoder cannot.
+func (d *decoded) ScaleOnLoad(w, h int) bool {
+	j, is := d.Source.(interface{ ScaleOnLoad(w, h int) bool })
+	return is && j.ScaleOnLoad(w, h)
+}
+
 func fileInput(path string) (*input, error) {
 	f, err := os.Open(path)
 	if err != nil {

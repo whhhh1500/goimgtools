@@ -81,8 +81,10 @@ type ResizeOptions struct {
 	// decoded straight to the averages of its pixels), leaving less for the
 	// resize itself. It is markedly faster and uses less memory; the pixels
 	// differ slightly from a resize of the full image, the size of the
-	// result does not. It applies when Resize is the first operation on a
-	// JPEG, and is ignored otherwise.
+	// result does not. With ResizeLibvips it is sharp's fastShrinkOnLoad,
+	// sizes included, which also has a WebP scaled while it is decoded (as
+	// libwebp scales it). It applies when Resize is the first operation on
+	// a JPEG (or, with ResizeLibvips, a WebP), and is ignored otherwise.
 	FastShrinkOnLoad bool
 	// Background fills the bars FitContain adds. The default is black.
 	Background color.Color

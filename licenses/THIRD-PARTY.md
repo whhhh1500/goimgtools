@@ -232,6 +232,11 @@ were rewritten in Go; nothing of the original files is included unchanged.
 does (`src/dsp/upsampling.c`: the "fancy" chroma upsampler;
 `src/dsp/yuv.h`: the integer conversion), so that decoded pixels are
 libwebp's to the byte; it was rewritten in Go to work on strips.
+`internal/webpstream/rescale.go` is a Go port of libwebp's rescaler
+(`src/utils/rescaler_utils.c` and the plain C of `src/dsp/rescaler.c`) and
+of its premultiplication by alpha (`WebPMultARGBRow`,
+`src/dsp/alpha_processing.c`); `scaled.go` decodes scaled as
+`src/dec/io_dec.c` and `src/dec/vp8l_dec.c` do.
 
 `internal/vp8lenc/optimal.go` follows the idea of libwebp's lossless
 `TraceBackwards` (`src/enc/backward_references_cost_enc.c`): the LZ77

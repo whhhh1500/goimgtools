@@ -156,6 +156,10 @@ func check(t *testing.T, what string, data []byte) {
 	t.Helper()
 	want, werr, panicked := reference(data)
 	got, gerr := stream(t, data, pipeline.NewEnv(0, t.TempDir()))
+	// Scaled, the image fails where it fails whole.
+	if ok, serr := scaledStream(t, data); ok && (serr == nil) != (gerr == nil) {
+		t.Errorf("%s: scaled decoding gives %v, whole %v", what, serr, gerr)
+	}
 	if panicked {
 		return // The reference is no guide; not panicking ourselves is enough.
 	}

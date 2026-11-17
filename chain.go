@@ -261,7 +261,7 @@ func (z resizeOp) resize(src pipeline.Source, turn ops.Orientation, pre preShrun
 			return nil, err
 		}
 	}
-	return z.fitBox(ops.Orient(out, turn), dw, dh)
+	return z.fitBox(ops.Orient(out, turn), dw, dh, false)
 }
 
 // resizeVips is resize with ResizeLibvips: sharp's resize of src, which is
@@ -298,7 +298,8 @@ func (z resizeOp) resizeVips(src pipeline.Source, turn ops.Orientation, pre preS
 			return nil, err
 		}
 	}
-	return z.fitBox(ops.Orient(out, turn), dw, dh)
+	// sharp multiplies the colours by alpha only for a resize.
+	return z.fitBox(ops.Orient(out, turn), dw, dh, hs != 1 || vs != 1)
 }
 
 // resizePillow is resize with ResizePillow: Pillow's resize of src to the
@@ -350,7 +351,7 @@ func (z resizeOp) resizePillow(src pipeline.Source, turn ops.Orientation, pre pr
 		}
 		return ops.Extend(out, x, y, max(0, spec.width-dw-x), max(0, spec.height-dh-y), bg)
 	}
-	return z.fitBox(ops.Orient(out, turn), dw, dh)
+	return z.fitBox(ops.Orient(out, turn), dw, dh, false)
 }
 
 // pillowDraft is the factor Pillow's draft(mode, size) reduces a JPEG by for
@@ -422,8 +423,10 @@ func (r resizeSpec) shrinks(sw, sh, tw, th int) (hs, vs float64) {
 }
 
 // fitBox crops or pads out, a dw × dh image, to the box of z: what
-// FitCover and FitContain do after the resize.
-func (z resizeOp) fitBox(out pipeline.Source, dw, dh int) (pipeline.Source, error) {
+// FitCover and FitContain do after the resize. premultiplied says that
+// sharp pads the image while its colours are multiplied by alpha (see
+// vipsBackground).
+func (z resizeOp) fitBox(out pipeline.Source, dw, dh int, premultiplied bool) (pipeline.Source, error) {
 	o, width, height := z.spec.o, z.spec.width, z.spec.height
 	switch {
 	case o.Fit == FitCover && width > 0 && height > 0 && (dw > width || dh > height):
@@ -442,7 +445,7 @@ func (z resizeOp) fitBox(out pipeline.Source, dw, dh int) (pipeline.Source, erro
 		if o.Background != nil {
 			bg = o.Background
 		}
-		if o.Method == ResizeLibvips && !pipeline.IsOpaque(out) {
+		if premultiplied && !pipeline.IsOpaque(out) {
 			bg = vipsBackground(bg)
 		}
 		gx, gy := o.Position.gridOr(1, 1)
@@ -732,6 +735,28 @@ func vipsShrinkOnLoad(src pipeline.Source, z resizeSpec, turn ops.Orientation) i
 		k /= 2
 	}
 	return k
+}
+
+// vipsWebPScale is the size sharp has libwebp decode a WebP at, for the
+// resize z (with ResizeLibvips and FastShrinkOnLoad) after turn: the image
+// scaled by 1/s, s the smaller of the factors the resize reduces the two
+// sides by, each side rounded to the nearest (half to even, as libvips'
+// rint); 0, 0 when s is not above 1.
+func vipsWebPScale(src pipeline.Source, z resizeSpec, turn ops.Orientation) (int, int) {
+	b := src.Bounds()
+	tw, th := turn.Size(z.width, z.height)
+	hs, vs := z.shrinks(b.Dx(), b.Dy(), tw, th)
+	shrink := min(hs, vs)
+	if !(shrink > 1) {
+		return 0, 0
+	}
+	scale := 1 / shrink
+	w := math.RoundToEven(float64(b.Dx()) * scale)
+	h := math.RoundToEven(float64(b.Dy()) * scale)
+	if w < 1 || h < 1 {
+		return 0, 0
+	}
+	return int(w), int(h)
 }
 
 // shrinkFactor picks the largest of 8, 4 and 2 that still leaves the resize
