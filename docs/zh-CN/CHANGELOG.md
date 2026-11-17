@@ -22,6 +22,7 @@
 - 按名称注册操作：`RegisterOperation`、`UnregisterOperation`、`LookupOperation`、`Operations`、`Image.Do`。包裹每一步骤的钩子：`Image.Around`。`ParseColor`。
 - `cli` 包：以库的形式提供命令行（`cli.Main`、`cli.Run`），程序可向其中加入自定义操作；命令行选项 `-op 名字[:参数]` 与子命令 `ops`。
 - `ToSRGB()` / `-srgb`：依据色彩配置将颜色转换至 sRGB。GIF、BMP 无法附带色彩配置，输出时自动转换。
+- 支持查找表类色彩配置（lut8、lut16、lutAToB；RGB 与 CMYK，连接空间为 Lab 或 XYZ），按其感知表转换，插值方式与 LittleCMS 相同（CMYK 印刷配置与其感知转换相差不超过 1 级）。带色彩配置的 CMYK JPEG 解码时即经配置转为 sRGB，与 sharp 相同（以前按简单公式转换，并把 CMYK 配置写进 RGB 输出）。
 - WebP、TIFF 支持读写色彩配置；WebP 支持读写 EXIF。
 - `JPEGOptions.Trellis` / `-jpeg-trellis`：网格量化（采用 mozjpeg 的方法）。
 - `JPEGOptions.QuantTable`（`QuantTable` 类型，每种选择有具名常量）/ `-jpeg-quant-table`：mozjpeg 的 9 套量化表，编号与其 `-quant-table` 一致；默认 `QuantTableStandard`（0）为 JPEG 标准表。

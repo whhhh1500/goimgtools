@@ -99,7 +99,7 @@ Staged data is kept in memory up to 1/8 of the memory limit (8MB by default); be
 
 - AVIF and HEIC are not supported.
 - EXIF in TIFF files is neither read nor written (ICC profiles are).
-- Lookup-table (A2B0 and similar) and grayscale colour profiles are not converted to sRGB; they are written unchanged, including to GIF and BMP.
+- Grayscale colour profiles are not converted to sRGB; they are written unchanged, including to GIF and BMP. A CMYK image without a profile is converted with the plain formula (sharp uses a CMYK profile of its own).
 - Entropy decoding in JPEG is sequential, and the IDCT is not yet parallelized (the conversion of colour is); with many threads this is the slowest stage when shrinking JPEGs.
 - Animations are written as GIF or WebP only (not as APNG). In GIF output, identical consecutive frames are not merged (each is still stored, at a few dozen bytes).
 - Colour curves are not built in; a per-pixel adjustment takes a few lines with `Pixels` (see the grayscale example in [Extending](docs/extending.md)), and a filter that needs neighbouring pixels can be a `Pipe` stage or a `Convolve` kernel.

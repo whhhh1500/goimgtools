@@ -10,6 +10,7 @@ import (
 	"io"
 	"runtime/debug"
 
+	"github.com/whhhh1500/goimgtools/internal/iccprof"
 	"github.com/whhhh1500/goimgtools/internal/ops"
 	"github.com/whhhh1500/goimgtools/internal/resize"
 	"github.com/whhhh1500/goimgtools/pipeline"
@@ -225,6 +226,15 @@ func (m *Image) buildFrom(env *pipeline.Env, top bool, f *input, format string, 
 					pre = preShrunk{orig: orig, whole: true}
 				}
 			}
+		}
+	}
+	// A CMYK image is turned into sRGB through its colour profile as soon
+	// as it is decoded, as sharp does; without a profile its values are
+	// taken as they are (as color.CMYK converts them).
+	if !sizeOnly && src.ColorModel() == color.CMYKModel && len(meta.ICC) > 0 {
+		if p, err := iccprof.Parse(meta.ICC); err == nil && p.Channels() == 4 {
+			src = ops.CMYKToSRGB(src, p.ToSRGB())
+			meta.ICC = nil
 		}
 	}
 	if format == "jpeg" && keepYCbCr && pre.k <= 1 {

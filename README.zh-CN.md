@@ -99,7 +99,7 @@ goimgtools batch -resize 1920x1920 -no-enlarge -quality 80 -format jpeg in_dir o
 
 - 不支持 AVIF 与 HEIC。
 - 不读写 TIFF 中的 EXIF（ICC 色彩配置可读写）。
-- 查找表类（A2B0 等）与灰度色彩配置不转换至 sRGB，按原样写出（包括输出 GIF、BMP 时）。
+- 灰度色彩配置不转换至 sRGB，按原样写出（包括输出 GIF、BMP 时）。不带色彩配置的 CMYK 图像按简单公式转换（sharp 用其自带的 CMYK 配置）。
 - JPEG 解码中的熵解码为顺序过程，IDCT 尚未并行化（色彩换算已并行）；多线程下它是 JPEG 缩小流程中最慢的环节。
 - 动画只输出为 GIF 或 WebP（不输出 APNG）。GIF 输出中相邻的相同帧不合并（每帧仍单独存储，仅占数十字节）。
 - 未内置颜色曲线；逐像素的调整可用 `Pixels` 以数行代码实现（参见[扩展](docs/zh-CN/extending.md)中的灰度示例），依赖邻域像素的滤镜可实现为 `Pipe` 环节或 `Convolve` 卷积核。

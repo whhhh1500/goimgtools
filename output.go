@@ -66,8 +66,10 @@ func (m *Image) Density(dpi float64) *Image {
 // GIF and BMP output, which cannot carry a profile, is converted this way
 // without being asked. Profiles described by primaries and tone curves
 // are converted (those of cameras, phones, Display P3, Adobe RGB,
-// ProPhoto); others (lookup tables) are left as they are, kept in the
-// output where the format can carry them.
+// ProPhoto), and those of lookup tables by their perceptual table; grey
+// profiles are left as they are, kept in the output where the format can
+// carry them. (A CMYK image is turned into sRGB through its profile when
+// it is decoded, whether or not this is asked for.)
 func (m *Image) ToSRGB() *Image { m.toSRGB = true; return m }
 
 // manageColour converts src to sRGB when its profile asks for it: on
@@ -81,7 +83,7 @@ func (m *Image) manageColour(src pipeline.Source, icc []byte, format string) (pi
 		return src, icc
 	}
 	p, err := iccprof.Parse(icc)
-	if err != nil {
+	if err != nil || p.Channels() != 3 {
 		return src, icc // not one this package can convert from
 	}
 	if t := p.ToSRGB(); !t.Identity() {

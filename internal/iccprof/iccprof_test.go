@@ -135,10 +135,70 @@ func putS15(b []byte, v float64) {
 	b[0], b[1], b[2], b[3] = byte(x>>24), byte(x>>16), byte(x>>8), byte(x)
 }
 
+// TestLookupTables: profiles of lookup tables (lut16 to Lab, lutAToB to
+// XYZ; CMYK and RGB) are read and convert paper white to white; damaged
+// tables are refused, not misread; conversions asked of the wrong kind of
+// profile leave the values alone.
+func TestLookupTables(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		ch   int
+	}{{"cmyk-lut16", 4}, {"cmyk-mab", 4}, {"rgb-lut16", 3}} {
+		icc, err := os.ReadFile(filepath.Join("..", "..", "tests", "testdata", "icc", c.name+".icc"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, err := Parse(icc)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if p.Channels() != c.ch || p.IsSRGB() || p.ToSRGB().Identity() {
+			t.Errorf("%s: %d channels, sRGB %v", c.name, p.Channels(), p.IsSRGB())
+		}
+		tr := p.ToSRGB()
+		var r, g, b uint8
+		if c.ch == 4 {
+			r, g, b = tr.ConvertCMYK(0, 0, 0, 0)
+			if x, y, z := tr.Convert(10, 20, 30); x != 10 || y != 20 || z != 30 {
+				t.Errorf("%s: an RGB conversion of a CMYK profile changed the values", c.name)
+			}
+		} else {
+			r, g, b = tr.Convert(255, 255, 255)
+			if x, y, z := tr.ConvertCMYK(0, 0, 0, 255); x != 0 || y != 0 || z != 0 {
+				t.Errorf("%s: full black is %d,%d,%d", c.name, x, y, z)
+			}
+		}
+		if r < 254 || g < 254 || b < 254 {
+			t.Errorf("%s: white is %d,%d,%d", c.name, r, g, b)
+		}
+		// A table cut short, a grid too large for its data, a tag of an
+		// unknown type.
+		a2b := tagOffset(icc, "A2B0")
+		size := int(icc[tagEntry(icc, "A2B0")+8])<<24 | int(icc[tagEntry(icc, "A2B0")+9])<<16 |
+			int(icc[tagEntry(icc, "A2B0")+10])<<8 | int(icc[tagEntry(icc, "A2B0")+11])
+		short := append([]byte(nil), icc...)
+		e := tagEntry(short, "A2B0")
+		n := size / 2
+		short[e+8], short[e+9], short[e+10], short[e+11] = byte(n>>24), byte(n>>16), byte(n>>8), byte(n)
+		big := append([]byte(nil), icc...)
+		if string(icc[a2b:a2b+4]) == "mAB " {
+			clut := int(icc[a2b+24])<<24 | int(icc[a2b+25])<<16 | int(icc[a2b+26])<<8 | int(icc[a2b+27])
+			big[a2b+clut] = 200
+		} else {
+			big[a2b+10] = 200
+		}
+		for what, b := range map[string][]byte{"cut short": short, "grid too large": big, "unknown type": withAt(icc, a2b, "mBA ")} {
+			if _, err := Parse(b); err == nil {
+				t.Errorf("%s %s: accepted", c.name, what)
+			}
+		}
+	}
+}
+
 // FuzzParse: any bytes either fail to parse or give a profile whose
 // conversion works on every value, without a panic.
 func FuzzParse(f *testing.F) {
-	for _, name := range []string{"p3-table.icc", "adobe-gamma.icc", "p3-para.icc"} {
+	for _, name := range []string{"p3-table.icc", "adobe-gamma.icc", "p3-para.icc", "cmyk-lut16.icc", "cmyk-mab.icc", "rgb-lut16.icc"} {
 		b, err := os.ReadFile(filepath.Join("..", "..", "tests", "testdata", "icc", name))
 		if err != nil {
 			f.Fatal(err)
@@ -153,6 +213,7 @@ func FuzzParse(f *testing.F) {
 		tr := p.ToSRGB()
 		for v := 0; v < 256; v += 17 {
 			tr.Convert(uint8(v), uint8(255-v), uint8(v*3))
+			tr.ConvertCMYK(uint8(v), uint8(255-v), uint8(v*3), uint8(v*7))
 		}
 	})
 }

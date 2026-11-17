@@ -233,6 +233,13 @@ channel of a lossless image. `cleanTransparent` in
 as `WebPCleanupTransparentArea` does (`src/enc/picture_tools_enc.c`). Both
 were rewritten in Go; nothing of the original files is included unchanged.
 
+`internal/iccprof/lut.go` interpolates the lookup tables of colour
+profiles as LittleCMS (MIT licence) does: its tetrahedral interpolation
+(`cmsintrp.c`, `TetrahedralInterpFloat`), in four dimensions between two
+of them (`Eval4Inputs`), on grids of the sizes it picks
+(`_cmsReasonableGridpointsByColorspace`). The routines were written anew;
+no code of LittleCMS is included.
+
 `internal/webpstream/fancy.go` turns decoded Y'CbCr into RGB as libwebp
 does (`src/dsp/upsampling.c`: the "fancy" chroma upsampler;
 `src/dsp/yuv.h`: the integer conversion), so that decoded pixels are
