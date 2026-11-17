@@ -19,6 +19,15 @@ func clip8(i int32) uint8 {
 
 // fdct transforms the 4x4 difference src-ref.
 func fdct(src []uint8, sStride int, ref []uint8, rStride int, out *[16]int16) {
+	if useSIMD {
+		_, _ = src[3*sStride+3], ref[3*rStride+3]
+		fdctSIMD(&src[0], sStride, &ref[0], rStride, out)
+		return
+	}
+	fdctGo(src, sStride, ref, rStride, out)
+}
+
+func fdctGo(src []uint8, sStride int, ref []uint8, rStride int, out *[16]int16) {
 	var tmp [16]int32
 	for i := 0; i < 4; i++ {
 		s, r := src[i*sStride:i*sStride+4], ref[i*rStride:i*rStride+4]
@@ -103,6 +112,15 @@ func iwht(in *[16]int16, out *[16]int16) {
 // idctAdd is the decoder's inverseDCT4: dst = clip(ref + idct(coef)).
 // dst and ref may be the same memory.
 func idctAdd(coef *[16]int16, ref []uint8, rStride int, dst []uint8, dStride int) {
+	if useSIMD {
+		_, _ = ref[3*rStride+3], dst[3*dStride+3]
+		idctAddSIMD(coef, &ref[0], rStride, &dst[0], dStride)
+		return
+	}
+	idctAddGo(coef, ref, rStride, dst, dStride)
+}
+
+func idctAddGo(coef *[16]int16, ref []uint8, rStride int, dst []uint8, dStride int) {
 	const (
 		c1 = 85627 // 65536 * cos(pi/8) * sqrt(2).
 		c2 = 35468 // 65536 * sin(pi/8) * sqrt(2).
@@ -154,6 +172,14 @@ func copy4(ref []uint8, rStride int, dst []uint8, dStride int) {
 
 // sse4 is the sum of squared differences of two 4x4 blocks.
 func sse4(a []uint8, aStride int, b []uint8, bStride int) int {
+	if useSIMD {
+		_, _ = a[3*aStride+3], b[3*bStride+3]
+		return sse4SIMD(&a[0], aStride, &b[0], bStride)
+	}
+	return sse4Go(a, aStride, b, bStride)
+}
+
+func sse4Go(a []uint8, aStride int, b []uint8, bStride int) int {
 	s := 0
 	for j := 0; j < 4; j++ {
 		p, q := a[j*aStride:j*aStride+4], b[j*bStride:j*bStride+4]

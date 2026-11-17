@@ -52,6 +52,20 @@ type quantizer struct {
 	q    [2]int32
 	iq   [2]int32 // 1<<17 / q
 	bias [2]int32
+	// v is the same for each coefficient (raster order), for
+	// quantizeSIMD; simd is whether it fits its 16-bit lanes.
+	v    quantVec
+	simd bool
+}
+
+// quantVec is a quantizer for quantizeSIMD: steps and reciprocals of the
+// 16 coefficients, and the rounding biases in the order of its 32-bit
+// lanes, coefficient 0 first, then the AC ones.
+type quantVec struct {
+	q     [16]uint16
+	iq    [16]uint16
+	bias  [8]int32
+	bias1 [8]int32
 }
 
 func (z *quantizer) set(dc, ac int, bias [2]int32) {
@@ -60,6 +74,14 @@ func (z *quantizer) set(dc, ac int, bias [2]int32) {
 		z.iq[i] = (1 << 17) / z.q[i]
 		z.bias[i] = bias[i] << 9
 	}
+	z.simd = useSIMD && z.iq[0] <= 0xffff && z.iq[1] <= 0xffff && z.q[0] < 0x8000 && z.q[1] < 0x8000
+	for i := range z.v.q {
+		k := min(i, 1)
+		z.v.q[i], z.v.iq[i] = uint16(z.q[k]), uint16(z.iq[k])
+	}
+	for i := range z.v.bias {
+		z.v.bias[i], z.v.bias1[i] = z.bias[min(i, 1)], z.bias[1]
+	}
 }
 
 // quantize quantizes the coefficients in (raster order) from scan position
@@ -67,6 +89,26 @@ func (z *quantizer) set(dc, ac int, bias [2]int32) {
 // will get back from them in deq (raster order), and returns the scan
 // position of the last non-zero level, or -1.
 func (z *quantizer) quantize(in *[16]int16, first int, lv, deq *[16]int16) int {
+	if z.simd {
+		if first == 0 {
+			return quantizeSIMD(in, &z.v, lv, deq)
+		}
+		// From the first AC coefficient on: the DC stays as it was.
+		d0 := deq[0]
+		last := quantizeSIMD(in, &z.v, lv, deq)
+		deq[0] = d0
+		if lv[0] != 0 {
+			lv[0] = 0
+			if last == 0 {
+				last = -1
+			}
+		}
+		return last
+	}
+	return z.quantizeGo(in, first, lv, deq)
+}
+
+func (z *quantizer) quantizeGo(in *[16]int16, first int, lv, deq *[16]int16) int {
 	last := -1
 	lv[0] = 0
 	k := first // 0 selects the DC step, anything else the AC step

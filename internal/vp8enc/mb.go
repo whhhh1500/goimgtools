@@ -390,13 +390,14 @@ func (c *mbCoder) searchI4(up *mbCtx, limit int64) bool {
 		for _, m := range order[:tries] {
 			p := c.pred4[m][:]
 			fdct(src, 16, p, 4, &coef)
-			var last int
+			var last, bits int
 			if c.e.trellis && !c.e.trellisFinal {
-				last = c.trellis(&coef, 0, ctx, planeY1SansY2, &sg.qY1, sg.lamT, &lv, &deq)
+				last, bits = c.trellis(&coef, 0, ctx, planeY1SansY2, &sg.qY1, sg.lamT, &lv, &deq)
 			} else {
 				last = sg.qY1.quantize(&coef, 0, &lv, &deq)
+				bits = c.costs.blockCost(planeY1SansY2, 0, ctx, last, &lv)
 			}
-			rate := int(mc[m]) + c.costs.blockCost(planeY1SansY2, 0, ctx, last, &lv)
+			rate := int(mc[m]) + bits
 			out := p
 			if last >= 0 {
 				idctAdd(&deq, p, 4, rec[:], 4)
@@ -421,8 +422,8 @@ func (c *mbCoder) searchI4(up *mbCtx, limit int64) bool {
 			m := c4.modes[n]
 			p := c.pred4[m][:]
 			fdct(src, 16, p, 4, &coef)
-			last := c.trellis(&coef, 0, ctx, planeY1SansY2, &sg.qY1, sg.lamT, &lv, &deq)
-			rate := int(mc[m]) + c.costs.blockCost(planeY1SansY2, 0, ctx, last, &lv)
+			last, bits := c.trellis(&coef, 0, ctx, planeY1SansY2, &sg.qY1, sg.lamT, &lv, &deq)
+			rate := int(mc[m]) + bits
 			out := p
 			if last >= 0 {
 				idctAdd(&deq, p, 4, rec[:], 4)

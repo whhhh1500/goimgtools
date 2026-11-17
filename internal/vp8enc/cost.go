@@ -230,22 +230,16 @@ func (t *costTables) blockCost(plane, first, ctx, last int, lv *[16]int16) int {
 	if ctx == 0 {
 		cost = int(t.notEOB[plane][bands[first]][0])
 	}
+	c := uint(ctx)
 	for n := first; n <= last; n++ {
-		v := int(lv[n])
-		if v < 0 {
-			v = -v
-		}
-		tab := &lc[bands[n]][ctx]
-		if v <= maxVarLevel {
-			cost += int(tab[v])
-		} else {
-			cost += int(tab[maxVarLevel])
-		}
-		cost += int(fixedCost[v])
-		ctx = min(v, 2)
+		v := int32(lv[n&15])
+		m := v >> 31
+		a := uint(v ^ m - m) // |v|
+		cost += int(lc[bands[n&15]&7][min(c, 2)][min(a, maxVarLevel)]) + int(fixedCost[min(a, maxLevel)])
+		c = min(a, 2)
 	}
 	if last < 15 {
-		cost += int(t.eob[plane][bands[last+1]][ctx])
+		cost += int(t.eob[plane][bands[last+1]][min(c, 2)])
 	}
 	return cost
 }

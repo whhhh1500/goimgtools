@@ -198,7 +198,10 @@ patent grant by Google. Both texts, as libwebp 1.6.0 distributes them
 compute libwebp's upsampling, conversion of colour and loop filter (as the Go
 code of those packages computes them) after the approach of its SSE2 code
 (`src/dsp/upsampling_sse2.c`, `yuv_sse2.h`, `dec_sse2.c`);
-`internal/vp8enc/ssim_amd64.s` the window sums of its SSIM (`ssim_sse2.c`); the
+`internal/vp8enc/ssim_amd64.s` the window sums of its SSIM (`ssim_sse2.c`);
+`internal/vp8enc/dct_amd64.s` the encoder's 4x4 forward transform after its
+`FTransform_SSE2` (`enc_sse2.c`), with the inverse transform, quantization,
+squared error and coefficient histogram as the Go code computes them; the
 files of the same names ending in `_arm64.s` do the same with NEON.
 
 `internal/vp8enc/analysis.go` follows the segmentation of libwebp's lossy

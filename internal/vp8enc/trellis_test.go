@@ -41,7 +41,11 @@ func TestTrellisLevels(t *testing.T) {
 					plane = planeY1WithY2
 				}
 				var lv, deq [16]int16
-				last := c.trellis(&in, first, r.IntN(3), plane, z, s.lamT, &lv, &deq)
+				ctx := r.IntN(3)
+				last, bits := c.trellis(&in, first, ctx, plane, z, s.lamT, &lv, &deq)
+				if want := c.costs.blockCost(plane, first, ctx, last, &lv); bits != want {
+					t.Errorf("q %d: the trellis counts %d bits, blockCost %d", q, bits, want)
+				}
 				wantLast := -1
 				for n := first; n < 16; n++ {
 					j := zigzag[n]

@@ -80,3 +80,126 @@ func TestSSIMSumsSIMD(t *testing.T) {
 		}
 	}
 }
+
+// TestTransformsSIMD: the SIMD forward and inverse transforms and squared
+// error give what the Go code gives, for random samples and coefficients
+// and the extremes.
+func TestTransformsSIMD(t *testing.T) {
+	if !useSIMD {
+		t.Skip("no SIMD")
+	}
+	rng := rand.New(rand.NewPCG(19, 20))
+	sample := func(kind int) uint8 {
+		switch kind {
+		case 0:
+			return uint8(rng.IntN(256))
+		case 1:
+			return uint8(rng.IntN(2) * 255)
+		}
+		return uint8(120 + rng.IntN(16))
+	}
+	for i := range 200000 {
+		kind := i % 3
+		var a, b [64]uint8
+		for j := range a {
+			a[j], b[j] = sample(kind), sample((kind+i/3)%3)
+		}
+		as, bs := 4+rng.IntN(13), 4+rng.IntN(13)
+		var want, got [16]int16
+		fdctGo(a[:], as, b[:], bs, &want)
+		fdct(a[:], as, b[:], bs, &got)
+		if got != want {
+			t.Fatalf("fdct %d: %v, want %v", i, got, want)
+		}
+		if g, w := sse4(a[:], as, b[:], bs), sse4Go(a[:], as, b[:], bs); g != w {
+			t.Fatalf("sse4 %d: %d, want %d", i, g, w)
+		}
+		var hw, hg coeffHist
+		var bins [16]uint8
+		rest := histBinsSIMD(&a[0], as, &b[0], bs, &bins)
+		for k, c := range want {
+			v := int(c)
+			if v < 0 {
+				v = -v
+			}
+			hw[min(v>>3, coeffBins-1)]++
+			if int(bins[k]) != min(v>>3, coeffBins-1) || (rest>>k&1 != 0) != (bins[k] != 0) {
+				t.Fatalf("histBins %d: coefficient %d in bin %d (%v), want %d", i, k, bins[k], rest>>k&1, min(v>>3, coeffBins-1))
+			}
+		}
+		hg.add(a[:], as, b[:], bs)
+		if hg != hw {
+			t.Fatalf("coeffHist.add %d: %v, want %v", i, hg, hw)
+		}
+		var coef [16]int16
+		for j := range coef {
+			switch (i / 3) % 4 {
+			case 0:
+				coef[j] = int16(rng.IntN(65536) - 32768)
+			case 1:
+				coef[j] = int16(rng.IntN(4096) - 2048)
+			case 2:
+				coef[j] = []int16{-32768, 32767, 0, -1, 1}[rng.IntN(5)]
+			default:
+				coef[j] = want[j] * int16(1+rng.IntN(8))
+			}
+		}
+		var wd, gd [64]uint8
+		wd, gd = a, a
+		idctAddGo(&coef, b[:], bs, wd[:], as)
+		idctAdd(&coef, b[:], bs, gd[:], as)
+		if gd != wd {
+			t.Fatalf("idctAdd %d: %v, want %v (coef %v)", i, gd, wd, coef)
+		}
+	}
+}
+
+// TestQuantizeSIMD: the SIMD quantizer gives the levels, dequantized
+// values and last position the Go code gives, for every quantizer index of
+// every plane type, from the DC and from the first AC coefficient on.
+func TestQuantizeSIMD(t *testing.T) {
+	if !useSIMD {
+		t.Skip("no SIMD")
+	}
+	rng := rand.New(rand.NewPCG(21, 22))
+	e := &encoder{}
+	for q := 0; q < 128; q++ {
+		var s segment
+		s.q = q
+		e.setQuant(&s)
+		for zi, z := range []*quantizer{&s.qY1, &s.qY2, &s.qUV} {
+			if !z.simd {
+				t.Fatalf("q %d, quantizer %d: not for SIMD", q, zi)
+			}
+			for i := range 3000 {
+				var in [16]int16
+				for j := range in {
+					switch i % 4 {
+					case 0:
+						in[j] = int16(rng.IntN(65536) - 32768)
+					case 1:
+						in[j] = int16(rng.IntN(400) - 200)
+					case 2:
+						in[j] = []int16{-32768, 32767, 0, -1, 1, int16(z.q[1] / 2), -int16(z.q[1] / 2)}[rng.IntN(7)]
+					default:
+						if rng.IntN(4) == 0 {
+							in[j] = int16(rng.IntN(100) - 50)
+						}
+					}
+				}
+				for first := 0; first < 2; first++ {
+					var wl, wd, gl, gd [16]int16
+					for j := range wl {
+						wl[j], wd[j] = int16(j+3), int16(j*7)
+					}
+					gl, gd = wl, wd
+					want := z.quantizeGo(&in, first, &wl, &wd)
+					got := z.quantize(&in, first, &gl, &gd)
+					if got != want || gl != wl || gd != wd {
+						t.Fatalf("q %d, quantizer %d, first %d, %v: %d %v %v, want %d %v %v", q, zi, first, in, got, gl, gd, want, wl, wd)
+					}
+				}
+			}
+		}
+	}
+}

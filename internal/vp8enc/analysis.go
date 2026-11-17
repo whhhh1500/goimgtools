@@ -3,6 +3,7 @@ package vp8enc
 import (
 	"errors"
 	"math"
+	"math/bits"
 	"sync/atomic"
 )
 
@@ -297,8 +298,20 @@ type coeffHist [coeffBins]int32
 
 // add counts the coefficients of the 4x4 difference src-pred.
 func (h *coeffHist) add(src []uint8, sStride int, pred []uint8, pStride int) {
+	if useSIMD {
+		// Most land in bin 0: counted together, they do not make each
+		// increment of it wait for the one before.
+		_, _ = src[3*sStride+3], pred[3*pStride+3]
+		var bins [16]uint8
+		rest := histBinsSIMD(&src[0], sStride, &pred[0], pStride, &bins)
+		h[0] += int32(16 - bits.OnesCount32(rest))
+		for ; rest != 0; rest &= rest - 1 {
+			h[bins[bits.TrailingZeros32(rest)&15]]++
+		}
+		return
+	}
 	var out [16]int16
-	fdct(src, sStride, pred, pStride, &out)
+	fdctGo(src, sStride, pred, pStride, &out)
 	for _, c := range out {
 		v := int(c)
 		if v < 0 {
