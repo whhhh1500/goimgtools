@@ -326,7 +326,7 @@ var tempCount atomic.Int64
 // reduction and re-encoding can both make a file larger than it was, for a
 // picture that was already small.
 func (o *options) finish(im *goimgtools.Image, in, out string) (kept bool, err error) {
-	if ext := strings.ToLower(filepath.Ext(out)); ext == ".dzi" || ext == ".dz" {
+	if ext := strings.ToLower(filepath.Ext(out)); ext == ".dzi" || ext == ".dz" || ext == ".zip" {
 		layouts := map[string]goimgtools.TileLayout{"dz": goimgtools.TileDeepZoom, "google": goimgtools.TileGoogle,
 			"iiif": goimgtools.TileIIIF, "iiif3": goimgtools.TileIIIF3, "zoomify": goimgtools.TileZoomify}
 		layout, ok := layouts[strings.ToLower(*o.tileLayout)]

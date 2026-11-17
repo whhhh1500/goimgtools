@@ -1,11 +1,14 @@
 package tests
 
 import (
+	"archive/zip"
+	"bytes"
 	"crypto/sha256"
 	"fmt"
 	"image"
 	"image/color"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -117,14 +120,44 @@ func TestTiles(t *testing.T) {
 // its bytes) but blank.png.
 func treeSum(t *testing.T, dir string) (int, string) {
 	t.Helper()
+	return digest(tileSums(t, dir))
+}
+
+func digest(sums map[string]string) (int, string) {
 	var lines []string
-	for name, sum := range tileSums(t, dir) {
-		if filepath.Base(name) != "blank.png" {
+	for name, sum := range sums {
+		if path.Base(name) != "blank.png" {
 			lines = append(lines, name+" "+sum+"\n")
 		}
 	}
 	slices.Sort(lines)
 	return len(lines), fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(lines, ""))))[:16]
+}
+
+// zipSum is treeSum of the files of a ZIP archive, which must be stored
+// as libvips stores them.
+func zipSum(t *testing.T, b []byte) (int, string) {
+	t.Helper()
+	z, err := zip.NewReader(bytes.NewReader(b), int64(len(b)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sums := map[string]string{}
+	for _, f := range z.File {
+		if f.Method != zip.Store || f.Modified.Year() != 1980 || f.Mode() != 0o664 {
+			t.Errorf("%s: method %d, %v, %v", f.Name, f.Method, f.Modified, f.Mode())
+		}
+		r, err := f.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var data bytes.Buffer
+		if _, err := data.ReadFrom(r); err != nil {
+			t.Fatalf("%s: %v", f.Name, err)
+		}
+		sums[f.Name] = fmt.Sprintf("%x", sha256.Sum256(data.Bytes()))[:16]
+	}
+	return digest(sums)
 }
 
 // TestTileLayouts: the other layouts, depths, blank tiles and backgrounds,
@@ -133,7 +166,8 @@ func treeSum(t *testing.T, dir string) (int, string) {
 // with 1 and 4 threads; the digests are of sharp's trees. An image with
 // transparency: its levels shrunk with the colours weighted by alpha, its
 // JPEG tiles flattened over black, as libvips does both. Google's
-// blank.png is a tile of the background.
+// blank.png is a tile of the background. The same files in a ZIP archive,
+// by ToTiles to a .zip file and by ToTilesWriter.
 func TestTileLayouts(t *testing.T) {
 	src := sourcePNG(t, "pillow/source.png")
 	rgba := sourcePNG(t, "pillow/median-rgba-source.png")
@@ -176,6 +210,19 @@ func TestTileLayouts(t *testing.T) {
 				t.Errorf("%s: blank.png %v %v", c.name, m.Bounds(), m.At(3, 5))
 			}
 		}
+		dir := t.TempDir()
+		if err := FromBytes(c.in).Threads(4).ToTiles(filepath.Join(dir, "t.zip"), c.o); err != nil {
+			t.Fatal(err)
+		}
+		var buf bytes.Buffer
+		if err := FromBytes(c.in).ToTilesWriter(&buf, "t", c.o); err != nil {
+			t.Fatal(err)
+		}
+		for _, b := range [][]byte{must(os.ReadFile(filepath.Join(dir, "t.zip"))), buf.Bytes()} {
+			if n, sum := zipSum(t, b); n != c.files || sum != c.sum {
+				t.Errorf("%s in a ZIP archive: %d files, digest %s; sharp's %d, %s", c.name, n, sum, c.files, c.sum)
+			}
+		}
 	}
 	// The overlap of a layout but Deep Zoom is less than the size; unknown
 	// depths and layouts; SkipBlanks is at most 255.
@@ -187,5 +234,31 @@ func TestTileLayouts(t *testing.T) {
 	}
 	if err := FromBytes(src).ToTiles(filepath.Join(dir, "ok"), TileOptions{Size: 64, Overlap: 64}); err != nil {
 		t.Errorf("Deep Zoom overlap of the size: %v", err)
+	}
+	// Names in an archive; ToFile of a .zip file; nothing left of a
+	// failed one.
+	for _, name := range []string{"", "../x", "/x", "a//b"} {
+		if err := FromBytes(src).ToTilesWriter(&bytes.Buffer{}, name); err == nil {
+			t.Errorf("archive name %q accepted", name)
+		}
+	}
+	var buf bytes.Buffer
+	if err := FromBytes(src).ToTilesWriter(&buf, "maps/city.zip"); err != nil {
+		t.Fatal(err)
+	}
+	if z, err := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len())); err != nil || z.File[len(z.File)-1].Name != "maps/city.dzi" {
+		t.Errorf("maps/city: %v", err)
+	}
+	if err := FromBytes(src).ToFile(filepath.Join(dir, "f.zip")); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := zipSum(t, must(os.ReadFile(filepath.Join(dir, "f.zip")))); n != 10 {
+		t.Errorf("ToFile f.zip: %d files", n)
+	}
+	if err := FromBytes(src).PNG().ToTiles(filepath.Join(dir, "bad.zip"), TileOptions{Size: 9000}); err == nil {
+		t.Error("tile size 9000 accepted")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "bad.zip")); err == nil {
+		t.Error("a failed archive was left")
 	}
 }

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"archive/zip"
 	"bytes"
 	"image"
 	"image/color"
@@ -86,6 +87,14 @@ func TestConvert(t *testing.T) {
 	}
 	if _, _, err := cli("-tile-layout", "google", "-tile-size", "128", in, filepath.Join(dir, "map.dz")); err != nil {
 		t.Fatal(err)
+	}
+	if _, _, err := cli("-tile-layout", "iiif", in, filepath.Join(dir, "pack.zip")); err != nil {
+		t.Fatal(err)
+	}
+	if z, err := zip.OpenReader(filepath.Join(dir, "pack.zip")); err != nil || z.File[len(z.File)-1].Name != "pack/info.json" {
+		t.Errorf("pack.zip: %v", err)
+	} else {
+		z.Close()
 	}
 	for _, name := range []string{"deep.dzi", "deep_files/10/4_3.jpeg", "map/blank.png", "map/3/3/4.jpg"} {
 		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {

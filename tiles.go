@@ -1,17 +1,21 @@
 package goimgtools
 
 import (
+	"archive/zip"
 	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"image"
 	"image/color"
 	"image/draw"
 	"io"
+	"io/fs"
 	"math"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -112,7 +116,10 @@ type TileOptions struct {
 // TileDeepZoom and the other TileLayout values. path is where it goes
 // without an extension (one of .dzi or .dz is taken off): "map" gives
 // map.dzi and the directory map_files for Deep Zoom, the directory map for
-// the other layouts.
+// the other layouts. A path ending in .zip is a ZIP archive that holds
+// them, as ToTilesWriter writes it ("map.zip" holds map.dzi and
+// map_files/...), written beside and renamed when it is complete, as
+// ToFile writes a file.
 //
 // The tiles are in the output format of the recipe (JPEG, PNG, WebP, or a
 // registered format), with its options; by default JPEG at quality 80 with
@@ -128,12 +135,81 @@ type TileOptions struct {
 // helpers (Threads) the tiles of a row are encoded at the same time. If
 // ToTiles fails, what it has written is incomplete and must be removed.
 func (m *Image) ToTiles(path string, opts ...TileOptions) (err error) {
+	var tmp *os.File
+	defer func() {
+		// After guard: whatever went wrong, the unfinished archive goes.
+		if err != nil && tmp != nil {
+			tmp.Close()
+			os.Remove(tmp.Name())
+		}
+	}()
 	defer guard(&err)
 	m.atMostOne("ToTiles", len(opts))
 	if m.err != nil {
 		return m.err
 	}
-	o := first(opts)
+	if !strings.EqualFold(filepath.Ext(path), ".zip") {
+		return m.tiles(nil, trimTileExt(path), first(opts))
+	}
+	if tmp, err = createBeside(path); err != nil {
+		return err
+	}
+	bw := bufio.NewWriterSize(tmp, 64<<10)
+	zw := zip.NewWriter(bw)
+	if err = m.tiles(zw, trimTileExt(filepath.Base(path)), first(opts)); err != nil {
+		return err
+	}
+	if err = zw.Close(); err != nil {
+		return err
+	}
+	if err = bw.Flush(); err != nil {
+		return err
+	}
+	if err = tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
+}
+
+// ToTilesWriter writes the pyramid of tiles of ToTiles to w as a ZIP
+// archive, as sharp's tile writes one (to a .zip file, or to a buffer):
+// name is the image's name in it, a path of names separated by slashes
+// (an extension .zip, .dzi or .dz is taken off), so that "map" gives
+// map.dzi and map_files/LEVEL/COLUMN_ROW.jpeg for Deep Zoom, map/... for
+// the other layouts. The files are stored without compression (the tiles
+// are compressed already), with the dates and modes libvips gives them, in
+// an order that does not depend on the threads (libvips' does; each file
+// is the same). The archive streams out: a row of tiles is held at a time,
+// and an entry of the archive's directory for each file.
+func (m *Image) ToTilesWriter(w io.Writer, name string, opts ...TileOptions) (err error) {
+	defer guard(&err)
+	m.atMostOne("ToTilesWriter", len(opts))
+	if m.err != nil {
+		return m.err
+	}
+	name = trimTileExt(name)
+	if !fs.ValidPath(name) || name == "." {
+		return fmt.Errorf("goimgtools: tile archive name %q: names separated by slashes, without . or ..", name)
+	}
+	zw := zip.NewWriter(w)
+	if err := m.tiles(zw, name, first(opts)); err != nil {
+		return err
+	}
+	return zw.Close()
+}
+
+// trimTileExt takes an extension of a pyramid of tiles off a name.
+func trimTileExt(name string) string {
+	switch ext := strings.ToLower(filepath.Ext(name)); ext {
+	case ".dzi", ".dz", ".zip":
+		return name[:len(name)-len(ext)]
+	}
+	return name
+}
+
+// tiles writes the pyramid at base: a path of the file system, or with zw
+// a name in that archive.
+func (m *Image) tiles(zw *zip.Writer, base string, o TileOptions) error {
 	if o.Size == 0 {
 		o.Size = 256
 	}
@@ -153,9 +229,6 @@ func (m *Image) ToTiles(path string, opts ...TileOptions) (err error) {
 	case o.SkipBlanks > 255:
 		return fmt.Errorf("goimgtools: SkipBlanks %d: it is at most 255", o.SkipBlanks)
 	}
-	if ext := strings.ToLower(filepath.Ext(path)); ext == ".dzi" || ext == ".dz" {
-		path = path[:len(path)-len(ext)]
-	}
 	format, options := m.format, m.options
 	if format == "" {
 		format, options = "jpeg", JPEGOptions{Quality: 80, Optimize: true}
@@ -169,13 +242,16 @@ func (m *Image) ToTiles(path string, opts ...TileOptions) (err error) {
 	}
 	defer src.Close()
 	b := src.Bounds()
-	t := &tiler{m: m, env: pipeline.EnvOf(src), format: format, options: options, ext: format,
-		layout: o.Layout, dir: path, size: o.Size, overlap: o.Overlap, step: o.Size - o.Overlap,
-		id: o.ID, w: b.Dx(), h: b.Dy(), grey: src.ColorModel() == color.GrayModel, skip: o.SkipBlanks}
+	t := &tiler{m: m, env: pipeline.EnvOf(src), format: format, options: options, ext: format, zip: zw,
+		layout: o.Layout, base: base, dir: base, name: filepath.Base(base), size: o.Size, overlap: o.Overlap,
+		step: o.Size - o.Overlap, id: o.ID, w: b.Dx(), h: b.Dy(), grey: src.ColorModel() == color.GrayModel, skip: o.SkipBlanks}
+	if zw != nil {
+		t.name = path.Base(base)
+	}
 	t.alpha = !t.grey && !pipeline.IsOpaque(src)
 	defer t.release()
 	if t.layout == TileDeepZoom {
-		t.dir, t.margin, t.step = path+"_files", o.Overlap, o.Size
+		t.dir, t.margin, t.step = base+"_files", o.Overlap, o.Size
 	} else if format == "jpeg" {
 		t.ext = "jpg"
 	}
@@ -306,22 +382,22 @@ func (m *Image) ToTiles(path string, opts ...TileOptions) (err error) {
 			return io.ErrUnexpectedEOF
 		}
 	}
-	return t.describe(path)
+	return t.describe()
 }
 
 // describe writes the files that describe the pyramid, as libvips writes
 // them.
-func (t *tiler) describe(path string) error {
+func (t *tiler) describe() error {
 	var buf bytes.Buffer
 	var name string
 	switch t.layout {
 	case TileDeepZoom:
-		name = path + ".dzi"
+		name = t.base + ".dzi"
 		fmt.Fprintf(&buf, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Image xmlns=\"http://schemas.microsoft.com/deepzoom/2008\"\n"+
 			"  Format=\"%s\"\n  Overlap=\"%d\"\n  TileSize=\"%d\"\n  >\n  <Size \n    Height=\"%d\"\n    Width=\"%d\"\n  />\n</Image>\n",
 			t.ext, t.overlap, t.size, t.h, t.w)
 	case TileZoomify:
-		name = filepath.Join(t.dir, "ImageProperties.xml")
+		name = t.full("ImageProperties.xml")
 		fmt.Fprintf(&buf, "<IMAGE_PROPERTIES WIDTH=\"%d\" HEIGHT=\"%d\" NUMTILES=\"%d\" NUMIMAGES=\"1\" VERSION=\"1.8\" TILESIZE=\"%d\" />\n",
 			t.w, t.h, t.count.Load(), t.size)
 	case TileGoogle:
@@ -332,7 +408,10 @@ func (t *tiler) describe(path string) error {
 			img = image.NewGray(r)
 		}
 		draw.Draw(img, r, &image.Uniform{t.ink}, image.Point{}, draw.Src)
-		return t.writeTile(filepath.Join(t.dir, "blank.png"), "png", nil, img)
+		name = t.full("blank.png")
+		if err := t.encode(&buf, "png", nil, img); err != nil {
+			return err
+		}
 	default:
 		id := t.id
 		if id == "" {
@@ -345,8 +424,8 @@ func (t *tiler) describe(path string) error {
 			e.Encode(s)
 			return strings.TrimSuffix(b.String(), "\n")
 		}
-		name = filepath.Join(t.dir, "info.json")
-		at := quote(id + "/" + filepath.Base(t.dir))
+		name = t.full("info.json")
+		at := quote(id + "/" + t.name)
 		if t.layout == TileIIIF3 {
 			fmt.Fprintf(&buf, "{\n  \"@context\": \"http://iiif.io/api/image/3/context.json\",\n  \"id\": %s,\n"+
 				"  \"type\": \"ImageService3\",\n  \"profile\": \"level0\",\n  \"protocol\": \"http://iiif.io/api/image\",\n", at)
@@ -365,10 +444,42 @@ func (t *tiler) describe(path string) error {
 		}
 		fmt.Fprintf(&buf, "      ],\n      \"width\": %d\n    }\n  ],\n  \"width\": %d,\n  \"height\": %d\n}\n", t.size, t.w, t.h)
 	}
+	if t.zip != nil {
+		return t.addZip(name, buf.Bytes())
+	}
 	if err := os.MkdirAll(filepath.Dir(name), 0o777); err != nil {
 		return err
 	}
 	return os.WriteFile(name, buf.Bytes(), 0o666)
+}
+
+// full is the path of a file of the pyramid (rel, separated by slashes),
+// in the file system or the archive.
+func (t *tiler) full(rel string) string {
+	if t.zip != nil {
+		return t.dir + "/" + rel
+	}
+	return filepath.Join(t.dir, filepath.FromSlash(rel))
+}
+
+// addZip stores a file in the archive as libvips (libarchive) stores it:
+// without compression, the sizes and checksum after the data, dated
+// 1980-01-01, mode 0664.
+func (t *tiler) addZip(name string, data []byte) error {
+	fh := &zip.FileHeader{Name: name, Method: zip.Store, CreatorVersion: 3<<8 | 10, ReaderVersion: 10,
+		Flags: 0x8, ModifiedDate: 0x21, CRC32: crc32.ChecksumIEEE(data),
+		CompressedSize64: uint64(len(data)), UncompressedSize64: uint64(len(data)), ExternalAttrs: 0o100664 << 16}
+	for _, r := range name {
+		if r >= 0x80 {
+			fh.Flags |= 0x800 // the name is UTF-8
+			break
+		}
+	}
+	w, err := t.zip.CreateRaw(fh)
+	if err == nil {
+		_, err = w.Write(data)
+	}
+	return err
 }
 
 // tiler writes the levels of a pyramid.
@@ -378,8 +489,11 @@ type tiler struct {
 	format  string
 	options any
 	ext     string // of the tiles' files
+	zip     *zip.Writer
 	layout  TileLayout
+	base    string // the pyramid's path without an extension
 	dir     string // where the tiles go
+	name    string // the image's name: the last element of base
 	id      string
 	// A tile is size pixels square plus margin on each side, and they
 	// step by step: Deep Zoom's tiles overlap by their margins, the
@@ -576,6 +690,12 @@ func (l *tileLevel) writeRow(r, bottom int) error {
 	t := l.t
 	top := max(0, r*t.step-t.margin)
 	tiles := make([]error, l.tilesAcr)
+	var names []string
+	var data []*bytes.Buffer
+	if t.zip != nil {
+		// Encoded at the same time, stored in order.
+		names, data = make([]string, l.tilesAcr), make([]*bytes.Buffer, l.tilesAcr)
+	}
 	l.t.env.Parallel(l.tilesAcr, func(x int) {
 		// libvips writes no tile that holds none of the image.
 		if !image.Rect(x*t.step, r*t.step, x*t.step+t.size, r*t.step+t.size).Overlaps(l.save) {
@@ -605,9 +725,25 @@ func (l *tileLevel) writeRow(r, bottom int) error {
 			}
 			img = n
 		}
-		tiles[x] = t.writeTile(filepath.Join(t.dir, t.tileName(l, x, r)), t.format, t.options, img)
+		name := t.full(t.tileName(l, x, r))
+		if t.zip != nil {
+			names[x], data[x] = name, new(bytes.Buffer)
+			tiles[x] = t.encode(data[x], t.format, t.options, img)
+			return
+		}
+		tiles[x] = t.writeTile(name, img)
 	})
-	return errors.Join(tiles...)
+	if err := errors.Join(tiles...); err != nil {
+		return err
+	}
+	for x, b := range data {
+		if b != nil {
+			if err := t.addZip(names[x], b.Bytes()); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // blank reports whether every value of a tile is within the threshold of
@@ -637,13 +773,13 @@ func (l *tileLevel) blank(top, bottom, left, right int) bool {
 func (t *tiler) tileName(l *tileLevel, x, y int) string {
 	switch t.layout {
 	case TileDeepZoom:
-		return filepath.Join(fmt.Sprint(l.n), fmt.Sprintf("%d_%d.%s", x, y, t.ext))
+		return fmt.Sprintf("%d/%d_%d.%s", l.n, x, y, t.ext)
 	case TileGoogle:
-		return filepath.Join(fmt.Sprint(l.n), fmt.Sprint(y), fmt.Sprintf("%d.%s", x, t.ext))
+		return fmt.Sprintf("%d/%d/%d.%s", l.n, y, x, t.ext)
 	case TileZoomify:
 		t.count.Add(1)
 		k := l.before + y*l.tilesAcr + x
-		return filepath.Join(fmt.Sprintf("TileGroup%d", k/256), fmt.Sprintf("%d-%d-%d.%s", l.n, x, y, t.ext))
+		return fmt.Sprintf("TileGroup%d/%d-%d-%d.%s", k/256, l.n, x, y, t.ext)
 	}
 	// IIIF: the region in pixels of the image, clipped to it, and the size
 	// in pixels of the level.
@@ -658,11 +794,11 @@ func (t *tiler) tileName(l *tileLevel, x, y int) string {
 	if t.layout == TileIIIF3 {
 		size += fmt.Sprint(min(t.size, l.h-y*t.size))
 	}
-	return filepath.Join(region, size, "0", "default."+t.ext)
+	return region + "/" + size + "/0/default." + t.ext
 }
 
 // writeTile encodes one tile to its file.
-func (t *tiler) writeTile(name, format string, options any, img image.Image) error {
+func (t *tiler) writeTile(name string, img image.Image) error {
 	if err := os.MkdirAll(filepath.Dir(name), 0o777); err != nil {
 		return err
 	}
@@ -671,9 +807,7 @@ func (t *tiler) writeTile(name, format string, options any, img image.Image) err
 		return err
 	}
 	w := bufio.NewWriter(f)
-	src := pipeline.FromImage(img, t.env)
-	err = t.m.encodeWith(w, src, format, options, 0, pipeline.Meta{})
-	src.Close()
+	err = t.encode(w, t.format, t.options, img)
 	if err == nil {
 		err = w.Flush()
 	}
@@ -681,4 +815,11 @@ func (t *tiler) writeTile(name, format string, options any, img image.Image) err
 		err = cerr
 	}
 	return err
+}
+
+// encode writes a tile in a format, without metadata.
+func (t *tiler) encode(w io.Writer, format string, options any, img image.Image) error {
+	src := pipeline.FromImage(img, t.env)
+	defer src.Close()
+	return t.m.encodeWith(w, src, format, options, 0, pipeline.Meta{})
 }
