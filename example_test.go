@@ -456,3 +456,35 @@ func Example_overriding() {
 	fmt.Println(len(out) > 0)
 	// Output: true
 }
+
+// A page photographed at an angle, straightened: the corners of the page in
+// the photograph (top left, bottom left, bottom right, top right) become
+// the corners of an output in the page's proportions (A4 here).
+func ExampleImage_Transform() {
+	page := goimgtools.TransformPerspectiveQuad(112, 80, 95, 610, 520, 640, 498, 70)
+	out, err := goimgtools.FromBytes(picture(640, 720)).
+		Transform(420, 594, page, goimgtools.TransformOptions{Interpolator: goimgtools.InterpolateBicubic}).
+		JPEG(90).
+		ToBytes()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	info, _ := goimgtools.FromBytes(out).Metadata()
+	fmt.Println(info.Width, info.Height)
+	// Output: 420 594
+}
+
+// A tone curve for contrast: shadows down, highlights up, black and white
+// as they were; and warmer, by a red curve after it.
+func ExampleImage_Curves() {
+	contrast := [][2]uint8{{0, 0}, {64, 48}, {192, 210}, {255, 255}}
+	warmer := goimgtools.CurvesOptions{Red: [][2]uint8{{0, 0}, {128, 140}, {255, 255}}}
+	img, err := goimgtools.FromBytes(picture(64, 48)).Curves(contrast, warmer).ToImage()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println(img.Bounds().Size())
+	// Output: (64,48)
+}
