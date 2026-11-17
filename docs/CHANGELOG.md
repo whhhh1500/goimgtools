@@ -14,6 +14,7 @@ Nothing exported by 0.1.0 was removed or changed in its signature (checked with 
 - The default PNG level is 7 with Go 1.27 (6 before): smaller files, written more slowly. `PNGOptions{CompressionLevel: 6}` keeps the old files.
 - `Threads(n)` is no longer capped at 3: a larger n uses that many cores.
 - JPEG files are written as libjpeg-turbo writes them (Pillow's and sharp's bytes), no longer as `image/jpeg` does: at the same quality, pixels a level or so apart, files of about the same size.
+- A CMYK file (JPEG, TIFF) without a colour profile is converted to sRGB through libvips's CMYK profile, as libvips and sharp convert it, no longer with `color.CMYK`'s plain formula: printing inks come out as printed (full cyan is RGB 0,153,228, no longer 0,255,255). A `*image.CMYK` given to `FromImage` keeps `color.CMYK`'s values.
 
 ### Added
 
@@ -22,7 +23,7 @@ Nothing exported by 0.1.0 was removed or changed in its signature (checked with 
 - Operations by name: `RegisterOperation`, `UnregisterOperation`, `LookupOperation`, `Operations` and `Image.Do`. Hooks around every step: `Image.Around`. `ParseColor`.
 - Package `cli`: the command line as a library (`cli.Main`, `cli.Run`), allowing programs to add their own operations; the `-op NAME[:ARGS]` flag and the `ops` command.
 - `ToSRGB()` / `-srgb`: converts colours to sRGB using the colour profile. GIF and BMP output, which cannot carry a profile, is converted automatically.
-- Grey colour profiles (a tone curve, as Photoshop's dot gain profiles) are converted, the image staying grey. Colour profiles of lookup tables (lut8, lut16, lutAToB; RGB and CMYK, to Lab or XYZ) are converted, by their perceptual table, interpolated as LittleCMS does (within 1 level of its perceptual conversion for a CMYK printing profile). A CMYK JPEG with a profile is turned into sRGB through it as it is decoded, as sharp does (it was converted with the plain formula, its profile written to the RGB output).
+- Grey colour profiles (a tone curve, as Photoshop's dot gain profiles) are converted, the image staying grey. Colour profiles of lookup tables (lut8, lut16, lutAToB; RGB and CMYK, to Lab or XYZ) are converted, by their perceptual table, interpolated as LittleCMS does (within 1 level of its perceptual conversion for a CMYK printing profile), the black point compensated as LittleCMS compensates it. A CMYK JPEG with a profile is turned into sRGB through it as it is decoded, as sharp does (it was converted with the plain formula, its profile written to the RGB output).
 - Colour profiles in WebP and TIFF files (read and write); EXIF in WebP files.
 - `JPEGOptions.Trellis` / `-jpeg-trellis`: trellis quantization, following mozjpeg.
 - `JPEGOptions.QuantTable` (type `QuantTable`, with a named constant for each choice) / `-jpeg-quant-table`: mozjpeg's nine quantization tables, numbered as its `-quant-table`; `QuantTableStandard` (0), the default, is the JPEG standard's.

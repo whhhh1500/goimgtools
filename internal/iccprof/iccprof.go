@@ -15,17 +15,39 @@
 // lut16Type, lutAToBType), RGB or CMYK, whose connection space is XYZ or
 // Lab: by their perceptual table (AToB0), as browsers and sharp convert a
 // CMYK photograph, interpolated as LittleCMS interpolates; and from grey
-// profiles of a tone curve (those of a printing press's dot gain).
+// profiles of a tone curve (those of a printing press's dot gain). Their
+// black is compensated as LittleCMS compensates it in a perceptual
+// conversion to a version 4 sRGB profile (Pillow's and sharp's): taken to
+// sRGB's black, linearly in XYZ, the white kept.
 package iccprof
 
 import (
 	"crypto/sha256"
+	_ "embed"
 	"encoding/binary"
 	"errors"
 	"image/color"
 	"math"
 	"sync"
 )
+
+// chemicalProof is libvips's CMYK profile, which it (and so sharp) takes a
+// CMYK image without a profile to be in: Graeme W. Gill's "Chemical
+// proof", in the public domain; its perceptual table only.
+//
+//go:embed chemical-proof.icc
+var chemicalProof []byte
+
+// DefaultCMYK returns the profile of a CMYK image that has none (or one
+// that cannot be read), as libvips and sharp take it; nil if it cannot be
+// read, which a test rules out.
+var DefaultCMYK = sync.OnceValue(func() *Profile {
+	p, err := Parse(chemicalProof)
+	if err != nil || p.Channels() != 4 {
+		return nil
+	}
+	return p
+})
 
 // Profile is a matrix/TRC RGB profile, or a profile of lookup tables.
 type Profile struct {
@@ -41,7 +63,79 @@ type Profile struct {
 	// gray, of a grey profile: its tone curve, to Y (or, with a Lab
 	// connection space, to L*).
 	gray *curve
+	// bpc takes the black of a profile of lookup tables or of a grey
+	// profile to sRGB's; nil if it is sRGB's.
+	bpc *bpc
 }
+
+// bpc is LittleCMS's black point compensation: XYZ times scale plus off,
+// per component, which takes the profile's black point to 0 and keeps the
+// white of the connection space.
+type bpc struct {
+	scale, off [3]float64
+}
+
+// newBPC returns the compensation for a black point (D50 XYZ); nil for 0.
+func newBPC(black [3]float64) *bpc {
+	if black == [3]float64{} {
+		return nil
+	}
+	var c bpc
+	for i := range black {
+		// LittleCMS: a = (out - D50) / (in - D50), b = -D50 (out - in) /
+		// (in - D50), with out 0.
+		t := black[i] - d50[i]
+		c.scale[i] = -d50[i] / t
+		c.off[i] = float64(d50[i]*black[i]) / t
+	}
+	return &c
+}
+
+func (c *bpc) apply(xyz [3]float64) [3]float64 {
+	if c == nil {
+		return xyz
+	}
+	for i := range xyz {
+		xyz[i] = float64(c.scale[i]*xyz[i]) + c.off[i]
+	}
+	return xyz
+}
+
+// neutralBlack is the black point LittleCMS (2.17 and 2.20) works out from
+// the lightness of the darkest colour: the neutral grey of that lightness,
+// kept within L* 0 to 50 (0 for one above 95, a negative profile's).
+func neutralBlack(L float64) [3]float64 {
+	switch {
+	case !(L >= 0) || L > 95:
+		L = 0
+	case L > 50:
+		L = 50
+	}
+	y := (L + 16) / 116
+	var f float64
+	if y <= 24.0/116 {
+		f = float64(108.0/841) * (y - 16.0/116)
+	} else {
+		f = float64(y*y) * y
+	}
+	return [3]float64{float64(d50[0] * f), f, float64(d50[2] * f)}
+}
+
+// lightness is the L* of D50 XYZ.
+func lightness(xyz [3]float64) float64 {
+	y := xyz[1]
+	var f float64
+	if y > float64(24.0/116*24.0/116)*(24.0/116) {
+		f = math.Cbrt(y)
+	} else {
+		f = float64(841.0/108*y) + 16.0/116
+	}
+	return float64(116*f) - 16
+}
+
+// The black point of a version 4 profile's perceptual table, which the
+// specification fixes (LittleCMS's cmsPERCEPTUAL_BLACK).
+var perceptualBlack = [3]float64{0.00336, 0.0034731, 0.00287}
 
 // Channels is how many values a pixel in the profile's colour space has:
 // 3 (RGB) or 4 (CMYK).
@@ -154,7 +248,15 @@ func Parse(b []byte) (*Profile, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &Profile{gray: &c, lab: pcs == "Lab "}, nil
+		p := &Profile{gray: &c, lab: pcs == "Lab "}
+		// The black point: the lightness of grey 0.
+		y := c.at(0)
+		L := float64(y * 100)
+		if !p.lab {
+			L = lightness([3]float64{0, y, 0})
+		}
+		p.bpc = newBPC(neutralBlack(L))
+		return p, nil
 	}
 	// A profile of lookup tables: its perceptual transform, or failing
 	// that another.
@@ -165,7 +267,20 @@ func Parse(b []byte) (*Profile, error) {
 	for _, name := range []string{"A2B0", "A2B1", "A2B2"} {
 		if t := tags[name]; t != nil {
 			if l, err := readLut(t, in); err == nil {
-				return &Profile{lut: l, lab: pcs == "Lab ", key: sha256.Sum256(b)}, nil
+				p := &Profile{lut: l, lab: pcs == "Lab ", key: sha256.Sum256(b)}
+				// The black point: fixed for the perceptual table of a
+				// version 4 profile; otherwise the neutral grey as light as
+				// the most ink (CMYK) or RGB 0 gives.
+				if b[8] >= 4 && name == "A2B0" {
+					p.bpc = newBPC(perceptualBlack)
+				} else {
+					var dark [4]float64
+					if in == 4 {
+						dark = [4]float64{1, 1, 1, 1}
+					}
+					p.bpc = newBPC(neutralBlack(lightness(l.pcsToXYZ(l.eval(dark[:in]), p.lab))))
+				}
+				return p, nil
 			}
 		}
 	}
@@ -334,6 +449,10 @@ func (p *Profile) grayTable() *[256]uint8 {
 				y = float64(3*float64(6.0/29*6.0/29)) * (f - 4.0/29)
 			}
 		}
+		if p.bpc != nil {
+			// Neutral: Y as X and Z.
+			y = p.bpc.apply([3]float64{0, y, 0})[1]
+		}
 		y = clamp01(y)
 		if y <= 0.0031308 {
 			y *= 12.92
@@ -453,7 +572,7 @@ func cachedGrid(p *Profile) *lutGrid {
 	if len(gridCache) >= 4 {
 		clear(gridCache)
 	}
-	g := newLutGrid(p.lut, p.lab)
+	g := newLutGrid(p)
 	gridCache[p.key] = g
 	return g
 }

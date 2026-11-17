@@ -3,6 +3,7 @@ package iccprof
 import (
 	"image"
 	"image/png"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -219,6 +220,56 @@ func TestGrayProfile(t *testing.T) {
 	}
 	if _, err := Parse(withAt(icc, tagEntry(icc, "kTRC"), "zzzz")); err == nil {
 		t.Error("a grey profile without its curve accepted")
+	}
+}
+
+// TestDefaultCMYK: libvips's CMYK profile reads, no ink is white and the
+// inks are the colours LittleCMS gives them (Pillow's ImageCms, perceptual,
+// within one level: these are this package's values).
+func TestDefaultCMYK(t *testing.T) {
+	p := DefaultCMYK()
+	if p == nil || p.Channels() != 4 || p.bpc == nil {
+		t.Fatalf("%+v", p)
+	}
+	tr := p.ToSRGB()
+	for _, c := range []struct{ in, want [4]uint8 }{
+		{[4]uint8{0, 0, 0, 0}, [4]uint8{255, 255, 255}},
+		{[4]uint8{255, 0, 0, 0}, [4]uint8{0, 153, 228}},
+		{[4]uint8{0, 255, 0, 0}, [4]uint8{234, 0, 130}},
+		{[4]uint8{0, 0, 255, 0}, [4]uint8{255, 240, 0}},
+		{[4]uint8{0, 0, 0, 255}, [4]uint8{18, 4, 23}},
+	} {
+		r, g, b := tr.ConvertCMYK(c.in[0], c.in[1], c.in[2], c.in[3])
+		if [4]uint8{r, g, b} != c.want {
+			t.Errorf("%v: %d,%d,%d, want %v", c.in, r, g, b, c.want[:3])
+		}
+	}
+}
+
+// TestBlackPoint: LittleCMS's black point compensation takes the black
+// point to 0 and keeps the white; a black at L* 0 needs none, and one
+// lighter than L* 50 counts as 50.
+func TestBlackPoint(t *testing.T) {
+	if newBPC(neutralBlack(0)) != nil || newBPC(neutralBlack(-3)) != nil || newBPC(neutralBlack(97)) != nil {
+		t.Error("a compensation for black at L* 0")
+	}
+	if neutralBlack(70) != neutralBlack(50) {
+		t.Error("L* 70 is not taken as 50")
+	}
+	k := neutralBlack(13)
+	if l := lightness(k); math.Abs(l-13) > 1e-9 {
+		t.Errorf("L* %v", l)
+	}
+	c := newBPC(k)
+	for i, v := range c.apply(k) {
+		if math.Abs(v) > 1e-12 {
+			t.Errorf("black %d: %v", i, v)
+		}
+	}
+	for i, v := range c.apply(d50) {
+		if math.Abs(v-d50[i]) > 1e-12 {
+			t.Errorf("white %d: %v", i, v)
+		}
 	}
 }
 

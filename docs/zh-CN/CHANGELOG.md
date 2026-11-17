@@ -14,6 +14,7 @@
 - Go 1.27 下 PNG 默认级别为 7（原为 6）：文件更小，写得更慢。`PNGOptions{CompressionLevel: 6}` 可得原来的文件。
 - `Threads(n)` 不再以 3 为上限：n 更大时即用更多核心。
 - JPEG 按 libjpeg-turbo 的方式写出（即 Pillow、sharp 的字节），不再按 `image/jpeg` 的方式：同一质量下像素相差约一个色阶，文件大小相当。
+- 不带色彩配置的 CMYK 文件（JPEG、TIFF）按 libvips 的 CMYK 配置转为 sRGB，与 libvips、sharp 相同，不再按 `color.CMYK` 的简单公式：印刷油墨呈现为印刷出的颜色（满版青色为 RGB 0,153,228，不再是 0,255,255）。交给 `FromImage` 的 `*image.CMYK` 仍保持 `color.CMYK` 的值。
 
 ### 新增
 
@@ -22,7 +23,7 @@
 - 按名称注册操作：`RegisterOperation`、`UnregisterOperation`、`LookupOperation`、`Operations`、`Image.Do`。包裹每一步骤的钩子：`Image.Around`。`ParseColor`。
 - `cli` 包：以库的形式提供命令行（`cli.Main`、`cli.Run`），程序可向其中加入自定义操作；命令行选项 `-op 名字[:参数]` 与子命令 `ops`。
 - `ToSRGB()` / `-srgb`：依据色彩配置将颜色转换至 sRGB。GIF、BMP 无法附带色彩配置，输出时自动转换。
-- 支持灰度色彩配置（色调曲线，如 Photoshop 的网点扩大配置），转换后仍为灰度。支持查找表类色彩配置（lut8、lut16、lutAToB；RGB 与 CMYK，连接空间为 Lab 或 XYZ），按其感知表转换，插值方式与 LittleCMS 相同（CMYK 印刷配置与其感知转换相差不超过 1 级）。带色彩配置的 CMYK JPEG 解码时即经配置转为 sRGB，与 sharp 相同（以前按简单公式转换，并把 CMYK 配置写进 RGB 输出）。
+- 支持灰度色彩配置（色调曲线，如 Photoshop 的网点扩大配置），转换后仍为灰度。支持查找表类色彩配置（lut8、lut16、lutAToB；RGB 与 CMYK，连接空间为 Lab 或 XYZ），按其感知表转换，插值方式与 LittleCMS 相同（CMYK 印刷配置与其感知转换相差不超过 1 级），黑点补偿也与 LittleCMS 相同。带色彩配置的 CMYK JPEG 解码时即经配置转为 sRGB，与 sharp 相同（以前按简单公式转换，并把 CMYK 配置写进 RGB 输出）。
 - WebP、TIFF 支持读写色彩配置；WebP 支持读写 EXIF。
 - `JPEGOptions.Trellis` / `-jpeg-trellis`：网格量化（采用 mozjpeg 的方法）。
 - `JPEGOptions.QuantTable`（`QuantTable` 类型，每种选择有具名常量）/ `-jpeg-quant-table`：mozjpeg 的 9 套量化表，编号与其 `-quant-table` 一致；默认 `QuantTableStandard`（0）为 JPEG 标准表。

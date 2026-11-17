@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"bytes"
 	"image"
 	"image/draw"
 	"os"
@@ -12,9 +13,10 @@ import (
 // TestICCLookupTables: a CMYK JPEG with a profile of lookup tables (lut16
 // to Lab, lutAToB to XYZ) is turned into sRGB through it as soon as it is
 // decoded, and an RGB image with one by ToSRGB: what LittleCMS gives
-// (Pillow's ImageCms), to within one level for CMYK and three for RGB; the
-// output carries no profile. A CMYK JPEG without a profile is converted as
-// color.CMYK converts it.
+// (Pillow's ImageCms, perceptual, its black point compensated), to within
+// one level for CMYK and three for RGB; the output carries no profile. A
+// CMYK JPEG without a profile is converted through libvips's CMYK profile,
+// as sharp converts it.
 func TestICCLookupTables(t *testing.T) {
 	for _, c := range []struct {
 		in, ref string
@@ -23,6 +25,7 @@ func TestICCLookupTables(t *testing.T) {
 	}{
 		{"cmyk-lut16.jpg", "cmyk-lut16-lcms.png", false, 1},
 		{"cmyk-mab.jpg", "cmyk-mab-lcms.png", false, 1},
+		{"cmyk-plain.jpg", "cmyk-plain-lcms.png", false, 1},
 		{"rgb-lut16.png", "rgb-lut16-lcms.png", true, 3},
 	} {
 		in, err := os.ReadFile("testdata/icc/" + c.in)
@@ -74,14 +77,13 @@ func TestICCLookupTables(t *testing.T) {
 			t.Errorf("grey: up to %d levels from LittleCMS", worst)
 		}
 	}
-	// Without its profile the CMYK JPEG is converted as before.
+	// StripICC drops the profile from the output, not from the conversion.
 	in := must(os.ReadFile("testdata/icc/cmyk-lut16.jpg"))
-	plain := must(FromBytes(in).StripICC().PNG().ToBytes())
 	if info, err := FromBytes(in).Metadata(); err != nil || info.Color != "cmyk" || !info.HasProfile {
 		t.Errorf("input: %+v, %v", info, err)
 	}
-	if len(plain) == 0 {
-		t.Error("no output without the profile")
+	if !bytes.Equal(must(FromBytes(in).StripICC().PNG().ToBytes()), must(FromBytes(in).PNG().ToBytes())) {
+		t.Error("StripICC changes the conversion")
 	}
 }
 

@@ -403,7 +403,8 @@ func gridPoints(in int) int {
 	return 33
 }
 
-func newLutGrid(l *lut, lab bool) *lutGrid {
+func newLutGrid(p *Profile) *lutGrid {
+	l := p.lut
 	g := gridPoints(l.in)
 	n := 1
 	grid := make([]int, l.in)
@@ -413,14 +414,14 @@ func newLutGrid(l *lut, lab bool) *lutGrid {
 	}
 	t := &lutGrid{in: l.in, grid: grid, val: make([]float32, 3*n)}
 	x := make([]float64, l.in)
-	for p := 0; p < n; p++ {
-		q := p
+	for k := 0; k < n; k++ {
+		q := k
 		for i := l.in - 1; i >= 0; i-- {
 			x[i] = float64(q%g) / float64(g-1)
 			q /= g
 		}
-		s := srgbOf(l.pcsToXYZ(l.eval(x), lab))
-		t.val[3*p], t.val[3*p+1], t.val[3*p+2] = float32(s[0]), float32(s[1]), float32(s[2])
+		s := srgbOf(p.bpc.apply(l.pcsToXYZ(l.eval(x), p.lab)))
+		t.val[3*k], t.val[3*k+1], t.val[3*k+2] = float32(s[0]), float32(s[1]), float32(s[2])
 	}
 	return t
 }

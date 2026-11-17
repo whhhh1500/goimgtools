@@ -229,10 +229,19 @@ func (m *Image) buildFrom(env *pipeline.Env, top bool, f *input, format string, 
 		}
 	}
 	// A CMYK image is turned into sRGB through its colour profile as soon
-	// as it is decoded, as sharp does; without a profile its values are
-	// taken as they are (as color.CMYK converts them).
-	if !sizeOnly && src.ColorModel() == color.CMYKModel && len(meta.ICC) > 0 {
-		if p, err := iccprof.Parse(meta.ICC); err == nil && p.Channels() == 4 {
+	// as it is decoded, as sharp does; a file without one (or with one that
+	// cannot be read, or not a CMYK one) through libvips's CMYK profile, as
+	// libvips and sharp take it. An image made in memory without a profile
+	// keeps the values color.CMYK gives.
+	if !sizeOnly && src.ColorModel() == color.CMYKModel {
+		p, err := iccprof.Parse(meta.ICC)
+		if err != nil || p.Channels() != 4 {
+			p = nil
+			if format != generated {
+				p = iccprof.DefaultCMYK()
+			}
+		}
+		if p != nil {
 			src = ops.CMYKToSRGB(src, p.ToSRGB())
 			meta.ICC = nil
 		}

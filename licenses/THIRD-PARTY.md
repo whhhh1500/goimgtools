@@ -237,8 +237,10 @@ were rewritten in Go; nothing of the original files is included unchanged.
 profiles as LittleCMS (MIT licence) does: its tetrahedral interpolation
 (`cmsintrp.c`, `TetrahedralInterpFloat`), in four dimensions between two
 of them (`Eval4Inputs`), on grids of the sizes it picks
-(`_cmsReasonableGridpointsByColorspace`). The routines were written anew;
-no code of LittleCMS is included.
+(`_cmsReasonableGridpointsByColorspace`), and compensates the black point
+as it does (`cmssamp.c`, `cmsDetectBlackPoint`; `cmscnvrt.c`,
+`ComputeBlackPointCompensation`). The routines were written anew; no code
+of LittleCMS is included.
 
 `internal/webpstream/fancy.go` turns decoded Y'CbCr into RGB as libwebp
 does (`src/dsp/upsampling.c`: the "fancy" chroma upsampler;
@@ -313,6 +315,12 @@ smartcrop.js by Jonas Wagner, MIT licence), written afresh in Go. The blend mode
 `Normalize`'s percentiles (`internal/ops/levels.go`) reproduce libvips'
 arithmetic as observed through sharp and the vips command, without its
 code.
+
+`internal/iccprof/chemical-proof.icc` is the CMYK profile libvips ships
+(`libvips/colour/profiles/cmyk.icm`) and takes a CMYK image without a
+profile to be in, cut down to its description, copyright, white point and
+perceptual table (AToB0). Its copyright tag reads: "Created by Graeme W.
+Gill. Released into the public domain. No Warranty, Use at your own risk."
 
 ## apngdis
 

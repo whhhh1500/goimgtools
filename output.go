@@ -68,9 +68,11 @@ func (m *Image) Density(dpi float64) *Image {
 // without being asked. Profiles described by primaries and tone curves
 // are converted (those of cameras, phones, Display P3, Adobe RGB,
 // ProPhoto), those of lookup tables by their perceptual table, and those
-// of grey images (a dot gain) by their tone curve, the image staying grey.
-// (A CMYK image is turned into sRGB through its profile when it is
-// decoded, whether or not this is asked for.)
+// of grey images (a dot gain) by their tone curve, the image staying grey;
+// the black point of the last two kinds is compensated as LittleCMS does
+// it. (A CMYK image is turned into sRGB through its profile when it is
+// decoded, whether or not this is asked for; a CMYK file without one
+// through libvips's CMYK profile, as sharp does.)
 func (m *Image) ToSRGB() *Image { m.toSRGB = true; return m }
 
 // manageColour converts src to sRGB when its profile asks for it: on
