@@ -29,6 +29,10 @@ type Options struct {
 	// Density, when above 0, is the resolution to record in a pHYs chunk,
 	// in pixels per inch (stored per metre).
 	Density float64
+	// alpha writes 8-bit RGBA strips with their alpha channel even when
+	// every pixel is opaque: the frames of an APNG must all have the
+	// colour type of the file.
+	alpha bool
 }
 
 // Encode writes src to w as a PNG. writer.go is the standard library's
@@ -129,7 +133,9 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 
 	if hasAlpha {
 		opq := knownOpq
-		if !knownOpq {
+		if o != nil && o.alpha {
+			opq = false
+		} else if !knownOpq {
 			// Whether there is transparency decides the header, and is only
 			// known once every pixel has been seen: the strips are recorded
 			// (in a temporary file beyond their memory share) while their

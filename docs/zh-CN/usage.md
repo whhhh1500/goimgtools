@@ -82,7 +82,7 @@ err := goimgtools.Open("in.jpg").
 | `EnsureAlpha(alpha)` | 为不含透明的图像加上给定不透明度（0–1）的透明通道（值为 alpha·255 舍去小数，与 sharp 的 `ensureAlpha` 逐字节一致）；已含透明的图像保持不变 |
 | `RemoveAlpha()` | 去掉透明度：每个像素显示其存储的颜色（sharp 的 `removeAlpha`）；与 `Flatten` 不同，不与背景色混合 |
 | `Composite(overlay, CompositeOptions{...})` | 图像叠加 / 水印（见[水印](#水印)） |
-| `Animated()` | 处理 GIF、WebP 或 PNG 动画（APNG）的每一帧并输出 GIF 或 WebP 动画。WebP 的各帧按 libwebp 动画解码器的方式绘制（混合与否、清除与否），逐像素一致；APNG 的各帧按其规范绘制。静态图像不受影响；无法保留的动画（输出为其他格式）返回包装了 `errors.ErrUnsupported` 的错误。WebP 第一帧完整存储，之后各帧仅存储变化的矩形区域。GIF 的所有帧共用一套按画面内容选取的调色板（`GIFOptions` 的 `Colors`、`NoDither` 依然有效；颜色数不超过该值时原样保留），自第二帧起仅存储变化的部分（见[压缩](compression.md)） |
+| `Animated()` | 处理 GIF、WebP 或 PNG 动画（APNG）的每一帧并输出 GIF、WebP 或 PNG 动画（APNG）。WebP 的各帧按 libwebp 动画解码器的方式绘制（混合与否、清除与否），逐像素一致；APNG 的各帧按其规范绘制。静态图像不受影响；无法保留的动画（输出为其他格式）返回包装了 `errors.ErrUnsupported` 的错误。WebP 第一帧完整存储，之后各帧仅存储变化的矩形区域。GIF 的所有帧共用一套按画面内容选取的调色板（`GIFOptions` 的 `Colors`、`NoDither` 依然有效；颜色数不超过该值时原样保留），自第二帧起仅存储变化的部分（见[压缩](compression.md)）。APNG 为无损：所有帧共不超过 256 种颜色时共用一套调色板，否则为 RGB 或 RGBA；之后各帧存储变化的矩形，原样写入或把未变像素设为透明后叠加，取较小者；`CompressionLevel` 有效，`Colors` 不适用（报错） |
 | `Pixels(fn)` | 自定义逐像素操作：`fn` 逐条带接收 8 位 NRGBA 数据并原地修改（见[扩展](extending.md)） |
 | `Pipe(op)` | 在链的当前位置插入任意自定义操作（见[扩展](extending.md)） |
 | `Apply(steps...)` | 将一组步骤写为函数，在链的中间调用 |

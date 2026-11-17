@@ -18,8 +18,8 @@ import (
 )
 
 // Animated makes the chain apply to every frame of an animated GIF, WebP or
-// PNG (APNG) and write an animated GIF or WebP. Without it only the first
-// frame is used. A still image passes unchanged. An animation that cannot be
+// PNG (APNG) and write an animated GIF, WebP or PNG (APNG). Without it only
+// the first frame is used. A still image passes unchanged. An animation that cannot be
 // kept, one to another output format, fails with an error wrapping
 // errors.ErrUnsupported (without Animated its first frame is used).
 //
@@ -41,6 +41,17 @@ import (
 // GIF's loop count becomes a WebP's (a GIF says how often it repeats, a
 // WebP how often it plays), as gif2webp converts them. A WebP's become a
 // GIF's the other way, and its durations hundredths of a second.
+//
+// An APNG is written without loss: with one palette for all the frames
+// when they have 256 colours or fewer, else as RGB (RGBA with
+// transparency); the first frame whole, every later one as the rectangle
+// that changed, either as it is or, when that is smaller, with the pixels
+// that stay as they were transparent and blended over the picture. A
+// frame that changes nothing lengthens the one before, and frames all
+// alike make a still PNG. Every frame is processed before the file is
+// written (the colours and the transparency of all of them decide how it
+// is stored): the frames are kept in working storage. PNGOptions'
+// CompressionLevel applies; Colors does not (an error).
 //
 // A GIF is written with one palette chosen for all the frames together
 // (GIFOptions.Colors and NoDither apply; an animation of no more colours
@@ -171,7 +182,7 @@ func (in *input) otherFrames(format string, env *pipeline.Env) (Frames, error) {
 // keepsAnimation reports whether Animated can run the chain over the
 // frames of input format into output format.
 func keepsAnimation(input, output string) bool {
-	return (input == "gif" || input == "webp" || input == "png") && (output == "gif" || output == "webp")
+	return (input == "gif" || input == "webp" || input == "png") && (output == "gif" || output == "webp" || output == "png")
 }
 
 // refuseAnimation fails when Animated asks for the frames of input format
@@ -184,7 +195,7 @@ func (m *Image) refuseAnimation(f *input, input, output string, env *pipeline.En
 		return err
 	}
 	name := map[string]string{"gif": "an animated GIF", "webp": "an animated WebP", "png": "an animated PNG (APNG)"}[input]
-	return fmt.Errorf("goimgtools: the input is %s and %s output cannot hold an animation (GIF and WebP output can); without Animated its first frame is used: %w",
+	return fmt.Errorf("goimgtools: the input is %s and %s output cannot hold an animation (GIF, WebP and PNG output can); without Animated its first frame is used: %w",
 		name, output, errors.ErrUnsupported)
 }
 
@@ -565,13 +576,25 @@ func (s *canvasSource) Next() (image.Image, error) {
 func (m *Image) writeAnimated(w io.Writer, f *input, env *pipeline.Env, input, format string) error {
 	var g GIFOptions
 	var wo WebPOptions
+	var po PNGOptions
 	var err error
 	fixed := false
-	if format == "webp" {
+	switch format {
+	case "webp":
 		if wo, err = optionsOf[WebPOptions](m.options, "webp"); err != nil {
 			return err
 		}
-	} else {
+	case "png":
+		if po, err = optionsOf[PNGOptions](m.options, "png"); err != nil {
+			return err
+		}
+		if po.Colors != 0 {
+			return fmt.Errorf("goimgtools: PNGOptions.Colors does not apply to an animation (an APNG keeps every colour; GIF output chooses a palette for all frames): %w", errors.ErrUnsupported)
+		}
+		if po.CompressionLevel == 0 {
+			po.CompressionLevel = DefaultPNGLevel
+		}
+	default:
 		if g, err = optionsOf[GIFOptions](m.options, "gif"); err != nil {
 			return err
 		}
@@ -664,9 +687,14 @@ func (m *Image) writeAnimated(w io.Writer, f *input, env *pipeline.Env, input, f
 	defer cv.close()
 	seq := &frameSeq{m: m, f: f, anim: anim, cv: cv, env: env, w: cw, h: ch}
 	defer seq.close()
-	if format == "webp" {
+	switch format {
+	case "webp":
 		return webpanim.Encode(w, env, webpanim.Options{
 			LoopCount: webpLoopCount(plays), Lossless: wo.Lossless, Quality: wo.Quality, Effort: wo.Effort,
+		}, seq.next)
+	case "png":
+		return pngstream.EncodeAnimation(w, env, pngstream.AnimOptions{
+			LoopCount: webpLoopCount(plays), Level: po.CompressionLevel,
 		}, seq.next)
 	}
 	// A GIF says in hundredths of a second how long a frame shows, and how

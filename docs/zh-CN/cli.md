@@ -102,7 +102,7 @@ goimgtools -op median:3 -op normalize -op "tint:#704214" scan.jpg out.jpg
 | `-webp-lossless`、`-webp-effort N` | 无损 WebP；力度 1（最快）至 9（文件最小），默认 5。力度也作用于有损 WebP：5 已用上全部手段（5 以上只在透明通道上多做），1 耗时约减半 |
 | `-png-level N`、`-gif-colors N`、`-gif-fixed-palette`、`-tiff-compression none\|deflate\|lzw`、`-tiff-predictor` | 各格式专用选项 |
 | `-gif-lossy N` | GIF：有损压缩，可接受的颜色差 1–255（照片类动画 16–32，带抖动的静态图 8–16；见[压缩](compression.md)） |
-| `-animated` | 处理 GIF、WebP 或 PNG 动画（APNG）的每一帧，按输出格式写为 GIF 或 WebP 动画；`-gif-colors`、`-no-dither` 适用于 GIF，WebP 的选项适用于 WebP。输出为其他格式时报错 |
+| `-animated` | 处理 GIF、WebP 或 PNG 动画（APNG）的每一帧，按输出格式写为 GIF、WebP 或 PNG 动画（APNG，无损）；`-gif-colors`、`-no-dither` 适用于 GIF，WebP 的选项适用于 WebP，`-png-level` 适用于 PNG。输出为其他格式时报错 |
 | `-op NAME[:ARG,ARG...]` | 按名称执行操作（`goimgtools ops` 列出全部操作，包括内置操作与程序注册的操作）；可多次指定，按指定顺序在锐化之后执行 |
 | `-keep-exif`、`-keep-xmp`、`-strip-icc` | 元数据 |
 | `-density DPI` | 在输出中记录每英寸 DPI 个像素的分辨率（JPEG、PNG、TIFF、BMP）；默认保留输入的分辨率 |

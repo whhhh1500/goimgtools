@@ -8,7 +8,7 @@ English | [中文](zh-CN/CHANGELOG.md)
 
 Nothing exported by 0.1.0 was removed or changed in its signature (checked with `apidiff`, which every push now runs against the last release). What can still surprise code written for 0.1.0:
 
-- `Animated()` returns an error wrapping `errors.ErrUnsupported` for an animation it cannot keep (an animated GIF, WebP or PNG to JPEG, PNG, BMP or TIFF), where 0.1.0 silently wrote the first frame. Leave out `Animated()` to get the first frame.
+- `Animated()` returns an error wrapping `errors.ErrUnsupported` for an animation it cannot keep (an animated GIF, WebP or PNG to JPEG, BMP or TIFF), where 0.1.0 silently wrote the first frame; to PNG it writes an APNG. Leave out `Animated()` to get the first frame.
 - A lossy WebP is decoded to `*image.NRGBA` strips, no longer to `*image.YCbCr`, so that its colours are libwebp's; `Metadata()` still reports `ycbcr`. Code that type-asserts the decoded image should accept any `image.Image`.
 - `Frames().LoopCount` of a GIF is the number of times it plays, as documented, one more than 0.1.0 returned.
 - The default PNG level is 7 with Go 1.27 (6 before): smaller files, written more slowly. `PNGOptions{CompressionLevel: 6}` keeps the old files.
@@ -34,6 +34,7 @@ Nothing exported by 0.1.0 was removed or changed in its signature (checked with 
 - Animated WebP output: `Animated()` with WebP output writes an animated GIF as an animated WebP (lossy or lossless), storing only the rectangle that changed in each frame.
 - Animated WebP input: read as its first frame (previously rejected as an unreadable image), and with `Animated()` frame by frame into an animated GIF or WebP: each frame is drawn on the picture as libwebp's animation decoder draws it (blended or put as it is, its rectangle cleared afterwards or not), pixel for pixel; how long the frames show and how often the animation plays carry over (to a GIF in hundredths of a second, and as repeats after the first time). `Frames` counts the frames of animated WebP and PNG (APNG) files; `info` shows them.
 - Animated PNG (APNG) input: with `Animated()`, frame by frame into an animated GIF or WebP, each frame drawn as the APNG specification says (put as it is or composited over, as apngdis does; cleared, put back or left afterwards), checked frame by frame against a renderer written from the specification.
+- Animated PNG (APNG) output: `Animated()` with PNG output writes an APNG, without loss: one palette for all frames when they have 256 colours or fewer (else RGB or RGBA), later frames as the rectangle that changed, as it is or blended over with the unchanged pixels transparent, whichever is smaller; frames alike merged. Pillow reads them back pixel for pixel; an animated GIF of a moving ball becomes 30% smaller, and photographic animations Pillow wrote as APNG 0.1–2.7% smaller.
 - `CompositeOptions.WidthRatio` / `HeightRatio`: watermark size as a fraction of the base image; `-watermark-width N%`.
 - Lossy WebP: segments with individual quantizers (spatial noise shaping, ported from libwebp).
 - `pipeline.Env.SetHelpers`, `Helpers`, `Parallel` and `Go`, allowing stages to distribute their work across cores.

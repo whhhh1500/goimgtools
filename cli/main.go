@@ -202,7 +202,7 @@ func register(fs *flag.FlagSet) *options {
 		gifLossy:       fs.Int("gif-lossy", 0, "GIF: lossy compression, the colour difference 1-255 it may accept (16-32 for photographic GIFs: 18-32% smaller); 0 keeps every pixel"),
 		tiffComp:       fs.String("tiff-compression", "none", "TIFF compression: none, deflate or lzw"),
 		tiffPredictor:  fs.Bool("tiff-predictor", false, "TIFF: store each sample as its difference from the pixel to its left (horizontal predictor): photographs compress much better with deflate or lzw"),
-		animated:       fs.Bool("animated", false, "process every frame of an animated GIF, WebP or PNG and write an animated GIF or WebP; only what changes is stored (GIF: one palette for all frames, -gif-colors, -no-dither); another output format is an error"),
+		animated:       fs.Bool("animated", false, "process every frame of an animated GIF, WebP or PNG and write an animated GIF, WebP or PNG (APNG); only what changes is stored (GIF: one palette for all frames, -gif-colors, -no-dither); another output format is an error"),
 		keepExif:       fs.Bool("keep-exif", false, "copy the EXIF block (camera, date, GPS) to the output"),
 		keepXmp:        fs.Bool("keep-xmp", false, "copy the XMP packet (keywords, rating, rights) to the output (JPEG, PNG, WebP, TIFF)"),
 		stripICC:       fs.Bool("strip-icc", false, "drop the ICC colour profile instead of copying it"),

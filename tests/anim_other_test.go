@@ -226,9 +226,9 @@ func TestOtherAnimations(t *testing.T) {
 		what string
 		m    *Image
 	}{
-		{"WebP to PNG", FromBytes(anim).Animated().PNG()},
-		{"APNG to PNG", FromBytes(ap).Animated().PNG()},
-		{"APNG read twice", FromReader(bytes.NewReader(ap)).Animated().PNG()},
+		{"WebP to TIFF", FromBytes(anim).Animated().TIFF()},
+		{"APNG to JPEG", FromBytes(ap).Animated().JPEG(80)},
+		{"APNG read twice", FromReader(bytes.NewReader(ap)).Animated().BMP()},
 	} {
 		if _, err := c.m.ToBytes(); !errors.Is(err, errors.ErrUnsupported) || errors.Is(err, ErrFormat) {
 			t.Errorf("%s: %v", c.what, err)
