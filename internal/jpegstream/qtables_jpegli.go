@@ -112,10 +112,10 @@ func jpegliDistance(quality int) float64 {
 	case quality >= 100:
 		return 0.01
 	case quality >= 30:
-		return 0.1 + float64(100-quality)*0.09
+		return 0.1 + float64(float64(100-quality)*0.09)
 	}
 	q := float64(quality)
-	return 53.0/3000.0*q*q - 23.0/20.0*q + 25.0
+	return float64(53.0/3000.0*q*q) - float64(23.0/20.0*q) + 25.0
 }
 
 // jpegliScale is DistanceToScale.

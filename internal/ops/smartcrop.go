@@ -148,7 +148,7 @@ func (s *scorer) entropy(x, y, w, h int) float64 {
 		for _, n := range hist[c] {
 			if n > 0 {
 				p := float64(n) / total
-				e -= p * math.Log2(p)
+				e -= float64(p * math.Log2(p))
 			}
 		}
 	}
@@ -231,29 +231,31 @@ func (s *scorer) attentionCrop(tw, th int) (left, top int) {
 			sum[y*n+x] = [3]float64{float64(c.R), float64(c.G), float64(c.B)}
 		}
 	}
-	// XYZ (D65, Y of white 100), and the scores.
+	// XYZ (D65, Y of white 100), and the scores. Every product is
+	// rounded before it is added (see blendOf), so that the crop does not
+	// depend on the processor.
 	var Y, score [n * n]float64
 	var X, Z [n * n]float64
 	for k := range sum {
 		r, g, b := srgbLinear(sum[k][0]/255), srgbLinear(sum[k][1]/255), srgbLinear(sum[k][2]/255)
-		X[k] = 100 * (0.4124*r + 0.3576*g + 0.1805*b)
-		Y[k] = 100 * (0.2126*r + 0.7152*g + 0.0722*b)
-		Z[k] = 100 * (0.0193*r + 0.1192*g + 0.9505*b)
+		X[k] = 100 * (float64(0.4124*r) + float64(0.3576*g) + float64(0.1805*b))
+		Y[k] = 100 * (float64(0.2126*r) + float64(0.7152*g) + float64(0.0722*b))
+		Z[k] = 100 * (float64(0.0193*r) + float64(0.1192*g) + float64(0.9505*b))
 	}
 	at := func(x, y int) float64 { return math.Trunc(Y[max(0, min(y, n-1))*n+max(0, min(x, n-1))]) }
 	for y := 0; y < n; y++ {
 		for x := 0; x < n; x++ {
 			k := y*n + x
 			// Edges: a Laplacian of Y in whole numbers, times 5.
-			edge := math.Abs(5 * (4*at(x, y) - at(x-1, y) - at(x+1, y) - at(x, y-1) - at(x, y+1)))
+			edge := math.Abs(5 * (float64(4*at(x, y)) - at(x-1, y) - at(x+1, y) - at(x, y-1) - at(x, y+1)))
 			score[k] = edge
 			if Y[k] <= 5 {
 				continue
 			}
 			// Skin: the direction of the XYZ colour against skin's.
-			m := math.Sqrt(X[k]*X[k] + Y[k]*Y[k] + Z[k]*Z[k])
+			m := math.Sqrt(float64(X[k]*X[k]) + float64(Y[k]*Y[k]) + float64(Z[k]*Z[k]))
 			dx, dy, dz := X[k]/m-0.78, Y[k]/m-0.57, Z[k]/m-0.44
-			score[k] += 100 - 100*math.Sqrt(dx*dx+dy*dy+dz*dz)
+			score[k] += 100 - float64(100*math.Sqrt(float64(dx*dx)+float64(dy*dy)+float64(dz*dz)))
 			// Saturation as libvips counts it: the a* of L*a*b*.
 			score[k] += labA(X[k], Y[k], Z[k])
 		}
@@ -281,7 +283,7 @@ func labA(x, y, z float64) float64 {
 		if t > 216.0/24389 {
 			return math.Cbrt(t)
 		}
-		return (24389.0/27*t + 16) / 116
+		return (float64(24389.0/27*t) + 16) / 116
 	}
 	return 500 * (f(x/95.047) - f(y/100))
 }
@@ -310,7 +312,7 @@ func gaussGrid(v []float64, n int, sigma float64) []float64 {
 		for x := 0; x < n; x++ {
 			s := 0.0
 			for i, w := range k {
-				s += w * v[y*n+max(0, min(x+i-r, n-1))]
+				s += float64(w * v[y*n+max(0, min(x+i-r, n-1))])
 			}
 			tmp[y*n+x] = s
 		}
@@ -319,7 +321,7 @@ func gaussGrid(v []float64, n int, sigma float64) []float64 {
 		for x := 0; x < n; x++ {
 			s := 0.0
 			for i, w := range k {
-				s += w * tmp[max(0, min(y+i-r, n-1))*n+x]
+				s += float64(w * tmp[max(0, min(y+i-r, n-1))*n+x])
 			}
 			out[y*n+x] = s
 		}

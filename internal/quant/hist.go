@@ -276,7 +276,7 @@ func points(bins []bin) (pts []bin, opaque int) {
 		}
 		f := a / 255 * colorScale
 		bins[n] = bin{n: q.n, v: [4]int32{
-			int32(r*f + 0.5), int32(g*f + 0.5), int32(b*f + 0.5), int32(a*alphaScale + 0.5),
+			int32(float64(r*f) + 0.5), int32(float64(g*f) + 0.5), int32(float64(b*f) + 0.5), int32(float64(a*alphaScale) + 0.5),
 		}}
 		n++
 	}

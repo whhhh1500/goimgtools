@@ -17,7 +17,7 @@
 ### 新增
 
 - 图像调整操作：`Grayscale`、`Modulate`、`Blur`、`Sharpen`（轻度锐化或反锐化掩模）、`Extend`、`Trim`、`RotateBy`（任意角度）。
-- `inspect.Stats`、`inspect.Hash`（感知哈希）、`inspect.ReadExif` / `ParseExif`；子命令 `stats`、`hash`、`exif`。
+- `inspect.Stats`、`inspect.Hash`（感知哈希）、`inspect.ReadExif` / `ParseExif`；子命令 `stats`、`hash`、`exif`。`Stats` 还报告 sharp 的 `stats()` 所报告的各项，数值一致到末几位：`Channels`（类型 `ChannelStats`）、`Entropy`、`Sharpness`。
 - 按名称注册操作：`RegisterOperation`、`UnregisterOperation`、`LookupOperation`、`Operations`、`Image.Do`。包裹每一步骤的钩子：`Image.Around`。`ParseColor`。
 - `cli` 包：以库的形式提供命令行（`cli.Main`、`cli.Run`），程序可向其中加入自定义操作；命令行选项 `-op 名字[:参数]` 与子命令 `ops`。
 - `ToSRGB()` / `-srgb`：依据色彩配置将颜色转换至 sRGB。GIF、BMP 无法附带色彩配置，输出时自动转换。
@@ -34,9 +34,12 @@
 - `CompositeOptions.WidthRatio` / `HeightRatio`：按底图的比例确定水印尺寸；`-watermark-width N%`。
 - 有损 WebP 分段量化：各段使用独立的量化级别（移植自 libwebp 的空间噪声整形）。
 - `pipeline.Env.SetHelpers`、`Helpers`、`Parallel`、`Go`：供处理环节将工作分摊至多个核。
+- `ExtendWith`（类型 `Extension`：`ExtendCopy`、`ExtendRepeat`、`ExtendMirror`）/ `-extend-with`：用图像本身扩边，与 sharp 带 `extendWith` 的 `extend` 逐像素一致；`Do("extend")` 在颜色的位置接受 copy、repeat 或 mirror。
+- `ResizeOptions.LinearLight` / `-linear-light`：在线性光下缩放，同 libvips `thumbnail` 的 `linear`；`Do("resize")` 以第六个参数 `linear` 接受。
 - `ResizeOptions.Position`（`FitCover` 保留的部分、`FitContain` 放置图像的位置）与 `ResizeOptions.Interesting`（类型 `Interesting`：`InterestingEntropy`、`InterestingAttention`，即 sharp 的智能裁剪策略）/ `-position`。`Do("resize")` 以第五个参数接受它们。
+- `Recomb`、`Unflatten`、`ExtractChannel`（类型 `Channel`）、`RemoveAlpha`，仿照 sharp 的 `recomb`、`unflatten`、`extractChannel`、`removeAlpha`（前两者逐字节一致），也可按名称调用：recomb、unflatten、extract-channel、remove-alpha。
 - `CompositeOptions.Blend`（类型 `BlendMode`）/ `-watermark-blend`：sharp 合成的各种混合模式（正片叠底、滤色、叠加、变暗、变亮、颜色减淡与加深、强光与柔光、差值、排除），与 sharp 的结果相差不超过 1。
-- 仿照 sharp 的色阶与滤镜：`Negate`、`Linear`、`Gamma`、`Threshold`、`Tint`、`Normalize`（`NormalizeOptions`）、`CLAHE`（`CLAHEOptions`）、`Median`、`Convolve`（`Convolution`），也可按名称调用（`Do`、`-op`）：negate、linear、gamma、threshold、tint、normalize、clahe、median、convolve。`Negate`、`Linear`、`Threshold`、`CLAHE`、`Median`、`Convolve` 与 sharp 的结果逐字节一致，`Normalize` 相差不超过 1，`Tint` 不超过 2；`Median` 也与 Pillow 的 `MedianFilter` 逐字节一致。
+- 仿照 sharp 的色阶与滤镜：`Negate`、`Linear`、`Gamma`、`Threshold`、`Tint`、`Normalize`（`NormalizeOptions`）、`CLAHE`（`CLAHEOptions`）、`Median`、`Convolve`（`Convolution`），也可按名称调用（`Do`、`-op`）：negate、linear、gamma、threshold、tint、normalize、clahe、median、convolve。`Negate`、`Linear`、`Threshold`、`CLAHE`、`Median`、`Convolve` 与 sharp 的结果逐字节一致，`Normalize` 与 `Tint` 相差不超过 1；`Median` 也与 Pillow 的 `MedianFilter` 逐字节一致。
 
 ### 变更
 
@@ -68,6 +71,7 @@
 
 ### 修复
 
+- 在把乘法与加法融合为一条指令的处理器上（ARM64，如 Apple 芯片与 AWS Graviton；POWER、s390x、RISC-V、LoongArch），部分结果可能与 x86 相差一级或一个像素：`Linear`、混合模式、带小数权重的 `Convolve`、GIF 与少色 PNG 的调色板、Mitchell 核、按比例定位的水印、`RotateBy` 的尺寸、`Blur` 的方框、文字描边，以及无损 WebP 与 jpegli 编码器所做的选择。现在每个乘积都先取整再相加（与 x86 相同），自动测试会检查编译器在这些处理器上没有融合任何一处。
 - 操作中发生 panic 时，处理链的输入可能未被关闭，继续占用内存预算与临时文件。
 - GIF 的 `Frames().LoopCount` 此前为其重复次数，比字段文档所述的播放次数少 1。
 

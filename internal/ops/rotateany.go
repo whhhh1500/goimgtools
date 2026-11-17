@@ -28,8 +28,8 @@ func RotateAny(src pipeline.Source, deg float64, bg color.Color) (pipeline.Sourc
 	b := src.Bounds()
 	w, h := float64(b.Dx()), float64(b.Dy())
 	sin, cos := math.Sincos(math.Mod(deg, 360) * math.Pi / 180)
-	ow := int(math.Ceil(w*math.Abs(cos) + h*math.Abs(sin) - 1e-9))
-	oh := int(math.Ceil(w*math.Abs(sin) + h*math.Abs(cos) - 1e-9))
+	ow := int(math.Ceil(float64(w*math.Abs(cos)) + float64(h*math.Abs(sin)) - 1e-9))
+	oh := int(math.Ceil(float64(w*math.Abs(sin)) + float64(h*math.Abs(cos)) - 1e-9))
 	ow, oh = max(ow, 1), max(oh, 1)
 	if int64(ow) > 1<<24 || int64(oh) > 1<<24 {
 		return nil, errors.New("goimgtools: the turned image would be too large")
@@ -294,8 +294,8 @@ func (t *rotated) Next() (image.Image, error) {
 // result as those that cannot.
 func (t *rotated) render(out *image.RGBA, x0, x1 int, c *tileCache) error {
 	ow, oh := t.rect.Dx(), t.rect.Dy()
-	cx, cy := float64(ow)/2, float64(oh)/2
-	scx, scy := float64(t.sw)/2-0.5, float64(t.sh)/2-0.5
+	cx, cy := float64(float64(ow)/2), float64(float64(oh)/2)
+	scx, scy := float64(float64(t.sw)/2)-0.5, float64(float64(t.sh)/2)-0.5
 	fw, fh := float64(t.sw), float64(t.sh)
 	bg := [4]uint8{uint8(t.bg[0]), uint8(t.bg[1]), uint8(t.bg[2]), uint8(t.bg[3])}
 	// The tile of the last pixel; a read into the cache may replace it.

@@ -92,7 +92,7 @@ func Run(args []string, stdout, stderr io.Writer) error { return run(args, stdou
 type options struct {
 	resize, rotate, fit, bg, kernel, crop, flatten *string
 	position                                       *string
-	flip, flop, noEnlarge, fast                    *bool
+	flip, flop, noEnlarge, fast, linearLight       *bool
 	watermark, wmText, gravity, offset, wmGap      *string
 	wmRatio, wmAnchor, wmPivot                     *string
 	wmWidth                                        *string
@@ -115,7 +115,7 @@ type options struct {
 	mem, threads, maxPixels                        *int
 	skipLarger                                     *bool
 	tmp                                            *string
-	trim, extend, modulate, sharpen                *string
+	trim, extend, extendWith, modulate, sharpen    *string
 	ops                                            []string // -op, in order
 	grayscale                                      *bool
 	blur                                           *float64
@@ -129,10 +129,12 @@ func register(fs *flag.FlagSet) *options {
 		flip:           fs.Bool("flip", false, "mirror top to bottom"),
 		flop:           fs.Bool("flop", false, "mirror left to right"),
 		fit:            fs.String("fit", "inside", "how -resize WxH fits: inside (shrink in proportion), cover (fill and crop), contain (shrink in proportion, pad with -background), outside, fill (stretch)"),
+		linearLight:    fs.Bool("linear-light", false, "resize in linear light: fine light detail keeps its brightness when the image is reduced"),
 		position:       fs.String("position", "center", "the part -fit cover keeps (and where -fit contain puts the image): northwest, north, northeast, west, center, east, southwest, south, southeast; or, for cover, entropy (the part with the most detail) or attention (the part that draws the eye)"),
 		bg:             fs.String("background", "black", "`color` of the bars -fit contain adds, the border of -extend and the corners -rotate leaves at other angles: white, black, transparent, #rrggbb or #rrggbbaa"),
 		trim:           fs.String("trim", "", "cut away the edges that are the colour of the top-left pixel, allowing this `difference` 0-255 (10 also catches JPEG noise)"),
 		extend:         fs.String("extend", "", "add a border of `T,R,B,L` pixels in -background"),
+		extendWith:     fs.String("extend-with", "", "fill the border of -extend from the image: copy (the edge pixels), repeat (the image) or mirror (the image mirrored)"),
 		grayscale:      fs.Bool("grayscale", false, "turn the image into shades of grey"),
 		modulate:       fs.String("modulate", "", "change `B,S,H`: brightness and saturation factors and hue degrees (1.2,0.8,0 is brighter and less vivid)"),
 		blur:           fs.Float64("blur", 0, "Gaussian blur of this `sigma` in pixels (as Pillow's GaussianBlur)"),
@@ -486,7 +488,7 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 			return nil, fmt.Errorf("-kernel: unknown filter %q", *o.kernel)
 		}
 		ro := goimgtools.ResizeOptions{Fit: f, WithoutEnlargement: *o.noEnlarge, FastShrinkOnLoad: *o.fast,
-			Background: bg, Kernel: k}
+			Background: bg, Kernel: k, LinearLight: *o.linearLight}
 		switch p := strings.ToLower(*o.position); p {
 		case "entropy":
 			ro.Interesting = goimgtools.InterestingEntropy
@@ -510,7 +512,15 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 		if err != nil {
 			return nil, fmt.Errorf("-extend: %w", err)
 		}
-		im.Extend(v[0], v[1], v[2], v[3], bg)
+		switch *o.extendWith {
+		case "":
+			im.Extend(v[0], v[1], v[2], v[3], bg)
+		case "copy", "repeat", "mirror":
+			im.ExtendWith(v[0], v[1], v[2], v[3], map[string]goimgtools.Extension{
+				"copy": goimgtools.ExtendCopy, "repeat": goimgtools.ExtendRepeat, "mirror": goimgtools.ExtendMirror}[*o.extendWith])
+		default:
+			return nil, fmt.Errorf("-extend-with: unknown way %q", *o.extendWith)
+		}
 	}
 	if *o.grayscale {
 		im.Grayscale()

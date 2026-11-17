@@ -162,7 +162,7 @@ func (in *inputRows) drain() error {
 func boxRadius(sigma float64, passes int) float32 {
 	r := float32(sigma)
 	sigma2 := float32(r*r) / float32(passes)
-	L := float32(math.Sqrt(12.0*float64(sigma2) + 1.0))
+	L := float32(math.Sqrt(float64(12.0*float64(sigma2)) + 1.0))
 	l := float32(math.Floor((float64(L) - 1.0) / 2.0))
 	a := float32(2*l+1) * (float32(l*(l+1)) - float32(3*sigma2))
 	a /= 6 * (sigma2 - float32((l+1)*(l+1)))

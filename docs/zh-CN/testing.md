@@ -36,7 +36,7 @@ BSD、Solaris、Android、iOS、模拟处理器与 WebAssembly 仅运行上述�
 
 - **极限情况**（[tests/limits_test.go](../../tests/limits_test.go)）：1×1、1×N、N×1 以及 8 / 16 像素块边界附近的尺寸，每种像素类型写入每种格式后再读回；这些小图像经过每一种操作和每一种缩放算法；各格式可容纳的最大边长（JPEG、GIF 65535，有损 WebP 16383，无损 WebP 16384）以及超出一个像素时返回的错误；宽 / 高 6 万像素的图像在默认内存上限内完成处理；一百余组参数极值（质量、颜色数、角度、比例、偏移、字号的上下界以及无穷大、NaN）；每次仅提供一个字节的输入流、中途断开的输入流；覆盖输入文件、输出目录不存在等文件系统情形。
 - **扩展接口**（[tests/extend_test.go](../../tests/extend_test.go)、[example_test.go](../../example_test.go)）：仅使用公开包实现的操作、输入与文件格式；示例在包外编译并运行。
-- **多线程与跨平台**（[tests/threads_test.go](../../tests/threads_test.go)、[tests/platform_test.go](../../tests/platform_test.go)）：分摊工作的操作在 0、1、3、7 个辅助线程下，无论数据驻留内存还是写入临时文件，结果均逐字节一致，且预算全部归还；新操作及各编码器的输出与在 x86-64 上记录的校验值比对，自动测试在每种处理器上均运行此项。
+- **多线程与跨平台**（[tests/threads_test.go](../../tests/threads_test.go)、[tests/platform_test.go](../../tests/platform_test.go)）：分摊工作的操作在 0、1、3、7 个辅助线程下，无论数据驻留内存还是写入临时文件，结果均逐字节一致，且预算全部归还；新操作及各编码器的输出与在 x86-64 上记录的校验值比对，自动测试在每种处理器上均运行此项。自动测试还会为带乘加融合指令的处理器（ARM64、POWER、s390x、RISC-V、LoongArch）编译本库，只要编译器在任何地方把浮点乘法与加法融合即失败，因为这可能让结果与 x86 不同，而测试图像未必能体现出来。
 - **模糊测试**（[tests/fuzz_test.go](../../tests/fuzz_test.go)）：
 
 ```bash

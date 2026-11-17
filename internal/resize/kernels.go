@@ -22,9 +22,9 @@ var (
 	Mitchell = &draw.Kernel{Support: 2, At: func(t float64) float64 {
 		const b, c = 1.0 / 3, 1.0 / 3
 		if t < 1 {
-			return ((12-9*b-6*c)*t*t*t + (-18+12*b+6*c)*t*t + (6 - 2*b)) / 6
+			return (float64((12-9*b-6*c)*t*t*t) + float64((-18+12*b+6*c)*t*t) + (6 - 2*b)) / 6
 		}
-		return ((-b-6*c)*t*t*t + (6*b+30*c)*t*t + (-12*b-48*c)*t + (8*b + 24*c)) / 6
+		return (float64((-b-6*c)*t*t*t) + float64((6*b+30*c)*t*t) + float64((-12*b-48*c)*t) + (8*b + 24*c)) / 6
 	}}
 
 	Lanczos2 = lanczos(2)

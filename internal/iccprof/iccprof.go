@@ -43,7 +43,7 @@ func (c *curve) at(x float64) float64 {
 		case 1:
 			return math.Pow(x, c.table[0])
 		}
-		f := x * float64(n-1)
+		f := float64(x * float64(n-1))
 		i := int(f)
 		if i >= n-1 {
 			return c.table[n-1]

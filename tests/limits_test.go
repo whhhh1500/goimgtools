@@ -158,11 +158,19 @@ func TestSmallestThroughOperations(t *testing.T) {
 		{"mild sharpen", func(m *Image, w, h int) *Image { return m.Sharpen() }, same},
 		{"unsharp mask", func(m *Image, w, h int) *Image { return m.Sharpen(SharpenOptions{Sigma: 3, Amount: 2, Threshold: 2}) }, same},
 		{"extend", func(m *Image, w, h int) *Image { return m.Extend(1, 2, 3, 4, color.Transparent) }, func(w, h int) (int, int) { return w + 6, h + 4 }},
+		{"extend with mirror", func(m *Image, w, h int) *Image { return m.ExtendWith(5, 2, 9, 4, ExtendMirror) }, func(w, h int) (int, int) { return w + 6, h + 14 }},
+		{"extend with copy", func(m *Image, w, h int) *Image { return m.ExtendWith(0, 2, 3, 1, ExtendCopy) }, func(w, h int) (int, int) { return w + 3, h + 3 }},
 		{"levels", func(m *Image, w, h int) *Image { return m.Negate().Linear(1.1, -3).Gamma(0.8).Threshold(90) }, same},
 		{"tint, normalize", func(m *Image, w, h int) *Image { return m.Tint(color.RGBA{9, 99, 199, 255}).Normalize() }, same},
 		{"median", func(m *Image, w, h int) *Image { return m.Median(3) }, same},
+		{"channels", func(m *Image, w, h int) *Image {
+			return m.Recomb([][]float64{{1, 0, 0, 0}, {0, 0.5, 0.5, 0}, {0, 0, 1, 0}, {0, 0, 0, 0.9}}).Unflatten().RemoveAlpha().ExtractChannel(ChannelGreen)
+		}, same},
 		{"median larger than the image", func(m *Image, w, h int) *Image { return m.Median(99) }, same},
 		{"clahe larger than the image", func(m *Image, w, h int) *Image { return m.CLAHE(CLAHEOptions{Width: 40, Height: 9}) }, same},
+		{"linear light", func(m *Image, w, h int) *Image {
+			return m.Resize(max(1, w/3), 0, ResizeOptions{LinearLight: true})
+		}, func(w, h int) (int, int) { return max(1, w/3), max(1, (h*max(1, w/3)+w/2)/w) }},
 		{"cover, entropy", func(m *Image, w, h int) *Image {
 			return m.Resize(max(1, w/2), max(1, h-1), ResizeOptions{Fit: FitCover, Interesting: InterestingEntropy})
 		}, func(w, h int) (int, int) { return max(1, w/2), max(1, h-1) }},

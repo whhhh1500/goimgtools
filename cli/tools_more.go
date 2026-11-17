@@ -69,7 +69,7 @@ func stats(args []string, stdout, stderr io.Writer) error {
 		Color string  `json:"color"`
 		Share float64 `json:"share"`
 	}
-	return eachFile("stats", "Reads every pixel and reports the average colour, the brightness, the\ncolours that cover most of the image, whether it is really greyscale and\nreally opaque, and how many colours it has (when at most 256).",
+	return eachFile("stats", "Reads every pixel and reports the average colour, the brightness, the\ncolours that cover most of the image, whether it is really greyscale and\nreally opaque, how many colours it has (when at most 256), and, as sharp's\nstats(), the entropy, the sharpness and (with -json) each channel's levels.",
 		args, stdout, stderr, func(file string) (string, any, error) {
 			st, err := inspect.Stats(goimgtools.Open(file))
 			if err != nil {
@@ -79,18 +79,39 @@ func stats(args []string, stdout, stderr io.Writer) error {
 			for _, d := range st.Dominant {
 				dominant = append(dominant, share{inspect.Hex(d.Color), d.Share})
 			}
+			// The channels as sharp's stats() names them.
+			type channel struct {
+				Min        uint8   `json:"min"`
+				Max        uint8   `json:"max"`
+				Sum        uint64  `json:"sum"`
+				SquaresSum uint64  `json:"squaresSum"`
+				Mean       float64 `json:"mean"`
+				Stdev      float64 `json:"stdev"`
+				MinX       int     `json:"minX"`
+				MinY       int     `json:"minY"`
+				MaxX       int     `json:"maxX"`
+				MaxY       int     `json:"maxY"`
+			}
+			var channels []channel
+			for _, c := range st.Channels {
+				channels = append(channels, channel{c.Min, c.Max, c.Sum, c.SquaresSum, c.Mean, c.Stdev, c.MinAt.X, c.MinAt.Y, c.MaxAt.X, c.MaxAt.Y})
+			}
 			return st.String(), struct {
-				File        string  `json:"file"`
-				Width       int     `json:"width"`
-				Height      int     `json:"height"`
-				Average     string  `json:"average"`
-				Brightness  float64 `json:"brightness"`
-				Gray        bool    `json:"gray"`
-				Opaque      bool    `json:"opaque"`
-				Transparent float64 `json:"transparent"`
-				Colors      int     `json:"colors"`
-				Dominant    []share `json:"dominant"`
-			}{file, st.Width, st.Height, inspect.Hex(st.Average), st.Brightness, st.Gray, st.Opaque, st.Transparent, st.Colors, dominant}, nil
+				File        string    `json:"file"`
+				Width       int       `json:"width"`
+				Height      int       `json:"height"`
+				Average     string    `json:"average"`
+				Brightness  float64   `json:"brightness"`
+				Gray        bool      `json:"gray"`
+				Opaque      bool      `json:"opaque"`
+				Transparent float64   `json:"transparent"`
+				Colors      int       `json:"colors"`
+				Dominant    []share   `json:"dominant"`
+				Entropy     float64   `json:"entropy"`
+				Sharpness   float64   `json:"sharpness"`
+				Channels    []channel `json:"channels"`
+			}{file, st.Width, st.Height, inspect.Hex(st.Average), st.Brightness, st.Gray, st.Opaque, st.Transparent, st.Colors, dominant,
+				st.Entropy, st.Sharpness, channels}, nil
 		})
 }
 

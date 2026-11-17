@@ -146,11 +146,14 @@ func (z resizeOp) resize(src pipeline.Source, turn ops.Orientation, pre preShrun
 	out := src
 	if iw != b.Dx() || ih != b.Dy() || pre.k > 1 {
 		var err error
-		if pre.k > 1 && pre.planes {
+		switch {
+		case z.spec.o.LinearLight:
+			out, err = resize.ScaleLinear(src, iw, ih, z.kernel, ew, eh)
+		case pre.k > 1 && pre.planes:
 			// The pixels of FastShrinkOnLoad already differ a little:
 			// the planes are scaled as they are, in fixed point.
 			out, err = resize.ScalePlanes(src, iw, ih, z.kernel, ew, eh, pre.ratio, pre.gray)
-		} else {
+		default:
 			out, err = resize.ScaleExtent(src, iw, ih, z.kernel, ew, eh)
 		}
 		if err != nil {
@@ -279,8 +282,8 @@ func (c compositeOp) apply(src pipeline.Source, r *run) (pipeline.Source, error)
 	}
 	W, H, w, h := float64(b.Dx()), float64(b.Dy()), float64(tb.Dx()), float64(tb.Dy())
 	// The position on the image.
-	px := W*float64(gx)/2 + float64(o.Left) + o.LeftRatio*W
-	py := H*float64(gy)/2 + float64(o.Top) + o.TopRatio*H
+	px := float64(W*float64(gx)/2) + float64(o.Left) + float64(o.LeftRatio*W)
+	py := float64(H*float64(gy)/2) + float64(o.Top) + float64(o.TopRatio*H)
 	// The point of the overlay that goes there: by default the one named
 	// like Gravity.
 	ax, ay, ok := o.Anchor.point(w, h, w*float64(gx)/2, h*float64(gy)/2, o.AnchorX, o.AnchorY)

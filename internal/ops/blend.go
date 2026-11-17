@@ -34,18 +34,20 @@ func ValidBlend(m int) bool { return m >= 0 && m < blendModes }
 
 // blendOf returns f for a mode, as libvips' vips_composite_base_blend, on
 // colours from 0 to 1 multiplied by alpha (a the overlay's, b the image's).
+// Every product is rounded before it is added (the explicit float64
+// conversions), so that no processor fuses the two and rounds differently.
 func blendOf(mode int) func(a, b float64) float64 {
 	switch mode {
 	case BlendMultiply:
 		return func(a, b float64) float64 { return a * b }
 	case BlendScreen:
-		return func(a, b float64) float64 { return a + b - a*b }
+		return func(a, b float64) float64 { return a + b - float64(a*b) }
 	case BlendOverlay:
 		return func(a, b float64) float64 {
 			if b <= 0.5 {
 				return 2 * a * b
 			}
-			return 1 - 2*(1-a)*(1-b)
+			return 1 - float64(2*(1-a)*(1-b))
 		}
 	case BlendDarken:
 		return math.Min
@@ -70,23 +72,23 @@ func blendOf(mode int) func(a, b float64) float64 {
 			if a < 0.5 {
 				return 2 * a * b
 			}
-			return 1 - 2*(1-a)*(1-b)
+			return 1 - float64(2*(1-a)*(1-b))
 		}
 	case BlendSoftLight:
 		return func(a, b float64) float64 {
 			g := math.Sqrt(b)
 			if b <= 0.25 {
-				g = ((16*b-12)*b + 4) * b
+				g = (float64((float64(16*b)-12)*b) + 4) * b
 			}
 			if a <= 0.5 {
-				return b - (1-2*a)*b*(1-b)
+				return b - float64((1-2*a)*b*(1-b))
 			}
-			return b + (2*a-1)*(g-b)
+			return b + float64((2*a-1)*(g-b))
 		}
 	case BlendDifference:
 		return func(a, b float64) float64 { return math.Abs(b - a) }
 	case BlendExclusion:
-		return func(a, b float64) float64 { return a + b - 2*a*b }
+		return func(a, b float64) float64 { return a + b - float64(2*a*b) }
 	}
 	return func(a, b float64) float64 { return a }
 }
@@ -104,12 +106,12 @@ func drawBlend(out *image.RGBA, r image.Rectangle, top *image.NRGBA, sp image.Po
 				continue // aA = 0 leaves B as it is
 			}
 			aA, aB := float64(s[i+3])/255, float64(d[i+3])/255
-			aR := aA + aB*(1-aA)
+			aR := aA + float64(aB*(1-aA))
 			ar := uint8(aR * 255) // cut, as libvips casts
 			for c := 0; c < 3; c++ {
 				A := float64(s[i+c]) / 255 * aA
 				B := float64(d[i+c]) / 255
-				v := ((1-aB)*A + (1-aA)*B + aA*aB*f(A, B)) / aR
+				v := (float64((1-aB)*A) + float64((1-aA)*B) + float64(aA*aB*f(A, B))) / aR
 				cut := uint32(math.Max(0, math.Min(255, v*255)))
 				// Kept multiplied by alpha, as the band is.
 				d[i+c] = uint8((cut*uint32(ar) + 127) / 255)

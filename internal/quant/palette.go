@@ -24,8 +24,8 @@ func newBox(pts []bin, lo, hi int) box {
 		b.w += n
 		for c := 0; c < 4; c++ {
 			v := float64(p.v[c])
-			b.sum[c] += n * v
-			s2[c] += n * v * v
+			b.sum[c] += float64(n * v)
+			s2[c] += float64(n * v * v)
 		}
 	}
 	for c := 0; c < 4; c++ {
@@ -71,7 +71,7 @@ func split(pts []bin, b box) (box, box, bool) {
 		w2 := b.w - w1
 		score := 0.0
 		for c := 0; c < 4; c++ {
-			s1[c] += n * float64(p.v[c])
+			s1[c] += float64(n * float64(p.v[c]))
 			s2 := b.sum[c] - s1[c]
 			score += s1[c]*s1[c]/w1 + s2*s2/w2
 		}
@@ -169,10 +169,10 @@ func refine(pts []bin, cent [][4]float64) [][4]float64 {
 			n := float64(p.n)
 			w[bi] += n
 			s := &sum[bi]
-			s[0] += n * float64(v0)
-			s[1] += n * float64(v1)
-			s[2] += n * float64(v2)
-			s[3] += n * float64(v3)
+			s[0] += float64(n * float64(v0))
+			s[1] += float64(n * float64(v1))
+			s[2] += float64(n * float64(v2))
+			s[3] += float64(n * float64(v3))
 		}
 		moved := 0.0
 		for i := range cent {
@@ -207,7 +207,7 @@ func toNRGBA(c [4]float64) color.NRGBA {
 		a = 255
 	}
 	f := 255 / (a * colorScale)
-	ch := func(v float64) uint8 { return uint8(min(255, max(0, v*f+0.5))) }
+	ch := func(v float64) uint8 { return uint8(min(255, max(0, float64(v*f)+0.5))) }
 	return color.NRGBA{ch(c[0]), ch(c[1]), ch(c[2]), uint8(min(255, max(1, a+0.5)))}
 }
 

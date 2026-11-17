@@ -251,7 +251,7 @@ func Fade(top image.Image, f float64) *image.RGBA {
 	b := top.Bounds()
 	out := image.NewRGBA(b)
 	draw.Draw(out, b, top, b.Min, draw.Src)
-	k := uint32(f*255 + 0.5)
+	k := uint32(float64(f*255) + 0.5)
 	for i, v := range out.Pix {
 		out.Pix[i] = uint8((uint32(v)*k + 127) / 255)
 	}

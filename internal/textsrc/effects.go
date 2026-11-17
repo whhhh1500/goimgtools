@@ -17,7 +17,7 @@ func dilate(dst, src *image.Alpha, radius float64, tmp []uint8) {
 	row, pre, suf := tmp[:w], tmp[w:2*w], tmp[2*w:3*w]
 	for dy := -R; dy <= R; dy++ {
 		// Half the width of the disk at this distance from its centre row.
-		half := int(math.Floor(math.Sqrt(math.Max(0, radius*radius-float64(dy*dy))) + 1e-9))
+		half := int(math.Floor(math.Sqrt(math.Max(0, float64(radius*radius)-float64(dy*dy))) + 1e-9))
 		if float64(abs(dy)) > radius {
 			continue
 		}

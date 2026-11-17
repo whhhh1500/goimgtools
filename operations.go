@@ -91,6 +91,15 @@ type ResizeOptions struct {
 	// smartcrop) do. The resized image is held in memory while the part is
 	// chosen.
 	Interesting Interesting
+	// LinearLight resizes in linear light, as libvips' thumbnail does with
+	// linear: the levels are made linear (undoing the sRGB curve) before
+	// they are averaged and encoded again after, so that fine light detail
+	// (thin lines, text, a starry sky) keeps its brightness when an image
+	// is reduced instead of darkening, and colours mix as light does. It
+	// takes a little longer (a 24-megapixel PNG reduced to 1500 x 1000:
+	// 0.74s instead of 0.64s). With FastShrinkOnLoad, the reduction the
+	// decoder makes comes first, on the encoded levels.
+	LinearLight bool
 }
 
 // Interesting is how FitCover chooses the part of the image it keeps.

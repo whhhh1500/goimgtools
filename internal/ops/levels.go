@@ -45,7 +45,8 @@ func LinearLUT(a, b float64) (*[256]uint8, error) {
 	}
 	var t [256]uint8
 	for i := range t {
-		t[i] = uint8(math.Max(0, math.Min(255, a*float64(i)+b)))
+		// The product rounded before b is added, on every processor.
+		t[i] = uint8(math.Max(0, math.Min(255, float64(a*float64(i))+b)))
 	}
 	return &t, nil
 }
@@ -87,12 +88,13 @@ func Threshold(src pipeline.Source, level int) pipeline.Source {
 		f: func(r, g, b uint8) uint8 { return lut[t.grey(r, g, b)] }}
 }
 
-// grayOf makes *image.Gray strips of the NRGBA strips of an opaque source,
-// each pixel's grey f of its colour.
+// grayOf makes *image.Gray strips of the NRGBA strips of a source, each
+// pixel's grey f of its colour, or its channel ch when f is nil.
 type grayOf struct {
 	src      pipeline.Source
 	env      *pipeline.Env
 	f        func(r, g, b uint8) uint8
+	ch       int
 	buf      []uint8
 	reserved int64
 }
@@ -128,6 +130,12 @@ func (g *grayOf) Next() (image.Image, error) {
 	for y := 0; y < r.Dy(); y++ {
 		sp := n.Pix[y*n.Stride:][:4*r.Dx()]
 		d := out.Pix[y*r.Dx():][:r.Dx()]
+		if g.f == nil {
+			for x := range d {
+				d[x] = sp[4*x+g.ch]
+			}
+			continue
+		}
 		for x := range d {
 			d[x] = g.f(sp[4*x], sp[4*x+1], sp[4*x+2])
 		}
@@ -206,7 +214,7 @@ func Tint(src pipeline.Source, c color.Color) pipeline.Source {
 	for v := range lut {
 		L, _, _ := t.toLab(uint8(v), uint8(v), uint8(v))
 		l := float64(L) / 100
-		w := float32(1 - 4*(l-0.5)*(l-0.5))
+		w := float32(1 - float64(4*(l-0.5)*(l-0.5)))
 		lut[v][0], lut[v][1], lut[v][2] = t.fromLab(L, w*ta, w*tb)
 	}
 	return pipeline.Map(src, func(strip *image.NRGBA) error {
@@ -219,11 +227,30 @@ func Tint(src pipeline.Source, c color.Color) pipeline.Source {
 	})
 }
 
-// grey is the grey level of the linear luminance of an sRGB colour
-// (Rec. 709 weights, as libvips' B_W).
+// GreyRow sets dst[i] to libvips' 8-bit B_W (sharp's greyscale) of the
+// colour of pixel i of the NRGBA pixels pix, to the byte (see grey).
+func GreyRow(dst, pix []uint8) {
+	t := labTables()
+	for i := range dst {
+		p := pix[4*i : 4*i+3 : 4*i+3]
+		dst[i] = t.grey(p[0], p[1], p[2])
+	}
+}
+
+// grey is libvips' 8-bit B_W of an sRGB colour, to the byte (checked
+// on 65536 colours against sharp's greyscale): the luminance of its linear
+// light (Rec. 709 weights, the products in double precision as libvips
+// makes them) in single precision, made a level by interpolating between
+// the levels of the steps of 1/255 and rounding half to even (adding 2^23
+// in single precision rounds so). Every product is rounded before it is
+// added (see toLab).
 func (t *labTable) grey(r, g, b uint8) uint8 {
-	y := 0.2126*t.linear[r] + 0.7152*t.linear[g] + 0.0722*t.linear[b]
-	return t.gamma[int(min(max(y, 0), 1)*gammaSteps+0.5)]
+	y := float32(t.wr[r] + t.wg[g] + t.wb[b])
+	y = min(max(y, 0), 1)
+	yf := float32(y * 255)
+	yi := min(int(yf), 254)
+	v := float32(float32(t.bw[yi+1]-t.bw[yi]) * (yf - float32(yi)))
+	return uint8(int32(float32(float32(float32(t.bw[yi])+v)+0x1p23)) - 0x1p23)
 }
 
 // ---- normalize ----

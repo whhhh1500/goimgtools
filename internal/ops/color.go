@@ -207,6 +207,12 @@ type labTable struct {
 	cbrt [cbrtSteps + 2]float32
 	// gamma is linear light on [0, 1] in gammaSteps steps to sRGB levels.
 	gamma [gammaSteps + 1]uint8
+	// bw is the sRGB level of linear light i/255, rounded: libvips'
+	// table for its 8-bit B_W.
+	bw [257]int32
+	// wr, wg and wb are the parts of the luminance of B_W: the linear
+	// light of each level times its weight, as libvips multiplies.
+	wr, wg, wb [256]float64
 }
 
 const (
@@ -237,9 +243,22 @@ var labOnce = sync.OnceValue(func() *labTable {
 		if v <= 0.0031308 {
 			v *= 12.92
 		} else {
-			v = 1.055*math.Pow(v, 1/2.4) - 0.055
+			v = float64(1.055*math.Pow(v, 1/2.4)) - 0.055
 		}
 		t.gamma[i] = uint8(math.Round(math.Max(0, math.Min(1, v)) * 255))
+	}
+	for i := range t.bw {
+		v := float64(i) / 255
+		if v <= 0.0031308 {
+			v *= 12.92
+		} else {
+			v = float64(1.055*math.Pow(v, 1/2.4)) - 0.055
+		}
+		t.bw[i] = int32(math.RoundToEven(255 * v))
+	}
+	for i := range t.wr {
+		l := float64(t.linear[i])
+		t.wr[i], t.wg[i], t.wb[i] = 0.2126*l, 0.7152*l, 0.0722*l
 	}
 	return t
 })
@@ -250,7 +269,7 @@ func labF(t float64) float64 {
 	if t > labEpsilon {
 		return math.Cbrt(t)
 	}
-	return (labKappa*t + 16) / 116
+	return (float64(labKappa*t) + 16) / 116
 }
 
 // f is labF, from the table where t is within it.
@@ -261,7 +280,7 @@ func (t *labTable) f(v float32) float32 {
 	if v >= 1 {
 		return float32(labF(float64(v)))
 	}
-	x := v * cbrtSteps
+	x := float32(v * cbrtSteps)
 	i := int(x)
 	frac := x - float32(i)
 	return t.cbrt[i] + float32((t.cbrt[i+1]-t.cbrt[i])*frac)

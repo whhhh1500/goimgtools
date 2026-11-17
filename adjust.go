@@ -110,7 +110,36 @@ func (m *Image) Extend(top, right, bottom, left int, background color.Color) *Im
 	if background == nil {
 		background = color.Black
 	}
-	return m.add(extendOp{top, right, bottom, left, background})
+	return m.add(extendOp{top: top, right: right, bottom: bottom, left: left, background: background})
+}
+
+// Extension is how ExtendWith fills a border from the image.
+type Extension int
+
+const (
+	// ExtendCopy repeats the pixels at the edges.
+	ExtendCopy Extension = iota
+	// ExtendRepeat repeats the image, as tiles.
+	ExtendRepeat
+	// ExtendMirror mirrors the image at its edges (the edge pixel taken
+	// twice), and again further out.
+	ExtendMirror
+)
+
+// ExtendWith adds a border of the given widths (top, right, bottom, left,
+// in pixels) filled from the image itself, as sharp's extend with
+// extendWith copy, repeat or mirror (to the byte): see Extension. A
+// border wider than the image goes on repeating or mirroring it. A top or
+// bottom border that repeats or mirrors the image keeps the image in
+// working storage (a temporary file beyond its share of the limit).
+func (m *Image) ExtendWith(top, right, bottom, left int, how Extension) *Image {
+	if top < 0 || right < 0 || bottom < 0 || left < 0 {
+		return m.fail(errors.New("goimgtools: ExtendWith takes widths of 0 and more"))
+	}
+	if how < ExtendCopy || how > ExtendMirror {
+		return m.fail(errors.New("goimgtools: unknown Extension"))
+	}
+	return m.add(extendOp{top: top, right: right, bottom: bottom, left: left, with: how, from: true})
 }
 
 // Trim cuts away the edges that are the colour of the top-left pixel: the
@@ -201,6 +230,9 @@ func (o sharpenOp) apply(src pipeline.Source, r *run) (pipeline.Source, error) {
 type extendOp struct {
 	top, right, bottom, left int
 	background               color.Color
+	// from: filled from the image (ExtendWith), as with says.
+	from bool
+	with Extension
 }
 
 func (o extendOp) apply(src pipeline.Source, r *run) (pipeline.Source, error) {
@@ -211,7 +243,14 @@ func (o extendOp) apply(src pipeline.Source, r *run) (pipeline.Source, error) {
 		}
 		return nil, err
 	}
-	return ops.Extend(src, o.left, o.top, o.right, o.bottom, o.background)
+	if o.from && !r.sizeOnly {
+		return ops.ExtendWith(src, o.left, o.top, o.right, o.bottom, int(o.with))
+	}
+	bg := o.background
+	if bg == nil {
+		bg = color.Black
+	}
+	return ops.Extend(src, o.left, o.top, o.right, o.bottom, bg)
 }
 
 type trimOp struct{ threshold float64 }

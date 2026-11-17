@@ -108,13 +108,13 @@ func entropy(hist []uint32) float64 {
 		if c != 0 {
 			f := float64(c)
 			n += f
-			s -= f * math.Log2(f)
+			s -= float64(f * math.Log2(f))
 		}
 	}
 	if n == 0 {
 		return 0
 	}
-	return s + n*math.Log2(n)
+	return s + float64(n*math.Log2(n))
 }
 
 // wantPalette guesses, for an image of at most 256 colours, whether the

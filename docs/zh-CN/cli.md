@@ -57,12 +57,14 @@ goimgtools -op median:3 -op normalize -op "tint:#704214" scan.jpg out.jpg
 | `-crop X,Y,W,H` | 裁剪 |
 | `-resize WxH` | 目标尺寸；可只指定一边（`1536x`、`x1024`） |
 | `-fit` | `inside`（默认）、`cover`、`contain`、`outside`、`fill` |
+| `-linear-light` | 在线性光下缩放：缩小时细小的亮部细节保持亮度 |
 | `-position` | `-fit cover` 保留的部分与 `-fit contain` 放置图像的位置：`center`（默认）、`northwest` … `southeast`；`cover` 还可用 `entropy`（细节最多处）或 `attention`（最引人注意处） |
 | `-background 颜色` | `-fit contain` 的填充、`-extend` 的边框以及 `-rotate` 斜向旋转后四角的颜色：`white`、`black`、`transparent`、`#rrggbb`、`#rrggbbaa` |
 | `-kernel` | `nearest`、`linear`、`cubic`（默认）、`mitchell`、`lanczos2`、`lanczos3` |
 | `-no-enlarge` | 不放大图像 |
 | `-fast-shrink` | JPEG 缩小至一半以下时，先在解码阶段缩小 |
 | `-extend T,R,B,L` | 四周扩边（单位为像素），颜色由 `-background` 指定 |
+| `-extend-with copy\|repeat\|mirror` | `-extend` 的边框改用图像本身：重复边缘像素、重复图像或镜像图像 |
 | `-grayscale` | 转为灰度 |
 | `-modulate B,S,H` | 亮度系数、饱和度系数、色相度数，例如 `1.2,0.8,0` |
 | `-blur sigma` | 高斯模糊 |

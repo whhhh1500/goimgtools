@@ -162,11 +162,11 @@ func (g *grouper) selfBits(counts []uint16, syms []uint16) (bits float64, n int)
 			a++
 		}
 		tot[a] += c
-		bits -= float64(c) * math.Log2(float64(c))
+		bits -= float64(float64(c) * math.Log2(float64(c)))
 	}
 	for _, t := range tot {
 		if t > 0 {
-			bits += float64(t) * math.Log2(float64(t))
+			bits += float64(float64(t) * math.Log2(float64(t)))
 		}
 	}
 	return bits, tot[0]

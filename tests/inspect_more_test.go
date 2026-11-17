@@ -34,7 +34,7 @@ func TestStats(t *testing.T) {
 	if b := (299*200.0 + 587*100 + 114*50) / 1000 / 255; math.Abs(st.Brightness-b) > 1e-9 {
 		t.Errorf("brightness %v, want %v", st.Brightness, b)
 	}
-	if s := st.String(); s != "average #c86432, brightness 49%, 1 colours; mostly #c86432 100%" {
+	if s := st.String(); s != "average #c86432, brightness 49%, 1 colours; mostly #c86432 100%; entropy 0.00 bits, sharpness 0.00" {
 		t.Errorf("in words: %q", s)
 	}
 
@@ -349,5 +349,61 @@ func TestExif(t *testing.T) {
 	}
 	if _, _, err := inspect.ReadExif(nil); err == nil {
 		t.Error("ReadExif(nil) accepted")
+	}
+}
+
+// TestStatsAsSharp: the channels, entropy and sharpness Stats reports are
+// sharp 0.35's stats() of the same files: the levels, their positions and
+// sums exactly, the rest to the last digits.
+func TestStatsAsSharp(t *testing.T) {
+	type ch = inspect.ChannelStats
+	cs := func(lo, hi uint8, loAt, hiAt image.Point, sum, sq uint64, mean, sd float64) ch {
+		return ch{Min: lo, Max: hi, MinAt: loAt, MaxAt: hiAt, Sum: sum, SquaresSum: sq, Mean: mean, Stdev: sd}
+	}
+	rgb := []ch{
+		cs(0, 255, image.Pt(118, 44), image.Pt(127, 13), 2236595, 404011459, 144.76343042071198, 72.06590288127651),
+		cs(0, 255, image.Pt(94, 0), image.Pt(22, 18), 1460540, 241015762, 94.53333333333333, 81.6309125640135),
+		cs(0, 255, image.Pt(5, 0), image.Pt(118, 55), 1085069, 207134889, 70.23100323624595, 92.05945718127897),
+	}
+	opaque := cs(255, 255, image.Pt(0, 0), image.Pt(0, 0), 255*150*103, 255*255*150*103, 255, 0)
+	grey := cs(0, 255, image.Pt(117, 43), image.Pt(123, 54), 1649882, 265929532, 106.78847896440129, 76.21590504677833)
+	for _, c := range []struct {
+		file               string
+		channels           []ch
+		entropy, sharpness float64
+	}{
+		{"pillow/source.png", append(rgb[:3:3], opaque), 7.273467719438486, 6.879013640588321},
+		{"pillow/median-rgba-source.png", append(rgb[:3:3], cs(0, 255, image.Pt(0, 0), image.Pt(37, 0), 2192708, 421257648, 141.92284789644012, 84.40517487020414)),
+			7.273467719438486, 6.879013640588321},
+		{"pillow/gray.png", []ch{grey, grey, grey, opaque}, 7.284216635860503, 7.045214864725048},
+		{"png/anim-ops.png", []ch{
+			cs(0, 255, image.Pt(0, 0), image.Pt(6, 101), 997490, 184816470, 51.95260416666667, 83.2294750772279),
+			cs(0, 255, image.Pt(0, 31), image.Pt(6, 101), 1114715, 166546125, 58.05807291666667, 72.8272871474193),
+			cs(0, 255, image.Pt(0, 31), image.Pt(0, 0), 868920, 133638320, 45.25625, 70.08892109122723),
+			cs(0, 255, image.Pt(0, 31), image.Pt(0, 0), 1863962, 456893590, 97.08135416666667, 119.88536352169119),
+		}, 2.739074549637735, 6.78826717313007},
+	} {
+		st, err := inspect.Stats(FromBytes(sourcePNG(t, c.file)))
+		if err != nil {
+			t.Fatalf("%s: %v", c.file, err)
+		}
+		near := func(a, b float64) bool { return math.Abs(a-b) <= 1e-12*math.Max(1, math.Abs(b)) }
+		for i, w := range c.channels {
+			g := st.Channels[i]
+			if g.Min != w.Min || g.Max != w.Max || g.MinAt != w.MinAt || g.MaxAt != w.MaxAt || g.Sum != w.Sum || g.SquaresSum != w.SquaresSum ||
+				!near(g.Mean, w.Mean) || !near(g.Stdev, w.Stdev) {
+				t.Errorf("%s channel %d: %+v, sharp %+v", c.file, i, g, w)
+			}
+		}
+		if !near(st.Entropy, c.entropy) || !near(st.Sharpness, c.sharpness) {
+			t.Errorf("%s: entropy %v sharpness %v, sharp %v and %v", c.file, st.Entropy, st.Sharpness, c.entropy, c.sharpness)
+		}
+	}
+	// One pixel: no spread, no sharpness.
+	one := image.NewNRGBA(image.Rect(0, 0, 1, 1))
+	one.Pix[0], one.Pix[3] = 7, 255
+	st, err := inspect.Stats(FromImage(one))
+	if err != nil || st.Channels[0].Stdev != 0 || st.Sharpness != 0 || st.Entropy != 0 || st.Channels[0].Mean != 7 {
+		t.Errorf("one pixel: %+v, %v", st, err)
 	}
 }

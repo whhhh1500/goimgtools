@@ -17,7 +17,7 @@ Nothing exported by 0.1.0 was removed or changed in its signature (checked with 
 ### Added
 
 - Image adjustments: `Grayscale`, `Modulate`, `Blur`, `Sharpen` (mild sharpening or unsharp masking), `Extend`, `Trim` and `RotateBy` (arbitrary angle).
-- `inspect.Stats`, `inspect.Hash` (perceptual hash) and `inspect.ReadExif` / `ParseExif`; the `stats`, `hash` and `exif` commands.
+- `inspect.Stats`, `inspect.Hash` (perceptual hash) and `inspect.ReadExif` / `ParseExif`; the `stats`, `hash` and `exif` commands. `Stats` also reports what sharp's `stats()` does, to the last digits: `Channels` (type `ChannelStats`), `Entropy` and `Sharpness`.
 - Operations by name: `RegisterOperation`, `UnregisterOperation`, `LookupOperation`, `Operations` and `Image.Do`. Hooks around every step: `Image.Around`. `ParseColor`.
 - Package `cli`: the command line as a library (`cli.Main`, `cli.Run`), allowing programs to add their own operations; the `-op NAME[:ARGS]` flag and the `ops` command.
 - `ToSRGB()` / `-srgb`: converts colours to sRGB using the colour profile. GIF and BMP output, which cannot carry a profile, is converted automatically.
@@ -34,9 +34,12 @@ Nothing exported by 0.1.0 was removed or changed in its signature (checked with 
 - `CompositeOptions.WidthRatio` / `HeightRatio`: watermark size as a fraction of the base image; `-watermark-width N%`.
 - Lossy WebP: segments with individual quantizers (spatial noise shaping, ported from libwebp).
 - `pipeline.Env.SetHelpers`, `Helpers`, `Parallel` and `Go`, allowing stages to distribute their work across cores.
+- `ExtendWith` (type `Extension`: `ExtendCopy`, `ExtendRepeat`, `ExtendMirror`) / `-extend-with`: borders made of the image, pixel for pixel sharp's `extend` with `extendWith`; `Do("extend")` takes copy, repeat or mirror in place of the colour.
+- `ResizeOptions.LinearLight` / `-linear-light`: resizing in linear light, as libvips' `thumbnail` with `linear`; `Do("resize")` takes `linear` as a sixth word.
 - `ResizeOptions.Position` (the part `FitCover` keeps, where `FitContain` puts the image) and `ResizeOptions.Interesting` (type `Interesting`: `InterestingEntropy`, `InterestingAttention`, as sharp's smart crop strategies) / `-position`. `Do("resize")` takes them as a fifth word.
+- `Recomb`, `Unflatten`, `ExtractChannel` (type `Channel`) and `RemoveAlpha`, after sharp's `recomb`, `unflatten`, `extractChannel` and `removeAlpha` (the first two byte-for-byte identical), and by name: recomb, unflatten, extract-channel, remove-alpha.
 - `CompositeOptions.Blend` (type `BlendMode`) / `-watermark-blend`: the blend modes of sharp's composite (multiply, screen, overlay, darken, lighten, colour dodge and burn, hard and soft light, difference, exclusion), within a level of sharp's results.
-- Levels and filters after sharp: `Negate`, `Linear`, `Gamma`, `Threshold`, `Tint`, `Normalize` (`NormalizeOptions`), `CLAHE` (`CLAHEOptions`), `Median` and `Convolve` (`Convolution`), and by name (`Do`, `-op`): negate, linear, gamma, threshold, tint, normalize, clahe, median, convolve. `Negate`, `Linear`, `Threshold`, `CLAHE`, `Median` and `Convolve` give sharp's results to the byte, `Normalize` within a level and `Tint` within two; `Median` is also Pillow's `MedianFilter` to the byte.
+- Levels and filters after sharp: `Negate`, `Linear`, `Gamma`, `Threshold`, `Tint`, `Normalize` (`NormalizeOptions`), `CLAHE` (`CLAHEOptions`), `Median` and `Convolve` (`Convolution`), and by name (`Do`, `-op`): negate, linear, gamma, threshold, tint, normalize, clahe, median, convolve. `Negate`, `Linear`, `Threshold`, `CLAHE`, `Median` and `Convolve` give sharp's results to the byte, `Normalize` and `Tint` within a level; `Median` is also Pillow's `MedianFilter` to the byte.
 
 ### Changed
 
@@ -68,6 +71,7 @@ Nothing exported by 0.1.0 was removed or changed in its signature (checked with 
 
 ### Fixed
 
+- On processors that fuse a multiplication and an addition into one instruction (ARM64, such as Apple silicon and AWS Graviton, POWER, s390x, RISC-V, LoongArch), some results could differ from those on x86 by a level or a pixel: `Linear`, the blend modes, `Convolve` with fractional weights, the palettes of GIF and few-colour PNG, the Mitchell kernel, watermarks placed by ratio, the size of `RotateBy`, `Blur`'s boxes, text outlines, and choices made by the lossless WebP and jpegli encoders. Every product is now rounded before it is added, as on x86, and CI checks that the compiler fuses none of them on those processors.
 - A panic in an operation could leave the chain's input open, retaining memory budget and temporary files.
 - `Frames().LoopCount` of a GIF was its repeat count, one less than the number of times it plays, which is what the field documents.
 

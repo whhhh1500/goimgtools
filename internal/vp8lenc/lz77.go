@@ -184,7 +184,7 @@ func (c *costModel) init() {
 		if m > 128 {
 			m = 256 - m
 		}
-		k := uint16(16 + 32*math.Log2(1+float64(m)))
+		k := uint16(16 + float64(32*math.Log2(1+float64(m))))
 		for ch := range c.lit {
 			c.lit[ch][v] = min(k, costCap)
 		}
@@ -223,7 +223,7 @@ func (c *costModel) update(s *stats) {
 		avg = 0
 		for ch := range c.lit {
 			for v, h := range s.lit[ch] {
-				avg += float64(h) * float64(c.lit[ch][v])
+				avg += float64(float64(h) * float64(c.lit[ch][v]))
 			}
 		}
 		avg /= float64(s.nLit)
@@ -241,7 +241,7 @@ func (c *costModel) update(s *stats) {
 			c.hit = uint32(max(1, min(v, costCap)))
 			// The share of literals the cache catches pays the hit price.
 			if r := hits / float64(s.nLit); v < avg {
-				avg = r*v + (1-r)*avg
+				avg = float64(r*v) + float64((1-r)*avg)
 			}
 		}
 	}

@@ -38,6 +38,23 @@ func TestSameOnEveryProcessor(t *testing.T) {
 		{"extend, trim", photo.Clone().Extend(3, 4, 5, 6, color.NRGBA{9, 8, 7, 255}).Trim(10), "d1998b95dee39434"},
 		{"resize cubic", photo.Clone().Resize(117, 0), "5cdeb0a2e42b9640"},
 		{"resize lanczos up", clear.Clone().Resize(400, 0, ResizeOptions{Kernel: KernelLanczos3}), "04647b41febc98fb"},
+		{"resize in linear light", photo.Clone().Resize(127, 0, ResizeOptions{LinearLight: true, Kernel: KernelLanczos3}), "5b9f6206ffcfbd15"},
+		{"resize translucent in linear light", clear.Clone().Resize(0, 61, ResizeOptions{LinearLight: true}), "5cc4e087e1f0a142"},
+		{"resize mitchell", photo.Clone().Resize(173, 0, ResizeOptions{Kernel: KernelMitchell}), "ea6251e9cde30067"},
+		{"levels", photo.Clone().Linear(1.13, -7.5).Gamma(1.7), "1f410fb5a23f02a4"},
+		{"threshold, unflatten", photo.Clone().Threshold(140).Unflatten(), "ce1e2bb0dbd829dc"},
+		{"tint, normalize", photo.Clone().Tint(color.RGBA{112, 66, 20, 255}).Normalize(NormalizeOptions{Lower: 3, Upper: 97}), "8a06fc35de2b3332"},
+		{"recomb translucent", clear.Clone().Recomb([][]float64{{0.31, 0.62, 0.07, 0}, {0.2, 0.5, 0.3, 0.1}, {0.11, 0.37, 0.53, 0}, {0.1, 0, 0.2, 0.75}}), "8d4169cfe265aa86"},
+		{"convolve fractions", photo.Clone().Convolve(Convolution{Width: 3, Height: 3, Weights: []float64{0.1, -0.7, 0.13, -0.6, 3.9, -0.55, 0.12, -0.8, 0.17}, Offset: 1.3}), "5a1ecbad1e425874"},
+		{"median, clahe", photo.Clone().Median(3).CLAHE(CLAHEOptions{Width: 21, Height: 17, MaxSlope: 4}), "a33a6f98d121924f"},
+		{"blend modes", photo.Clone().Composite(clear.Clone(), CompositeOptions{Blend: BlendSoftLight}).
+			Composite(clear.Clone().Flop(), CompositeOptions{Blend: BlendOverlay, Gravity: SouthEast}).
+			Composite(clear.Clone().Flip(), CompositeOptions{Blend: BlendHardLight, Gravity: NorthEast, Opacity: 0.6}).
+			Composite(clear.Clone(), CompositeOptions{Blend: BlendExclusion, Gravity: SouthWest}), "d1267b1174a7247d"},
+		{"overlay by ratio, turned", photo.Clone().Composite(clear.Clone(), CompositeOptions{LeftRatio: 0.37, TopRatio: 0.21, Angle: 17}), "2da34ec182e1e722"},
+		{"attention crop", photo.Clone().Resize(120, 140, ResizeOptions{Fit: FitCover, Interesting: InterestingAttention}), "689cfd7a72fd4c9e"},
+		{"entropy crop", photo.Clone().Resize(150, 60, ResizeOptions{Fit: FitCover, Interesting: InterestingEntropy}), "d5a7e04db11ef0a0"},
+		{"alpha channel", clear.Clone().ExtractChannel(ChannelAlpha), "e880988a7dc509ad"},
 	}
 	for _, c := range cases {
 		env := pipeline.NewEnv(0, t.TempDir())

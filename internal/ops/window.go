@@ -474,9 +474,11 @@ func convolveRow(win [][]uint8, dst []uint8, w, rx, ry, width int, cols []int, w
 				kr := fk[j*width : j*width+width]
 				for i, o := range cols {
 					p := row[o : o+3 : o+3]
-					v[0] += kr[i] * float64(p[0])
-					v[1] += kr[i] * float64(p[1])
-					v[2] += kr[i] * float64(p[2])
+					// Each product rounded before it is added (see
+					// blendOf).
+					v[0] += float64(kr[i] * float64(p[0]))
+					v[1] += float64(kr[i] * float64(p[1]))
+					v[2] += float64(kr[i] * float64(p[2]))
 				}
 			}
 		}

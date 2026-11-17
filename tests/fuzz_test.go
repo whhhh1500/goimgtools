@@ -226,7 +226,8 @@ func FuzzChain(f *testing.F) {
 		}
 		if bit(5) {
 			m.Resize(int(w%400), int(h%400), ResizeOptions{Fit: Fit(pick(6, 5)), Kernel: Kernel(pick(9, 6)),
-				FastShrinkOnLoad: bit(12), WithoutEnlargement: bit(13), Position: Position(more % 10), Interesting: Interesting(w % 3)})
+				FastShrinkOnLoad: bit(12), WithoutEnlargement: bit(13), Position: Position(more % 10), Interesting: Interesting(w % 3),
+				LinearLight: more&0x400 != 0})
 		}
 		if bit(14) {
 			m.Extract(int(w%7), int(h%5), 1+int(w%50), 1+int(h%50))
@@ -297,6 +298,29 @@ func FuzzChain(f *testing.F) {
 				k[i] = float64(int8(flags >> (i % 25)))
 			}
 			m.Convolve(Convolution{Width: cw, Height: ch, Weights: k, Offset: float64(h % 64)})
+		}
+		if extra>>18&3 == 3 {
+			n := 3 + int(h%2)
+			rows := make([][]float64, n)
+			for i := range rows {
+				rows[i] = make([]float64, n)
+				for j := range rows[i] {
+					rows[i][j] = float64(int8(flags>>((i*n+j)%25))) / 50
+				}
+			}
+			m.Recomb(rows)
+		}
+		if extra>>20&3 == 3 {
+			m.Unflatten()
+		}
+		if extra>>22&3 == 3 {
+			m.ExtractChannel(Channel(w % 4))
+		}
+		if extra>>24&3 == 3 {
+			m.RemoveAlpha()
+		}
+		if extra>>26&3 == 3 {
+			m.ExtendWith(int(w%5), int(h%9), int(w%3), int(h%70), Extension(more%3))
 		}
 		if bit(22) {
 			m.KeepExif()

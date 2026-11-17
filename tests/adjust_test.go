@@ -690,3 +690,129 @@ func TestAdjustTogether(t *testing.T) {
 		t.Skip()
 	}
 }
+
+// TestExtendWith: the borders ExtendWith makes are sharp 0.35's extend
+// with extendWith copy, repeat and mirror, pixel for pixel, also when they
+// are wider than the image; colours and transparency are copied as they
+// are, a greyscale image stays greyscale, and with a small memory limit
+// the image is kept in a temporary file.
+func TestExtendWith(t *testing.T) {
+	// A 4 x 3 greyscale image whose pixels are 0 to 11 (times 20); sharp's
+	// results, a hex digit a pixel, rows apart.
+	src := image.NewGray(image.Rect(0, 0, 4, 3))
+	for i := range src.Pix {
+		src.Pix[i] = uint8(20 * i)
+	}
+	for _, c := range []struct {
+		how    Extension
+		trbl   [4]int
+		result string
+	}{
+		{ExtendCopy, [4]int{2, 1, 2, 3}, "00001233 00001233 00001233 44445677 88889abb 88889abb 88889abb"},
+		{ExtendCopy, [4]int{5, 9, 7, 10}, "00000000000123333333333 00000000000123333333333 00000000000123333333333 00000000000123333333333 00000000000123333333333 00000000000123333333333 44444444444567777777777 888888888889abbbbbbbbbb 888888888889abbbbbbbbbb 888888888889abbbbbbbbbb 888888888889abbbbbbbbbb 888888888889abbbbbbbbbb 888888888889abbbbbbbbbb 888888888889abbbbbbbbbb 888888888889abbbbbbbbbb"},
+		{ExtendRepeat, [4]int{2, 1, 2, 3}, "56745674 9ab89ab8 12301230 56745674 9ab89ab8 12301230 56745674"},
+		{ExtendRepeat, [4]int{5, 9, 7, 10}, "67456745674567456745674 ab89ab89ab89ab89ab89ab8 23012301230123012301230 67456745674567456745674 ab89ab89ab89ab89ab89ab8 23012301230123012301230 67456745674567456745674 ab89ab89ab89ab89ab89ab8 23012301230123012301230 67456745674567456745674 ab89ab89ab89ab89ab89ab8 23012301230123012301230 67456745674567456745674 ab89ab89ab89ab89ab89ab8 23012301230123012301230"},
+		{ExtendMirror, [4]int{2, 1, 2, 3}, "65445677 21001233 21001233 65445677 a9889abb a9889abb 65445677"},
+		{ExtendMirror, [4]int{5, 9, 7, 10}, "54456776544567765445677 9889abba9889abba9889abb 9889abba9889abba9889abb 54456776544567765445677 10012332100123321001233 10012332100123321001233 54456776544567765445677 9889abba9889abba9889abb 9889abba9889abba9889abb 54456776544567765445677 10012332100123321001233 10012332100123321001233 54456776544567765445677 9889abba9889abba9889abb 9889abba9889abba9889abb"},
+	} {
+		out, err := FromImage(src).ExtendWith(c.trbl[0], c.trbl[1], c.trbl[2], c.trbl[3], c.how).ToImage()
+		if err != nil {
+			t.Fatal(err)
+		}
+		g, ok := out.(*image.Gray)
+		if !ok {
+			t.Fatalf("%v: %T, want a greyscale image", c.how, out)
+		}
+		var rows []string
+		for y := 0; y < g.Rect.Dy(); y++ {
+			var b strings.Builder
+			for x := 0; x < g.Rect.Dx(); x++ {
+				fmt.Fprintf(&b, "%x", g.GrayAt(g.Rect.Min.X+x, g.Rect.Min.Y+y).Y/20)
+			}
+			rows = append(rows, b.String())
+		}
+		if got := strings.Join(rows, " "); got != c.result {
+			t.Errorf("%v %v:\n got %s\nwant %s", c.how, c.trbl, got, c.result)
+		}
+	}
+
+	// Colours and transparency, mirrored on every side, kept in a
+	// temporary file under a small limit.
+	tr := testutil.Images(900, 600)["nrgba"]
+	at := func(x, y int) color.NRGBA { return color.NRGBAModel.Convert(tr.At(x, y)).(color.NRGBA) }
+	mirror := func(i, n int) int {
+		if i %= 2 * n; i < 0 {
+			i += 2 * n
+		}
+		if i >= n {
+			i = 2*n - 1 - i
+		}
+		return i
+	}
+	for _, limit := range []int64{0, 1536 << 10} {
+		m := FromImage(tr).ExtendWith(250, 7, 410, 333, ExtendMirror)
+		if limit > 0 {
+			m.MemoryLimit(limit)
+		}
+		out, err := m.PNG().ToBytes()
+		if err != nil {
+			t.Fatalf("limit %d: %v", limit, err)
+		}
+		got := decodePNG(t, out)
+		if b := got.Bounds(); b.Dx() != 900+7+333 || b.Dy() != 600+250+410 {
+			t.Fatalf("size %v", b)
+		}
+		for y := 0; y < 1260; y += 13 {
+			for x := 0; x < 1240; x += 11 {
+				if p, want := color.NRGBAModel.Convert(got.At(x, y)).(color.NRGBA), at(mirror(x-333, 900), mirror(y-250, 600)); p != want && want.A != 0 {
+					t.Fatalf("limit %d at %d,%d: %v, want %v", limit, x, y, p, want)
+				}
+			}
+		}
+	}
+
+	// Read in order: the edges copied, or only sides mirrored; from an
+	// image of another type than the strips the stage works on.
+	photo := photoLike(900, 600)
+	pat := func(x, y int) color.NRGBA { return color.NRGBAModel.Convert(photo.At(x, y)).(color.NRGBA) }
+	for _, c := range []struct {
+		how  Extension
+		trbl [4]int
+		at   func(x, y int) (int, int)
+	}{
+		{ExtendCopy, [4]int{4, 9, 6, 3}, func(x, y int) (int, int) { return max(0, min(x-3, 899)), max(0, min(y-4, 599)) }},
+		{ExtendMirror, [4]int{0, 950, 0, 20}, func(x, y int) (int, int) { return mirror(x-20, 900), y }},
+	} {
+		out, err := FromImage(photo).ExtendWith(c.trbl[0], c.trbl[1], c.trbl[2], c.trbl[3], c.how).ToImage()
+		if err != nil {
+			t.Fatal(err)
+		}
+		b := out.Bounds()
+		for y := 0; y < b.Dy(); y += 7 {
+			for x := 0; x < b.Dx(); x += 3 {
+				sx, sy := c.at(x, y)
+				if p, want := color.NRGBAModel.Convert(out.At(b.Min.X+x, b.Min.Y+y)).(color.NRGBA), pat(sx, sy); p != want {
+					t.Fatalf("%v at %d,%d: %v, want %v", c.how, x, y, p, want)
+				}
+			}
+		}
+	}
+
+	// By name, and the words of the step; errors.
+	var words []string
+	FromImage(src).Do("extend", "1", "2", "3", "4", "mirror").Around(func(s Step, in pipeline.Source, run func(pipeline.Source) (pipeline.Source, error)) (pipeline.Source, error) {
+		words = s.Args
+		return run(in)
+	}).PNG().ToBytes()
+	if fmt.Sprint(words) != "[1 2 3 4 mirror]" {
+		t.Errorf("extend words %v", words)
+	}
+	for _, m := range []*Image{FromImage(src).ExtendWith(-1, 0, 0, 0, ExtendCopy), FromImage(src).ExtendWith(1, 1, 1, 1, 3)} {
+		if _, err := m.PNG().ToBytes(); err == nil {
+			t.Error("no error")
+		}
+	}
+	if w, h, err := FromImage(src).ExtendWith(1, 2, 3, 4, ExtendRepeat).OutputSize(); err != nil || w != 10 || h != 7 {
+		t.Errorf("OutputSize %d x %d, %v", w, h, err)
+	}
+}

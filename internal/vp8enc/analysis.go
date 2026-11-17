@@ -414,7 +414,7 @@ func (e *encoder) setSegments(quality int) {
 	amp := snsToDQ * snsStrength / 100.0 / 128
 	for k := 0; k < e.nSegs; k++ {
 		s := &e.segs[k]
-		expn := 1 - amp*float64(s.alpha)
+		expn := 1 - float64(amp*float64(s.alpha))
 		s.q = min(max(int(127*(1-math.Pow(base, expn))), 0), 127)
 		e.setQuant(s)
 	}

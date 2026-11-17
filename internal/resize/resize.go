@@ -350,6 +350,8 @@ type scaler struct {
 	started    bool
 	done       bool
 	err        error
+	// lin, in linear light (ScaleLinear), converts the levels.
+	lin *linTable
 
 	// With helpers, the destination columns are shared out in parts, each
 	// reading the source columns it needs into a row of its own.
@@ -409,7 +411,7 @@ func ScaleExtent(src pipeline.Source, dw, dh int, q *draw.Kernel, ew, eh float64
 
 	// Weight tables: 16 bytes per contribution, 32 per destination column/row.
 	kw := func(d, sdim int) int64 {
-		per := 2*q.Support*math.Max(1, float64(sdim)/float64(d)) + 2
+		per := float64(2*q.Support*math.Max(1, float64(sdim)/float64(d))) + 2
 		return int64(float64(d)*per)*16 + int64(d)*32
 	}
 	need := kw(dw, sb.Dx()) + kw(dh, sb.Dy()) +
@@ -595,6 +597,9 @@ func (s *scaler) feed() error {
 		return nil
 	}
 	readRow(strip, s.sb.Min.Y+int(y), s.row)
+	if s.lin != nil {
+		s.lin.row(s.row)
+	}
 
 	// Horizontal pass: x/image's scaleX_*.
 	row, tmp, ca := s.row, s.tmp, s.constAlpha
@@ -677,6 +682,9 @@ func (s *scaler) feedParts(strip subImager, y int32) {
 		m := strip.SubImage(image.Rect(x0+p.s0, ay, x0+p.s1, ay+1))
 		if s.gray {
 			readRowGray(m, ay, p.grow)
+			if s.lin != nil {
+				s.lin.grayRow(p.grow)
+			}
 			for x := p.x0; x < p.x1; x++ {
 				h := s.hz.sources[x]
 				var v float64
@@ -694,6 +702,9 @@ func (s *scaler) feedParts(strip subImager, y int32) {
 			return
 		}
 		readRow(m, ay, p.row)
+		if s.lin != nil {
+			s.lin.row(p.row)
+		}
 		ca := s.constAlpha
 		for x := p.x0; x < p.x1; x++ {
 			h := s.hz.sources[x]
@@ -736,6 +747,9 @@ func (s *scaler) feedParts(strip subImager, y int32) {
 // results are the same to the last bit.
 func (s *scaler) feedGray(strip image.Image, y int32) {
 	readRowGray(strip, s.sb.Min.Y+int(y), s.grow)
+	if s.lin != nil {
+		s.lin.grayRow(s.grow)
+	}
 	row, tmp := s.grow, s.gtmp
 	for x, h := range s.hz.sources {
 		var p float64
@@ -772,6 +786,10 @@ func (s *scaler) emit(dst []uint8) {
 			if pr > pa {
 				pr = pa
 			}
+			if s.lin != nil {
+				dst[x] = s.lin.encode[ftou(pr*inv)]
+				continue
+			}
 			dst[x] = uint8(ftou(pr*inv) >> 8)
 		}
 		s.gfree = append(s.gfree, o.g)
@@ -793,6 +811,21 @@ func (s *scaler) emit(dst []uint8) {
 			pb = pa
 		}
 		d := dst[x*4 : x*4+4 : x*4+4]
+		if s.lin != nil {
+			// The colour (divided by alpha) encoded again, then
+			// multiplied by alpha as 16-bit levels are.
+			a := ftou(pa * inv)
+			if a == 0 {
+				d[0], d[1], d[2], d[3] = 0, 0, 0, 0
+				continue
+			}
+			k := 1 / pa
+			for c, v := range [3]float64{pr, pg, pb} {
+				d[c] = uint8(uint32(s.lin.encode[ftou(v*k)]) * 0x101 * uint32(a) / 0xffff >> 8)
+			}
+			d[3] = uint8(a >> 8)
+			continue
+		}
 		d[0] = uint8(ftou(pr*inv) >> 8)
 		d[1] = uint8(ftou(pg*inv) >> 8)
 		d[2] = uint8(ftou(pb*inv) >> 8)

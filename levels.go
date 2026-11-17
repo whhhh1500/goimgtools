@@ -61,8 +61,7 @@ func (m *Image) Threshold(level int) *Image {
 // pixels, as sharp's tint: it is made grey, and each grey becomes c at
 // that lightness, less of it towards black and white (which stay). Use it
 // for sepia: Tint(color.RGBA{112, 66, 20, 255}). Transparency is kept;
-// the alpha of c is not used. The result is within a level or two of
-// sharp's.
+// the alpha of c is not used. The result is within a level of sharp's.
 func (m *Image) Tint(c color.Color) *Image {
 	if c == nil {
 		return m.fail(errors.New("goimgtools: Tint needs a colour"))

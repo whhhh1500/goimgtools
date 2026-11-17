@@ -49,13 +49,14 @@ err := goimgtools.Open("in.jpg").
 | `Flip()` / `Flop()` | 上下镜像 / 左右镜像 |
 | `Trim(threshold)` | 去除四周与左上角像素同色的边（红、绿、蓝、透明任一通道之差超过 `threshold` 才视为不同；取 10 可消除 JPEG 噪点，与 sharp 相同） |
 | `Extend(top, right, bottom, left, background)` | 四周扩边，宽度按 CSS 的上、右、下、左顺序给出 |
+| `ExtendWith(top, right, bottom, left, how)` | 用图像本身扩边：`ExtendCopy` 重复边缘像素，`ExtendRepeat` 平铺重复图像，`ExtendMirror` 镜像（边缘像素出现两次），边框比图像宽时继续重复或镜像。与 sharp 带 `extendWith` 的 `extend` 逐像素一致。顶部或底部边框需要重复或镜像时，图像存入工作存储 |
 | `Grayscale()` | 灰度化：Rec. 601 亮度四舍五入至最近的灰阶，与 Pillow 的 `convert("L")` 逐字节一致；JPEG 直接采用文件中存储的亮度。不透明图像输出为单通道灰度文件 |
 | `Modulate(brightness, saturation, hue)` | 在 LCh 色彩空间中将亮度、饱和度乘以系数，并将色相旋转指定度数（与 sharp 的做法相同），每个像素与 sharp 的结果相差不超过 1：`Modulate(1.2, 0.8, 0)` 使亮度提高 20%、色彩略淡 |
 | `Negate()` | 反色：每个颜色取其相反值（255 − 色阶），透明度不变。与 sharp 的 `negate({alpha: false})` 逐字节一致 |
 | `Linear(a, b)` | 每个红、绿、蓝色阶 v 变为 a·v + b，舍去小数并限制在 0–255，与 sharp 的 `linear` 逐字节一致：`Linear(1.2, -25)` 提高对比度 |
 | `Gamma(g)` | 每个色阶 v 变为 255·(v/255)^(1/g)，与 ImageMagick 的 `-gamma` 相同：大于 1 提亮中间调，小于 1 压暗；黑白不变 |
 | `Threshold(level)` | 黑白二值：灰度（按线性光计算，与 sharp 相同）不小于 `level` 的像素变白，其余变黑。不含透明的图像与 sharp 的 `threshold` 逐字节一致，并输出为单通道文件 |
-| `Tint(color)` | 着色：按每个像素的亮度赋予该颜色，越接近黑白越淡（sharp 的 `tint`，与其相差不超过 2）：`Tint(color.RGBA{112, 66, 20, 255})` 为褐色调 |
+| `Tint(color)` | 着色：按每个像素的亮度赋予该颜色，越接近黑白越淡（sharp 的 `tint`，与其相差不超过 1）：`Tint(color.RGBA{112, 66, 20, 255})` 为褐色调 |
 | `Normalize(NormalizeOptions{Lower, Upper})` | 拉伸明度（L*a*b* 中的 L*），使最暗的 `Lower`% 变黑、最亮的 `100-Upper`% 变白（默认 1 与 99），保持色相与饱和度；即 sharp 的 `normalise`，相差不超过 1（百分位与其完全相同）。需先读完整幅图像并保存在工作区 |
 | `CLAHE(CLAHEOptions{Width, Height, MaxSlope})` | 局部对比度增强（限制对比度的自适应直方图均衡），提亮暗部、压低亮部以显出细节：每个色阶变为其在像素周围 `Width` × `Height` 窗口中的排位，窗口中每个色阶最多计 `MaxSlope` 个像素（默认 3）。不含透明的图像与 sharp 的 `clahe` 逐字节一致；24 MP、64×64 窗口单核 18s，4 核 7s（sharp：7.6s、8.7s） |
 | `Median(size)` | 中值滤波：每个像素的每个通道取其周围 size × size 方块（奇数，3–99）的中值，去除噪点而保留边缘。与 Pillow 的 `MedianFilter` 及 sharp 的 `median` 逐字节一致 |
@@ -64,6 +65,10 @@ err := goimgtools.Open("in.jpg").
 | `Sharpen()` | 轻度锐化（sharp 的 3×3 卷积核），适用于缩小之后 |
 | `Sharpen(SharpenOptions{Sigma, Amount, Threshold})` | 反锐化掩模（Pillow 的 `UnsharpMask`），`Amount` 默认为 1.5 |
 | `Flatten(color)` | 去除透明，铺底色 |
+| `Recomb(matrix)` | 按矩阵重组通道：3 行 3 列（或 4 行 4 列，第四行生成透明度），每行给出结果的一个通道，即各通道值乘以该行各数之和，舍去小数。与 sharp 的 `recomb` 逐字节一致；`{{0.393, 0.769, 0.189}, {0.349, 0.686, 0.168}, {0.272, 0.534, 0.131}}` 为褐色调 |
+| `Unflatten()` | 白色像素变为透明（灰度按 sharp 的方式计算为 255 的像素）；在 `Threshold` 之后使用，则达到阈值的像素全部变透明。与 sharp 的 `unflatten` 逐字节一致 |
+| `ExtractChannel(c)` | 取出一个通道作为灰度图像：`ChannelRed`、`ChannelGreen`、`ChannelBlue` 或 `ChannelAlpha`（sharp 的 `extractChannel`） |
+| `RemoveAlpha()` | 去掉透明度：每个像素显示其存储的颜色（sharp 的 `removeAlpha`）；与 `Flatten` 不同，不与背景色混合 |
 | `Composite(overlay, CompositeOptions{...})` | 图像叠加 / 水印（见[水印](#水印)） |
 | `Animated()` | 处理 GIF、WebP 或 PNG 动画（APNG）的每一帧并输出 GIF 或 WebP 动画。WebP 的各帧按 libwebp 动画解码器的方式绘制（混合与否、清除与否），逐像素一致；APNG 的各帧按其规范绘制。静态图像不受影响；无法保留的动画（输出为其他格式）返回包装了 `errors.ErrUnsupported` 的错误。WebP 第一帧完整存储，之后各帧仅存储变化的矩形区域。GIF 的所有帧共用一套按画面内容选取的调色板（`GIFOptions` 的 `Colors`、`NoDither` 依然有效；颜色数不超过该值时原样保留），自第二帧起仅存储变化的部分（见[压缩](compression.md)） |
 | `Pixels(fn)` | 自定义逐像素操作：`fn` 逐条带接收 8 位 NRGBA 数据并原地修改（见[扩展](extending.md)） |
@@ -75,6 +80,7 @@ err := goimgtools.Open("in.jpg").
 - `Fit`：`FitInside`（默认，等比缩放至框内，不裁剪、不变形）、`FitCover`（填满框后居中裁去多余部分，即 sharp 的默认方式）、`FitContain`（等比缩放至框内，再以 `Background` 补边至恰为 w×h，默认黑色）、`FitOutside`、`FitFill`（拉伸）。
 - `WithoutEnlargement`：禁止放大。
 - `Position`：`FitCover` 保留的部分，以及 `FitContain` 放置图像的位置：默认居中，也可为 `NorthWest` … `SouthEast` 九个方位之一（sharp 的 `position`；居中裁剪的取整方式与 sharp 相同）。
+- `LinearLight`：在线性光下缩放（同 libvips `thumbnail` 的 `linear`）：先把色阶转为线性光再求平均，之后重新编码，因此缩小图像时细小的亮部细节（细线、文字、星空）保持亮度而不会变暗，颜色也按光的方式混合。黑白相间的像素缩小一半后为 188 级（白色一半的光），而不是 128 级。把 2400 万像素的 PNG 缩小到 1500×1000 用时 0.74 秒（不开启为 0.64 秒）。
 - `Interesting`：用于 `FitCover`，按画面内容选择保留的部分，即 sharp 的 `strategy.entropy` / `strategy.attention`（libvips 的 smartcrop）：`InterestingEntropy` 保留细节最多的部分（像素相同时与 libvips 的裁剪完全一致），`InterestingAttention` 保留最引人注意的部分（边缘、肤色与饱和的红色，在按 libvips 方式缩小到 32×32 的图像上评分）。选择期间缩放后的图像保存在内存中。
 - `Kernel`：`KernelCubic`（默认，Catmull-Rom）、`KernelNearest`、`KernelLinear`、`KernelMitchell`、`KernelLanczos2`、`KernelLanczos3`。
 - `Filter`：自定义缩放滤镜（`&goimgtools.Filter{Support, At}`），设置后取代 `Kernel`。
@@ -249,7 +255,7 @@ goimgtools.Text("第一行\n第二行 Mixed", goimgtools.TextOptions{
 | `goimgtools info 文件...` | `img.Metadata()`、`img.Frames()` | 每个文件输出一行：格式、宽高、颜色类型与位深、像素数、文件大小、动画（GIF、WebP、APNG）的帧数与时长、EXIF 方向、是否含 ICC / EXIF。加 `-json` 时每个文件输出一行 JSON |
 | `goimgtools check 文件...` | `inspect.Verify(img)` | 完整解码一遍，报告损坏、截断或并非图像的文件。`info` 仅读取文件头，无法发现文件后半部分的损坏 |
 | `goimgtools compare a b` | `inspect.Compare(a, b)` | 逐像素比较两幅图像，格式不同亦可：给出是否完全相同；若不同，则给出 PSNR（越高越接近，40 以上肉眼难以分辨）、最大差值及差异像素数。`-min-psnr 35` 可用作质量门槛：未达到时以非零状态退出 |
-| `goimgtools stats 文件...` | `inspect.Stats(img)` | 遍历全部像素：平均色、亮度、面积占比最大的几种颜色、是否实为灰度图像、是否确有透明像素、颜色数（不超过 256 种时）。可用于选取占位色、决定使用深色或浅色文字、判断能否存储为灰度或调色板图像 |
+| `goimgtools stats 文件...` | `inspect.Stats(img)` | 遍历全部像素：平均色、亮度、面积占比最大的几种颜色、是否实为灰度图像、是否确有透明像素、颜色数（不超过 256 种时）。可用于选取占位色、决定使用深色或浅色文字、判断能否存储为灰度或调色板图像。另有 sharp 的 `stats()` 所报告的各项，数值一致到末几位：`Channels`（红、绿、蓝、透明各通道的最低与最高值及其首次出现的位置、总和、平均值、标准差）、`Entropy`（熵）与 `Sharpness`（锐度） |
 | `goimgtools hash 文件...` | `inspect.Hash(img)` | 64 位感知哈希：同一图像改变尺寸、格式或压缩率后，哈希值仅相差数位；不同图像约相差一半。`-similar 10` 列出彼此相近的文件，用于查找重复图像 |
 | `goimgtools exif 文件...` | `inspect.ReadExif(img)` | EXIF 中的相机、镜头、拍摄时间、曝光参数、GPS 位置等 |
 | `goimgtools formats` | `Formats()`、`CodecByName()` | 支持的格式、各格式的扩展名及是否可读、可写 |
@@ -292,7 +298,7 @@ if e, ok, _ := inspect.ReadExif(goimgtools.Open("photo.jpg")); ok {
 }
 ```
 
-实测（单线程）：`info`、`exif` 仅读取文件头，约 0.015 秒；对 2400 万像素的 JPEG，`check` 与 `hash` 约 0.2 秒，`stats` 约 0.34 秒，`compare` 比较两幅此类图像约 0.5 秒。
+实测（单线程）：`info`、`exif` 仅读取文件头，约 0.015 秒；对 2400 万像素的 JPEG，`check` 与 `hash` 约 0.2 秒，`stats` 约 0.5 秒（sharp 的 `stats()` 为 0.43 秒），`compare` 比较两幅此类图像约 0.5 秒。
 
 说明：
 

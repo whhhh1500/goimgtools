@@ -2,6 +2,7 @@ package tests
 
 import (
 	"bytes"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -25,7 +26,7 @@ func sourcePNG(t *testing.T, name string) []byte {
 }
 
 // TestLevelsAgainstSharp: Linear, Threshold and Convolve give sharp's
-// (0.35) results to the byte, Normalize within a level, Tint within two,
+// (0.35) results to the byte, Normalize and Tint within a level,
 // on the image Pillow's references are made from.
 func TestLevelsAgainstSharp(t *testing.T) {
 	src := sourcePNG(t, "pillow/source.png")
@@ -39,7 +40,7 @@ func TestLevelsAgainstSharp(t *testing.T) {
 		{"convolve", FromBytes(src).Convolve(Convolution{Width: 3, Height: 3, Weights: []float64{0, -1, 0, -1, 5, -1, 0, -1, 0}}), 0},
 		{"normalize", FromBytes(src).Normalize(), 1},
 		{"normalize-5-95", FromBytes(src).Normalize(NormalizeOptions{Lower: 5, Upper: 95}), 1},
-		{"tint", FromBytes(src).Tint(color.RGBA{0x70, 0x42, 0x14, 0xff}), 2},
+		{"tint", FromBytes(src).Tint(color.RGBA{0x70, 0x42, 0x14, 0xff}), 1},
 		{"clahe-20-31-5", FromBytes(src).CLAHE(CLAHEOptions{Width: 20, Height: 31, MaxSlope: 5}), 0},
 	} {
 		out, err := c.m.PNG().ToBytes()
@@ -390,4 +391,195 @@ func TestCoverPositionAndSmartCrop(t *testing.T) {
 			t.Errorf("%+v: no error", o)
 		}
 	}
+}
+
+// TestChannelOps: Recomb and Unflatten give sharp 0.35's results to the
+// byte (with a 3 x 3 and a 4 x 4 matrix, on images with and without
+// transparency, and after Threshold); ExtractChannel and RemoveAlpha give
+// the levels of the channel and the colours as stored.
+func TestChannelOps(t *testing.T) {
+	rgb, rgba := sourcePNG(t, "pillow/source.png"), sourcePNG(t, "pillow/median-rgba-source.png")
+	sepia := [][]float64{{0.393, 0.769, 0.189}, {0.349, 0.686, 0.168}, {0.272, 0.534, 0.131}}
+	for _, c := range []struct {
+		name string
+		m    *Image
+	}{
+		{"recomb", FromBytes(rgb).Recomb(sepia)},
+		{"recomb-alpha", FromBytes(rgba).Recomb([][]float64{{0.9, 0.1, 0, 0}, {0, 0.7, 0.5, -0.1}, {0.2, 0, 0.8, 0}, {0.3, 0.3, 0, 0.6}})},
+		{"unflatten-alpha", FromBytes(rgba).Unflatten()},
+		{"threshold-unflatten", FromBytes(rgb).Threshold(200).Unflatten()},
+	} {
+		got, err := c.m.ToImage()
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if maxd, mean, _ := channelDiff(t, got, readPNG(t, "sharp/"+c.name+".png")); maxd > 0 {
+			t.Errorf("%s: differs from sharp by up to %d (mean %.3f)", c.name, maxd, mean)
+		}
+	}
+	// Unflatten of an opaque image is written with its transparency.
+	if p, ok := decodePNG(t, must(FromBytes(rgb).Unflatten().PNG().ToBytes())).(*image.NRGBA); !ok || p.Opaque() {
+		t.Errorf("Unflatten: written as %T, opaque", p)
+	}
+
+	src := decodePNG(t, rgba)
+	at := func(x, y int) color.NRGBA { return color.NRGBAModel.Convert(src.At(x, y)).(color.NRGBA) }
+	for ch, name := range []string{"red", "green", "blue", "alpha"} {
+		out := decodePNG(t, must(FromBytes(rgba).ExtractChannel(Channel(ch)).PNG().ToBytes()))
+		g, ok := out.(*image.Gray)
+		if !ok {
+			t.Fatalf("ExtractChannel(%s): %T, want a greyscale image", name, out)
+		}
+		for y := 0; y < 103; y += 5 {
+			for x := 0; x < 150; x += 3 {
+				p := at(x, y)
+				if want := [4]uint8{p.R, p.G, p.B, p.A}[ch]; g.GrayAt(x, y).Y != want {
+					t.Fatalf("ExtractChannel(%s) at %d,%d: %d, want %d", name, x, y, g.GrayAt(x, y).Y, want)
+				}
+			}
+		}
+	}
+	if g := decodePNG(t, must(FromBytes(rgb).ExtractChannel(ChannelAlpha).PNG().ToBytes())).(*image.Gray); g.GrayAt(7, 7).Y != 255 {
+		t.Errorf("the alpha of an opaque image: %d", g.GrayAt(7, 7).Y)
+	}
+	out, err := FromBytes(rgba).RemoveAlpha().ToImage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for y := 0; y < 103; y += 4 {
+		for x := 0; x < 150; x += 3 {
+			p, q := at(x, y), color.NRGBAModel.Convert(out.At(x, y)).(color.NRGBA)
+			if q != (color.NRGBA{p.R, p.G, p.B, 255}) {
+				t.Fatalf("RemoveAlpha at %d,%d: %v, want %v opaque", x, y, q, p)
+			}
+		}
+	}
+	if _, ok := decodePNG(t, must(FromBytes(rgba).RemoveAlpha().PNG().ToBytes())).(*image.RGBA); !ok {
+		t.Errorf("RemoveAlpha is written with an alpha channel")
+	}
+
+	// By name, and the words of the steps.
+	var words [][]string
+	FromBytes(rgb).Do("recomb", "1", "0", "0", "0", "1", "0", "0", "0", "0.5").Do("extract-channel", "blue").Do("unflatten").Do("remove-alpha").
+		Around(func(s Step, in pipeline.Source, run func(pipeline.Source) (pipeline.Source, error)) (pipeline.Source, error) {
+			words = append(words, append([]string{s.Name}, s.Args...))
+			return run(in)
+		}).PNG().ToBytes()
+	if fmt.Sprint(words) != "[[recomb 1 0 0 0 1 0 0 0 0.5] [extract-channel blue] [unflatten] [remove-alpha]]" {
+		t.Errorf("steps %v", words)
+	}
+	for _, m := range []*Image{
+		FromBytes(rgb).Recomb([][]float64{{1, 0}, {0, 1}}),
+		FromBytes(rgb).Recomb([][]float64{{1, 0, 0}, {0, 1, 0}, {0, 1}}),
+		FromBytes(rgb).Recomb([][]float64{{1, 0, 0}, {0, 1, 0}, {0, 0, math.NaN()}}),
+		FromBytes(rgb).ExtractChannel(4),
+		FromBytes(rgb).Do("recomb", "1", "2"),
+		FromBytes(rgb).Do("extract-channel", "cyan"),
+	} {
+		if _, err := m.PNG().ToBytes(); err == nil {
+			t.Error("no error")
+		}
+	}
+}
+
+// TestLinearLight: resizing in linear light keeps every level through a
+// resize that only repeats pixels, averages light (a fine black and white
+// pattern becomes the grey of half the light, not the middle level), and
+// keeps a translucent colour.
+func TestLinearLight(t *testing.T) {
+	// Every level, in colour and in grey, repeated twice over.
+	c := image.NewNRGBA(image.Rect(0, 0, 256, 3))
+	g := image.NewGray(image.Rect(0, 0, 256, 3))
+	for y := 0; y < 3; y++ {
+		for x := 0; x < 256; x++ {
+			c.SetNRGBA(x, y, color.NRGBA{uint8(x), uint8(255 - x), uint8(x * 7), 255})
+			g.SetGray(x, y, color.Gray{uint8(x)})
+		}
+	}
+	for _, src := range []image.Image{c, g} {
+		out, err := FromImage(src).Resize(512, 6, ResizeOptions{Fit: FitFill, Kernel: KernelNearest, LinearLight: true}).ToImage()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for x := 0; x < 512; x++ {
+			if got, want := color.NRGBAModel.Convert(out.At(x, 3)), color.NRGBAModel.Convert(src.At(x/2, 1)); got != want {
+				t.Fatalf("%T: level at %d is %v, want %v", src, x, got, want)
+			}
+		}
+	}
+
+	// A pattern of black and white pixels, halved: 188 is the sRGB level
+	// of half the light of white; without linear light, about 128.
+	checker := image.NewNRGBA(image.Rect(0, 0, 64, 64))
+	grey := image.NewGray(image.Rect(0, 0, 64, 64))
+	for y := 0; y < 64; y++ {
+		for x := 0; x < 64; x++ {
+			v := uint8(255 * ((x + y) % 2))
+			checker.SetNRGBA(x, y, color.NRGBA{v, v, v, 255})
+			grey.SetGray(x, y, color.Gray{v})
+		}
+	}
+	for _, src := range []image.Image{checker, grey} {
+		for _, threads := range []int{1, 4} {
+			for _, k := range []Kernel{KernelLinear, KernelCubic, KernelLanczos3} {
+				out, err := FromImage(src).Threads(threads).Resize(32, 32, ResizeOptions{Kernel: k, LinearLight: true}).ToImage()
+				if err != nil {
+					t.Fatal(err)
+				}
+				p := color.NRGBAModel.Convert(out.At(16, 16)).(color.NRGBA)
+				if p.R < 186 || p.R > 189 || p.R != p.G || p.G != p.B {
+					t.Errorf("%T, kernel %v, %d threads: %v, want about 188", src, k, threads, p)
+				}
+				plain := color.NRGBAModel.Convert(must2(FromImage(src).Resize(32, 32, ResizeOptions{Kernel: k}).ToImage()).At(16, 16)).(color.NRGBA)
+				if plain.R < 120 || plain.R > 135 {
+					t.Errorf("%T, kernel %v without linear light: %v", src, k, plain)
+				}
+			}
+		}
+	}
+
+	// A translucent colour stays itself; what is clear stays clear.
+	tr := image.NewNRGBA(image.Rect(0, 0, 40, 40))
+	for y := 0; y < 40; y++ {
+		for x := 20; x < 40; x++ {
+			tr.SetNRGBA(x, y, color.NRGBA{200, 60, 30, 128})
+		}
+	}
+	out, err := FromImage(tr).Resize(20, 20, ResizeOptions{LinearLight: true}).ToImage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := color.NRGBAModel.Convert(out.At(2, 10)).(color.NRGBA); p.A != 0 {
+		t.Errorf("clear area: %v", p)
+	}
+	if p := color.NRGBAModel.Convert(out.At(16, 10)).(color.NRGBA); p.A != 128 || absDiff(p.R, 200) > 2 || absDiff(p.G, 60) > 2 || absDiff(p.B, 30) > 2 {
+		t.Errorf("translucent area: %v, want about {200 60 30 128}", p)
+	}
+
+	// The words of the step, and by name.
+	var words []string
+	FromImage(c).Do("resize", "100", "0", "inside", "cubic", "center", "linear").Around(func(s Step, in pipeline.Source, run func(pipeline.Source) (pipeline.Source, error)) (pipeline.Source, error) {
+		words = s.Args
+		return run(in)
+	}).PNG().ToBytes()
+	if fmt.Sprint(words) != "[100 0 inside cubic center linear]" {
+		t.Errorf("resize words %v", words)
+	}
+	if _, err := FromImage(c).Do("resize", "100", "0", "inside", "cubic", "center", "gamma").PNG().ToBytes(); err == nil {
+		t.Error("an unknown LIGHT word: no error")
+	}
+}
+
+func must2(img image.Image, err error) image.Image {
+	if err != nil {
+		panic(err)
+	}
+	return img
+}
+
+func absDiff(a, b uint8) int {
+	if a > b {
+		return int(a - b)
+	}
+	return int(b - a)
 }

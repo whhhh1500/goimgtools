@@ -85,6 +85,32 @@ jobs:
           go-version: "1.27.x"
       - run: GOARCH=386 go test ./...
 
+  fused:
+    # Processors with fused multiply-add (ARM64, POWER, s390x, RISC-V,
+    # LoongArch) may round a*b+c once instead of twice, and the same image
+    # would come out differently on them: no floating-point product may be
+    # fused with an addition (an explicit conversion, float64(a*b) + c,
+    # rounds the product first). This lists any the compiler still fuses.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.x"
+      - name: No fused multiply-add
+        run: |
+          bad=0
+          for arch in arm64 ppc64le s390x riscv64 loong64; do
+            out=$(GOARCH=$arch go build -a -gcflags=-S ./... 2>&1) || { echo "$out" | tail -20; exit 1; }
+            found=$(echo "$out" | grep -E '\sFN?M(ADD|SUB)[SDF]?\s' | grep -oE 'goimgtools/[^ :]+\.go:[0-9]+' | sort -u)
+            if [ -n "$found" ]; then
+              echo "::error::$arch fuses a multiplication and an addition at:"
+              echo "$found"
+              bad=1
+            fi
+          done
+          exit $bad
+
   emulated:
     # Processors unlike the ones above, run under emulation: among them
     # 32-bit ARM and MIPS, and s390x and MIPS, which store numbers the other

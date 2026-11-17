@@ -60,11 +60,17 @@ func TestSameWithHelpers(t *testing.T) {
 		"mild sharpen": func(m *Image) *Image { return m.Sharpen() },
 		"modulate":     func(m *Image) *Image { return m.Modulate(1.1, 1.4, 33) },
 		"median 5":     func(m *Image) *Image { return m.Median(5) },
-		"clahe":        func(m *Image) *Image { return m.CLAHE(CLAHEOptions{Width: 17, Height: 12}) },
+		"resize in linear light": func(m *Image) *Image {
+			return m.Resize(1100, 37, ResizeOptions{Fit: FitFill, LinearLight: true})
+		},
+		"clahe": func(m *Image) *Image { return m.CLAHE(CLAHEOptions{Width: 17, Height: 12}) },
 		"convolve": func(m *Image) *Image {
 			return m.Convolve(Convolution{Width: 3, Height: 3, Weights: []float64{1, 2, 1, 2, 4, 2, 1, 2, 1}})
 		},
-		"normalize, tint":  func(m *Image) *Image { return m.Normalize().Tint(color.RGBA{200, 100, 0, 255}) },
+		"normalize, tint": func(m *Image) *Image { return m.Normalize().Tint(color.RGBA{200, 100, 0, 255}) },
+		"channels": func(m *Image) *Image {
+			return m.Recomb([][]float64{{0.4, 0.6, 0}, {0, 1, 0}, {0.2, 0.2, 0.6}}).Unflatten().ExtractChannel(ChannelAlpha)
+		},
 		"rotate 30":        func(m *Image) *Image { return m.RotateBy(30, color.White) },
 		"rotate -77.7":     func(m *Image) *Image { return m.RotateBy(-77.7, color.Transparent) },
 		"blur, rotate, sh": func(m *Image) *Image { return m.Blur(1.5).RotateBy(12, nil).Sharpen() },

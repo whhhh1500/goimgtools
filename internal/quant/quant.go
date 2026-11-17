@@ -463,16 +463,16 @@ func (q *quantized) polish(cent [][4]float64, solid int) error {
 				n := float64(smoothWeight(q.row, i))
 				wt[pi] += n
 				a := &sum[pi]
-				a[0] += n * float64(t[0])
-				a[1] += n * float64(t[1])
-				a[2] += n * float64(t[2])
-				a[3] += n * float64(t[3])
+				a[0] += float64(n * float64(t[0]))
+				a[1] += float64(n * float64(t[1]))
+				a[2] += float64(n * float64(t[2]))
+				a[3] += float64(n * float64(t[3]))
 			}
 		}
 		done()
 		for i := range cent {
 			for c := 0; c < 4; c++ {
-				cent[i][c] = (sum[i][c] + polishPrior*cent[i][c]) / (wt[i] + polishPrior)
+				cent[i][c] = (sum[i][c] + float64(polishPrior*cent[i][c])) / (wt[i] + polishPrior)
 			}
 		}
 	}

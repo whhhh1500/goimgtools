@@ -104,6 +104,11 @@ func describe(op operation) (string, []string) {
 			w = append(w, n)
 		} else if n, ok := positionNames[o.spec.o.Position]; ok {
 			w = append(w, n)
+		} else if o.spec.o.LinearLight {
+			w = append(w, "center")
+		}
+		if o.spec.o.LinearLight {
+			w = append(w, "linear")
 		}
 		return "resize", w
 	case extractOp:
@@ -124,6 +129,9 @@ func describe(op operation) (string, []string) {
 		}
 		return "sharpen", []string{f(o.o.Sigma), f(o.o.Amount), d(o.o.Threshold)}
 	case extendOp:
+		if o.from {
+			return "extend", []string{d(o.top), d(o.right), d(o.bottom), d(o.left), extensionNames[o.with]}
+		}
 		return "extend", []string{d(o.top), d(o.right), d(o.bottom), d(o.left), colorWord(o.background)}
 	case trimOp:
 		return "trim", []string{f(o.threshold)}
@@ -141,6 +149,10 @@ func describe(op operation) (string, []string) {
 		return "clahe", []string{d(o.o.Width), d(o.o.Height), d(o.o.MaxSlope)}
 	case convolveOp:
 		return "convolve", o.words()
+	case recombOp:
+		return "recomb", o.words()
+	case channelOp:
+		return o.name, o.words()
 	case namedOp:
 		return o.name, o.args
 	case customOp:
@@ -159,6 +171,8 @@ var (
 	positionNames = map[Position]string{NorthWest: "northwest", North: "north", NorthEast: "northeast",
 		West: "west", Center: "center", East: "east", SouthWest: "southwest", South: "south", SouthEast: "southeast"}
 	interestingNames = map[Interesting]string{InterestingEntropy: "entropy", InterestingAttention: "attention"}
+	lightNames       = map[bool]string{false: "srgb", true: "linear"}
+	extensionNames   = map[Extension]string{ExtendCopy: "copy", ExtendRepeat: "repeat", ExtendMirror: "mirror"}
 )
 
 // colorWord writes c as ParseColor reads it.
@@ -463,10 +477,10 @@ func pick[T comparable](names map[T]string, word, what string) (T, error) {
 
 // builtInOps are the methods of Image that take arguments in words.
 var builtInOps = map[string]OperationDef{
-	"resize": {Name: "resize", Usage: "WIDTH,HEIGHT[,FIT[,KERNEL[,POSITION]]]",
-		Help: "Resize: 0 for a side keeps the proportions; FIT inside, cover, contain, outside, fill; KERNEL cubic, nearest, linear, mitchell, lanczos2, lanczos3; POSITION (what cover keeps, where contain puts the image) northwest ... center ... southeast, or entropy or attention for cover",
+	"resize": {Name: "resize", Usage: "WIDTH,HEIGHT[,FIT[,KERNEL[,POSITION[,LIGHT]]]]",
+		Help: "Resize: 0 for a side keeps the proportions; FIT inside, cover, contain, outside, fill; KERNEL cubic, nearest, linear, mitchell, lanczos2, lanczos3; POSITION (what cover keeps, where contain puts the image) northwest ... center ... southeast, or entropy or attention for cover; LIGHT srgb (the levels as they are) or linear (in linear light)",
 		builtIn: func(m *Image, a []string) error {
-			if err := wantArgs(a, 2, 5); err != nil {
+			if err := wantArgs(a, 2, 6); err != nil {
 				return err
 			}
 			v, err := argInts(a[:2])
@@ -489,6 +503,11 @@ var builtInOps = map[string]OperationDef{
 					if o.Position, err = pick(positionNames, a[4], "position"); err != nil {
 						return err
 					}
+				}
+			}
+			if len(a) > 5 {
+				if o.LinearLight, err = pick(lightNames, a[5], "light"); err != nil {
+					return err
 				}
 			}
 			m.Resize(v[0], v[1], o)
@@ -558,7 +577,7 @@ var builtInOps = map[string]OperationDef{
 			m.Trim(t)
 			return nil
 		}},
-	"extend": {Name: "extend", Usage: "TOP,RIGHT,BOTTOM,LEFT[,COLOR]", Help: "Extend: add a border",
+	"extend": {Name: "extend", Usage: "TOP,RIGHT,BOTTOM,LEFT[,COLOR]", Help: "Extend: add a border of COLOR, or (ExtendWith) copy, repeat or mirror for one made of the image",
 		builtIn: func(m *Image, a []string) error {
 			if err := wantArgs(a, 4, 5); err != nil {
 				return err
@@ -569,6 +588,10 @@ var builtInOps = map[string]OperationDef{
 			}
 			var bg color.Color
 			if len(a) == 5 {
+				if how, err := pick(extensionNames, a[4], "extension"); err == nil {
+					m.ExtendWith(v[0], v[1], v[2], v[3], how)
+					return nil
+				}
 				if bg, err = ParseColor(a[4]); err != nil {
 					return err
 				}

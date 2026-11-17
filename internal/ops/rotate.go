@@ -25,7 +25,7 @@ func RotateOverlay(top image.Image, deg, px, py, cx, cy float64) (*image.RGBA, i
 	// (x cos - y sin, x sin + y cos).
 	at := func(u, v float64) (float64, float64) {
 		u, v = u-px, v-py
-		return cx + u*cos - v*sin, cy + u*sin + v*cos
+		return cx + float64(u*cos) - float64(v*sin), cy + float64(u*sin) + float64(v*cos)
 	}
 	minX, minY := math.Inf(1), math.Inf(1)
 	maxX, maxY := math.Inf(-1), math.Inf(-1)
