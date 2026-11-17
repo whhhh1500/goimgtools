@@ -159,6 +159,70 @@ func (e *encoder) Write(b []byte) (int, error) {
 // without a test, and the Paeth predictor picks its value without
 // branches.
 func filter(cr *[nFilter][]byte, pr []byte, bpp int) int {
+	if useSIMD {
+		if f, ok := filterSIMD(cr, pr, bpp); ok {
+			return f
+		}
+	}
+	return filterGo(cr, pr, bpp)
+}
+
+// filterSIMD is filter with filterRunSIMD for the bulk of the row: every
+// filter is worked out over the whole row (filterGo stops one as soon as
+// it cannot win), which chooses the same one, filtered the same way. It
+// reports whether the row was long enough.
+func filterSIMD(cr *[nFilter][]byte, pr []byte, bpp int) (int, bool) {
+	cdat0 := cr[0][1:]
+	n := len(cdat0)
+	chunks := (n - bpp) / 32
+	if chunks <= 0 {
+		return 0, false
+	}
+	cdat1, cdat2, cdat3, cdat4 := cr[1][1:][:n], cr[2][1:][:n], cr[3][1:][:n], cr[4][1:][:n]
+	pdat := pr[1:][:n]
+	var sums [5]uint64 // up, paeth, none, sub, average
+	add := func(k int, d uint8) { sums[k] += uint64(abs8(d)) }
+	for i := 0; i < bpp; i++ {
+		c, u := cdat0[i], pdat[i]
+		cdat2[i], cdat4[i], cdat1[i], cdat3[i] = c-u, c-u, c, c-u/2
+		add(0, c-u)
+		add(1, c-u)
+		add(2, c)
+		add(3, c)
+		add(4, c-u/2)
+	}
+	end := bpp + 32*chunks
+	filterRunSIMD(&cdat0[bpp], &pdat[bpp], &cdat2[bpp], &cdat1[bpp], &cdat3[bpp], &cdat4[bpp], bpp, chunks, &sums)
+	for i := end; i < n; i++ {
+		c, u, l, ul := int(cdat0[i]), int(pdat[i]), int(cdat0[i-bpp]), int(pdat[i-bpp])
+		pa, pb := u-ul, l-ul
+		pc := abs(pa + pb)
+		pa, pb = abs(pa), abs(pb)
+		pred := ul
+		if pb <= pc {
+			pred = u
+		}
+		if pa <= min(pb, pc) {
+			pred = l
+		}
+		cdat2[i], cdat4[i], cdat1[i], cdat3[i] = uint8(c-u), uint8(c-pred), uint8(c-l), uint8(c-(l+u)/2)
+		add(0, cdat2[i])
+		add(1, cdat4[i])
+		add(2, cdat0[i])
+		add(3, cdat1[i])
+		add(4, cdat3[i])
+	}
+	f, best := ftUp, sums[0]
+	for k, ft := range [...]int{ftPaeth, ftNone, ftSub, ftAverage} {
+		if sums[k+1] < best {
+			f, best = ft, sums[k+1]
+		}
+	}
+	return f, true
+}
+
+// filterGo is filter in Go.
+func filterGo(cr *[nFilter][]byte, pr []byte, bpp int) int {
 	// We try all five filter types, and pick the one that minimizes the sum of absolute differences.
 	// This is the same heuristic that libpng uses, although the filters are attempted in order of
 	// estimated most likely to be minimal (ftUp, ftPaeth, ftNone, ftSub, ftAverage), rather than
