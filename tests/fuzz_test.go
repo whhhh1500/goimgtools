@@ -34,7 +34,7 @@ import (
 // images of Go and of golang.org/x/image, and files this package wrote.
 func seedFiles(tb testing.TB) [][]byte {
 	var out [][]byte
-	dirs := []string{filepath.Join(runtime.GOROOT(), "src", "image", "testdata"), filepath.Join("testdata", "webp"), filepath.Join("testdata", "png")}
+	dirs := []string{filepath.Join(runtime.GOROOT(), "src", "image", "testdata"), filepath.Join("testdata", "webp"), filepath.Join("testdata", "png"), filepath.Join("testdata", "icc"), filepath.Join("testdata", "sharp")}
 	if x := testutil.XImageTestdata(); x != "" {
 		dirs = append(dirs, x)
 	}
