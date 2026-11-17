@@ -233,6 +233,9 @@ func (c *rechunk) Bounds() image.Rectangle { return c.src.Bounds() }
 func (c *rechunk) ColorModel() color.Model { return c.src.ColorModel() }
 func (c *rechunk) Env() *Env               { return c.env }
 
+// Opaque is the source's: re-cut strips have the same pixels.
+func (c *rechunk) Opaque() bool { return IsOpaque(c.src) }
+
 func (c *rechunk) Next() (image.Image, error) {
 	b := c.src.Bounds()
 	if !c.started {

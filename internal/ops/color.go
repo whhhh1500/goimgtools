@@ -160,8 +160,13 @@ func Modulate(src pipeline.Source, brightness, saturation, hue, lightness float6
 	br, lt := float32(brightness), float32(lightness)
 	env := pipeline.EnvOf(src)
 	ways := env.Helpers() + 1
+	// Each part of a strip has a cache of the colours it has turned
+	// (a photograph has a few hundred thousand colours among its millions
+	// of pixels): the result of a colour, worked out once, is looked up.
+	caches := make([][]colorEntry, ways)
+	cached := env.Budget.TryReserve(int64(ways) * colorCacheBytes)
 	// The pixels of a part of a strip.
-	modulate := func(pix []uint8) {
+	modulate := func(pix []uint8, cache []colorEntry) {
 		var lastIn, lastOut [3]uint8
 		have := false
 		for i := 0; i+3 < len(pix); i += 4 {
@@ -174,28 +179,79 @@ func Modulate(src pipeline.Source, brightness, saturation, hue, lightness float6
 				p[0], p[1], p[2] = lastOut[0], lastOut[1], lastOut[2]
 				continue
 			}
+			key := 1<<24 | uint32(in[0])<<16 | uint32(in[1])<<8 | uint32(in[2])
+			var e *colorEntry
+			if cache != nil {
+				if e = &cache[colorSlot(key)]; e.key == key {
+					p[0], p[1], p[2] = e.out[0], e.out[1], e.out[2]
+					lastIn, lastOut, have = in, e.out, true
+					continue
+				}
+			}
 			L, a, b := t.toLab(p[0], p[1], p[2])
 			L = float32(L*br) + lt
 			// Each product rounded before it is added: see toLab.
 			a, b = float32(a*ka)-float32(b*kb), float32(a*kb)+float32(b*ka)
 			p[0], p[1], p[2] = t.fromLab(L, a, b)
 			lastIn, lastOut, have = in, [3]uint8{p[0], p[1], p[2]}, true
+			if e != nil {
+				*e = colorEntry{key, lastOut}
+			}
 		}
 	}
-	return pipeline.Map(src, func(strip *image.NRGBA) error {
+	m := pipeline.Map(src, func(strip *image.NRGBA) error {
 		// With helpers, the rows of the strip are shared out, in parts of
 		// at least 8K pixels.
 		rows := strip.Rect.Dy()
 		parts := max(1, min(ways, rows, rows*strip.Rect.Dx()/(8<<10)))
 		row := 4 * strip.Rect.Dx()
 		env.Parallel(parts, func(k int) {
+			if cached && caches[k] == nil {
+				caches[k] = make([]colorEntry, 1<<colorCacheBits)
+			}
 			y0, y1 := k*rows/parts, (k+1)*rows/parts
 			for y := y0; y < y1; y++ {
-				modulate(strip.Pix[y*strip.Stride:][:row])
+				modulate(strip.Pix[y*strip.Stride:][:row], caches[k])
 			}
 		})
 		return nil
-	}), nil
+	})
+	if !cached {
+		return m, nil
+	}
+	return &releasing{Source: m, release: func() { env.Budget.Release(int64(ways) * colorCacheBytes) }}, nil
+}
+
+// colorEntry is a colour (in the low 24 bits of key, bit 24 set) and what
+// an operation turns it into.
+type colorEntry struct {
+	key uint32
+	out [3]uint8
+}
+
+// The colour caches: direct-mapped, 32K entries of 8 bytes.
+const (
+	colorCacheBits  = 15
+	colorCacheBytes = 8 << colorCacheBits
+)
+
+// colorSlot is the entry of the cache that colour key goes to.
+func colorSlot(key uint32) uint32 { return key * 2654435761 >> (32 - colorCacheBits) }
+
+// releasing is a source that gives back memory of the budget when closed.
+type releasing struct {
+	pipeline.Source
+	release func()
+}
+
+func (r *releasing) Opaque() bool { return pipeline.IsOpaque(r.Source) }
+
+func (r *releasing) Close() error {
+	if r.release != nil {
+		r.release()
+		r.release = nil
+	}
+	return r.Source.Close()
 }
 
 // labTable holds what converting between 8-bit sRGB and L*a*b* is made

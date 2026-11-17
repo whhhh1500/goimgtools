@@ -429,6 +429,9 @@ type rgbaStrips struct{ pipeline.Source }
 
 func (s rgbaStrips) ColorModel() color.Model { return color.RGBAModel }
 
+// Opaque is the source's: its strips only change type.
+func (s rgbaStrips) Opaque() bool { return pipeline.IsOpaque(s.Source) }
+
 func (s rgbaStrips) Next() (image.Image, error) {
 	m, err := s.Source.Next()
 	if err != nil {
