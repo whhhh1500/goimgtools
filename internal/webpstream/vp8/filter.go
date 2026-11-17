@@ -113,6 +113,10 @@ func (d *Decoder) simpleFilter(mby, slot int, params []filterParam) {
 // for macroblock row mby, which is in macroblock row slot of the band buffer.
 // It also changes the bottom rows of the macroblock row above (slot-1).
 func (d *Decoder) normalFilter(mby, slot int, params []filterParam) {
+	if useAVX2 {
+		d.normalFilterAVX2(mby, slot, params)
+		return
+	}
 	{
 		for mbx := 0; mbx < d.mbw; mbx++ {
 			f := params[mbx]
@@ -274,4 +278,60 @@ func clamp255(x int) uint8 {
 		return 255
 	}
 	return uint8(x)
+}
+
+// normalFilterAVX2 is normalFilter with AVX2: each call of filter246 by one
+// of the assembly functions, in the same order (those of the two chroma
+// planes together), every byte the same.
+func (d *Decoder) normalFilterAVX2(mby, slot int, params []filterParam) {
+	y, ys := d.img.Y, d.img.YStride
+	cb, cr, cs := d.img.Cb, d.img.Cr, d.img.CStride
+	// across checks the pixels of an edge between columns at i, rows from
+	// i: 16 rows of luma or 8 of each chroma plane; down, of an edge between
+	// rows at i.
+	across := func(pix []byte, i, s, rows int) { _, _ = pix[i-4], pix[i+(rows-1)*s+3] }
+	down := func(pix []byte, i, s, cols int) { _, _ = pix[i-4*s], pix[i+3*s+cols-1] }
+	for mbx := 0; mbx < d.mbw; mbx++ {
+		f := params[mbx]
+		if f.level == 0 {
+			continue
+		}
+		l, il, hl := int(f.level), int(f.ilevel), int(f.hlevel)
+		yi := (slot*ys + mbx) * 16
+		ci := (slot*cs + mbx) * 8
+		if mbx > 0 {
+			across(y, yi, ys, 16)
+			filterV6(&y[yi], &y[yi+8*ys], ys, l+4, il, hl)
+			across(cb, ci, cs, 8)
+			across(cr, ci, cs, 8)
+			filterV6(&cb[ci], &cr[ci], cs, l+4, il, hl)
+		}
+		if f.inner {
+			for _, x := range [3]int{4, 8, 12} {
+				across(y, yi+x, ys, 16)
+				filterV4(&y[yi+x], &y[yi+x+8*ys], ys, l, il, hl)
+			}
+			across(cb, ci+4, cs, 8)
+			across(cr, ci+4, cs, 8)
+			filterV4(&cb[ci+4], &cr[ci+4], cs, l, il, hl)
+		}
+		if mby > 0 {
+			down(y, yi, ys, 16)
+			filterH6(&y[yi], &y[yi+8], ys, l+4, il, hl)
+			down(cb, ci, cs, 8)
+			down(cr, ci, cs, 8)
+			filterH6(&cb[ci], &cr[ci], cs, l+4, il, hl)
+		}
+		if f.inner {
+			for _, k := range [3]int{4, 8, 12} {
+				i := yi + k*ys
+				down(y, i, ys, 16)
+				filterH4(&y[i], &y[i+8], ys, l, il, hl)
+			}
+			i := ci + 4*cs
+			down(cb, i, cs, 8)
+			down(cr, i, cs, 8)
+			filterH4(&cb[i], &cr[i], cs, l, il, hl)
+		}
+	}
 }

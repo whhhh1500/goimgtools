@@ -25,7 +25,7 @@ jobs:
       - run: go test ./...
       # The Go code that the assembly (AVX2) stands in for, on amd64.
       - if: matrix.os == 'ubuntu-latest'
-        run: go test -tags purego ./internal/jpegstream ./tests
+        run: go test -tags purego ./internal/jpegstream/... ./internal/webpstream/... ./tests
 
   avif:
     # The AVIF module (a module of its own, avif/), with the WebAssembly

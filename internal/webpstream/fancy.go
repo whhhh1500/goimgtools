@@ -201,9 +201,12 @@ func (t *toRGB) Next() (image.Image, error) {
 			}
 			nu, nv := chroma(near)
 			fu, fv := chroma(far)
+			dst := out.Pix[(y-y0)*4*w : (y-y0+1)*4*w]
+			if a == nil && yuvRowSIMD(dst, lum, nu, fu, nv, fv) {
+				continue
+			}
 			upsample(nu, fu, upU)
 			upsample(nv, fv, upV)
-			dst := out.Pix[(y-y0)*4*w : (y-y0+1)*4*w]
 			for x, v := range lum {
 				d := dst[4*x : 4*x+4]
 				u, vv := int(upU[x]), int(upV[x])
@@ -263,6 +266,56 @@ func upsample(n, f, dst []uint8) {
 	if w&1 == 0 {
 		dst[w-1] = uint8((3*int(n[last]) + int(f[last]) + 2) >> 2)
 	}
+}
+
+// yuvRowSIMD converts a row (without alpha) as the loop of Next does, with
+// AVX2, and reports whether it did: the pairs of pixels from the second on
+// in chunks of 32 (those of 16 pairs of chroma samples), the rest here.
+func yuvRowSIMD(dst, lum, nu, fu, nv, fv []uint8) bool {
+	w := len(lum)
+	last := (w - 1) >> 1 // the last pair: pixels 2*last-1 and 2*last
+	if !useAVX2 || last < 16 {
+		return false
+	}
+	k := last / 16
+	n := len(nu)
+	_, _, _, _ = nu[16*k], fu[:n][16*k], nv[:n][16*k], fv[:n][16*k]
+	_, _ = dst[4*(32*k+1)-1], lum[32*k]
+	yuvRowAVX2(&dst[4], &lum[1], &nu[0], &fu[0], &nv[0], &fv[0], k)
+	yuvPixel(dst, lum, nu, fu, nv, fv, 0)
+	for x := 32*k + 1; x < w; x++ {
+		yuvPixel(dst, lum, nu, fu, nv, fv, x)
+	}
+	return true
+}
+
+// yuvPixel converts pixel x of a row: its chroma upsampled as upsample
+// does, converted as Next does.
+func yuvPixel(dst, lum, nu, fu, nv, fv []uint8, x int) {
+	up := func(n, f []uint8) int {
+		w := len(lum)
+		switch {
+		case x == 0:
+			return (3*int(n[0]) + int(f[0]) + 2) >> 2
+		case x == w-1 && w&1 == 0:
+			l := (w - 1) >> 1
+			return (3*int(n[l]) + int(f[l]) + 2) >> 2
+		case x&1 == 1:
+			i := (x + 1) >> 1
+			n0, n1, f0, f1 := int(n[i-1]), int(n[i]), int(f[i-1]), int(f[i])
+			return ((n0+3*n1+3*f0+f1+8)>>3 + n0) >> 1
+		}
+		i := x >> 1
+		n0, n1, f0, f1 := int(n[i-1]), int(n[i]), int(f[i-1]), int(f[i])
+		return ((3*n0+n1+f0+3*f1+8)>>3 + n1) >> 1
+	}
+	u, vv := up(nu, fu), up(nv, fv)
+	d := dst[4*x : 4*x+4]
+	yy := multHi(int(lum[x]), 19077)
+	d[0] = clip8(yy + multHi(vv, 26149) - 14234)
+	d[1] = clip8(yy - multHi(u, 6419) - multHi(vv, 13320) + 8708)
+	d[2] = clip8(yy + multHi(u, 33050) - 17685)
+	d[3] = 0xff
 }
 
 func multHi(v, coeff int) int { return (v * coeff) >> 8 }

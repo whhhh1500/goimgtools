@@ -194,6 +194,11 @@ BSD 3-Clause License, copyright (c) 2010 Google Inc., with an additional
 patent grant by Google. Both texts, as libwebp 1.6.0 distributes them
 (`COPYING` and `PATENTS`), are in `LICENSE-LIBWEBP`, next to this file.
 
+`internal/webpstream/yuv_amd64.s` and `internal/webpstream/vp8/filter_amd64.s`
+compute libwebp's upsampling, conversion of colour and loop filter (as the Go
+code of those packages computes them) after the approach of its SSE2 code
+(`src/dsp/upsampling_sse2.c`, `yuv_sse2.h`, `dec_sse2.c`).
+
 `internal/vp8enc/analysis.go` follows the segmentation of libwebp's lossy
 encoder (`src/enc/analysis_enc.c`, and `VP8SetSegmentParams` and
 `SimplifySegments` in `src/enc/quant_enc.c`): how a macroblock's
