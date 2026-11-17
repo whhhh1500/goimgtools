@@ -36,7 +36,7 @@ JPEG library as it is kept in libjpeg-turbo:
 | `internal/jpegstream/islow.go` | `jidctint.c`: `jpeg_idct_islow` |
 | `internal/jpegstream/idctred.go` | `jidctred.c`: `jpeg_idct_4x4`, `jpeg_idct_2x2`, `jpeg_idct_1x1` |
 | `internal/jpegstream/ycc.go` | `jdsample.c` (fancy upsampling), `jdcolor.c` (YCbCr to RGB) |
-| `internal/jpegstream/idct_amd64.s`, `idct4_amd64.s`, `ycc_amd64.s`, `fdct_amd64.s`, `rgb_amd64.s` (AVX2) | the same routines, as `islow.go`, `idctred.go`, `ycc.go`, `fdct.go` and `writer.go` compute them, after the approach of libjpeg-turbo's SIMD code (`simd/x86_64`) |
+| `internal/jpegstream/idct_amd64.s`, `idct4_amd64.s`, `ycc_amd64.s`, `fdct_amd64.s`, `rgb_amd64.s` (AVX2), `idct_arm64.s`, `jpeg_arm64.s` (NEON) | the same routines, as `islow.go`, `idctred.go`, `ycc.go`, `fdct.go` and `writer.go` compute them, after the approach of libjpeg-turbo's SIMD code (`simd/x86_64`) |
 | `internal/jpegstream/fdct.go` | `jfdctint.c`: `jpeg_fdct_islow` |
 | `internal/jpegstream/writer.go`: `ycc`, `scale`, `scaleH`, `padRows`, the dummy blocks past the edges, the markers | `jccolor.c`: `rgb_ycc_convert`; `jcsample.c`: `h2v2_downsample`, `h2v1_downsample`; `jcprepct.c`: `expand_bottom_edge`; `jccoefct.c`: `compress_data`; `jcmarker.c` |
 | `internal/jpegstream/writer_opt.go`: `optimalSpec` | `jchuff.c`: `jpeg_gen_optimal_table` |
@@ -198,7 +198,8 @@ patent grant by Google. Both texts, as libwebp 1.6.0 distributes them
 compute libwebp's upsampling, conversion of colour and loop filter (as the Go
 code of those packages computes them) after the approach of its SSE2 code
 (`src/dsp/upsampling_sse2.c`, `yuv_sse2.h`, `dec_sse2.c`);
-`internal/vp8enc/ssim_amd64.s` the window sums of its SSIM (`ssim_sse2.c`).
+`internal/vp8enc/ssim_amd64.s` the window sums of its SSIM (`ssim_sse2.c`); the
+files of the same names ending in `_arm64.s` do the same with NEON.
 
 `internal/vp8enc/analysis.go` follows the segmentation of libwebp's lossy
 encoder (`src/enc/analysis_enc.c`, and `VP8SetSegmentParams` and
