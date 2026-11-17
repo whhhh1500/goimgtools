@@ -2,9 +2,9 @@
 
 | Fit within 1536 + white background + watermark (single thread) | goimgtools | Standard library (whole-image decode) |
 |---|---|---|
-| JPEG 6000×4000 (24 MP), peak process memory | **9.4MB** | 243MB |
+| JPEG 6000×4000 (24 MP), peak process memory | **9.9MB** | 243MB |
 | PNG 6900×9200 (63 MP, with alpha), peak process memory | **10.4MB** | 588MB |
-| JPEG 6000×4000, time | **0.38s** | 0.82s |
+| JPEG 6000×4000, time | **0.17s** | 0.85s |
 | PNG 6900×9200, time | **1.63s** | 3.10s |
 
 goimgtools is a streaming image processing library and command-line tool written in pure Go. Images pass through the processing chain in strips of a few rows and are never decoded in full, so memory use is essentially independent of image size, and processing is faster than with whole-image decoding.
