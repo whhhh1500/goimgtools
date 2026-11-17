@@ -271,7 +271,8 @@ func FuzzChain(f *testing.F) {
 					TransformExtent(f(w, 2), f(h, 2), f(more, 1), f(w^h, 1)),
 					TransformPerspective(f(w, 40), f(h, 90), f(more, 3), f(w>>3, 90), f(h>>2, 40), f(more>>4, 3), f(w>>5, 5000), f(h>>5, 5000)),
 					TransformQuad(f(w, 2), f(h, 2), f(more, 2), f(w>>2, 1), f(h>>3, 1), f(more>>2, 1), f(w>>4, 1), f(h>>1, 2)),
-				}[more>>3%4]
+					TransformPerspectiveQuad(f(w, 2), f(h, 2), f(more, 2), f(w>>2, 1), f(h>>3, 1), f(more>>2, 1), f(w>>4, 1), f(h>>1, 2)),
+				}[more>>3%5]
 				m.Transform(1+int(w%61), 1+int(h%53), tr, TransformOptions{Interpolator: Interpolator(h % 3), Background: color.NRGBA{uint8(w), 3, uint8(h), uint8(more)}})
 			}
 		}

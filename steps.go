@@ -661,8 +661,8 @@ var builtInOps = map[string]OperationDef{
 			m.Affine(v[0], v[1], v[2], v[3], o)
 			return nil
 		}},
-	"transform": {Name: "transform", Usage: "WIDTH,HEIGHT,affine|extent|perspective|quad,NUMBERS...[,nearest|bilinear|bicubic][,BACKGROUND]",
-		Help: "Transform: Pillow's Image.transform to WIDTH x HEIGHT, with 6, 4, 8 or 8 numbers (TransformAffine, TransformExtent, TransformPerspective, TransformQuad)",
+	"transform": {Name: "transform", Usage: "WIDTH,HEIGHT,affine|extent|perspective|quad|perspective-quad,NUMBERS...[,nearest|bilinear|bicubic][,BACKGROUND]",
+		Help: "Transform: Pillow's Image.transform to WIDTH x HEIGHT, with 6, 4, 8, 8 or 8 numbers (TransformAffine, TransformExtent, TransformPerspective, TransformQuad, TransformPerspectiveQuad)",
 		builtIn: func(m *Image, a []string) error {
 			if len(a) < 3 {
 				return errors.New("want WIDTH,HEIGHT, the kind of transform and its numbers")

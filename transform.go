@@ -13,8 +13,9 @@ import (
 
 // Transformation is how Transform maps each pixel of its output to a point
 // of the image: one of Pillow's transform methods, made by TransformAffine,
-// TransformExtent, TransformPerspective or TransformQuad. The zero
-// Transformation is none, which Transform reports as an error.
+// TransformExtent, TransformPerspective or TransformQuad, or a perspective
+// made by TransformPerspectiveQuad. The zero Transformation is none, which
+// Transform reports as an error.
 type Transformation struct {
 	kind transformKind
 	data [8]float64
@@ -28,13 +29,15 @@ const (
 	extentTransform
 	perspectiveTransform
 	quadTransform
+	perspectiveQuadTransform
 )
 
 var transformNames = map[transformKind]string{affineTransform: "affine", extentTransform: "extent",
-	perspectiveTransform: "perspective", quadTransform: "quad"}
+	perspectiveTransform: "perspective", quadTransform: "quad", perspectiveQuadTransform: "perspective-quad"}
 
 // transformArgs is how many numbers each kind of Transformation takes.
-var transformArgs = map[transformKind]int{affineTransform: 6, extentTransform: 4, perspectiveTransform: 8, quadTransform: 8}
+var transformArgs = map[transformKind]int{affineTransform: 6, extentTransform: 4, perspectiveTransform: 8, quadTransform: 8,
+	perspectiveQuadTransform: 8}
 
 // TransformAffine maps the centre (x, y) of an output pixel to (a·x + b·y +
 // c, d·x + e·y + f) in the image: Pillow's Transform.AFFINE with the data
@@ -67,6 +70,61 @@ func TransformPerspective(a, b, c, d, e, f, g, h float64) Transformation {
 // Pillow's Transform.QUAD with the data (x0, y0, x1, y1, x2, y2, x3, y3).
 func TransformQuad(x0, y0, x1, y1, x2, y2, x3, y3 float64) Transformation {
 	return Transformation{quadTransform, [8]float64{x0, y0, x1, y1, x2, y2, x3, y3}}
+}
+
+// TransformPerspectiveQuad maps the output onto the quadrilateral of the
+// image with the same corners as TransformQuad's, in the same order, by the
+// perspective that takes the corners of the output to them: it straightens
+// a page, a sign or a screen photographed at an angle, given where its
+// corners are in the photograph, the output being the page seen square on
+// (choose its width and height in the page's proportions). The
+// coefficients of TransformPerspective are worked out from the corners in
+// double precision (Heckbert's square-to-quadrilateral mapping); three
+// corners on a line are refused by Transform.
+func TransformPerspectiveQuad(x0, y0, x1, y1, x2, y2, x3, y3 float64) Transformation {
+	return Transformation{perspectiveQuadTransform, [8]float64{x0, y0, x1, y1, x2, y2, x3, y3}}
+}
+
+// perspectiveQuad returns the perspective of TransformPerspective that takes
+// the corners of a w x h output (top left, bottom left, bottom right, top
+// right) to the points q in that order; false when there is none (three
+// points on a line).
+func perspectiveQuad(q [8]float64, w, h int) ([8]float64, bool) {
+	// Heckbert ("Fundamentals of Texture Mapping and Image Warping", 1989):
+	// the unit square's (0,0), (1,0), (1,1), (0,1) to p0, p1, p2, p3.
+	p := [4][2]float64{{q[0], q[1]}, {q[6], q[7]}, {q[4], q[5]}, {q[2], q[3]}}
+	det := func(a, b, c, d float64) float64 { return float64(a*d) - float64(b*c) }
+	sx := p[0][0] - p[1][0] + p[2][0] - p[3][0]
+	sy := p[0][1] - p[1][1] + p[2][1] - p[3][1]
+	dx1, dx2 := p[1][0]-p[2][0], p[3][0]-p[2][0]
+	dy1, dy2 := p[1][1]-p[2][1], p[3][1]-p[2][1]
+	var g, k float64
+	if sx != 0 || sy != 0 {
+		d := det(dx1, dx2, dy1, dy2)
+		if d == 0 {
+			return [8]float64{}, false
+		}
+		g, k = det(sx, dx2, sy, dy2)/d, det(dx1, sx, dy1, sy)/d
+	}
+	a := p[1][0] - p[0][0] + float64(g*p[1][0])
+	b := p[3][0] - p[0][0] + float64(k*p[3][0])
+	d := p[1][1] - p[0][1] + float64(g*p[1][1])
+	e := p[3][1] - p[0][1] + float64(k*p[3][1])
+	// From the unit square to the output's pixels.
+	fw, fh := float64(w), float64(h)
+	c := [8]float64{a / fw, b / fh, p[0][0], d / fw, e / fh, p[0][1], g / fw, k / fh}
+	// A quadrilateral with three corners on a line has no perspective: the
+	// matrix (a b c; d e f; g k 1) is singular.
+	c0, f0 := p[0][0], p[0][1]
+	if float64(a*det(e, f0, k, 1))-float64(b*det(d, f0, g, 1))+float64(c0*det(d, e, g, k)) == 0 {
+		return [8]float64{}, false
+	}
+	for _, v := range c {
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return [8]float64{}, false
+		}
+	}
+	return c, true
 }
 
 // TransformOptions are the optional settings of Transform.
@@ -106,6 +164,11 @@ func (m *Image) Transform(width, height int, t Transformation, opts ...Transform
 	if width < 1 || height < 1 {
 		return m.fail(fmt.Errorf("goimgtools: Transform to %dx%d: the size must be positive", width, height))
 	}
+	if t.kind == perspectiveQuadTransform {
+		if _, ok := perspectiveQuad(t.data, width, height); !ok {
+			return m.fail(errors.New("goimgtools: TransformPerspectiveQuad: three of the corners are on a line"))
+		}
+	}
 	if _, ok := interpolatorNames[o.Interpolator]; !ok {
 		return m.fail(fmt.Errorf("goimgtools: unknown Interpolator %d", o.Interpolator))
 	}
@@ -135,6 +198,9 @@ func pillowTransform(t Transformation, w, h int) (int, [8]float64) {
 		return ops.PillowAffine, [8]float64{(x1 - x0) / float64(w), 0, x0, 0, (y1 - y0) / float64(h), y0}
 	case perspectiveTransform:
 		return ops.PillowPerspective, d
+	case perspectiveQuadTransform:
+		c, _ := perspectiveQuad(d, w, h)
+		return ops.PillowPerspective, c
 	case quadTransform:
 		x0, y0 := d[0], d[1]
 		sw, se, ne := d[2:4], d[4:6], d[6:8]

@@ -16,7 +16,9 @@ import (
 // Pillow cookbook works it out, and one that divides by 0 along a line) and
 // quad (one that turns the image over); colour, with transparency and grey;
 // nearest, bilinear and bicubic; what lies outside left as Pillow fills it
-// or in a colour. The sums are of Pillow 12.1.1's pixels.
+// or in a colour. The sums are of Pillow 12.1.1's pixels. The perspective
+// TransformPerspectiveQuad works out from the corners gives the pixels of
+// the cookbook's (numpy's) coefficients.
 func TestPillowTransform(t *testing.T) {
 	for _, c := range []struct {
 		in     string
@@ -167,6 +169,9 @@ func TestPillowTransform(t *testing.T) {
 		{"pillow/gray.png", 110, 120, TransformQuad(149.0, 0.0, 170.0, 102.0, -15.0, 113.0, 0.5, 0.25), InterpolateBilinear, color.Gray{120}, "6fd4efe8bb693827"},
 		{"pillow/gray.png", 110, 120, TransformQuad(149.0, 0.0, 170.0, 102.0, -15.0, 113.0, 0.5, 0.25), InterpolateBicubic, nil, "99ff419f1f28f1a7"},
 		{"pillow/gray.png", 110, 120, TransformQuad(149.0, 0.0, 170.0, 102.0, -15.0, 113.0, 0.5, 0.25), InterpolateBicubic, color.Gray{120}, "f7ae64438b125ca9"},
+		{"pillow/source.png", 140, 100, TransformPerspectiveQuad(8, 5, 2, 94, 140, 99, 147, 12), InterpolateNearest, nil, "6edb80faaa947c79"},
+		{"pillow/source.png", 140, 100, TransformPerspectiveQuad(8, 5, 2, 94, 140, 99, 147, 12), InterpolateBilinear, nil, "f5ae63302f7dc038"},
+		{"pillow/source.png", 140, 100, TransformPerspectiveQuad(8, 5, 2, 94, 140, 99, 147, 12), InterpolateBicubic, nil, "aa1bca04ed83d305"},
 	} {
 		for _, threads := range []int{1, 4} {
 			o := TransformOptions{Background: c.bg, Interpolator: c.interp}
@@ -197,6 +202,16 @@ func TestPillowTransform(t *testing.T) {
 	if !bytes.Equal(again, want) {
 		t.Errorf("the words %v give another image", words)
 	}
+	// The perspective of corners by name, and its words.
+	words = nil
+	q := must(FromBytes(in).Transform(90, 60, TransformPerspectiveQuad(3, 4, 1, 90, 140, 99, 120, 2)).PNG().ToBytes())
+	byName := must(FromBytes(in).Do("transform", "90", "60", "perspective-quad", "3", "4", "1", "90", "140", "99", "120", "2").Around(func(s Step, src pipeline.Source, run func(pipeline.Source) (pipeline.Source, error)) (pipeline.Source, error) {
+		words = append([]string{s.Name}, s.Args...)
+		return run(src)
+	}).PNG().ToBytes())
+	if !bytes.Equal(q, byName) || !bytes.Equal(must(FromBytes(in).Do(words[0], words[1:]...).PNG().ToBytes()), q) {
+		t.Errorf("perspective-quad by name, words %v: another image", words)
+	}
 	for _, args := range [][]string{{"10", "10", "affine", "1", "0", "0", "0", "1"}, {"10", "10", "spin", "1"}, {"0", "10", "extent", "0", "0", "5", "5"},
 		{"10", "10", "extent", "0", "0", "5", "5", "nearest", "bicubic"}, {"10", "10", "extent", "0", "0", "5", "5", "red", "blue"}, {"10", "10", "extent", "0", "0", "5", "x"}} {
 		if _, err := FromBytes(in).Do("transform", args...).PNG().ToBytes(); err == nil {
@@ -208,7 +223,8 @@ func TestPillowTransform(t *testing.T) {
 		t    Transformation
 		o    TransformOptions
 	}{{10, 10, Transformation{}, TransformOptions{}}, {0, 10, TransformExtent(0, 0, 1, 1), TransformOptions{}},
-		{10, 10, TransformQuad(0, 0, 0, 1, 1, 1, 1, math.Inf(1)), TransformOptions{}}, {10, 10, TransformExtent(0, 0, 1, 1), TransformOptions{Interpolator: 9}}} {
+		{10, 10, TransformQuad(0, 0, 0, 1, 1, 1, 1, math.Inf(1)), TransformOptions{}}, {10, 10, TransformExtent(0, 0, 1, 1), TransformOptions{Interpolator: 9}},
+		{10, 10, TransformPerspectiveQuad(0, 0, 0, 10, 0, 20, 5, 5), TransformOptions{}}, {10, 10, TransformPerspectiveQuad(0, 0, 0, 10, 10, 10, 5, 5), TransformOptions{}}} {
 		if _, err := FromBytes(in).Transform(c.w, c.h, c.t, c.o).PNG().ToBytes(); err == nil {
 			t.Errorf("Transform(%d, %d, %+v, %+v) accepted", c.w, c.h, c.t, c.o)
 		}
