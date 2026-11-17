@@ -162,6 +162,7 @@ func TestSmallestThroughOperations(t *testing.T) {
 		{"tint, normalize", func(m *Image, w, h int) *Image { return m.Tint(color.RGBA{9, 99, 199, 255}).Normalize() }, same},
 		{"median", func(m *Image, w, h int) *Image { return m.Median(3) }, same},
 		{"median larger than the image", func(m *Image, w, h int) *Image { return m.Median(99) }, same},
+		{"clahe larger than the image", func(m *Image, w, h int) *Image { return m.CLAHE(CLAHEOptions{Width: 40, Height: 9}) }, same},
 		{"convolve", func(m *Image, w, h int) *Image {
 			return m.Convolve(Convolution{Width: 5, Height: 3, Weights: []float64{1, 0, -1, 2, 0, -2, 1, 0, -1, 1, 2, 3, 4, 5, 6}, Offset: 100})
 		}, same},

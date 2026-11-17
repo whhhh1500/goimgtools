@@ -57,6 +57,7 @@ err := goimgtools.Open("in.jpg").
 | `Threshold(level)` | 黑白二值：灰度（按线性光计算，与 sharp 相同）不小于 `level` 的像素变白，其余变黑。不含透明的图像与 sharp 的 `threshold` 逐字节一致，并输出为单通道文件 |
 | `Tint(color)` | 着色：按每个像素的亮度赋予该颜色，越接近黑白越淡（sharp 的 `tint`，与其相差不超过 2）：`Tint(color.RGBA{112, 66, 20, 255})` 为褐色调 |
 | `Normalize(NormalizeOptions{Lower, Upper})` | 拉伸明度（L*a*b* 中的 L*），使最暗的 `Lower`% 变黑、最亮的 `100-Upper`% 变白（默认 1 与 99），保持色相与饱和度；即 sharp 的 `normalise`，相差不超过 1（百分位与其完全相同）。需先读完整幅图像并保存在工作区 |
+| `CLAHE(CLAHEOptions{Width, Height, MaxSlope})` | 局部对比度增强（限制对比度的自适应直方图均衡），提亮暗部、压低亮部以显出细节：每个色阶变为其在像素周围 `Width` × `Height` 窗口中的排位，窗口中每个色阶最多计 `MaxSlope` 个像素（默认 3）。不含透明的图像与 sharp 的 `clahe` 逐字节一致；24 MP、64×64 窗口单核 18s，4 核 7s（sharp：7.6s、8.7s） |
 | `Median(size)` | 中值滤波：每个像素的每个通道取其周围 size × size 方块（奇数，3–99）的中值，去除噪点而保留边缘。与 Pillow 的 `MedianFilter` 及 sharp 的 `median` 逐字节一致 |
 | `Convolve(Convolution{Width, Height, Weights, Scale, Offset})` | 自定义卷积核（边长为奇数，最大 99）：窗口加权和除以 `Scale`（默认为权重之和）再加 `Offset`。与 sharp 的 `convolve` 逐字节一致；例如权重 `0,-1,0,-1,5,-1,0,-1,0` 为锐化，`-1,-1,-1,-1,8,-1,-1,-1,-1` 配合 `Scale: 1` 为边缘检测 |
 | `Blur(sigma)` | 高斯模糊，sigma 须大于 0 且不超过 1000 像素；采用 Pillow 的 `GaussianBlur` 算法，耗时不随 sigma 变化 |

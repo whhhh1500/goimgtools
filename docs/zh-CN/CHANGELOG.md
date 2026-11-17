@@ -35,7 +35,7 @@
 - 有损 WebP 分段量化：各段使用独立的量化级别（移植自 libwebp 的空间噪声整形）。
 - `pipeline.Env.SetHelpers`、`Helpers`、`Parallel`、`Go`：供处理环节将工作分摊至多个核。
 - `CompositeOptions.Blend`（类型 `BlendMode`）/ `-watermark-blend`：sharp 合成的各种混合模式（正片叠底、滤色、叠加、变暗、变亮、颜色减淡与加深、强光与柔光、差值、排除），与 sharp 的结果相差不超过 1。
-- 仿照 sharp 的色阶与滤镜：`Negate`、`Linear`、`Gamma`、`Threshold`、`Tint`、`Normalize`（`NormalizeOptions`）、`Median`、`Convolve`（`Convolution`），也可按名称调用（`Do`、`-op`）：negate、linear、gamma、threshold、tint、normalize、median、convolve。`Negate`、`Linear`、`Threshold`、`Median`、`Convolve` 与 sharp 的结果逐字节一致，`Normalize` 相差不超过 1，`Tint` 不超过 2；`Median` 也与 Pillow 的 `MedianFilter` 逐字节一致。
+- 仿照 sharp 的色阶与滤镜：`Negate`、`Linear`、`Gamma`、`Threshold`、`Tint`、`Normalize`（`NormalizeOptions`）、`CLAHE`（`CLAHEOptions`）、`Median`、`Convolve`（`Convolution`），也可按名称调用（`Do`、`-op`）：negate、linear、gamma、threshold、tint、normalize、clahe、median、convolve。`Negate`、`Linear`、`Threshold`、`CLAHE`、`Median`、`Convolve` 与 sharp 的结果逐字节一致，`Normalize` 相差不超过 1，`Tint` 不超过 2；`Median` 也与 Pillow 的 `MedianFilter` 逐字节一致。
 
 ### 变更
 

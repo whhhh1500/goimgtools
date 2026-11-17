@@ -131,6 +131,8 @@ func describe(op operation) (string, []string) {
 		return "normalize", []string{f(o.o.Lower), f(o.o.Upper)}
 	case medianOp:
 		return "median", []string{d(o.size)}
+	case claheOp:
+		return "clahe", []string{d(o.o.Width), d(o.o.Height), d(o.o.MaxSlope)}
 	case convolveOp:
 		return "convolve", o.words()
 	case namedOp:

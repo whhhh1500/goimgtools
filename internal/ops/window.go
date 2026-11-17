@@ -39,6 +39,7 @@ type windowStage struct {
 	n, y     int // rows per strip handed out, rows handed out
 	reserved int64
 	opaque   bool
+	mirror   bool // rows past the edges are mirrored, not repeated
 	// newRow makes a function that makes one row of the result from the
 	// rows of its window, one for each part of the work.
 	newRow func() func(win [][]uint8, dst []uint8)
@@ -115,7 +116,13 @@ func (w *windowStage) Next() (image.Image, error) {
 		row, win := w.rows[k], w.wins[k]
 		for y := y0 + k*(y1-y0)/parts; y < y0+(k+1)*(y1-y0)/parts; y++ {
 			for i := range win {
-				win[i] = w.ring[max(0, min(y-w.r+i, w.h-1))%len(w.ring)]
+				sy := y - w.r + i
+				if w.mirror {
+					sy = mirrorIndex(sy, w.h)
+				} else {
+					sy = max(0, min(sy, w.h-1))
+				}
+				win[i] = w.ring[sy%len(w.ring)]
 			}
 			row(win, w.out.Pix[(y-y0)*w.out.Stride:][:4*w.w])
 		}
@@ -137,6 +144,129 @@ func (w *windowStage) Next() (image.Image, error) {
 		}
 	}
 	return &out, nil
+}
+
+// mirrorIndex is i reflected into 0..n-1 as libvips' mirror extension
+// does (the edge pixel repeated: ... b a | a b c ... z | z y ...), as often
+// as it takes.
+func mirrorIndex(i, n int) int {
+	i %= 2 * n
+	if i < 0 {
+		i += 2 * n
+	}
+	if i >= n {
+		i = 2*n - 1 - i
+	}
+	return i
+}
+
+// ---- CLAHE ----
+
+// CLAHE equalizes src's histogram locally, contrast limited, as libvips'
+// hist_local (sharp's clahe): each red, green and blue level becomes 255
+// times the share of the width x height window around it (centred, its
+// left and top halves the larger for an even side; the image mirrored past
+// its edges) that is at that level or below, with every level's count cut
+// at maxSlope (1 or more) and what is cut spread evenly over the 256
+// levels. Transparency is kept.
+func CLAHE(src pipeline.Source, width, height, maxSlope int) (pipeline.Source, error) {
+	if width < 1 || height < 1 || width > 1<<12 || height > 1<<12 || maxSlope < 1 {
+		return nil, errors.New("goimgtools: CLAHE wants a window of 1 to 4096 a side and a slope of 1 or more")
+	}
+	b := src.Bounds()
+	w := b.Dx()
+	ws, err := newWindow(src, height/2, func() func(win [][]uint8, dst []uint8) {
+		cols := make([]int, w+width)
+		for x := range cols {
+			cols[x] = 4 * mirrorIndex(x-width/2, w)
+		}
+		return func(win [][]uint8, dst []uint8) {
+			claheRow(win[:height], dst, w, width, maxSlope, cols)
+		}
+	})
+	if err != nil {
+		return nil, err
+	}
+	ws.mirror = true
+	return ws, nil
+}
+
+// claheHist is the histogram of a channel of a CLAHE window: the counts,
+// and the counts cut at the slope summed in blocks of 16 levels (what is
+// cut off is the size of the window less their total). It is kept up to
+// date without branches, the levels coming as the picture has them.
+type claheHist struct {
+	h   [256]int32
+	blk [16]int32
+}
+
+func (c *claheHist) add(v uint8, lim int32) {
+	h := c.h[v]
+	c.blk[v>>4] += int32(uint32(h-lim) >> 31) // h < lim: one more kept
+	c.h[v] = h + 1
+}
+
+func (c *claheHist) remove(v uint8, lim int32) {
+	h := c.h[v]
+	c.blk[v>>4] -= int32(uint32(h-lim-1) >> 31) // h <= lim: one fewer kept
+	c.h[v] = h - 1
+}
+
+// level is the result for level t in a window of n pixels: libvips' sum
+// (the cut counts of the levels to t, and the share of what is cut that
+// falls to them) times 255 over n.
+func (c *claheHist) level(t int, lim int32, n int64) uint8 {
+	var kept, sum int32
+	for k, b := range c.blk {
+		kept += b
+		if k < t>>4 {
+			sum += b
+		}
+	}
+	for _, v := range c.h[t&^15 : t+1] {
+		sum += min(v, lim)
+	}
+	over := int32(n) - kept
+	return uint8(255 * int64(sum+int32(t+1)*over/256) / n)
+}
+
+// claheRow makes a row of CLAHE from the height rows of its window; cols
+// are the byte offsets of the columns from x = -width/2 on, mirrored. A
+// pixel's channels are read with one load.
+func claheRow(win [][]uint8, dst []uint8, w, width, slope int, cols []int) {
+	var r, g, b claheHist
+	lim := int32(slope)
+	for x := 0; x < width; x++ {
+		o := cols[x]
+		for _, row := range win {
+			v := binary.LittleEndian.Uint32(row[o:])
+			r.add(uint8(v), lim)
+			g.add(uint8(v>>8), lim)
+			b.add(uint8(v>>16), lim)
+		}
+	}
+	n := int64(width * len(win))
+	centre := win[len(win)/2]
+	for x := 0; x < w; x++ {
+		if x > 0 {
+			o, p := cols[x-1], cols[x+width-1]
+			for _, row := range win {
+				in := binary.LittleEndian.Uint32(row[p:])
+				out := binary.LittleEndian.Uint32(row[o:])
+				r.add(uint8(in), lim)
+				r.remove(uint8(out), lim)
+				g.add(uint8(in>>8), lim)
+				g.remove(uint8(out>>8), lim)
+				b.add(uint8(in>>16), lim)
+				b.remove(uint8(out>>16), lim)
+			}
+		}
+		mid := centre[4*x : 4*x+4 : 4*x+4]
+		dst[4*x] = r.level(int(mid[0]), lim, n)
+		dst[4*x+1] = g.level(int(mid[1]), lim, n)
+		dst[4*x+2] = b.level(int(mid[2]), lim, n)
+		dst[4*x+3] = mid[3]
+	}
 }
 
 // ---- median ----

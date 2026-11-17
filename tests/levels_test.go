@@ -40,6 +40,7 @@ func TestLevelsAgainstSharp(t *testing.T) {
 		{"normalize", FromBytes(src).Normalize(), 1},
 		{"normalize-5-95", FromBytes(src).Normalize(NormalizeOptions{Lower: 5, Upper: 95}), 1},
 		{"tint", FromBytes(src).Tint(color.RGBA{0x70, 0x42, 0x14, 0xff}), 2},
+		{"clahe-20-31-5", FromBytes(src).CLAHE(CLAHEOptions{Width: 20, Height: 31, MaxSlope: 5}), 0},
 	} {
 		out, err := c.m.PNG().ToBytes()
 		if err != nil {
@@ -140,6 +141,9 @@ func TestLevelFormulas(t *testing.T) {
 		{"Convolve 2x3", FromImage(m).Convolve(Convolution{Width: 2, Height: 3, Weights: make([]float64, 6)})},
 		{"Convolve short", FromImage(m).Convolve(Convolution{Width: 3, Height: 3, Weights: make([]float64, 8)})},
 		{"Convolve NaN", FromImage(m).Convolve(Convolution{Width: 1, Height: 1, Weights: []float64{math.NaN()}})},
+		{"CLAHE 0x5", FromImage(m).CLAHE(CLAHEOptions{Width: 0, Height: 5})},
+		{"CLAHE 4097", FromImage(m).CLAHE(CLAHEOptions{Width: 4097, Height: 5})},
+		{"CLAHE slope 101", FromImage(m).CLAHE(CLAHEOptions{Width: 5, Height: 5, MaxSlope: 101})},
 	} {
 		if _, err := c.m.PNG().ToBytes(); err == nil {
 			t.Errorf("%s: no error", c.what)

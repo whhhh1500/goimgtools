@@ -287,6 +287,9 @@ func FuzzChain(f *testing.F) {
 		if extra>>12&3 == 3 {
 			m.Median(3 + 2*int(h%4))
 		}
+		if extra>>16&3 == 3 {
+			m.CLAHE(CLAHEOptions{Width: 1 + int(w%70), Height: 1 + int(h%70), MaxSlope: int(more % 101)})
+		}
 		if extra>>14&3 == 3 {
 			cw, ch := 1+2*int(w%3), 1+2*int(h%3)
 			k := make([]float64, cw*ch)

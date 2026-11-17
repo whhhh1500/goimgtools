@@ -281,6 +281,19 @@ the picture as libwebp's animation decoder does (`src/demux/anim_decode.c`:
 arithmetic, so that the frames come out as libwebp draws them; it was
 rewritten in Go.
 
+## libvips
+
+`CLAHE` (`internal/ops/window.go`) gives the results of libvips' local
+histogram equalization (`libvips/histogram/hist_local.c`, LGPL 2.1), whose
+method it follows: a window's histogram moved a column at a time, counts
+cut at the slope and what is cut spread over the levels, the image
+mirrored past its edges. It was written afresh in Go (the cut counts are
+kept in blocks, and what is cut off follows from them); no code of libvips
+is included. The blend modes of `Composite` (`internal/ops/blend.go`) and
+`Normalize`'s percentiles (`internal/ops/levels.go`) reproduce libvips'
+arithmetic as observed through sharp and the vips command, without its
+code.
+
 ## apngdis
 
 `blendOver` in `animate.go` composites a frame of an APNG over the picture

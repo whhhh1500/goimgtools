@@ -11,8 +11,8 @@ import (
 )
 
 // The operations on levels and neighbourhoods, after sharp's: Negate,
-// Linear, Gamma, Threshold, Tint, Normalize, Median and Convolve. They
-// work a few rows at a time, except Normalize, which counts the whole
+// Linear, Gamma, Threshold, Tint, Normalize, CLAHE, Median and Convolve.
+// They work a few rows at a time, except Normalize, which counts the whole
 // image first.
 
 // Negate turns every colour into its opposite: each red, green and blue
@@ -101,6 +101,39 @@ func (m *Image) Normalize(opts ...NormalizeOptions) *Image {
 		return m.fail(errors.New("goimgtools: Normalize wants 0 <= Lower < Upper <= 100"))
 	}
 	return m.add(normalizeOp{o})
+}
+
+// CLAHEOptions are the settings of CLAHE.
+type CLAHEOptions struct {
+	// Width and Height are the window around each pixel whose levels it
+	// is equalized among, in pixels, 1 to 4096 (sharp has no default; a
+	// few percent of the image's sides is usual).
+	Width, Height int
+	// MaxSlope limits how much the contrast is raised, 1 to 100: each
+	// level counts at most this many pixels of the window, what is above
+	// spread evenly over all levels. 0 means sharp's default, 3.
+	MaxSlope int
+}
+
+// CLAHE raises the contrast locally, bringing out details in dark and
+// light areas: contrast-limited adaptive histogram equalization, as sharp's
+// clahe (libvips' hist_local), to the byte for an image without
+// transparency. Each red, green and blue level of a pixel becomes its rank
+// among the levels of the window around it, the window mirrored past the
+// image's edges (libvips refuses a window larger than the image; here it
+// is mirrored again). Transparency is kept. The memory it takes is Height
+// rows of the image.
+func (m *Image) CLAHE(o CLAHEOptions) *Image {
+	if o.Width < 1 || o.Height < 1 || o.Width > 4096 || o.Height > 4096 {
+		return m.fail(errors.New("goimgtools: CLAHE Width and Height must be 1 to 4096"))
+	}
+	if o.MaxSlope < 0 || o.MaxSlope > 100 {
+		return m.fail(errors.New("goimgtools: CLAHE MaxSlope must be 0 to 100"))
+	}
+	if o.MaxSlope == 0 {
+		o.MaxSlope = 3
+	}
+	return m.add(claheOp{o})
 }
 
 // Median gives each pixel the middle value of the size x size square
@@ -223,6 +256,15 @@ func (o normalizeOp) apply(src pipeline.Source, r *run) (pipeline.Source, error)
 	return ops.Normalize(src, o.o.Lower, o.o.Upper)
 }
 
+type claheOp struct{ o CLAHEOptions }
+
+func (o claheOp) apply(src pipeline.Source, r *run) (pipeline.Source, error) {
+	if r.sizeOnly {
+		return src, nil
+	}
+	return ops.CLAHE(src, o.o.Width, o.o.Height, o.o.MaxSlope)
+}
+
 type medianOp struct{ size int }
 
 func (o medianOp) apply(src pipeline.Source, r *run) (pipeline.Source, error) {
@@ -329,6 +371,25 @@ var levelOps = map[string]OperationDef{
 				}
 			}
 			m.Normalize(o)
+			return nil
+		}},
+	"clahe": {Name: "clahe", Usage: "WIDTH,HEIGHT[,MAXSLOPE]", Help: "CLAHE: local contrast, equalized within a WIDTH x HEIGHT window, raised at most MAXSLOPE (3)",
+		builtIn: func(m *Image, a []string) error {
+			if err := wantArgs(a, 2, 3); err != nil {
+				return err
+			}
+			v, err := argInts(a)
+			if err != nil {
+				return err
+			}
+			o := CLAHEOptions{Width: v[0], Height: v[1]}
+			if len(v) == 3 {
+				if v[2] == 0 {
+					return errors.New("MAXSLOPE is 1 to 100")
+				}
+				o.MaxSlope = v[2]
+			}
+			m.CLAHE(o)
 			return nil
 		}},
 	"median": {Name: "median", Usage: "[SIZE]", Help: "Median: the middle value of the SIZE x SIZE square (3 by default)",

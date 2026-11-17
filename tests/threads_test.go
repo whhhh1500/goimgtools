@@ -60,6 +60,7 @@ func TestSameWithHelpers(t *testing.T) {
 		"mild sharpen": func(m *Image) *Image { return m.Sharpen() },
 		"modulate":     func(m *Image) *Image { return m.Modulate(1.1, 1.4, 33) },
 		"median 5":     func(m *Image) *Image { return m.Median(5) },
+		"clahe":        func(m *Image) *Image { return m.CLAHE(CLAHEOptions{Width: 17, Height: 12}) },
 		"convolve": func(m *Image) *Image {
 			return m.Convolve(Convolution{Width: 3, Height: 3, Weights: []float64{1, 2, 1, 2, 4, 2, 1, 2, 1}})
 		},
