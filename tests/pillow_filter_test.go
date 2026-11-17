@@ -1,6 +1,8 @@
 package tests
 
 import (
+	"bytes"
+	"math"
 	"testing"
 
 	. "github.com/whhhh1500/goimgtools"
@@ -80,6 +82,54 @@ func TestPillowFilters(t *testing.T) {
 		FromBytes(rgb).Convolve(Convolution{Width: 3, Height: 3, Weights: make([]float64, 9), Method: 2})} {
 		if _, err := m.PNG().ToBytes(); err == nil {
 			t.Errorf("bad arguments %d accepted", i)
+		}
+	}
+}
+
+// TestPillowBoxBlur: BoxBlur is Pillow's ImageFilter.BoxBlur, to the byte,
+// for whole and fractional radii, in colour and grey, and the same with
+// helpers; 0 leaves the image alone. The sums are of Pillow 12.1.1's pixels.
+func TestPillowBoxBlur(t *testing.T) {
+	for _, c := range []struct {
+		in     string
+		radius float64
+		sum    string
+	}{
+		{"pillow/source.png", 0.5, "1eab8545fcefae9f"},
+		{"pillow/source.png", 1, "297ff2e6d6447ffd"},
+		{"pillow/source.png", 1.3, "a10c5f99598f5939"},
+		{"pillow/source.png", 2.7, "5abb2e9a81ac6461"},
+		{"pillow/source.png", 10, "a8559f29ab92aef3"},
+		{"pillow/source.png", 40, "585861d231fdc359"},
+		{"pillow/source.png", 200, "97883072bf6a29eb"},
+		{"pillow/gray.png", 0.5, "2090791b03aa7105"},
+		{"pillow/gray.png", 1, "3c512b08fab9cf9b"},
+		{"pillow/gray.png", 1.3, "a5332c01faf0e685"},
+		{"pillow/gray.png", 2.7, "ee147cbae957eef6"},
+		{"pillow/gray.png", 10, "eb46fa4caaa105bf"},
+		{"pillow/gray.png", 40, "2360f6cb92a1fc56"},
+		{"pillow/gray.png", 200, "4b21abc3b39bc616"},
+	} {
+		for _, threads := range []int{1, 4} {
+			out, err := FromBytes(sourcePNG(t, c.in)).Threads(threads).BoxBlur(c.radius).PNG().ToBytes()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := rgbaSum(t, decodePNG(t, out)); got != c.sum {
+				t.Errorf("%s radius %v, %d threads: %s, Pillow's is %s", c.in, c.radius, threads, got, c.sum)
+			}
+		}
+	}
+	in := sourcePNG(t, "pillow/source.png")
+	if a, b := must(FromBytes(in).BoxBlur(0).PNG().ToBytes()), must(FromBytes(in).PNG().ToBytes()); !bytes.Equal(a, b) {
+		t.Error("BoxBlur(0) changed the image")
+	}
+	if b := must(FromBytes(in).Do("boxblur", "2.5").PNG().ToBytes()); !bytes.Equal(b, must(FromBytes(in).BoxBlur(2.5).PNG().ToBytes())) {
+		t.Error("boxblur by name: another image")
+	}
+	for _, r := range []float64{-1, 1001, math.NaN()} {
+		if _, err := FromBytes(in).BoxBlur(r).PNG().ToBytes(); err == nil {
+			t.Errorf("BoxBlur(%v) accepted", r)
 		}
 	}
 }

@@ -375,6 +375,28 @@ type blurOp struct {
 	o     BlurOptions
 }
 
+// BoxBlur gives each pixel the mean of the square of side 2*radius+1
+// around it, as Pillow's ImageFilter.BoxBlur, to the byte for an image
+// without transparency (whose transparent pixels lend no colour, as with
+// Blur). radius is 0 to 1000 and may be fractional (the pixels at the edge
+// of the square then count in part); 0 leaves the image as it is. The
+// time it takes does not grow with the radius.
+func (m *Image) BoxBlur(radius float64) *Image {
+	if !(radius >= 0) || radius > ops.MaxSigma {
+		return m.fail(errors.New("goimgtools: BoxBlur radius must be 0 to 1000"))
+	}
+	return m.add(boxBlurOp{radius})
+}
+
+type boxBlurOp struct{ radius float64 }
+
+func (o boxBlurOp) apply(src pipeline.Source, r *run) (pipeline.Source, error) {
+	if r.sizeOnly || o.radius == 0 {
+		return src, nil
+	}
+	return ops.BoxBlur(src, o.radius)
+}
+
 func (o blurOp) apply(src pipeline.Source, r *run) (pipeline.Source, error) {
 	if r.sizeOnly {
 		return src, nil

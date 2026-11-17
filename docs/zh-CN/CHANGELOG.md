@@ -51,6 +51,7 @@
 - 分辨率：`Info.Density`（每英寸像素数，读取自 JFIF、EXIF、pHYs、TIFF 与 BMP），默认保留到输出，`Density(dpi)` / `-density` 可设置；自定义格式可用 `EncodeOptions.Density` 与 `pipeline.Meta.Density`。`info` 会显示它。
 - `ExtendWith`（类型 `ExtendMode`：`ExtendCopy`、`ExtendRepeat`、`ExtendMirror`）/ `-extend-with`：用图像本身扩边，与 sharp 带 `extendWith` 的 `extend` 逐像素一致；`Do("extend")` 在颜色的位置接受 copy、repeat 或 mirror。
 - `Filter`（类型 `ImageFilter`）：Pillow 的内置滤镜（模糊、轮廓、细节、边缘增强、浮雕、找边、锐化、平滑），以及 `Convolution.Method` 的 `ConvolvePillow`：其 `ImageFilter.Kernel`，逐字节一致；按名字调用 `filter NAME` 与 `convolve …,pillow`。
+- `BoxBlur(radius)`（`boxblur`）：即 Pillow 的 `ImageFilter.BoxBlur`，逐字节一致，含小数半径。
 - Pillow 的 `ImageOps` 与 `ImageEnhance`，逐字节一致：`Posterize`、`Solarize`、`Equalize`、`AutoContrast`（`AutoContrastOptions`）与 `Enhance`（类型 `Enhancement`：`EnhanceColor`、`EnhanceContrast`、`EnhanceBrightness`、`EnhanceSharpness`）；按名字调用 posterize、solarize、equalize、autocontrast、enhance。
 - `ResizeOptions.Method`（类型 `ResizeMethod`）/ `-resize-method`：`ResizeLibvips` 即 sharp 的 `resize`，逐字节一致，涵盖所有核、fit、位置与背景，包括解码时缩小的 JPEG，以及配合 `FastShrinkOnLoad` 时按 libwebp 的方式在解码时缩放的 WebP（在 sharp 上核对了 578 次缩放）；`ResizePillow` 即 Pillow 的 `Image.resize`，逐字节一致（核对了 346 次缩放），各种 fit 即 `ImageOps` 的 `contain`、`cover`、`pad`、`fit`，配合 `ResizeOptions.ReducingGap`（`-reducing-gap`）即其 `reducing_gap` 与 `Image.thumbnail`；默认的 `ResizeDraw` 与以前相同。`Do("resize")` 以第七个参数接受 `draw`、`libvips` 或 `pillow`。`KernelBox` 与 `KernelHamming`（`-kernel box`、`hamming`）：Pillow 的 `BOX` 与 `HAMMING`。
 - `ResizeOptions.LinearLight` / `-linear-light`：在线性光下缩放，同 libvips `thumbnail` 的 `linear`；`Do("resize")` 以第六个参数 `linear` 接受。

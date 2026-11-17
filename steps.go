@@ -134,6 +134,8 @@ func describe(op operation) (string, []string) {
 			return "modulate", []string{f(o.brightness), f(o.saturation), f(o.hue), f(o.lightness)}
 		}
 		return "modulate", []string{f(o.brightness), f(o.saturation), f(o.hue)}
+	case boxBlurOp:
+		return "boxblur", []string{f(o.radius)}
 	case blurOp:
 		switch {
 		case o.o.MinAmplitude != 0:
@@ -719,6 +721,18 @@ var builtInOps = map[string]OperationDef{
 				o.Lightness = v[3]
 			}
 			m.Modulate(v[0], v[1], v[2], o)
+			return nil
+		}},
+	"boxblur": {Name: "boxblur", Usage: "RADIUS", Help: "Box blur: each pixel the mean of the square of side 2*RADIUS+1 around it, as Pillow's BoxBlur",
+		builtIn: func(m *Image, a []string) error {
+			if err := wantArgs(a, 1, 1); err != nil {
+				return err
+			}
+			v, err := argFloats(a)
+			if err != nil {
+				return err
+			}
+			m.BoxBlur(v[0])
 			return nil
 		}},
 	"blur": {Name: "blur", Usage: "SIGMA[,libvips[,MIN_AMPLITUDE]]", Help: "Blur: Gaussian, sigma in pixels, as Pillow's; libvips: as sharp's, cut off below MIN_AMPLITUDE of its peak (0.2 by default)",

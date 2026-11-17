@@ -196,17 +196,22 @@ func (b box) value(acc, left, right uint32) uint8 {
 	return uint8((acc*b.ww + (left+right)*b.fw + 1<<23) >> 24)
 }
 
-// hbox blurs a row three times over with the same box.
+// hbox blurs a row passes times over (1 or 3) with the same box.
 type hbox struct {
-	b  box
-	w  int
-	nc int // channels blurred: 3 when there is no transparency, the alpha staying 255
-	t  [2][]uint8
+	b      box
+	w      int
+	nc     int // channels blurred: 3 when there is no transparency, the alpha staying 255
+	passes int
+	t      [2][]uint8
 }
 
 // apply puts the blurred row into dst (whose alpha stays as it is when
 // only the colours are blurred).
 func (h *hbox) apply(dst, row []uint8) {
+	if h.passes == 1 {
+		h.pass(dst, row)
+		return
+	}
 	h.pass(h.t[0], row)
 	h.pass(h.t[1], h.t[0])
 	h.pass(dst, h.t[1])
@@ -610,7 +615,12 @@ func (f *filterStage) fail(err error) error {
 // blurPasses puts the three horizontal and three vertical box blurs for
 // sigma behind f's input.
 func (f *filterStage) blurPasses(sigma float64) (rowSource, error) {
-	b := newBox(boxRadius(sigma, 3))
+	return f.boxPasses(newBox(boxRadius(sigma, 3)), 3)
+}
+
+// boxPasses is the chain of passes that blurs with the box b passes times
+// across and then as many times down.
+func (f *filterStage) boxPasses(b box, passes int) (rowSource, error) {
 	if !b.any {
 		return f.in, nil
 	}
@@ -628,11 +638,11 @@ func (f *filterStage) blurPasses(sigma float64) (rowSource, error) {
 	f.in.out = rowBatch(rows, w4)
 	f.in.hblur = make([]rowPass, ways)
 	for g := range f.in.hblur {
-		f.in.hblur[g] = &hbox{b: b, w: w, nc: nc, t: [2][]uint8{opaqueRow(w4), opaqueRow(w4)}}
+		f.in.hblur[g] = &hbox{b: b, w: w, nc: nc, passes: passes, t: [2][]uint8{opaqueRow(w4), opaqueRow(w4)}}
 	}
 	var last rowSource = f.in
 	h := f.in.h
-	for i := 0; i < 3; i++ {
+	for i := 0; i < passes; i++ {
 		// The sums, and the batch of rows worked out.
 		if err := f.reserve(int64(w4)*int64(4+rows), "blur sums"); err != nil {
 			return nil, err
@@ -682,6 +692,26 @@ func Blur(src pipeline.Source, sigma float64) (pipeline.Source, error) {
 	f := newFilter(src)
 	if err := f.setup(func() (err error) {
 		f.last, err = f.blurPasses(sigma)
+		return err
+	}); err != nil {
+		return nil, f.fail(err)
+	}
+	f.finish = func(_ int, row []uint8, dst []uint8) error {
+		copy(dst, row)
+		return nil
+	}
+	return f, nil
+}
+
+// BoxBlur blurs src as Pillow's ImageFilter.BoxBlur: each pixel the mean
+// of the square of side 2*radius+1 around it (radius may be fractional:
+// the pixels at the ends then count in part), across and then down, each
+// rounded to 8 bits, the pixels beyond the edges the edge pixels repeated.
+// Colours are blurred premultiplied, as by Blur.
+func BoxBlur(src pipeline.Source, radius float64) (pipeline.Source, error) {
+	f := newFilter(src)
+	if err := f.setup(func() (err error) {
+		f.last, err = f.boxPasses(newBox(float32(radius)), 1)
 		return err
 	}); err != nil {
 		return nil, f.fail(err)

@@ -70,6 +70,7 @@ err := goimgtools.Open("in.jpg").
 | `Dilate(width)`、`Erode(width)` | 与 sharp 的 `dilate`、`erode` 逐字节一致：每个通道取 2·width+1 像素方块（1–65536）的按位与（dilate）或按位或（erode）。在黑白图像（如 `Threshold` 的结果）上，dilate 让黑色图形（白底上的文字）扩张 width 像素，erode 让其收缩；其他图像请用 `Rank`。耗时几乎不随 width 增长 |
 | `Convolve(Convolution{Width, Height, Weights, Scale, Offset})` | 自定义卷积核（边长为奇数，最大 99）：窗口加权和除以 `Scale`（默认为权重之和）再加 `Offset`。与 sharp 的 `convolve` 逐字节一致；例如权重 `0,-1,0,-1,5,-1,0,-1,0` 为锐化，`-1,-1,-1,-1,8,-1,-1,-1,-1` 配合 `Scale: 1` 为边缘检测 |
 | `Blur(sigma, BlurOptions{Method, MinAmplitude})` | 高斯模糊，sigma 须大于 0 且不超过 1000 像素。默认（`BlurPillow`）为 Pillow 的 `GaussianBlur`：三次方框模糊，不含透明的图像与 Pillow 逐字节一致。`BlurLibvips` 与 sharp 的 `blur` 逐字节一致（含透明图像）：直接用高斯核，权重为 libvips 的整数权重，在低于峰值的 `MinAmplitude` 处截断（默认 0.2，即 sharp 的 `minAmplitude`，因此同一 sigma 下比 Pillow 模糊得轻）。两种方式的耗时都几乎不随 sigma 变化 |
+| `BoxBlur(radius)` | 方框模糊：每个像素取其周围边长 2×radius+1 的正方形的均值（radius 可为小数，边缘像素按比例计入），0 至 1000；即 Pillow 的 `ImageFilter.BoxBlur`，不含透明的图像逐字节一致。按名字调用 `boxblur RADIUS` |
 | `Sharpen()` | 轻度锐化（sharp 的 3×3 卷积核），适用于缩小之后 |
 | `Sharpen(SharpenOptions{Sigma, Amount, Threshold})` | 反锐化掩模（Pillow 的 `UnsharpMask`），`Amount` 默认为 1.5 |
 | `Sharpen(SharpenOptions{Sigma, Method: SharpenLibvips, Curve})` | sharp 带 sigma 的 `sharpen`：只锐化明度（L\*a\*b\* 的 L\*），颜色不偏移；`Curve`（`SharpenCurve{Flat, Jagged, JaggedFrom, MaxBrighten, MaxDarken}`，即 sharp 的 m1、m2、x1、y2、y3；nil 为 sharp 的默认值）把与模糊的差映射为改变量。与 sharp 的结果仅在少数像素上相差 1 级 |

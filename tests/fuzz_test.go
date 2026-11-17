@@ -248,6 +248,7 @@ func FuzzChain(f *testing.F) {
 		}
 		if has(2) {
 			m.Blur(0.3+float64(more>>9), BlurOptions{Method: BlurMethod(h & 1)})
+			m.BoxBlur(float64(more>>10) / 3)
 		}
 		if has(3) {
 			m.Sharpen()
