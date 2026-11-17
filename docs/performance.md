@@ -27,16 +27,16 @@ Measurements (6000×4000; output byte-for-byte identical at every thread count):
 
 | Case | 1 thread | 3 threads | 4 threads | 8 threads |
 |---|---|---|---|---|
-| JPEG to JPEG, without shrinking | 0.23s | 0.13s | 0.10s | 0.11s |
-| JPEG to PNG, without shrinking (level 7) | 2.10s | 1.89s | 1.16s | 0.49s |
-| RGB PNG to PNG, without shrinking (level 7) | 1.58s | 1.01s | 0.71s | 0.45s |
-| JPEG shrunk to 1536 | 0.22s | 0.14s | 0.14s | 0.14s |
-| JPEG to lossy WebP, without shrinking | 4.12s | — | 2.17s | 0.91s |
-| Real photograph 3840×2160 to lossy WebP | 1.13s | — | 0.73s | 0.52s |
-| 1080p enlarged to 4K | 0.12s | 0.11s | 0.11s | 0.10s |
-| 1080p enlarged to 8K | 0.40s | 0.33s | 0.29s | 0.24s |
+| JPEG to JPEG, without shrinking | 0.16s | 0.09s | 0.08s | 0.08s |
+| JPEG to PNG, without shrinking (level 7) | 1.55s | 1.46s | 0.83s | 0.47s |
+| RGB PNG to PNG, without shrinking (level 7) | 1.75s | 1.46s | 0.82s | 0.43s |
+| JPEG shrunk to 1536 | 0.17s | 0.09s | 0.10s | 0.09s |
+| JPEG to lossy WebP, without shrinking | 4.66s | — | 2.50s | 1.15s |
+| Real photograph 3840×2160 to lossy WebP | 0.98s | — | 0.53s | 0.29s |
+| 1080p enlarged to 4K | 0.10s | 0.08s | 0.07s | 0.07s |
+| 1080p enlarged to 8K | 0.37s | 0.30s | 0.26s | 0.21s |
 
-**SIMD on amd64 and arm64**: every kernel below also has a NEON version for arm64 (Apple silicon, Graviton, Ampere; with Go 1.27 or later, whose assembler has the instructions: with Go 1.26 arm64 uses the Go code), tested against the Go code the same way. On processors with AVX2 (unless built with the `purego` tag) the JPEG decoder's inverse DCT and its conversion of colour, with the upsampling of the chroma (halved both ways or across, or at full size), run as assembly after libjpeg-turbo's SIMD code, on the arithmetic of the Go code, lane by lane: every byte is the same on every processor (the tests compare them on 200,000 blocks, corrupt ones included, and every row width up to 300). A 6000×4000 JPEG (quality 90) decodes on one core in 99ms (4:2:0), 109ms (4:2:2) and 126ms (4:4:4); libjpeg-turbo with its SIMD, through Pillow 12.1.1, takes 101, 110 and 121ms, the Go code alone 208, 226 and 250ms. The JPEG encoder's conversion of RGB to YCbCr, its downsampling of the chroma, its forward DCT and its quantization run the same way: the 6000×4000 photograph written at quality 85 in 100ms (libjpeg-turbo with its SIMD, through Pillow: 66ms; the Go code alone: 213ms), with optimized Huffman tables in 168ms (167ms; 388ms). `ResizeLibvips`'s reduce (each output the weighted sum of its window, in 12-bit fixed point, down the columns and across the rows) and the decoding of a JPEG shrunk by half on load (libjpeg's 4×4 inverse DCT) run the same way: a 6000×4000 JPEG (4:2:0) fitted into 1536×1536 with Lanczos 3 and `FastShrinkOnLoad`, written as a JPEG of quality 80 with optimized tables, sharp's file to the byte, in 109ms on one core (sharp: 92ms; the Go code alone: 196ms). The lossy WebP decoder's inverse transform, its loop filter and its upsampling and conversion of colour run the same way, after libwebp's SSE2 code: a 6000×4000 lossy WebP decodes on one core in 0.33s, libwebp 1.6 with its SIMD (through Pillow) in 0.50s, the Go code alone in 0.56s. The default resize (`x/image`'s arithmetic, in float64) makes its sums down and across with the four channels of a pixel in the lanes of one register (two on arm64), each product rounded and then added, never fused, in the order of the Go code, so every sum is the same to the bit: a 6000×4000 JPEG fitted into 1536×1536 and written as a JPEG in 0.22s on one core instead of 0.31s. The lossy WebP encoder's 4×4 forward transform (after libwebp's FTransform_SSE2), inverse transform, quantization and squared error, and the histogram of coefficients by which it sorts macroblocks into segments, run the same way: a 6000×4000 photograph at quality 80 is encoded on one core in 4.4s at the default effort, 2.6s at effort 1 (the Go code alone: 7.1s and 3.9s; libwebp 1.6 with its SIMD, through sharp: 5.7s at its slowest method 6, 2.0s at its default method 4).
+**SIMD on amd64 and arm64**: every kernel below also has a NEON version for arm64 (Apple silicon, Graviton, Ampere; with Go 1.27 or later, whose assembler has the instructions: with Go 1.26 arm64 uses the Go code), tested against the Go code the same way. On processors with AVX2 (unless built with the `purego` tag) the JPEG decoder's inverse DCT and its conversion of colour, with the upsampling of the chroma (halved both ways or across, or at full size), run as assembly after libjpeg-turbo's SIMD code, on the arithmetic of the Go code, lane by lane: every byte is the same on every processor (the tests compare them on 200,000 blocks, corrupt ones included, and every row width up to 300). A 6000×4000 JPEG (quality 90) decodes on one core in 99ms (4:2:0), 109ms (4:2:2) and 126ms (4:4:4); libjpeg-turbo with its SIMD, through Pillow 12.1.1, takes 101, 110 and 121ms, the Go code alone 208, 226 and 250ms. The JPEG encoder's conversion of RGB to YCbCr, its downsampling of the chroma, its forward DCT and its quantization run the same way: the 6000×4000 photograph written at quality 85 in 100ms (libjpeg-turbo with its SIMD, through Pillow: 66ms; the Go code alone: 213ms), with optimized Huffman tables in 168ms (167ms; 388ms). `ResizeLibvips`'s reduce (each output the weighted sum of its window, in 12-bit fixed point, down the columns and across the rows) and the decoding of a JPEG shrunk by half on load (libjpeg's 4×4 inverse DCT) run the same way: a 6000×4000 JPEG (4:2:0) fitted into 1536×1536 with Lanczos 3 and `FastShrinkOnLoad`, written as a JPEG of quality 80 with optimized tables, sharp's file to the byte, in 109ms on one core (sharp: 92ms; the Go code alone: 196ms). The lossy WebP decoder's inverse transform, its loop filter and its upsampling and conversion of colour run the same way, after libwebp's SSE2 code: a 6000×4000 lossy WebP decodes on one core in 0.33s, libwebp 1.6 with its SIMD (through Pillow) in 0.50s, the Go code alone in 0.56s. The default resize (`x/image`'s arithmetic, in float64) makes its sums down and across with the four channels of a pixel in the lanes of one register (two on arm64), each product rounded and then added, never fused, in the order of the Go code, so every sum is the same to the bit: a 6000×4000 JPEG fitted into 1536×1536 and written as a JPEG in 0.17s on one core instead of 0.25s. Lossy WebP from colours (not Y'CbCr: PNG, a resized or flattened image) goes through sharp YUV, whose four passes share each step's columns among the helpers and run its upsampling and corrections with AVX2 or NEON, every sample libwebp's. The lossy WebP encoder's 4×4 forward transform (after libwebp's FTransform_SSE2), inverse transform, quantization and squared error, and the histogram of coefficients by which it sorts macroblocks into segments, run the same way: a 6000×4000 photograph at quality 80 is encoded on one core in 4.4s at the default effort, 2.6s at effort 1 (the Go code alone: 7.1s and 3.9s; libwebp 1.6 with its SIMD, through sharp: 5.7s at its slowest method 6, 2.0s at its default method 4).
 
 **Optimized Huffman tables** (`JPEGOptions.Optimize`): the first pass stages each block's symbols in a spill (a byte each, the bits of the value after it; about half a byte per pixel of a photograph, in memory under the limit and on disk above it) while counting them, and the second writes them again with the tables made of the counts; libjpeg keeps the coefficients of the whole image instead (3 bytes per pixel at 4:2:0).
 
@@ -94,20 +94,20 @@ The JPEG written here is 5% smaller (120,675 bytes against 127,372, libjpeg-turb
 
 | Operation | Output file | Peak memory | Time |
 |---|---|---|---|
-| Without shrinking, to JPEG (quality 85) | 5.9MB | 6.0MB | 0.23s |
-| Without shrinking, to PNG | 41.9MB | 9.2MB | 1.98s |
-| Without shrinking, to lossy WebP (quality 75) | 3.5MB | 20.3MB | 4.12s (0.91s with 8 threads; effort 1: 2.28s, 0.55s) |
-| Without shrinking, to lossless WebP | 27.6MB | 25.6MB | 5.13s (4.70s with 8 threads) |
-| Without shrinking, to BMP | 72MB | 6.7MB | 0.28s |
-| Without shrinking, to TIFF (uncompressed) | 96MB | 6.4MB | 0.26s |
-| Rotate 90°, without shrinking | 6.0MB | 12.4MB | 1.18s |
-| Rotate 90°, then shrink to 1536 | 0.1MB | 15.5MB | 0.25s |
-| Shrink to 1536, GIF output | 0.5MB | 12.9MB | 0.48s |
-| Without shrinking, outlined text watermark tiled across the whole image | 6.2MB | 10.6MB | 0.67s |
-| Shrink to 1536, lossy WebP output | 10KB | 9.2MB | 0.37s |
+| Without shrinking, to JPEG (quality 85) | 5.9MB | 6.0MB | 0.16s |
+| Without shrinking, to PNG | 42.2MB | 9.2MB | 1.52s |
+| Without shrinking, to lossy WebP (quality 75) | 3.2MB | 20.3MB | 4.62s (1.15s with 8 threads; effort 1: 2.11s, 0.48s) |
+| Without shrinking, to lossless WebP | 28.9MB | 25.6MB | 4.79s (4.49s with 8 threads) |
+| Without shrinking, to BMP | 72MB | 6.7MB | 0.15s |
+| Without shrinking, to TIFF (uncompressed) | 96MB | 6.4MB | 0.10s |
+| Rotate 90°, without shrinking | 6.0MB | 12.4MB | 0.73s |
+| Rotate 90°, then shrink to 1536 | 0.1MB | 15.5MB | 0.20s |
+| Shrink to 1536, GIF output | 0.5MB | 12.9MB | 0.43s |
+| Without shrinking, outlined text watermark tiled across the whole image | 6.3MB | 10.6MB | 0.22s |
+| Shrink to 1536, lossy WebP output | 10KB | 9.2MB | 0.30s |
 
 - When rotating by 90° without shrinking, the 96MB of pixel data is held in a temporary file; with all data in memory (a limit of 768MB or more), the time is about 0.8s and the peak about 108MB.
-- Lossless WebP from PNG RGB 6000×4000 (41.6MB; the same image as in the table above): output 27.6MB, peak 25.8MB, 5.35s (4.67s with 8 threads). (Before the encoder stopped trying the same Huffman grouping once for every block size it asks for, when a large image makes them all the same: 32.6MB and 8.87s. Version 0.1.0, without the optimal parse: 22.2MB and 4.15s, for a file 0.004% larger: the noise of a photograph from a JPEG leaves little for the parse to find.)
+- Lossless WebP from PNG RGB 6000×4000 (42.2MB; the same image as in the table above): output 28.9MB, peak 25.9MB, 4.99s (4.50s with 8 threads). (Before the encoder stopped trying the same Huffman grouping once for every block size it asks for, when a large image makes them all the same: 32.6MB and 8.87s. Version 0.1.0, without the optimal parse: 22.2MB and 4.15s, for a file 0.004% larger: the noise of a photograph from a JPEG leaves little for the parse to find.)
 - Lossy WebP with transparency (the 6000×4000 photograph in a soft round window, quality 75): 2.85MB, peak 26.6MB, 12.9s (6.0s with 8 threads; before the alpha plane was coded by the lossless encoder, 4.29MB, 20.9MB, 10.9s and 3.1s). The alpha plane is coded on one core, in up to 8MB of its own; at 24 megapixels, it is coded without the lossless encoder's optimal parse below effort 7.
 - Before encoding, lossy WebP must convert the whole image to YUV, store it, and measure every macroblock (as required by segment-based quantization; see [Compatibility and comparisons](compatibility.md#webp-encoders)). Images of no more than 256KB after conversion are kept in memory; larger ones are written directly to a temporary file and read back only row by row. Measurements show no effect on the time.
 - GIF output without shrinking takes 2.0s (peak 11.8MB). With a fixed palette (`FixedPalette`), it takes 4.3s: the colour search order on that path has been optimized; the result is byte-for-byte identical to the standard library and is produced more than 3 times as fast as by comparing one colour at a time.
@@ -118,18 +118,18 @@ Times for this library include decoding and encoding. The Pillow column gives th
 
 | Operation | 1 thread | 3 threads | 6 threads | Peak memory (1 / 6 threads) | Pillow, this step only |
 |---|---|---|---|---|---|
-| No operation | 0.20s | 0.12s | 0.12s | 6.9 / 12.7MB | — |
-| `Grayscale()` | 0.24s | 0.14s | 0.13s | 6.9 / 12.6MB | 0.02s |
-| `Modulate(1.1, 1.3, 20)` | 0.77s | 0.54s | 0.44s | 7.3 / 14.2MB | — |
-| `Blur(2)` | 0.34s | 0.19s | 0.16s | 10.2 / 17.9MB | 0.38s |
-| `Blur(40)` | 0.34s | 0.20s | 0.21s | 16.4 / 24.4MB | 0.38s |
-| `Sharpen()` (light) | 0.40s | 0.21s | 0.14s | 8.3 / 16.1MB | 0.24s (Pillow's `SHARPEN`, also 3×3) |
-| `Sharpen(SharpenOptions{Sigma: 2})` | 0.42s | 0.23s | 0.19s | 10.9 / 19.9MB | 0.48s |
-| `Trim(10)` | 0.29s | 0.22s | 0.20s | 7.6 / 13.3MB | — |
-| `Extend(50, 50, 50, 50, white)` | 0.22s | 0.14s | 0.13s | 7.9 / 15.4MB | 0.02s |
-| `RotateBy(30, white)`, output 7197×6465 | 0.71s | 0.58s | 0.43s | 12.6 / 19.7MB | 0.57s |
+| No operation | 0.16s | 0.09s | 0.08s | 6.9 / 12.7MB | — |
+| `Grayscale()` | 0.20s | 0.09s | 0.08s | 6.9 / 12.6MB | 0.02s |
+| `Modulate(1.1, 1.3, 20)` | 0.71s | 0.50s | 0.36s | 7.3 / 14.2MB | — |
+| `Blur(2)` | 0.29s | 0.17s | 0.13s | 10.2 / 17.9MB | 0.38s |
+| `Blur(40)` | 0.29s | 0.18s | 0.19s | 16.4 / 24.4MB | 0.38s |
+| `Sharpen()` (light) | 0.35s | 0.19s | 0.12s | 8.3 / 16.1MB | 0.24s (Pillow's `SHARPEN`, also 3×3) |
+| `Sharpen(SharpenOptions{Sigma: 2})` | 0.37s | 0.20s | 0.16s | 10.9 / 19.9MB | 0.48s |
+| `Trim(10)` | 0.24s | 0.17s | 0.15s | 7.6 / 13.3MB | — |
+| `Extend(50, 50, 50, 50, white)` | 0.17s | 0.09s | 0.08s | 7.9 / 15.4MB | 0.02s |
+| `RotateBy(30, white)`, output 7197×6465 | 0.66s | 0.53s | 0.38s | 12.6 / 19.7MB | 0.57s |
 
-- Single-threaded, after subtracting the 0.20s of the no-operation case: blur adds 0.14s (Pillow 0.38s) and the unsharp mask 0.22s (0.48s), their box passes running with AVX2 or NEON on Pillow's integer arithmetic, every byte the same; trimming adds 0.09s, its 3×3 median taken 32 bytes at a time; rotation by 30° adds 0.51s, of which about 0.08s is spent encoding the additional 22 MP (estimated from the encoding time per megapixel), so the rotation itself takes about 0.43s, against Pillow's 0.57s.
+- Single-threaded, after subtracting the 0.16s of the no-operation case: blur adds 0.13s (Pillow 0.38s) and the unsharp mask 0.21s (0.48s), their box passes running with AVX2 or NEON on Pillow's integer arithmetic, every byte the same; trimming adds 0.08s, its 3×3 median taken 32 bytes at a time; rotation by 30° adds 0.50s, of which about 0.08s is spent encoding the additional 22 MP (estimated from the encoding time per megapixel), so the rotation itself takes about 0.42s, against Pillow's 0.57s.
 - With the memory limit lowered to 16MB (staged rows written to a temporary file), blur, sharpening, rotation and trimming produce results pixel-for-pixel identical to those without a memory limit (compared as PNG output); time increases by 0–15%, and peak memory remains within 13MB in all cases.
 
 Evaluated but not implemented:
