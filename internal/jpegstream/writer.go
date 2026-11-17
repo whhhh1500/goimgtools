@@ -210,11 +210,13 @@ type encoder struct {
 	// recip is recip(8 * quant), for dividing by a quantization value
 	// without a division.
 	recip [nQuantIndex][blockSize]uint64
+	// natHalf and natRecip are half of 8 * quant and recip, in natural
+	// order, for fdctQuantAVX2.
+	natHalf  [nQuantIndex][blockSize]int32
+	natRecip [nQuantIndex][blockSize]uint32
 	// deadZone, when set, is how far from zero (in 1/100000 of a step) an
 	// AC coefficient of each table must be to be kept (QuantTableJpegli).
 	deadZone *[2]int64
-	// freq, when set, counts the symbols emitHuff writes (Options.Optimize).
-	freq *[nHuffIndex][257]int64
 	// trellis is set for Options.Trellis.
 	trellis bool
 	// hY and vY are the sampling factors of Y in a colour image: 2 and 2
@@ -313,33 +315,6 @@ func (e *encoder) padBits() {
 	e.bits, e.nBits = 0, 0
 }
 
-// emitHuff emits the given value with the given Huffman encoder.
-func (e *encoder) emitHuff(h huffIndex, value int32) {
-	if e.freq != nil {
-		e.freq[h][value]++
-	}
-	x := theHuffmanLUT[h][value]
-	e.emit(x&(1<<24-1), x>>24)
-}
-
-// emitHuffRLE emits a run of runLength copies of value encoded with the given
-// Huffman encoder.
-func (e *encoder) emitHuffRLE(h huffIndex, runLength, value int32) {
-	a, b := value, value
-	if a < 0 {
-		a, b = -value, value-1
-	}
-	nBits := uint32(mbits.Len32(uint32(a)))
-	// The code and the bits of the value, in one go.
-	sym := runLength<<4 | int32(nBits)
-	if e.freq != nil {
-		e.freq[h][sym]++
-	}
-	x := theHuffmanLUT[h][sym]
-	n := x >> 24
-	e.emit((x&(1<<24-1))<<nBits|uint32(b)&(1<<nBits-1), n+nBits)
-}
-
 // writeMarkerHeader writes the header for a marker with the given length.
 func (e *encoder) writeMarkerHeader(marker uint8, markerlen int) {
 	e.buf[0] = 0xff
@@ -419,8 +394,17 @@ func (e *encoder) writeBlock(b *block, q quantIndex, prevDC int32) int32 {
 // coefficients of 8-bit samples fit 16 bits.
 type qblock [blockSize]int16
 
-// quantize transforms b (in place) and quantizes it with table q into zz.
+// quantize transforms b (in place, unless with AVX2) and quantizes it with
+// table q into zz.
 func (e *encoder) quantize(b *block, q quantIndex, zz *qblock) {
+	if useAVX2 && e.deadZone == nil {
+		var nat [blockSize]int16
+		fdctQuantAVX2(b, &e.natHalf[q], &e.natRecip[q], &nat)
+		for zig := range zz {
+			zz[zig] = nat[unzig[zig]&(blockSize-1)]
+		}
+		return
+	}
 	fdct(b)
 	e.quantizeCoefs(b, q, zz)
 }
@@ -453,13 +437,9 @@ func (e *encoder) quantizeCoefs(b *block, q quantIndex, zz *qblock) {
 // writeQuantized emits a quantized block, its DC as the difference to
 // prevDC, and returns its DC.
 //
-// It is emitHuffRLE and emitHuff for every value, with the accumulator held
-// in local variables for the whole block; writeCounted does the same while
-// counting the symbols.
+// Each value goes in with its code, the accumulator held in local variables
+// for the whole block.
 func (e *encoder) writeQuantized(zz *qblock, q quantIndex, prevDC int32) int32 {
-	if e.freq != nil {
-		return e.writeCounted(zz, q, prevDC)
-	}
 	dcLUT, acLUT := theHuffmanLUT[2*q], theHuffmanLUT[2*q+1]
 	acc, n := e.bits, e.nBits
 	// Each value goes in as its code x (a huffmanLUT entry) followed by its
@@ -526,30 +506,6 @@ func nonzeros(zz *qblock) uint64 {
 	return nz
 }
 
-// writeCounted is writeQuantized counting the symbols in e.freq.
-func (e *encoder) writeCounted(zz *qblock, q quantIndex, prevDC int32) int32 {
-	// Emit the DC delta.
-	dc := int32(zz[0])
-	e.emitHuffRLE(huffIndex(2*q+0), 0, dc-prevDC)
-	// Emit the AC components: only the nonzero ones are visited.
-	nz := nonzeros(zz) &^ 1
-	h, last := huffIndex(2*q+1), 0
-	for ; nz != 0; nz &= nz - 1 {
-		zig := mbits.TrailingZeros64(nz)
-		runLength := int32(zig - last - 1)
-		for runLength > 15 {
-			e.emitHuff(h, 0xf0)
-			runLength -= 16
-		}
-		e.emitHuffRLE(h, runLength, int32(zz[zig]))
-		last = zig
-	}
-	if last != blockSize-1 {
-		e.emitHuff(h, 0x00)
-	}
-	return dc
-}
-
 // toYCbCr converts the 8x8 region of m whose top-left corner is p to its
 // YCbCr values.
 func toYCbCr(m image.Image, p image.Point, yBlock, cbBlock, crBlock *block) {
@@ -601,6 +557,12 @@ func pixCols(b image.Rectangle, x, bpp int) (col [8]int) {
 // rgbaToYCbCr is a specialized version of toYCbCr for image.RGBA images.
 func rgbaToYCbCr(m *image.RGBA, p image.Point, yBlock, cbBlock, crBlock *block) {
 	b := m.Bounds()
+	if useAVX2 && image.Rect(p.X, p.Y, p.X+8, p.Y+8).In(b) {
+		o := m.PixOffset(p.X, p.Y)
+		_ = m.Pix[o+7*m.Stride+31]
+		rgbaBlockAVX2(&m.Pix[o], m.Stride, yBlock, cbBlock, crBlock)
+		return
+	}
 	col := pixCols(b, p.X, 4)
 	for j := 0; j < 8; j++ {
 		row := m.Pix[(min(p.Y+j, b.Max.Y-1)-b.Min.Y)*m.Stride:]
@@ -794,6 +756,10 @@ func chroma420(m *image.YCbCr, plane []byte, p image.Point, dst *block) {
 // dst block, averaging squares of 4, the rounding bias alternating 1 and 2
 // across as libjpeg's h2v2 downsampling does.
 func scale(dst *block, src *[4]block) {
+	if useAVX2 {
+		scaleAVX2(dst, src)
+		return
+	}
 	for i := 0; i < 4; i++ {
 		dstOff := (i&2)<<4 | (i&1)<<2
 		for y := 0; y < 4; y++ {
@@ -1311,6 +1277,8 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 			}
 			e.quant[i][j] = uint8(x)
 			e.recip[i][j] = recip(8 * int32(x))
+			e.natHalf[i][unzig[j]] = 4 * int32(x)
+			e.natRecip[i][unzig[j]] = uint32(e.recip[i][j])
 		}
 	}
 	// The tables of jpegli come with its dead zone, unless the trellis

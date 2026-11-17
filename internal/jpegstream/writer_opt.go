@@ -20,11 +20,11 @@ package jpegstream
 // specification.
 
 import (
-	"bufio"
 	"errors"
 	"image"
 	"io"
 	"math"
+	mbits "math/bits"
 	"sort"
 
 	"github.com/whhhh1500/goimgtools/pipeline"
@@ -179,121 +179,109 @@ func (e *encoder) writeDHTSpecs(ids []byte, specs []huffmanSpec) {
 	}
 }
 
-// stdDecoder decodes symbols coded with one of the standard tables.
-type stdDecoder struct {
-	// fast maps the next 8 bits to size<<8 | symbol for codes of at most 8
-	// bits, and to 0 for longer ones.
-	fast [256]uint16
-	// For codes of n bits: the first code, how many there are, and where
-	// their symbols start in value.
-	first, count, index [17]int32
-	value               []byte
-}
+const stagedReadBuf = 64 << 10
 
-func (d *stdDecoder) init(s *huffmanSpec) {
-	d.value = s.value
-	code, k := int32(0), int32(0)
-	for i, n := range s.count {
-		size := int32(i + 1)
-		d.first[size], d.count[size], d.index[size] = code, int32(n), k
-		if size <= 8 {
-			for j := int32(0); j < int32(n); j++ {
-				lo := (code + j) << (8 - size)
-				for x := lo; x < lo+1<<(8-size); x++ {
-					d.fast[x] = uint16(size)<<8 | uint16(s.value[k+j])
-				}
-			}
+// The staged symbols of writeOptimized go to the spill in pieces of about
+// stageFlush bytes; a block's take at most stageBlockMax.
+const (
+	stageFlush    = 32 << 10
+	stageBlockMax = 3 * blockSize
+)
+
+// stageBlock appends the symbols of a quantized block, its DC as the
+// difference to prevDC, to b, and counts them in dc and ac: each symbol a
+// byte, followed by the low bits of its value (as writeQuantized writes
+// them) in one byte, or two (little-endian) for more than 8 bits. It
+// returns b and the block's DC.
+func stageBlock(b []byte, zz *qblock, prevDC int32, dc, ac *[257]int64) ([]byte, int32) {
+	value := func(b []byte, v int32, nb uint32) []byte {
+		s := v >> 31
+		x := uint32(v+s) & (1<<nb - 1)
+		switch {
+		case nb == 0:
+			return b
+		case nb <= 8:
+			return append(b, byte(x))
 		}
-		code = (code + int32(n)) << 1
-		k += int32(n)
+		return append(b, byte(x), byte(x>>8))
 	}
-}
-
-// stagedBits reads the entropy-coded data staged in a Spill.
-type stagedBits struct {
-	sp       *pipeline.Spill
-	off      int64
-	buf      []byte
-	r, w     int
-	acc      uint64 // the low n bits are unread
-	n        uint
-	overread int // bytes made up after the end of the data
-	err      error
-}
-
-// fill makes at least 32 bits available. Past the end of the data it
-// supplies zero bytes (decoding looks 16 bits ahead); needing more of them
-// than a look-ahead can explain is an error.
-func (b *stagedBits) fill() {
-	for b.n <= 32 {
-		c, ok := b.readByte()
-		if !ok {
-			b.overread++
-			if b.overread > 8 && b.err == nil {
-				b.err = io.ErrUnexpectedEOF
-			}
-		} else if c == 0xff {
-			// The plain encoder stuffs a zero after every 0xff.
-			b.readByte()
+	d := int32(zz[0])
+	v := d - prevDC
+	s := v >> 31
+	nb := uint32(mbits.Len32(uint32((v ^ s) - s)))
+	dc[nb]++
+	b = value(append(b, byte(nb)), v, nb)
+	nz := nonzeros(zz) &^ 1
+	last := 0
+	for ; nz != 0; nz &= nz - 1 {
+		zig := mbits.TrailingZeros64(nz)
+		run := zig - last - 1
+		for ; run > 15; run -= 16 {
+			ac[0xf0]++
+			b = append(b, 0xf0)
 		}
-		b.acc = b.acc<<8 | uint64(c)
-		b.n += 8
+		v := int32(zz[zig])
+		s := v >> 31
+		nb := uint32(mbits.Len32(uint32((v ^ s) - s)))
+		sym := byte(run<<4) | byte(nb)
+		ac[sym]++
+		b = value(append(b, sym), v, nb)
+		last = zig
 	}
+	if last != blockSize-1 {
+		ac[0x00]++
+		b = append(b, 0x00)
+	}
+	return b, d
 }
 
-func (b *stagedBits) readByte() (byte, bool) {
-	if b.r == b.w {
-		if b.err != nil || b.off >= b.sp.Size() {
-			return 0, false
-		}
-		k := int(min(int64(len(b.buf)), b.sp.Size()-b.off))
-		if n, err := b.sp.ReadAt(b.buf[:k], b.off); n < k {
+// stageReader reads the symbols stageBlock staged in a Spill.
+type stageReader struct {
+	sp   *pipeline.Spill
+	off  int64
+	buf  []byte
+	r, w int
+	err  error
+}
+
+// need makes at least 3 bytes available (a symbol and its value), or what
+// is left of the data; past its end it supplies zero bytes, and sets err.
+func (b *stageReader) need() {
+	if b.w-b.r >= 3 {
+		return
+	}
+	n := copy(b.buf, b.buf[b.r:b.w])
+	b.r, b.w = 0, n
+	if k := int(min(int64(len(b.buf)-n), b.sp.Size()-b.off)); k > 0 && b.err == nil {
+		if m, err := b.sp.ReadAt(b.buf[n:n+k], b.off); m < k {
 			if err == nil {
 				err = io.ErrUnexpectedEOF
 			}
 			b.err = err
-			return 0, false
+		} else {
+			b.off += int64(k)
+			b.w += k
 		}
-		b.off += int64(k)
-		b.r, b.w = 0, k
 	}
-	c := b.buf[b.r]
+	if b.w-b.r < 3 {
+		if b.w == b.r && b.err == nil {
+			b.err = io.ErrUnexpectedEOF
+		}
+		clear(b.buf[b.w : b.r+3])
+		b.w = b.r + 3
+	}
+}
+
+// value reads the bits of a value of nb bits.
+func (b *stageReader) value(nb uint32) uint32 {
+	x := uint32(b.buf[b.r])
 	b.r++
-	return c, true
+	if nb > 8 {
+		x |= uint32(b.buf[b.r]) << 8
+		b.r++
+	}
+	return x
 }
-
-// bits returns the next n bits, n <= 16.
-func (b *stagedBits) bits(n uint) uint32 {
-	if b.n < n {
-		b.fill()
-	}
-	b.n -= n
-	return uint32(b.acc>>b.n) & (1<<n - 1)
-}
-
-// symbol decodes one symbol.
-func (b *stagedBits) symbol(d *stdDecoder) uint8 {
-	if b.n < 16 {
-		b.fill()
-	}
-	if f := d.fast[uint8(b.acc>>(b.n-8))]; f != 0 {
-		b.n -= uint(f >> 8)
-		return uint8(f)
-	}
-	for size := uint(9); size <= 16; size++ {
-		code := int32(b.acc>>(b.n-size)) & (1<<size - 1)
-		if i := code - d.first[size]; i >= 0 && i < d.count[size] {
-			b.n -= size
-			return d.value[d.index[size]+i]
-		}
-	}
-	if b.err == nil {
-		b.err = errors.New("goimgtools: staged jpeg data is damaged")
-	}
-	return 0
-}
-
-const stagedReadBuf = 64 << 10
 
 // writeOptimized writes the Huffman tables and the scan of a baseline file
 // with tables made for this image.
@@ -301,27 +289,31 @@ func (e *encoder) writeOptimized(src pipeline.Source, first image.Image, size im
 	env := pipeline.EnvOf(src)
 	sp := pipeline.NewSpill(env)
 	defer sp.Close()
-	// Only a hint for whether to start in memory: a quarter of a byte per
-	// pixel is a common size for a photo's image data.
-	sp.Expect(int64(size.X) * int64(size.Y) / 4)
+	// Only a hint for whether to start in memory: half a byte per pixel is
+	// a common size of a photo's symbols staged.
+	sp.Expect(int64(size.X) * int64(size.Y) / 2)
 
-	// Pass 1: the plain scan, into the spill, counting symbols.
+	// Pass 1: the symbols of the scan, into the spill, counted.
 	var freq [nHuffIndex][257]int64
-	out := e.w
-	e.drain()
-	e.w, e.freq = bufio.NewWriterSize(sp, 4<<10), &freq
 	var prevDC [3]int32
+	staged := make([]byte, 0, stageFlush+stageBlockMax)
+	var werr error
 	err := e.quantBlocks(src, first, func(zz *qblock, comp int) {
-		prevDC[comp] = e.writeQuantized(zz, quantIndex((comp+1)/2), prevDC[comp])
+		q := quantIndex((comp + 1) / 2)
+		staged, prevDC[comp] = stageBlock(staged, zz, prevDC[comp], &freq[2*q], &freq[2*q+1])
+		if len(staged) >= stageFlush && werr == nil {
+			_, werr = sp.Write(staged)
+			staged = staged[:0]
+		}
 	})
-	e.padBits()
-	e.flush()
-	e.w, e.freq, e.bits, e.nBits = out, nil, 0, 0
+	if err == nil && werr == nil {
+		_, werr = sp.Write(staged)
+	}
 	if err != nil {
 		return err
 	}
-	if e.err != nil {
-		return e.err
+	if werr != nil {
+		return werr
 	}
 
 	// The tables.
@@ -329,12 +321,10 @@ func (e *encoder) writeOptimized(src pipeline.Source, first image.Image, size im
 	var (
 		specs [nHuffIndex]huffmanSpec
 		luts  [nHuffIndex]codeLUT
-		decs  [nHuffIndex]stdDecoder
 	)
 	for i := 0; i < nTables; i++ {
 		specs[i] = optimalSpec(&freq[i])
 		luts[i].init(&specs[i])
-		decs[i].init(&theHuffmanSpec[i])
 	}
 	e.writeDHTSpecs([]byte("\x00\x10\x01\x11")[:nTables], specs[:nTables])
 	if nComponent == 1 {
@@ -348,23 +338,27 @@ func (e *encoder) writeOptimized(src pipeline.Source, first image.Image, size im
 		return err
 	}
 	defer env.Budget.Release(stagedReadBuf)
-	rd := &stagedBits{sp: sp, buf: make([]byte, stagedReadBuf)}
+	rd := &stageReader{sp: sp, buf: make([]byte, stagedReadBuf)}
 	recode := func(q int) {
-		dc, ac := huffIndex(2*q), huffIndex(2*q+1)
-		s := rd.symbol(&decs[dc])
-		e.emitCode(&luts[dc], s)
+		dc, ac := &luts[2*q], &luts[2*q+1]
+		rd.need()
+		s := rd.buf[rd.r]
+		rd.r++
+		e.emitCode(dc, s)
 		if s != 0 {
-			e.emit(rd.bits(uint(s)), uint32(s))
+			e.emit(rd.value(uint32(s)), uint32(s))
 		}
 		for k := 1; k < blockSize; {
-			rs := rd.symbol(&decs[ac])
-			e.emitCode(&luts[ac], rs)
+			rd.need()
+			rs := rd.buf[rd.r]
+			rd.r++
+			e.emitCode(ac, rs)
 			if rs == 0x00 {
 				break
 			}
 			k += int(rs>>4) + 1
-			if n := rs & 0x0f; n != 0 {
-				e.emit(rd.bits(uint(n)), uint32(n))
+			if n := uint32(rs & 0x0f); n != 0 {
+				e.emit(rd.value(n), n)
 			}
 		}
 	}

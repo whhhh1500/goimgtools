@@ -2,6 +2,7 @@ package jpegstream
 
 import (
 	"bytes"
+	"image"
 	"math/rand/v2"
 	"testing"
 )
@@ -188,4 +189,102 @@ func BenchmarkYccH2V2(b *testing.B) {
 			yccH2V2(dst, y, c, c, c, c)
 		}
 	})
+}
+
+// TestFdctQuantAVX2: blocks of samples (flat, smooth, noisy, extreme) and
+// quantization tables of every value transform and quantize with AVX2 as
+// fdct and quantizeCoefs do.
+func TestFdctQuantAVX2(t *testing.T) {
+	if !useAVX2 {
+		t.Skip("no AVX2")
+	}
+	rng := rand.New(rand.NewPCG(9, 10))
+	for i := range 50000 {
+		var e encoder
+		for q := range nQuantIndex {
+			for j := range blockSize {
+				x := 1 + rng.IntN(255)
+				if i%3 == 0 {
+					x = 1 + rng.IntN(8)
+				}
+				e.quant[q][j] = uint8(x)
+				e.recip[q][j] = recip(8 * int32(x))
+				e.natHalf[q][unzig[j]] = 4 * int32(x)
+				e.natRecip[q][unzig[j]] = uint32(e.recip[q][j])
+			}
+		}
+		var b block
+		base := rng.Int32N(256)
+		for j := range b {
+			switch i % 4 {
+			case 0:
+				b[j] = base
+			case 1:
+				b[j] = min(255, max(0, base+rng.Int32N(9)-4))
+			case 2:
+				b[j] = rng.Int32N(256)
+			case 3:
+				b[j] = 255 * rng.Int32N(2)
+			}
+		}
+		q := quantIndex(i & 1)
+		var want, got qblock
+		wb, gb := b, b
+		fdct(&wb)
+		e.quantizeCoefs(&wb, q, &want)
+		e.quantize(&gb, q, &got)
+		if got != want {
+			t.Fatalf("block %d %v:\n got %v\nwant %v", i, b, got, want)
+		}
+	}
+}
+
+// TestRGBAToYCbCrAVX2: whole blocks of pixels convert with AVX2 as ycc
+// converts them, and 4 blocks of chroma shrink as scale shrinks them.
+func TestRGBAToYCbCrAVX2(t *testing.T) {
+	if !useAVX2 {
+		t.Skip("no AVX2")
+	}
+	rng := rand.New(rand.NewPCG(11, 12))
+	m := image.NewRGBA(image.Rect(3, 5, 3+37, 5+29))
+	for range 2000 {
+		for i := range m.Pix {
+			m.Pix[i] = byte(rng.IntN(256))
+			if rng.IntN(5) == 0 {
+				m.Pix[i] = 255 * byte(rng.IntN(2))
+			}
+		}
+		p := image.Pt(3+rng.IntN(30), 5+rng.IntN(22))
+		var y, cb, cr, wy, wcb, wcr block
+		rgbaToYCbCr(m, p, &y, &cb, &cr)
+		for j := range 8 {
+			for i := range 8 {
+				o := m.PixOffset(p.X+i, p.Y+j)
+				wy[8*j+i], wcb[8*j+i], wcr[8*j+i] = ycc(int32(m.Pix[o]), int32(m.Pix[o+1]), int32(m.Pix[o+2]))
+			}
+		}
+		if y != wy || cb != wcb || cr != wcr {
+			t.Fatalf("block at %v differs", p)
+		}
+		var src [4]block
+		for k := range src {
+			for j := range src[k] {
+				src[k][j] = rng.Int32N(256)
+			}
+		}
+		var got, want block
+		scale(&got, &src)
+		for i := 0; i < 4; i++ {
+			off := (i&2)<<4 | (i&1)<<2
+			for yy := 0; yy < 4; yy++ {
+				for x := 0; x < 4; x++ {
+					j := 16*yy + 2*x
+					want[8*yy+x+off] = (src[i][j] + src[i][j+1] + src[i][j+8] + src[i][j+9] + 1 + int32(x&1)) >> 2
+				}
+			}
+		}
+		if got != want {
+			t.Fatalf("scale: %v, want %v", got, want)
+		}
+	}
 }

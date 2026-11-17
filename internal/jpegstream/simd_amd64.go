@@ -30,3 +30,21 @@ func yccH2V1AVX2(dst, y, cb, cr *byte, chunks int)
 //
 //go:noescape
 func yccRowAVX2(dst, y, cb, cr *byte, chunks int)
+
+// fdctQuantAVX2 is fdct of b and the division of quantizeCoefs (without a
+// dead zone) with AVX2, the coefficients in natural order; b is not
+// changed.
+//
+//go:noescape
+func fdctQuantAVX2(b *block, half *[blockSize]int32, recip *[blockSize]uint32, out *[blockSize]int16)
+
+// rgbaBlockAVX2 is rgbaToYCbCr of a whole 8x8 block, pix its first pixel,
+// with AVX2.
+//
+//go:noescape
+func rgbaBlockAVX2(pix *byte, stride int, y, cb, cr *block)
+
+// scaleAVX2 is scale with AVX2.
+//
+//go:noescape
+func scaleAVX2(dst *block, src *[4]block)
