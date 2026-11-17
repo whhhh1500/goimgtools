@@ -53,11 +53,12 @@ The WebP encoders were written for this module. As there is no standard library 
   |---|---|---|---|
   | Effort 5 (default) | 6.6% / 9.5% smaller | 4.6% / 7.0% smaller | 1.3% / 2.2% smaller |
   | Effort 3 | 7.1% / 8.5% smaller | 4.9% / 5.8% smaller | 1.0% / 0.9% smaller |
-  | Effort 1 | 6.1% / 4.8% smaller | 3.6% / 1.4% smaller | 0.2% / 2.4% larger |
+  | Effort 2 | 6.1% / 4.8% smaller | 3.6% / 1.4% smaller | 0.2% / 2.4% larger |
+  | Effort 1 | 4.0% / 1.2% smaller | 1.5% smaller / 2.2% larger | 2.2% / 5.4% larger |
 
   On 11 interface pictures, screenshots and icons (converted to RGB), effort 5 is as small as libwebp's best at the same SSIMULACRA2 (27.4% smaller than libwebp's default, libwebp's best 27.2%; per image from 4% larger to 11% smaller).
 
-  At the same quality setting, files are about 2.5% smaller than those of libwebp's default and score higher. Time for a 3840×2160 photograph on one thread: 0.70s at effort 1, 0.82s at effort 3, 1.50s at effort 5 (8 threads: 0.34s); `cwebp` takes 0.45s at its default, 0.71s at method 6 and 2.93s at its best settings.
+  At the same quality setting, files are about 2.5% smaller than those of libwebp's default and score higher. Time for a 3840×2160 photograph (from PNG) on one thread: 0.43s at effort 1, 0.54s at effort 2, 0.79s at effort 3, 0.99s at effort 5 (8 threads: 0.32s); `cwebp` takes 0.53s at its default, 0.81s at method 6 and 3.03s at its best settings.
   - Segment-based quantization is ported from libwebp (macroblocks are divided into 4 segments according to the distribution of their coefficients, with finer quantization in flat areas and coarser quantization in textured areas, at libwebp's default strength).
   - From effort 3, colours are converted with libwebp's sharp YUV: rather than averaging the colour of each 2×2 block, it looks for the luma and chroma from which a decoder's chroma interpolation gives back the source most closely. On thin saturated lines the luminance of the decoded image comes 3–9 dB closer to the source's; decoders that interpolate chroma (libwebp, so browsers, and this module's) show the difference, those that do not (`x/image`) do worse with it. From effort 3 too, 4×4 blocks are quantized by trellis, as libwebp does (libwebp also does it for 16×16 blocks, which made files about 1% larger here).
   - From effort 5, the loop filter level of each segment is chosen by filtering the reconstruction at levels around the starting one and measuring it by SSIM, as libwebp's `-af` does.

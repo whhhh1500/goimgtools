@@ -187,6 +187,11 @@ type encoder struct {
 	effort  int
 	sharp   bool // convert colours with sharp YUV (sharp.go)
 	trellis bool // quantize 4x4 blocks by trellis (trellis.go)
+	// fast: the 16x16 and chroma predictions chosen by their error
+	// before coding, and only those coded (effort 1); i4Tries: how many
+	// 4x4 modes of each block's ranking are coded.
+	fast    bool
+	i4Tries int
 	// trellisFinal: the trellis only for the 4x4 mode chosen (effort 3).
 	trellisFinal bool
 	autoFilter   bool // choose the filter levels by measuring (autofilter.go)
@@ -288,6 +293,18 @@ func (e *encoder) init(quality int, rr *pipeline.RowReader, src pipeline.Source)
 	// every mode tried with the trellis: 15% faster at 3, files about 1%
 	// larger at the same look.
 	e.trellisFinal = e.effort == 3
+	// Effort 1 picks the 16x16 and chroma predictors by the error of the
+	// prediction and the cost of the mode (as libwebp's methods 0 to 2 pick
+	// all of them) and codes only the one picked, and codes the two best
+	// of each 4x4 block's ranking rather than four: on 14 images 28% less
+	// time than effort 2, for files 2.5% larger at the same SSIMULACRA2
+	// and 4% at the same butteraugli (with one 4x4 mode coded, 36% less
+	// time, 3.7% and 8%).
+	e.fast = e.effort == 1
+	e.i4Tries = i4Tries
+	if e.fast {
+		e.i4Tries = 2
+	}
 	e.autoFilter = e.effort >= 5 && (e.dbg == nil || !e.dbg.noFilter && !e.dbg.noAutoFilter)
 
 	w16 := e.mbw * 16

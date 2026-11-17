@@ -157,12 +157,15 @@ type WebPOptions struct {
 	// Effort trades time for size: 1 is the fastest, 9 gives the smallest
 	// files; 0 means the default, 5. For lossy output, effort 5 already
 	// does all there is (sharp colour conversion, trellis quantization and
-	// loop filter levels chosen by measuring); 1 and 2 leave them out and
-	// take less than half the time, for files about 3% larger at the same
-	// look, 4 leaves out the measured loop filter, and 3 also weighs the
-	// 4x4 modes without the trellis, which it keeps for the mode chosen
-	// (as libwebp's method 5; 15% less time than 4, files about 1% larger
-	// at the same look). Above 5, only
+	// loop filter levels chosen by measuring); 2 leaves them out and takes
+	// about half the time, for files about 3% larger at the same look, 4
+	// leaves out the measured loop filter, and 3 also weighs the 4x4 modes
+	// without the trellis, which it keeps for the mode chosen (as libwebp's
+	// method 5; 15% less time than 4, files about 1% larger at the same
+	// look). 1 is 2 with the 16x16 and chroma predictors picked by the
+	// error of their prediction and only those coded (as libwebp's methods
+	// 0 to 2 pick them), and two rather than four 4x4 modes coded for each
+	// block: 28% less time than 2, files 2.5% to 4% larger. Above 5, only
 	// transparency gets more: every filter of the alpha plane is tried, and
 	// planes of more than 4 megapixels get the optimal parse too.
 	Effort int

@@ -211,11 +211,10 @@ func TestEffort(t *testing.T) {
 	if !bytes.Equal(files[5], files[9]) {
 		t.Error("effort 9 differs from effort 5")
 	}
-	if bytes.Equal(files[1], files[3]) || bytes.Equal(files[3], files[4]) || bytes.Equal(files[3], files[5]) {
-		t.Error("effort 1, 3, 4 and 5 do not give four files")
-	}
-	if !bytes.Equal(files[1], files[2]) {
-		t.Error("effort 1 and 2 differ")
+	for _, k := range [][2]int{{1, 2}, {2, 3}, {1, 3}, {3, 4}, {3, 5}} {
+		if bytes.Equal(files[k[0]], files[k[1]]) {
+			t.Errorf("effort %d and %d give the same file", k[0], k[1])
+		}
 	}
 	// The default is 5.
 	var def bytes.Buffer

@@ -172,24 +172,32 @@ func (c *mbCoder) encodeMB(mbx, mby int) {
 
 	// Luma: the best 16x16 predictor, then 4x4 predictors if they do better.
 	best := &c.c16[0]
-	c.evalI16(best, predDC, mbx, mby, up)
-	other := &c.c16[1]
-	for _, mode := range [3]uint8{predTM, predVE, predHE} {
-		c.evalI16(other, mode, mbx, mby, up)
-		if other.score < best.score {
-			best, other = other, best
+	if e.fast {
+		c.evalI16(best, c.pickLarge(mbx, mby), mbx, mby, up)
+	} else {
+		c.evalI16(best, predDC, mbx, mby, up)
+		other := &c.c16[1]
+		for _, mode := range [3]uint8{predTM, predVE, predHE} {
+			c.evalI16(other, mode, mbx, mby, up)
+			if other.score < best.score {
+				best, other = other, best
+			}
 		}
 	}
 	i4 := c.searchI4(up, best.score)
 
 	// Chroma.
 	uv := &c.cuv[0]
-	c.evalUV(uv, predDC, mbx, mby, up)
-	otherUV := &c.cuv[1]
-	for _, mode := range [3]uint8{predTM, predVE, predHE} {
-		c.evalUV(otherUV, mode, mbx, mby, up)
-		if otherUV.score < uv.score {
-			uv, otherUV = otherUV, uv
+	if e.fast {
+		c.evalUV(uv, c.pickUV(mbx, mby), mbx, mby, up)
+	} else {
+		c.evalUV(uv, predDC, mbx, mby, up)
+		otherUV := &c.cuv[1]
+		for _, mode := range [3]uint8{predTM, predVE, predHE} {
+			c.evalUV(otherUV, mode, mbx, mby, up)
+			if otherUV.score < uv.score {
+				uv, otherUV = otherUV, uv
+			}
 		}
 	}
 
@@ -260,6 +268,48 @@ func (c *mbCoder) encodeMB(mbx, mby int) {
 		s := int(e.segMap[mby*e.mbw+mbx])
 		m.measure(&c.mbSrc, c.seg, s, c.lf)
 	}
+}
+
+// pickLarge is the 16x16 predictor whose prediction is nearest the luma,
+// counting the cost of the mode (effort 1).
+func (c *mbCoder) pickLarge(mbx, mby int) uint8 {
+	best, bm := int64(-1), uint8(predDC)
+	for _, mode := range [4]uint8{predDC, predTM, predVE, predHE} {
+		predLarge(&c.ws, wsY, 16, mode, mbx, mby, c.pred16[:])
+		d := 0
+		for n := 0; n < 16; n++ {
+			off := (n>>2)*64 + (n&3)*4
+			d += sse4(c.ysrc[off:], 16, c.pred16[off:], 16)
+		}
+		if s := int64(d)<<16 + int64(costI16[mode])*c.seg.lamY; best < 0 || s < best {
+			best, bm = s, mode
+		}
+	}
+	return bm
+}
+
+// pickUV is pickLarge for the chroma.
+func (c *mbCoder) pickUV(mbx, mby int) uint8 {
+	best, bm := int64(-1), uint8(predDC)
+	for _, mode := range [4]uint8{predDC, predTM, predVE, predHE} {
+		d := 0
+		for pl := 0; pl < 2; pl++ {
+			src, at := c.usrc[:], wsB
+			if pl == 1 {
+				src, at = c.vsrc[:], wsR
+			}
+			pred := c.predC[pl][:]
+			predLarge(&c.ws, at, 8, mode, mbx, mby, pred)
+			for n := 0; n < 4; n++ {
+				off := (n>>1)*32 + (n&1)*4
+				d += sse4(src[off:], 8, pred[off:], 8)
+			}
+		}
+		if s := int64(d)<<16 + int64(costUV[mode])*c.seg.lamUV; best < 0 || s < best {
+			best, bm = s, mode
+		}
+	}
+	return bm
 }
 
 // modeCost is the cost of a macroblock's prediction modes in the first
@@ -375,7 +425,7 @@ func (c *mbCoder) searchI4(up *mbCtx, limit int64) bool {
 			order[m] = uint8(m)
 			perr[m] = int64(sse4(src, 16, c.pred4[m][:], 4))<<16 + int64(mc[m])*sg.lamY
 		}
-		tries := min(i4Tries, nPred)
+		tries := min(c.e.i4Tries, nPred)
 		for i := 0; i < tries; i++ {
 			k := i
 			for j := i + 1; j < nPred; j++ {
