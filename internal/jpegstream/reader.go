@@ -185,9 +185,16 @@ type decoder struct {
 	tables  int // Huffman tables defined
 	// cscale is the scale each component is decoded at (setScale).
 	cscale [maxComponents]uint
-	// dcOnly tells reconstructBlock that the block's AC coefficients are
-	// all zero (decodeBlock, stepRows).
+	// dcOnly says that the block's AC coefficients are all zero
+	// (decodeBlock, stepRows), for reconstructBlock.
 	dcOnly bool
+	// With helpers, the blocks of a sequential scan are decoded into jobs
+	// and made into pixels a whole MCU row at a time, by the helpers, while
+	// the next row is decoded (idct.go).
+	idct     *pipeline.Env
+	jobs     [2][]idctJob
+	jobCur   int
+	idctWait func() error
 }
 
 // newDecoder returns a decoder that reads r.

@@ -695,8 +695,7 @@ func (s *stream) reconstructBand(my0, my1 int) error {
 					return err
 				}
 				d.dequantize(&b, i)
-				d.dcOnly = false
-				if err := d.reconstructBlock(&b, bx, by-my0*vi, i); err != nil {
+				if err := d.reconstructBlock(&b, bx, by-my0*vi, i, false); err != nil {
 					return err
 				}
 			}
@@ -757,10 +756,16 @@ func (s *stream) next() (image.Image, error) {
 			return nil, err
 		}
 	} else {
+		s.startIDCT()
 		for my := my0; my < my1; my++ {
 			if err := d.scanRow(my); err != nil {
+				d.idctDone()
 				return nil, err
 			}
+		}
+		// The band's pixels, before they are converted.
+		if err := d.idctDone(); err != nil {
+			return nil, err
 		}
 	}
 	s.my = my1

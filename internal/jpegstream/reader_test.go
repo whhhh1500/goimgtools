@@ -388,16 +388,29 @@ var pillowCorpus = map[string]string{
 func TestPillowCorpus(t *testing.T) {
 	flex := map[string]bool{"video-001.q50.121121.jpeg": true, "video-001.q50.211211.jpeg": true,
 		"video-001.q50.221122.jpeg": true, "video-001.q50.222112.jpeg": true}
+	// Also with three helpers, which make the pixels of sequential scans
+	// (idct.go) and convert them.
+	helped := pipeline.NewEnv(0, "")
+	helped.SetHelpers(3)
 	for name, data := range corpus(t) {
 		want, ok := pillowCorpus[name]
 		if !ok || flex[name] {
 			continue
 		}
-		m, err := decodeStream(data, nil)
-		if err != nil {
-			t.Errorf("%s: %v", name, err)
-			continue
+		for _, env := range []*pipeline.Env{nil, helped} {
+			m, err := decodeStream(data, env)
+			if err != nil {
+				t.Errorf("%s: %v", name, err)
+				continue
+			}
+			checkPillow(t, name, m, want, env != nil)
 		}
+	}
+}
+
+func checkPillow(t *testing.T, name string, m image.Image, want string, helped bool) {
+	t.Helper()
+	{
 		b := m.Bounds()
 		rgb := make([]byte, 0, 3*b.Dx()*b.Dy())
 		for y := b.Min.Y; y < b.Max.Y; y++ {
@@ -407,7 +420,7 @@ func TestPillowCorpus(t *testing.T) {
 			}
 		}
 		if got := fmt.Sprintf("%x", sha256.Sum256(rgb))[:16]; got != want {
-			t.Errorf("%s: pixels %s, Pillow's %s", name, got, want)
+			t.Errorf("%s (helpers %v): pixels %s, Pillow's %s", name, helped, got, want)
 		}
 	}
 }

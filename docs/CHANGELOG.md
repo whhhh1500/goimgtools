@@ -55,6 +55,7 @@ Nothing exported by 0.1.0 was removed or changed in its signature (checked with 
 - `Filter` (type `ImageFilter`): Pillow's built-in filters (blur, contour, detail, edge enhance, emboss, find edges, sharpen, smooth), and `Convolution.Method` `ConvolvePillow`: its `ImageFilter.Kernel`, to the byte; by name `filter NAME` and `convolve …,pillow`.
 - `BoxBlur(radius)` (`boxblur`): Pillow's `ImageFilter.BoxBlur`, to the byte, fractional radii included.
 - `RotateOptions` for `RotateBy` (`Method`: `RotateLibvips`, sharp's, or `RotatePillow`, Pillow's `Image.rotate` to the byte; `Interpolator`; `Expand`); by name `rotate DEGREES[,BACKGROUND][,pillow][,nearest|bilinear|bicubic][,expand]`.
+- JPEG decoding with `Threads(5)` or more: the inverse DCTs of a sequential JPEG are made on the other cores while the next row of blocks is decoded; a 6000×4000 JPEG decodes in 122–142ms instead of 172ms (pixels unchanged).
 - Animated GIF output: a frame that changes nothing lengthens the frame before instead of being written (up to 655.35s), as in WebP and APNG output.
 - `MaxFileSize` for PNG and GIF: the most colours that fit (a PNG first without loss); `-max-size` likewise.
 - `Transform(width, height, t, TransformOptions)`: Pillow's `Image.transform` to the byte, with `TransformAffine`, `TransformExtent`, `TransformPerspective` and `TransformQuad`, and `TransformPerspectiveQuad` (the perspective that takes the output's corners to four points, worked out from them); by name `transform WIDTH,HEIGHT,KIND,NUMBERS...[,INTERPOLATOR][,BACKGROUND]`.

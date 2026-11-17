@@ -267,7 +267,19 @@ func (d *decoder) scanRow(my int) error {
 				// block of the MCU row when the scans are decoded in step.
 				// nzm marks bp's non-zero AC coefficients, for refine.
 				bp, nzm := &b, (*uint64)(nil)
+				var job *idctJob
 				switch {
+				case d.idct != nil:
+					// Straight into the row's jobs (startIDCT made room for
+					// every block of the row).
+					jobs := &d.jobs[d.jobCur]
+					if len(*jobs) == cap(*jobs) {
+						return FormatError("too many blocks in an MCU row")
+					}
+					*jobs = (*jobs)[:len(*jobs)+1]
+					job = &(*jobs)[len(*jobs)-1]
+					job.b = block{}
+					bp = &job.b
 				case d.rowCoef[0] != nil:
 					stride := mxx * hi
 					k := (by-vi*my)*stride + bx
@@ -401,7 +413,11 @@ func (d *decoder) scanRow(my int) error {
 					}
 					continue
 				}
-				if err := d.reconstructBlock(&b, bx, by-d.bandMy*vi, int(compIndex)); err != nil {
+				if job != nil {
+					job.bx, job.by, job.comp, job.dcOnly = int32(bx), int32(by-d.bandMy*vi), uint8(compIndex), d.dcOnly
+					continue
+				}
+				if err := d.reconstructBlock(&b, bx, by-d.bandMy*vi, int(compIndex), d.dcOnly); err != nil {
 					return err
 				}
 			} // for j
@@ -431,6 +447,9 @@ func (d *decoder) scanRow(my int) error {
 		}
 	} // for mx
 	st.mcu, st.expectedRST, st.dc, st.blockCount = mcu, expectedRST, dc, blockCount
+	if d.idct != nil {
+		return d.idctRow()
+	}
 	return nil
 }
 
@@ -781,7 +800,7 @@ func (d *decoder) dequantizeNZ(b *block, nz uint64, compIndex int) {
 // reconstructBlock performs the inverse DCT of the dequantized b and stores
 // the block to the image. Here the image is the current band, and by is
 // relative to the band's first block row.
-func (d *decoder) reconstructBlock(b *block, bx, by, compIndex int) error {
+func (d *decoder) reconstructBlock(b *block, bx, by, compIndex int, dcOnly bool) error {
 	var h, v int
 	if d.flex {
 		// Flex mode: scale bx and by according to the component's sampling factors.
@@ -831,7 +850,7 @@ func (d *decoder) reconstructBlock(b *block, bx, by, compIndex int) error {
 		return nil
 	}
 
-	if d.dcOnly {
+	if dcOnly {
 		dcStore(b[0], dst, stride, sc)
 		return nil
 	}
