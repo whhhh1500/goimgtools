@@ -55,10 +55,10 @@ Environment: Windows 10, Go 1.27.1. "Standard library approach" denotes whole-im
 | PNG RGBA 6900×9200 | JPEG | 10.4MB / 11.2MB | 588MB | 1.63s | 1.21s | 3.10s |
 | PNG RGBA 6900×9200 | PNG | 11.2MB / 12.2MB | 591MB | 1.71s | 1.27s | 3.16s |
 | PNG interlaced RGB 6000×4000 | JPEG | 8.8MB / 10.9MB | 379MB | 0.56s | 0.50s | 1.02s |
-| JPEG baseline 4:2:0 6000×4000 | JPEG | 8.3MB / 9.0MB | 242MB | 0.30s | 0.19s | 0.87s |
-| JPEG baseline 4:4:4 6000×4000 | JPEG | 8.3MB / 8.8MB | 277MB | 0.43s | 0.24s | 1.02s |
-| JPEG progressive 6000×4000 | JPEG | 10.4MB / 11.0MB | 373MB | 0.44s | 0.26s | 1.07s |
-| JPEG progressive 5000×8000 | JPEG | 10.6MB / 10.7MB | 535MB | 0.70s | 0.41s | 1.58s |
+| JPEG baseline 4:2:0 6000×4000 | JPEG | 9.4MB / 11.5MB | 243MB | 0.38s | 0.21s | 0.82s |
+| JPEG baseline 4:4:4 6000×4000 | JPEG | 11.0MB / 11.5MB | 278MB | 0.49s | 0.32s | 0.97s |
+| JPEG progressive 6000×4000 | JPEG | 11.5MB / 12.2MB | 375MB | 0.52s | 0.36s | 1.02s |
+| JPEG progressive 5000×8000 | JPEG | 11.7MB / 12.3MB | 537MB | 0.82s | 0.56s | 1.51s |
 | GIF 6000×4000 | JPEG | 8.4MB / 10.5MB | 230MB | 0.29s | 0.15s | 0.85s |
 | GIF interlaced 6000×4000 | JPEG | 9.1MB / 10.7MB | 248MB | 0.32s | 0.30s | 0.86s |
 | BMP 24-bit 6000×4000 | JPEG | 8.7MB / 10.5MB | 299MB | 0.21s | 0.18s | 0.58s |
@@ -69,6 +69,7 @@ Environment: Windows 10, Go 1.27.1. "Standard library approach" denotes whole-im
 | WebP lossless 6000×4000 | JPEG | 14.2MB / 15.0MB | 300MB | 1.00s | 0.80s | 1.52s |
 
 - Total CPU time does not vary with the thread count (2 threads merely distribute the same work across two cores).
+- The JPEG rows were measured again (quality 90, made from one photograph) when JPEG decoding became libjpeg-turbo's (Pillow's and sharp's pixels): its accurate inverse DCT and the interpolation of the chroma cost time that the standard library's arithmetic did not, about 0.09s more for the 4:2:0 file on one thread (0.29s before, on the same file and machine) and 0.04s on two (the conversion of colour is shared among helper threads from four threads on), and 0.3MB more at the peak. A JPEG that goes straight into a JPEG file, with no operation, costs what it did; so does `FastShrinkOnLoad`, below.
 - The progressive JPEGs are decoded with their scans in step (see [Memory control](#memory-control)); before that change their coefficients (72MB at 6000×4000) went to a temporary file, and the 6000×4000 row took 0.87s at 8.8MB. Of the 1.6–1.8MB more at the peak, 0.6MB is the one row of coefficients; the rest is a garbage collection that the larger heap starts, which touches more memory the more cores there are (0.5MB more in all with `GOMAXPROCS=1`).
 - With `FastShrinkOnLoad` enabled (single thread): JPEG baseline 4:2:0 0.14s, 4:4:4 0.24s, progressive 0.27s.
 

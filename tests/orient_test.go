@@ -7,7 +7,6 @@ import (
 	"image"
 	"image/color"
 	stddraw "image/draw"
-	"image/jpeg"
 	"image/png"
 	"testing"
 
@@ -161,7 +160,7 @@ func TestRotateFlipFlop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dec, _ := jpeg.Decode(bytes.NewReader(jp))
+	dec, _ := decodeJPEG(bytes.NewReader(jp))
 	rgba := image.NewRGBA(dec.Bounds())
 	stddraw.Draw(rgba, rgba.Bounds(), dec, image.Point{}, stddraw.Src)
 	sameImage(t, "jpeg rotated", decodePNG(t, got), turnRef(rgba, 8))
@@ -177,7 +176,7 @@ func TestRotateFlipFlop(t *testing.T) {
 func TestAutoOrient(t *testing.T) {
 	src := testutil.Images(120, 80)["rgba-opaque"]
 	plain := jpegBytes(src, 92)
-	dec, _ := jpeg.Decode(bytes.NewReader(plain))
+	dec, _ := decodeJPEG(bytes.NewReader(plain))
 	rgba := image.NewRGBA(dec.Bounds())
 	stddraw.Draw(rgba, rgba.Bounds(), dec, image.Point{}, stddraw.Src)
 	for orient := 1; orient <= 8; orient++ {

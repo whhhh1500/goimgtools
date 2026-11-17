@@ -107,7 +107,7 @@ func TestEveryFormat(t *testing.T) {
 		dec    func(io.Reader) (image.Image, error)
 	}{
 		".png":  {"png", png.Decode},
-		".jpeg": {"jpeg", jpeg.Decode},
+		".jpeg": {"jpeg", decodeJPEG},
 		".gif":  {"gif", gif.Decode},
 		".bmp":  {"bmp", bmp.Decode},
 		".tiff": {"tiff", tiff.Decode},
@@ -147,7 +147,7 @@ func TestFormatsThroughChain(t *testing.T) {
 		},
 	}
 	decoders := map[string]func(io.Reader) (image.Image, error){
-		"png": png.Decode, "jpeg": jpeg.Decode, "gif": gif.Decode, "bmp": bmp.Decode, "tiff": tiff.Decode,
+		"png": png.Decode, "jpeg": decodeJPEG, "gif": gif.Decode, "bmp": bmp.Decode, "tiff": tiff.Decode,
 	}
 	for format, enc := range encoders {
 		for _, name := range []string{"nrgba", "rgba-opaque", "gray", "paletted"} {
@@ -375,7 +375,7 @@ func TestCodecInputProgressive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, err := jpeg.Decode(bytes.NewReader(data))
+	want, err := decodeJPEG(bytes.NewReader(data))
 	if err != nil {
 		t.Fatal(err)
 	}

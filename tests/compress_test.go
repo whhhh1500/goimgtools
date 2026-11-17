@@ -35,7 +35,7 @@ func photoLike(w, h int) *image.RGBA {
 func TestJPEGOptimizeAndProgressive(t *testing.T) {
 	decode := func(b []byte) image.Image {
 		t.Helper()
-		m, err := jpeg.Decode(bytes.NewReader(b))
+		m, err := decodeJPEG(bytes.NewReader(b))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -369,7 +369,7 @@ func TestJPEGQuantTables(t *testing.T) {
 			if err != nil {
 				t.Fatalf("table %d: %v", n, err)
 			}
-			m, err := jpeg.Decode(bytes.NewReader(b))
+			m, err := decodeJPEG(bytes.NewReader(b))
 			if err != nil {
 				t.Fatalf("table %d %+v: %v", n, o, err)
 			}
@@ -487,6 +487,7 @@ func TestJPEGChromaSubsampling(t *testing.T) {
 		for i, o := range []JPEGOptions{{}, {Optimize: true}, {Progressive: true}, {Trellis: true}, {Progressive: true, Trellis: true}} {
 			o.ChromaSubsampling = c.sub
 			data := must(FromImage(src).JPEG(85, o).ToBytes())
+			// The standard library tells the layout of the file.
 			m, err := jpeg.Decode(bytes.NewReader(data))
 			if err != nil {
 				t.Fatalf("%v %+v: %v", c.sub, o, err)
@@ -523,7 +524,7 @@ func TestJPEGChromaSubsampling(t *testing.T) {
 	}
 	// A greyscale image has one component whatever is asked.
 	g := image.NewGray(image.Rect(0, 0, 33, 17))
-	m, err := jpeg.Decode(bytes.NewReader(must(FromImage(g).JPEG(80, JPEGOptions{ChromaSubsampling: Chroma444}).ToBytes())))
+	m, err := decodeJPEG(bytes.NewReader(must(FromImage(g).JPEG(80, JPEGOptions{ChromaSubsampling: Chroma444}).ToBytes())))
 	if _, ok := m.(*image.Gray); err != nil || !ok {
 		t.Errorf("grey with Chroma444: %T, %v", m, err)
 	}

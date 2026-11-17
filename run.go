@@ -61,7 +61,7 @@ func (m *Image) build(env *pipeline.Env, sizeOnly bool) (pipeline.Source, io.Clo
 	if err != nil {
 		return nil, nil, "", pipeline.Meta{}, err
 	}
-	return m.buildFrom(env, env == nil, f, format, sizeOnly)
+	return m.buildFrom(env, env == nil, f, format, sizeOnly, false)
 }
 
 // openInput opens the input and recognises its format.
@@ -128,7 +128,11 @@ func (m *Image) decode(env *pipeline.Env, f *input, format string) (pipeline.Sou
 // buildFrom assembles the pipeline over an opened input, which it closes
 // when it fails. top is false for an overlay, whose env is the parent's; a
 // top-level image may be given its env too.
-func (m *Image) buildFrom(env *pipeline.Env, top bool, f *input, format string, sizeOnly bool) (pipeline.Source, io.Closer, string, pipeline.Meta, error) {
+//
+// keepYCbCr says that the pixels go straight to an encoder that takes the
+// YCbCr of a JPEG as it is (see output.go's takesYCbCr): the decoder then
+// hands it out unconverted.
+func (m *Image) buildFrom(env *pipeline.Env, top bool, f *input, format string, sizeOnly, keepYCbCr bool) (pipeline.Source, io.Closer, string, pipeline.Meta, error) {
 	var none pipeline.Meta
 	if env == nil {
 		env = m.newEnv()
@@ -165,6 +169,11 @@ func (m *Image) buildFrom(env *pipeline.Env, top bool, f *input, format string, 
 					src = small
 				}
 			}
+		}
+	}
+	if format == "jpeg" && keepYCbCr && pre.k <= 1 {
+		if j, ok := src.(interface{ KeepYCbCr() }); ok {
+			j.KeepYCbCr()
 		}
 	}
 	if top && m.ctx != nil {

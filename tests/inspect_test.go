@@ -6,7 +6,6 @@ import (
 	"image"
 	"image/color"
 	"image/gif"
-	"image/jpeg"
 	"image/png"
 	"math"
 	"testing"
@@ -125,7 +124,7 @@ func TestCompare(t *testing.T) {
 	// A lossy copy: the figures of a plain comparison of the decoded images.
 	for _, q := range []int{95, 60, 20} {
 		jp := jpegBytes(src, q)
-		dec, _ := jpeg.Decode(bytes.NewReader(jp))
+		dec, _ := decodeJPEG(bytes.NewReader(jp))
 		wantPSNR, wantMax, wantDiff := psnrOf(src, dec)
 		d, err := inspect.Compare(FromBytes(orig), FromBytes(jp))
 		if err != nil {

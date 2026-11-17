@@ -7,7 +7,6 @@ import (
 	"image"
 	"image/color"
 	"image/gif"
-	"image/jpeg"
 	"image/png"
 	"io"
 	"io/fs"
@@ -83,7 +82,7 @@ func (f failingWriter) Write(p []byte) (int, error) { return 0, f.err }
 func TestErrorKinds(t *testing.T) {
 	files := realFiles(t)
 	refs := map[string]func(io.Reader) (image.Image, error){
-		"png": png.Decode, "jpeg": jpeg.Decode, "jpeg-progressive": jpeg.Decode, "gif": gif.Decode,
+		"png": png.Decode, "jpeg": decodeJPEG, "jpeg-progressive": decodeJPEG, "gif": gif.Decode,
 		"bmp": bmp.Decode, "tiff": tiff.Decode, "webp-lossy": webp.Decode, "webp-lossless": webp.Decode,
 	}
 	for name, data := range files {

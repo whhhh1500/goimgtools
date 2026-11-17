@@ -2,9 +2,9 @@
 
 | Fit within 1536 + white background + watermark (single thread) | goimgtools | Standard library (whole-image decode) |
 |---|---|---|
-| JPEG 6000×4000 (24 MP), peak process memory | **8.3MB** | 242MB |
+| JPEG 6000×4000 (24 MP), peak process memory | **9.4MB** | 243MB |
 | PNG 6900×9200 (63 MP, with alpha), peak process memory | **10.4MB** | 588MB |
-| JPEG 6000×4000, time | **0.38s** | 0.87s |
+| JPEG 6000×4000, time | **0.38s** | 0.82s |
 | PNG 6900×9200, time | **1.63s** | 3.10s |
 
 goimgtools is a streaming image processing library and command-line tool written in pure Go. Images pass through the processing chain in strips of a few rows and are never decoded in full, so memory use is essentially independent of image size, and processing is faster than with whole-image decoding.
@@ -19,9 +19,10 @@ English | [中文](README.zh-CN.md)
 ## Features
 
 - **Bounded memory**: a 64MB limit by default, configurable with `MemoryLimit`. Steps that depend on the whole image (rotation, colour reduction, a progressive JPEG from a stream and others) move staged data to temporary files when it exceeds its share; every buffer that grows with image size counts against the limit, and exceeding it returns `ErrMemoryLimit`. Suited to memory-constrained servers and containers and to high-concurrency image services.
-- **Operations**: resize (6 interpolation kernels, 5 fit modes), crop, rotation by any angle, affine transforms, flip, trim and extend, flatten, grayscale, colour modulation, negate, linear levels, gamma, threshold, tint, normalize, local contrast (CLAHE), Gaussian blur, sharpening (including unsharp masking), median and rank filters, dilate and erode, custom convolution kernels, channel mixing (recomb), unflatten, channel extraction, smart crops (entropy, attention); image and text watermarks (nine-point positioning, proportional scaling, rotation, tiling, opacity); text rendering (per-character font fallback, stroke, shadow).
+- **Operations**: resize (8 interpolation kernels, 5 fit modes), crop, rotation by any angle, affine transforms, flip, trim and extend, flatten, grayscale, colour modulation, negate, linear levels, gamma, threshold, tint, normalize, local contrast (CLAHE), Gaussian blur, sharpening (including unsharp masking), median and rank filters, dilate and erode, custom convolution kernels, channel mixing (recomb), unflatten, channel extraction, smart crops (entropy, attention); image and text watermarks (nine-point positioning, proportional scaling, rotation, tiling, opacity); text rendering (per-character font fallback, stroke, shadow).
 - **Formats**: reading and writing JPEG, PNG, WebP (lossy and lossless), GIF, BMP and TIFF; animated GIF, WebP and PNG (APNG) to animated GIF or WebP; ICC colour profiles are preserved by default or converted to sRGB; the resolution (DPI) is preserved or set; EXIF and XMP are optionally preserved.
 - **Compression**: JPEG Huffman table optimization, progressive encoding with mozjpeg's scan search, trellis quantization, and the quantization tables of mozjpeg or of jpegli (with jpegli's, 15% smaller than mozjpeg's defaults at equal SSIMULACRA2 on 14 images); PNG colour reduction with an adaptive palette, and lossless PNG levels 8–9 that try every row filter (oxipng's Brute) and compress with a port of libdeflate's near-optimal parsing, split into blocks by cost as zopfli does (on 17 images 0.9% smaller than oxipng `-o max` in a fifth of its time, and within 0.3% of ECT `-9`); lossy WebP with spatial noise shaping, sharp YUV, trellis quantization, measured loop filter levels and chroma error diffusion (on 14 images 6.6% smaller than libwebp's default settings at equal SSIMULACRA2, and 1.3% smaller than its best settings), and lossless WebP whose matches follow the cheapest path through the pixels (5.3% smaller than libwebp's slowest setting on 17 images, in a seventh of its time); quality selection for a target file size; inter-frame differencing for animated GIF and WebP, lossy LZW for GIF (a photographic animated GIF as lossy WebP: 33% smaller than with libwebp's animation encoder at equal PSNR).
+- **Pillow's and sharp's pixels**: JPEG files decode to libjpeg-turbo's pixels, and many operations give Pillow's or sharp's results to the byte: blur (either way), rotation by any angle, affine transforms, trim, grayscale, threshold, negate, linear, recomb, unflatten, median, rank filters, dilate and erode, convolution, CLAHE, ensure-alpha, among others (see [Compatibility](docs/compatibility.md)).
 - **Parallelism**: `Threads(n)` enables multi-core processing, with output byte-for-byte identical to a single thread.
 - **Robustness**: panics during a run are returned as errors; input and output pixel counts are bounded; `context` cancellation is supported; continuously fuzz-tested.
 - **Extensibility**: custom operations, input sources, file formats and interpolation filters; operations registered by name; hooks that modify built-in behaviour; command-line programs that include custom operations.
@@ -76,7 +77,7 @@ goimgtools batch -resize 1920x1920 -no-enlarge -quality 80 -format jpeg in_dir o
 | [Command line](docs/cli.md) | All options; batch processing of directories |
 | [Extending](docs/extending.md) | Custom operations, inputs and formats; operations by name; hooks; custom command-line programs |
 | [Performance and benchmarks](docs/performance.md) | Memory control, multi-core processing, measurements and how to reproduce them |
-| [Compatibility and comparisons](docs/compatibility.md) | Where output matches the standard library byte for byte, intentional differences, comparison with libwebp |
+| [Compatibility and comparisons](docs/compatibility.md) | Where output matches the standard library, Pillow or sharp byte for byte, intentional differences, comparison with libwebp |
 | [Testing](docs/testing.md) | Test methods, verified platforms, fuzz testing |
 | [Changelog](docs/CHANGELOG.md) | Changes by version |
 | [API reference](https://pkg.go.dev/github.com/whhhh1500/goimgtools) | All types and methods |
@@ -99,7 +100,7 @@ Staged data is kept in memory up to 1/8 of the memory limit (8MB by default); be
 - AVIF and HEIC are not supported.
 - EXIF in TIFF files is neither read nor written (ICC profiles are).
 - Lookup-table (A2B0 and similar) and grayscale colour profiles are not converted to sRGB; they are written unchanged, including to GIF and BMP.
-- Entropy decoding in JPEG is sequential, and the IDCT and colour conversion are not yet parallelized; with many threads this is the slowest stage when shrinking JPEGs.
+- Entropy decoding in JPEG is sequential, and the IDCT is not yet parallelized (the conversion of colour is); with many threads this is the slowest stage when shrinking JPEGs.
 - Animations are written as GIF or WebP only (not as APNG). In GIF output, identical consecutive frames are not merged (each is still stored, at a few dozen bytes).
 - Colour curves are not built in; a per-pixel adjustment takes a few lines with `Pixels` (see the grayscale example in [Extending](docs/extending.md)), and a filter that needs neighbouring pixels can be a `Pipe` stage or a `Convolve` kernel.
 - GIF, BMP and TIFF encoding is single-threaded; LZ77 matching and the second pass of lossless WebP are sequential, so multiple threads speed it up by only 10–20%.

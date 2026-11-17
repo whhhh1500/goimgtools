@@ -151,7 +151,7 @@ func TestToFileAndErrors(t *testing.T) {
 	if err := Open(src).Resize(60, 0).ToFile(out); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := jpeg.Decode(bytes.NewReader(must(os.ReadFile(out)))); err != nil {
+	if _, err := decodeJPEG(bytes.NewReader(must(os.ReadFile(out)))); err != nil {
 		t.Fatal(err)
 	}
 	// A truncated input must leave no output file and no temp file.
@@ -236,7 +236,7 @@ func TestFastShrinkOnLoad(t *testing.T) {
 		return m
 	}
 	decode := func(b []byte) image.Image {
-		m, err := jpeg.Decode(bytes.NewReader(b))
+		m, err := decodeJPEG(bytes.NewReader(b))
 		if err != nil {
 			t.Fatal(err)
 		}

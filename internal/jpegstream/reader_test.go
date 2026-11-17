@@ -2,6 +2,8 @@ package jpegstream
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"fmt"
 	"image"
 	"image/jpeg"
 	"io"
@@ -54,6 +56,26 @@ func decodeMode(data []byte, env *pipeline.Env, random bool) (m image.Image, ove
 	return m, src.(*stream).d.overrun, err
 }
 
+// refDecode is the decoding the others are held to: jpeg.Decode's verdict
+// (an error, or none) and, where it decodes, this decoder's pixels in its
+// plainest mode (bands of automatic height, everything in memory, the input
+// read once). The pixels themselves are held to libjpeg-turbo's (Pillow's)
+// by TestPillowCorpus.
+func refDecode(t *testing.T, data []byte) (image.Image, error) {
+	t.Helper()
+	if _, err := jpeg.Decode(bytes.NewReader(data)); err != nil {
+		return nil, err
+	}
+	rows, cursors, noStep := testMCURows, maxCursors, testNoStep
+	testMCURows, maxCursors, testNoStep = 0, 1024, false
+	defer func() { testMCURows, maxCursors, testNoStep = rows, cursors, noStep }()
+	m, err := decodeStream(data, pipeline.NewEnv(0, ""))
+	if err != nil {
+		t.Fatalf("image/jpeg decodes it, this decoder: %v", err)
+	}
+	return m, nil
+}
+
 func same(t *testing.T, name string, want, got image.Image) {
 	t.Helper()
 	if reflect.TypeOf(want) != reflect.TypeOf(got) {
@@ -95,7 +117,7 @@ func TestStdlibCorpus(t *testing.T) {
 			testMCURows = 1
 		}
 		for name, data := range files {
-			want, werr := jpeg.Decode(bytes.NewReader(data))
+			want, werr := refDecode(t, data)
 			env := pipeline.NewEnv(0, "")
 			if mode == "disk" || mode == "random-disk" {
 				dir = t.TempDir()
@@ -157,11 +179,13 @@ func TestEncodedImages(t *testing.T) {
 			if err := jpeg.Encode(&buf, imgs[name], &jpeg.Options{Quality: 90}); err != nil {
 				t.Fatal(err)
 			}
-			want, err := jpeg.Decode(bytes.NewReader(buf.Bytes()))
+			want, err := refDecode(t, buf.Bytes())
 			if err != nil {
 				t.Fatal(err)
 			}
+			testMCURows = 1
 			got, err := decodeStream(buf.Bytes(), nil)
+			testMCURows = 0
 			if err != nil {
 				t.Fatalf("%s %v: %v", name, sz, err)
 			}
@@ -184,7 +208,7 @@ func TestTruncatedAndCorrupt(t *testing.T) {
 			t.Fatalf("missing %s", name)
 		}
 		check := func(what string, in []byte) {
-			want, werr := jpeg.Decode(bytes.NewReader(in))
+			want, werr := refDecode(t, in)
 			for _, random := range []bool{false, true} {
 				got, overrun, gerr := decodeMode(in, nil, random)
 				if werr != nil {
@@ -279,7 +303,7 @@ func TestManyTables(t *testing.T) {
 	}
 	f.Write([]byte{0xff, 0xd9})
 	data := f.Bytes()
-	want, werr := jpeg.Decode(bytes.NewReader(data))
+	want, werr := refDecode(t, data)
 	if werr != nil {
 		t.Fatal(werr)
 	}
@@ -319,6 +343,117 @@ func TestFillBytesAfterScan(t *testing.T) {
 	for _, random := range []bool{false, true} {
 		if _, _, err := decodeMode(data, nil, random); err == nil {
 			t.Errorf("random %v: decoded", random)
+		}
+	}
+}
+
+// pillowCorpus is the SHA-256 (its first 16 hex digits) of the RGB pixels
+// Pillow 12.1.1 (libjpeg-turbo) decodes Go's JPEG test files to.
+var pillowCorpus = map[string]string{
+	"video-001.221212.jpeg":                              "f3272ae74a3cffed",
+	"video-001.jpeg":                                     "5df7ed5f6d91eb6f",
+	"video-001.progressive.jpeg":                         "5df7ed5f6d91eb6f",
+	"video-001.q50.121121.jpeg":                          "00a127b2d52cd710",
+	"video-001.q50.211211.jpeg":                          "fa95323e4a632f2c",
+	"video-001.q50.221122.jpeg":                          "a00bb4cf047462f0",
+	"video-001.q50.222112.jpeg":                          "88a4e0a056b8772e",
+	"video-001.q50.410.jpeg":                             "6883a5ad925c211c",
+	"video-001.q50.410.progressive.jpeg":                 "6883a5ad925c211c",
+	"video-001.q50.411.jpeg":                             "75c569670c9826c1",
+	"video-001.q50.411.progressive.jpeg":                 "75c569670c9826c1",
+	"video-001.q50.420.jpeg":                             "34c30048db657703",
+	"video-001.q50.420.progressive.jpeg":                 "34c30048db657703",
+	"video-001.q50.422.jpeg":                             "973938af4699d5cc",
+	"video-001.q50.422.progressive.jpeg":                 "973938af4699d5cc",
+	"video-001.q50.440.jpeg":                             "c7b186405bd89744",
+	"video-001.q50.440.progressive.jpeg":                 "c7b186405bd89744",
+	"video-001.q50.444.jpeg":                             "4870a71780d96c99",
+	"video-001.q50.444.progressive.jpeg":                 "4870a71780d96c99",
+	"video-001.restart2.jpeg":                            "5f021700b8dea9da",
+	"video-001.rgb.jpeg":                                 "1dc7b1d4075366f5",
+	"video-001.separate.dc.progression.jpeg":             "523f1f1024d53793",
+	"video-001.separate.dc.progression.progressive.jpeg": "523f1f1024d53793",
+	"video-005.gray.jpeg":                                "c289899392b656bc",
+	"video-005.gray.q50.2x2.jpeg":                        "2d5942114f3e03e5",
+	"video-005.gray.q50.2x2.progressive.jpeg":            "2d5942114f3e03e5",
+	"video-005.gray.q50.jpeg":                            "2d5942114f3e03e5",
+	"video-005.gray.q50.progressive.jpeg":                "2d5942114f3e03e5",
+}
+
+// TestPillowCorpus: the pixels are libjpeg-turbo's, as Pillow decodes Go's
+// JPEG test files to; but for the files whose components are sampled in
+// ways no encoder chooses (luma at half the width of a chroma component,
+// say), which are decoded as the standard library does, each component
+// repeated to full size.
+func TestPillowCorpus(t *testing.T) {
+	flex := map[string]bool{"video-001.q50.121121.jpeg": true, "video-001.q50.211211.jpeg": true,
+		"video-001.q50.221122.jpeg": true, "video-001.q50.222112.jpeg": true}
+	for name, data := range corpus(t) {
+		want, ok := pillowCorpus[name]
+		if !ok || flex[name] {
+			continue
+		}
+		m, err := decodeStream(data, nil)
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		b := m.Bounds()
+		rgb := make([]byte, 0, 3*b.Dx()*b.Dy())
+		for y := b.Min.Y; y < b.Max.Y; y++ {
+			for x := b.Min.X; x < b.Max.X; x++ {
+				r, g, bl, _ := m.At(x, y).RGBA()
+				rgb = append(rgb, byte(r>>8), byte(g>>8), byte(bl>>8))
+			}
+		}
+		if got := fmt.Sprintf("%x", sha256.Sum256(rgb))[:16]; got != want {
+			t.Errorf("%s: pixels %s, Pillow's %s", name, got, want)
+		}
+	}
+}
+
+// TestKeepYCbCr: with KeepYCbCr the strips are the YCbCr the RGB is made
+// from; that YCbCr converted in one go, as a single band, is the RGB the
+// decoder hands out band by band, the row held back at the end of each band
+// and all (bands of one MCU row, every subsampling, odd sizes).
+func TestKeepYCbCr(t *testing.T) {
+	for _, ratio := range []int{Subsample444, Subsample422, Subsample420} {
+		for _, sz := range [][2]int{{1, 1}, {3, 5}, {37, 23}, {201, 97}} {
+			m := image.NewRGBA(image.Rect(0, 0, sz[0], sz[1]))
+			for i := range m.Pix {
+				m.Pix[i] = uint8(i * 37 % 251)
+			}
+			var buf bytes.Buffer
+			if err := Encode(&buf, pipeline.FromImage(m, nil), &Options{Quality: 90, Subsampling: ratio}); err != nil {
+				t.Fatal(err)
+			}
+			data := buf.Bytes()
+			testMCURows = 1
+			rgb, err := decodeStream(data, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			src, err := Open(bytes.NewReader(data), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			src.(*stream).KeepYCbCr()
+			raw, err := pipeline.Collect(src)
+			src.Close()
+			testMCURows = 0
+			if err != nil {
+				t.Fatal(err)
+			}
+			y, ok := raw.(*image.YCbCr)
+			if !ok {
+				t.Fatalf("%v %v: KeepYCbCr gave %T", ratio, sz, raw)
+			}
+			u := newUpsampler(y.SubsampleRatio, sz[0], sz[1], false, nil)
+			whole := image.NewRGBA(image.Rect(0, 0, sz[0], sz[1]))
+			band := *y
+			band.Rect = image.Rect(0, 0, sz[0], sz[1])
+			u.band(&band, 0, sz[1], true, whole)
+			same(t, fmt.Sprintf("%v %v", ratio, sz), whole, rgb)
 		}
 	}
 }

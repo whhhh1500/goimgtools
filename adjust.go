@@ -22,8 +22,8 @@ import (
 // of each pixel, rounded to the nearest level, as Pillow's convert("L"),
 // image/color's RGBToYCbCr and JPEG encoders compute it (Pillow's result
 // to the byte; image/color's GrayModel drops a fraction instead and can be
-// a level lower). For a JPEG it is the brightness the file stores. An
-// image without transparency becomes a one-channel greyscale image, which
+// a level lower); of a JPEG, Pillow's to the byte too, as it is decoded as
+// Pillow decodes it. An image without transparency becomes a one-channel greyscale image, which
 // a JPEG or PNG then stores as such, smaller; transparency is kept. See
 // GrayscaleOptions.Linear for sharp's grey.
 func (m *Image) Grayscale(opts ...GrayscaleOptions) *Image {

@@ -476,7 +476,7 @@ func (m *Image) write(w io.Writer, ext string) (err error) {
 			return err
 		}
 	}
-	src, closer, inFormat, meta, err := m.buildFrom(env, true, f, inFormat, false)
+	src, closer, inFormat, meta, err := m.buildFrom(env, true, f, inFormat, false, m.takesYCbCr(format))
 	if err != nil {
 		return err
 	}
@@ -568,6 +568,24 @@ func (m *Image) encode(w io.Writer, src pipeline.Source, format string, quality 
 // optionsFor returns the output options that belong to format: the ones
 // given together with it, and none when the format was decided by the file
 // name or the input.
+// takesYCbCr reports whether a JPEG's pixels go to the encoder of format
+// untouched, an encoder that takes YCbCr as it is (JPEG, lossy WebP): no
+// operation, no conversion of colour. The chroma then goes from the file
+// into the new one without being brought to full size and back.
+func (m *Image) takesYCbCr(format string) bool {
+	if len(m.chain) != 0 || m.toSRGB {
+		return false
+	}
+	switch format {
+	case "jpeg":
+		return true
+	case "webp":
+		o, _ := m.optionsFor("webp").(WebPOptions)
+		return !o.Lossless
+	}
+	return false
+}
+
 func (m *Image) optionsFor(format string) any {
 	if m.format == format {
 		return m.options

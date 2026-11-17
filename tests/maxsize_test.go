@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"image"
-	"image/jpeg"
 	"io"
 	"path/filepath"
 	"sync/atomic"
@@ -166,7 +165,7 @@ func TestMaxFileSize(t *testing.T) {
 	if err != nil || !bytes.Equal(low, capped) {
 		t.Errorf("a generous limit changed the output (err %v)", err)
 	}
-	if m, err := jpeg.Decode(bytes.NewReader(capped)); err != nil || m.Bounds().Size() != image.Pt(613, 457) {
+	if m, err := decodeJPEG(bytes.NewReader(capped)); err != nil || m.Bounds().Size() != image.Pt(613, 457) {
 		t.Errorf("capped file: %v", err)
 	}
 	// Formats without a quality, and a bad limit.

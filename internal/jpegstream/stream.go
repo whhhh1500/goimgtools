@@ -19,17 +19,22 @@ package jpegstream
 //     coefficients in a pipeline.Scratch, which is a temporary file when it
 //     does not fit in the memory budget, and turns them into pixels band by
 //     band after the last scan;
-//   - applyBlack and convertToRGB work on a band;
+//   - applyBlack works on a band;
 //   - the entropy-coded data is read 64 bits at a time (fillBits), the
 //     Huffman look-up tables have 11 bits, and a further table decodes a
 //     coefficient's extra bits with its code; a baseline block is decoded by
 //     decodeBlock, which dequantizes as it goes, and the inverse DCT skips
 //     the arithmetic on rows of zeros;
 //   - ShrinkOnLoad decodes the image reduced by 2, 4 or 8 (dct.go's reduced
-//     IDCTs), which jpeg.Decode cannot.
+//     IDCTs), which jpeg.Decode cannot;
+//   - the pixels are libjpeg-turbo's (and so Pillow's and sharp's), not
+//     jpeg.Decode's: the inverse DCT is libjpeg's accurate integer one
+//     (islow.go), and a colour image comes out as RGBA, its chroma brought
+//     back to full size and converted as libjpeg does (ycc.go); KeepYCbCr
+//     keeps the YCbCr strips instead, as ShrinkOnLoad does.
 //
-// The pixels are the same as jpeg.Decode's, but for ShrinkOnLoad and for
-// a corrupt progressive scan that ends inside an end-of-band run, whose rest
+// The arithmetic apart, the decoding is jpeg.Decode's, but for a corrupt
+// progressive scan that ends inside an end-of-band run, whose rest
 // jpeg.Decode carries into the next scan (libjpeg ends it with the scan, as
 // the scans decoded in step must).
 
@@ -163,15 +168,23 @@ func (c *coefStore) save(ci, bx, by int, b *block, zigStart, zigEnd int32) error
 }
 
 type stream struct {
-	d        *decoder
-	env      *pipeline.Env
-	k        int         // MCU rows per band
-	my       int         // next MCU row to output
-	rgba     *image.RGBA // band for convertToRGB / applyBlack
-	reserved int64
-	band     int64 // the part of reserved that is the band (planBand)
-	started  bool  // Next has been called
-	scanned  bool  // full mode: every scan has been read (or planned)
+	d    *decoder
+	env  *pipeline.Env
+	k    int         // MCU rows per band
+	my   int         // next MCU row to output
+	rgba *image.RGBA // band for applyBlack and up
+	raw  bool        // KeepYCbCr: hand out YCbCr strips
+	up   *upsampler  // the conversion of YCbCr to RGB
+	// The band decoded and being converted, a few rows at a time: its
+	// first row, its rows, the rows of the image it gives, the next of
+	// them to convert.
+	bandY0, bandY1        int
+	convFrom, convTo, pos int
+	converting            bool
+	reserved              int64
+	band                  int64 // the part of reserved that is the band (planBand)
+	started               bool  // Next has been called
+	scanned               bool  // full mode: every scan has been read (or planned)
 	// ra, if set, gives random access to the input (WithRandomAccess);
 	// cursors are the scans of a full-mode image (multiscan.go).
 	ra      func() (io.ReaderAt, int64, error)
@@ -243,7 +256,7 @@ func (s *stream) planBand() error {
 	if d.nComp == 4 {
 		rowBytes += int64(pw)
 	}
-	if d.nComp == 4 || (d.nComp == 3 && d.isRGB()) {
+	if d.nComp == 4 || s.converts() {
 		rowBytes += 4 * int64(w)
 	}
 	mcuRows := 8 * d.maxV >> d.scale
@@ -251,12 +264,29 @@ func (s *stream) planBand() error {
 	if testMCURows > 0 {
 		s.k = testMCURows
 	}
-	need := rowBytes * int64(mcuRows*s.k)
+	bandBytes := func() int64 {
+		need := rowBytes * int64(mcuRows*s.k)
+		if s.converts() {
+			// The strips handed out a few rows at a time instead of the
+			// band's RGBA, and the row held back.
+			need += 4*int64(w)*int64(s.chunkRows()) + 3*int64(w) + 8 - 4*int64(w)*int64(mcuRows*s.k)
+		}
+		return need
+	}
+	need := bandBytes()
 	s.env.Budget.Release(s.band)
 	s.reserved -= s.band
 	s.band = 0
 	if err := s.env.Budget.Reserve(need, "jpeg band"); err != nil {
-		return err
+		// A band of one MCU row is all the decoder needs.
+		if s.k == 1 || testMCURows > 0 {
+			return err
+		}
+		s.k = 1
+		need = bandBytes()
+		if err := s.env.Budget.Reserve(need, "jpeg band"); err != nil {
+			return err
+		}
 	}
 	s.reserved += need
 	s.band = need
@@ -278,9 +308,43 @@ func (s *stream) allocBand() {
 		d.blackStride = 8 * d.comp[3].h * d.mxx
 		d.blackPix = make([]byte, d.blackStride*8*d.comp[3].v*s.k)
 	}
-	if d.nComp == 4 || (d.nComp == 3 && d.isRGB()) {
+	if d.nComp == 4 {
 		s.rgba = image.NewRGBA(image.Rect(0, 0, d.width, mcuRows*s.k))
 	}
+	if s.converts() {
+		w, h := s.size()
+		s.rgba = image.NewRGBA(image.Rect(0, 0, w, s.chunkRows()))
+		s.up = newUpsampler(d.ratio, w, h, d.isRGB(), s.env)
+	}
+}
+
+// chunkRows is how many RGBA rows a strip has at most: 8, or with helpers,
+// who share out the converting, a whole band and the row held back.
+func (s *stream) chunkRows() int {
+	if s.env.Helpers() > 0 {
+		return (8*s.d.maxV>>s.d.scale)*s.k + 1
+	}
+	return 8
+}
+
+// converts reports whether the strips of a three-component image are
+// turned into RGBA: always for one stored as red, green and blue, unless
+// KeepYCbCr for YCbCr.
+func (s *stream) converts() bool {
+	return s.d.nComp == 3 && (s.d.isRGB() || !s.raw)
+}
+
+// KeepYCbCr makes the decoder hand out the YCbCr strips of a colour image
+// as they are, its chroma as stored, for a consumer that takes them so (an
+// encoder that would otherwise convert them back): the decoded pixels are
+// libjpeg's, but not converted to RGB. It must be called before the first
+// Next.
+func (s *stream) KeepYCbCr() {
+	if s.started || s.raw {
+		return
+	}
+	s.raw = true
+	s.planBand() // a smaller band than the one reserved
 }
 
 // size is the size of the image as decoded.
@@ -301,6 +365,14 @@ func (s *stream) ShrinkOnLoad(k int) bool {
 	if s.started || d.flex || d.nComp == 4 || (d.nComp == 3 && d.isRGB()) {
 		return false
 	}
+	raw := s.raw
+	s.raw = true // the reduced strips are YCbCr
+	defer func() {
+		if d.scale == 0 {
+			s.raw = raw
+			s.planBand()
+		}
+	}()
 	if d.nComp == 3 {
 		switch d.ratio {
 		case image.YCbCrSubsampleRatio444, image.YCbCrSubsampleRatio422,
@@ -423,9 +495,9 @@ func (s *stream) Opaque() bool { return true }
 // Meta returns the EXIF block and ICC profile found before the first scan.
 func (s *stream) Meta() pipeline.Meta { return s.d.meta }
 
-// Subsampling reports the chroma subsampling of the strips when they are
-// Gray (gray true) or YCbCr; ok is false for CMYK and RGB images, whose
-// strips are neither.
+// Subsampling reports the chroma subsampling of the image, that of the
+// strips when they are Gray (gray true) or YCbCr (with KeepYCbCr or
+// ShrinkOnLoad); ok is false for CMYK and RGB images.
 func (s *stream) Subsampling() (ratio image.YCbCrSubsampleRatio, gray, ok bool) {
 	d := s.d
 	switch {
@@ -441,7 +513,9 @@ func (s *stream) Subsampling() (ratio image.YCbCrSubsampleRatio, gray, ok bool) 
 // (progressive, or sequential with the components in separate scans).
 func (s *stream) Buffered() bool { return s.d.full }
 
-func (s *stream) ColorModel() color.Model {
+// StoredColorModel is how the file stores its pixels, which the strips
+// are converted from: gray, YCbCr, RGB or CMYK.
+func (s *stream) StoredColorModel() color.Model {
 	d := s.d
 	switch {
 	case d.nComp == 1:
@@ -449,6 +523,19 @@ func (s *stream) ColorModel() color.Model {
 	case d.nComp == 4:
 		return color.CMYKModel
 	case d.isRGB():
+		return color.RGBAModel
+	}
+	return color.YCbCrModel
+}
+
+func (s *stream) ColorModel() color.Model {
+	d := s.d
+	switch {
+	case d.nComp == 1:
+		return color.GrayModel
+	case d.nComp == 4:
+		return color.CMYKModel
+	case d.isRGB() || s.converts():
 		return color.RGBAModel
 	}
 	return color.YCbCrModel
@@ -589,6 +676,9 @@ func (s *stream) reconstructBand(my0, my1 int) error {
 }
 
 func (s *stream) Next() (image.Image, error) {
+	if s.converting {
+		return s.nextChunk(), nil
+	}
 	if s.done {
 		return nil, io.EOF
 	}
@@ -655,7 +745,38 @@ func (s *stream) next() (image.Image, error) {
 	mcuRows := 8 * d.maxV >> d.scale
 	w, h := s.size()
 	r := image.Rect(0, my0*mcuRows, w, min(my1*mcuRows, h))
+	if s.up != nil {
+		// Converted and handed out a few rows at a time.
+		last := r.Max.Y == h
+		s.bandY0, s.bandY1 = r.Min.Y, r.Max.Y
+		s.convFrom, s.convTo = s.up.span(r.Min.Y, r.Max.Y, last)
+		s.pos, s.converting = s.convFrom, true
+		if s.convFrom == s.convTo {
+			s.up.hold(d.img3, s.bandY0, s.bandY1, false)
+			s.converting = false
+			if s.done {
+				return nil, io.EOF
+			}
+			return s.next()
+		}
+		return s.nextChunk(), nil
+	}
 	return s.finishBand(r), nil
+}
+
+// nextChunk converts the next rows of the band into an RGBA strip; after
+// the last, it keeps what the next band needs.
+func (s *stream) nextChunk() image.Image {
+	to := min(s.pos+s.rgba.Rect.Dy(), s.convTo)
+	s.up.convert(s.d.img3, s.bandY0, s.pos, to, s.rgba)
+	r := image.Rect(0, s.pos, s.rgba.Rect.Dx(), to)
+	s.pos = to
+	if s.pos == s.convTo {
+		_, h := s.size()
+		s.up.hold(s.d.img3, s.bandY0, s.bandY1, s.bandY1 == h)
+		s.converting = false
+	}
+	return &image.RGBA{Pix: s.rgba.Pix[:r.Dy()*s.rgba.Stride], Stride: s.rgba.Stride, Rect: r}
 }
 
 // finishStream reads what follows the single scan of a streamed image, up
@@ -678,7 +799,8 @@ func (s *stream) finishStream() error {
 }
 
 // finishBand turns the band into the strip for rows r, applying the
-// standard library's applyBlack or convertToRGB where they apply.
+// standard library's applyBlack, or up's conversion to RGB, where they
+// apply.
 func (s *stream) finishBand(r image.Rectangle) image.Image {
 	d := s.d
 	if d.img1 != nil {
@@ -691,9 +813,6 @@ func (s *stream) finishBand(r image.Rectangle) image.Image {
 	img3 := &m
 	if d.nComp == 4 {
 		return s.applyBlack(img3)
-	}
-	if d.isRGB() {
-		return s.convertToRGB(img3)
 	}
 	return img3
 }
@@ -748,26 +867,4 @@ func (s *stream) applyBlack(img3 *image.YCbCr) image.Image {
 		}
 	}
 	return out
-}
-
-// convertToRGB is the standard library's convertToRGB for one band.
-func (s *stream) convertToRGB(img3 *image.YCbCr) image.Image {
-	d := s.d
-	cScale := d.comp[0].h / d.comp[1].h
-	bounds := img3.Bounds()
-	rg := *s.rgba
-	rg.Rect = bounds
-	img := &rg
-	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
-		po := img.PixOffset(bounds.Min.X, y)
-		yo := img3.YOffset(bounds.Min.X, y)
-		co := img3.COffset(bounds.Min.X, y)
-		for i, iMax := 0, bounds.Max.X-bounds.Min.X; i < iMax; i++ {
-			img.Pix[po+4*i+0] = img3.Y[yo+i]
-			img.Pix[po+4*i+1] = img3.Cb[co+i/cScale]
-			img.Pix[po+4*i+2] = img3.Cr[co+i/cScale]
-			img.Pix[po+4*i+3] = 255
-		}
-	}
-	return img
 }

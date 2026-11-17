@@ -306,7 +306,7 @@ func TestPixels(t *testing.T) {
 	// From files too: a JPEG, and a PNG with a palette.
 	photo := testutil.Images(333, 222)["rgba-opaque"]
 	jp := jpegBytes(photo, 85)
-	dec, _ := jpeg.Decode(bytes.NewReader(jp))
+	dec, _ := decodeJPEG(bytes.NewReader(jp))
 	got, err := FromBytes(jp).Pixels(invert).PNG().ToBytes()
 	if err != nil {
 		t.Fatal(err)
@@ -996,7 +996,7 @@ func TestWrapBuiltinFormat(t *testing.T) {
 		t.Fatal(err)
 	}
 	src.Close()
-	ref, _ := jpeg.Decode(bytes.NewReader(in))
+	ref, _ := decodeJPEG(bytes.NewReader(in))
 	same8(t, "decoder and encoder called directly", decodePNG(t, out.Bytes()), ref)
 	bmp, _ := CodecByName("bmp")
 	src, err = bmp.Decode(memInput{bytes.NewReader(must(FromBytes(in).BMP().ToBytes()))}, nil)

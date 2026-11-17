@@ -78,8 +78,8 @@ func planes(t *testing.T, what string, data []byte) (image.Rectangle, [][]byte) 
 	return image.Rectangle{}, nil
 }
 
-// checkSamePixels requires data to decode, with the standard library and
-// with this package, to exactly what the plain file decodes to.
+// checkSamePixels requires data to decode, with the standard library (its
+// planes) and with this package, to exactly what the plain file decodes to.
 func checkSamePixels(t *testing.T, what string, plain, data []byte) {
 	t.Helper()
 	wr, wp := planes(t, what+" plain", plain)
@@ -92,7 +92,7 @@ func checkSamePixels(t *testing.T, what string, plain, data []byte) {
 			t.Fatalf("%s: plane %d differs from the plain file's", what, i)
 		}
 	}
-	want, err := jpeg.Decode(bytes.NewReader(data))
+	want, err := decodeStream(plain, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -112,6 +112,14 @@ func (d *decoded) Subsampling() (ratio image.YCbCrSubsampleRatio, gray, ok bool)
 	return 0, false, false
 }
 
+// KeepYCbCr passes on to a JPEG decoder that its YCbCr strips are to be
+// handed out as they are, not converted to RGB.
+func (d *decoded) KeepYCbCr() {
+	if j, is := d.Source.(interface{ KeepYCbCr() }); is {
+		j.KeepYCbCr()
+	}
+}
+
 // ShrinkOnLoad passes on a request to a JPEG decoder to decode the image
 // reduced by k; false where the decoder cannot.
 func (d *decoded) ShrinkOnLoad(k int) bool {

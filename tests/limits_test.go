@@ -46,7 +46,7 @@ func decodeAny(t *testing.T, what string, b []byte) image.Image {
 	var err error
 	switch {
 	case bytes.HasPrefix(b, []byte("\xff\xd8")):
-		m, err = jpeg.Decode(bytes.NewReader(b))
+		m, err = decodeJPEG(bytes.NewReader(b))
 	case bytes.HasPrefix(b, []byte("\x89PNG")):
 		m, err = png.Decode(bytes.NewReader(b))
 	case bytes.HasPrefix(b, []byte("GIF8")):

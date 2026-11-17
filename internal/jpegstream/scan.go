@@ -812,12 +812,13 @@ func (d *decoder) reconstructBlock(b *block, bx, by, compIndex int) error {
 
 	if d.flex {
 		// Flex mode: expand each source pixel to h×v destination pixels.
-		idct(b)
+		var px [64]byte
+		islowStore(b, px[:], 8)
 		for y := 0; y < 8; y++ {
 			y8 := y * 8
 			yv := y * v
 			for x := 0; x < 8; x++ {
-				val := uint8(max(0, min(255, b[y8+x]+128)))
+				val := px[y8+x]
 				xh := x * h
 				for yy := 0; yy < v; yy++ {
 					for xx := 0; xx < h; xx++ {
@@ -835,7 +836,7 @@ func (d *decoder) reconstructBlock(b *block, bx, by, compIndex int) error {
 	}
 	switch d.scale {
 	case 0:
-		idctStore(b, dst, stride)
+		islowStore(b, dst, stride)
 	case 1:
 		idct4Store(b, dst, stride)
 	case 2:

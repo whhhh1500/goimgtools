@@ -51,7 +51,7 @@ err := goimgtools.Open("in.jpg").
 | `Trim(threshold, TrimOptions{Background, LineArt, Margin})` | 去除四周与左上角像素（或 `Background`）同色的边（红、绿、蓝、透明任一通道之差超过 `threshold` 才视为不同；sharp 的默认值 10 可消除 JPEG 噪点）。与 sharp 的 `trim`（libvips 的 `find_trim`）一样，先对图像做 3×3 中值滤波再找边，使边上的灰尘斑点与 JPEG 瑕疵不妨碍裁剪（保留的像素不受滤波影响）；`LineArt` 直接比较原像素，适用于由单像素细线构成的线稿（中值滤波会把细线滤掉）。`Margin` 在找到的范围外保留相应像素。像素相同时裁剪范围与 sharp 完全一致 |
 | `Extend(top, right, bottom, left, background)` | 四周扩边，宽度按 CSS 的上、右、下、左顺序给出 |
 | `ExtendWith(top, right, bottom, left, how)` | 用图像本身扩边：`ExtendCopy` 重复边缘像素，`ExtendRepeat` 平铺重复图像，`ExtendMirror` 镜像（边缘像素出现两次），边框比图像宽时继续重复或镜像。与 sharp 带 `extendWith` 的 `extend` 逐像素一致。顶部或底部边框需要重复或镜像时，图像存入工作存储 |
-| `Grayscale(GrayscaleOptions{Linear})` | 灰度化：Rec. 601 亮度四舍五入至最近的灰阶，与 Pillow 的 `convert("L")` 逐字节一致；JPEG 直接采用文件中存储的亮度。`Linear` 改用线性光的亮度（Rec. 709 权重），与 sharp 的 `greyscale` 逐字节一致：红色与蓝色更暗、绿色更亮。不透明图像输出为单通道灰度文件 |
+| `Grayscale(GrayscaleOptions{Linear})` | 灰度化：Rec. 601 亮度四舍五入至最近的灰阶，与 Pillow 的 `convert("L")` 逐字节一致（JPEG 亦然，其解码结果与 Pillow 相同）。`Linear` 改用线性光的亮度（Rec. 709 权重），与 sharp 的 `greyscale` 逐字节一致：红色与蓝色更暗、绿色更亮。不透明图像输出为单通道灰度文件 |
 | `Modulate(brightness, saturation, hue, ModulateOptions{Lightness})` | 在 LCh 色彩空间中将亮度、饱和度乘以系数，并将色相旋转指定度数（与 sharp 的做法相同）；`Lightness` 随后加到明度上（L\*，0–100），即 sharp 的 `lightness`。每个像素与 sharp 的结果相差不超过 1：`Modulate(1.2, 0.8, 0)` 使亮度提高 20%、色彩略淡 |
 | `Negate(NegateOptions{Alpha})` | 反色：每个颜色取其相反值（255 − 色阶），透明度不变；指定 `Alpha` 时透明度也取反。与 sharp 的 `negate({alpha: false})` 及 `negate()` 逐字节一致 |
 | `Linear(a, b)` | 每个红、绿、蓝色阶 v 变为 a·v + b，舍去小数并限制在 0–255，与 sharp 的 `linear` 逐字节一致：`Linear(1.2, -25)` 提高对比度 |
@@ -86,7 +86,7 @@ err := goimgtools.Open("in.jpg").
 - `Position`：`FitCover` 保留的部分，以及 `FitContain` 放置图像的位置：默认居中，也可为 `NorthWest` … `SouthEast` 九个方位之一（sharp 的 `position`；居中裁剪的取整方式与 sharp 相同）。
 - `LinearLight`：在线性光下缩放（同 libvips `thumbnail` 的 `linear`）：先把色阶转为线性光再求平均，之后重新编码，因此缩小图像时细小的亮部细节（细线、文字、星空）保持亮度而不会变暗，颜色也按光的方式混合。黑白相间的像素缩小一半后为 188 级（白色一半的光），而不是 128 级。把 2400 万像素的 PNG 缩小到 1500×1000 用时 0.74 秒（不开启为 0.64 秒）。
 - `Interesting`：用于 `FitCover`，按画面内容选择保留的部分，即 sharp 的 `strategy.entropy` / `strategy.attention`（libvips 的 smartcrop）：`InterestingEntropy` 保留细节最多的部分（像素相同时与 libvips 的裁剪完全一致），`InterestingAttention` 保留最引人注意的部分（边缘、肤色与饱和的红色，在按 libvips 方式缩小到 32×32 的图像上评分）。选择期间缩放后的图像保存在内存中。
-- `Kernel`：`KernelCubic`（默认，Catmull-Rom）、`KernelNearest`、`KernelLinear`、`KernelMitchell`、`KernelLanczos2`、`KernelLanczos3`。
+- `Kernel`：`KernelCubic`（默认，Catmull-Rom）、`KernelNearest`、`KernelLinear`、`KernelMitchell`、`KernelLanczos2`、`KernelLanczos3`、`KernelMKS2013`、`KernelMKS2021`（Magic Kernel Sharp，即 sharp 的 `mks2013`、`mks2021`）。
 - `Filter`：自定义缩放滤镜（`&goimgtools.Filter{Support, At}`），设置后取代 `Kernel`。
 - `FastShrinkOnLoad`：JPEG 解码时先行缩小（见 [JPEG 解码时缩小](performance.md#jpeg-解码时缩小可选)）。
 
