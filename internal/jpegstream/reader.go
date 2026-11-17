@@ -8,6 +8,7 @@
 package jpegstream
 
 import (
+	"github.com/whhhh1500/goimgtools/internal/density"
 	"github.com/whhhh1500/goimgtools/pipeline"
 
 	"image"
@@ -147,6 +148,7 @@ type decoder struct {
 	progressive bool
 
 	jfif                bool
+	jfifDensity         float64 // pixels per inch, 0 when not given
 	adobeTransformValid bool
 	adobeTransform      uint8
 	eobRun              uint16 // End-of-Band run, specified in section G.1.2.2.
@@ -471,6 +473,20 @@ func (d *decoder) processApp0Marker(n int) error {
 	n -= 5
 
 	d.jfif = d.tmp[0] == 'J' && d.tmp[1] == 'F' && d.tmp[2] == 'I' && d.tmp[3] == 'F' && d.tmp[4] == '\x00'
+	if d.jfif && n >= 7 {
+		// Version, units, horizontal and vertical density.
+		if err := d.readFull(d.tmp[:7]); err != nil {
+			return err
+		}
+		n -= 7
+		x := float64(int(d.tmp[3])<<8 | int(d.tmp[4]))
+		switch d.tmp[2] {
+		case 1:
+			d.jfifDensity = density.FromPerInch(x)
+		case 2:
+			d.jfifDensity = density.FromPerCm(x)
+		}
+	}
 
 	if n > 0 {
 		return d.ignore(n)
@@ -554,6 +570,12 @@ func (d *decoder) processApp2(n int) error {
 // finishMeta assembles the ICC profile once the header has been read.
 func (d *decoder) finishMeta() {
 	d.metaDone = true
+	// The resolution of the EXIF block, when it has one, as libvips takes
+	// it; else that of the JFIF segment.
+	d.meta.Density = d.jfifDensity
+	if v := density.FromExif(d.meta.Exif); v > 0 {
+		d.meta.Density = v
+	}
 	if len(d.iccParts) != 0 && len(d.iccParts) == d.iccTotal {
 		var icc []byte
 		for i := 1; i <= d.iccTotal; i++ {

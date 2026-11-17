@@ -16,6 +16,7 @@ import (
 	"image"
 	"image/color"
 	"io"
+	"math"
 	mbits "math/bits"
 
 	"github.com/whhhh1500/goimgtools/pipeline"
@@ -1111,6 +1112,10 @@ type Options struct {
 	// smaller file at about the same look, with other pixels than plain
 	// rounding.
 	Trellis bool
+	// Density, when above 0, is the resolution to record in a JFIF
+	// segment, in pixels per inch (rounded, 1 to 65535). Without it there
+	// is no JFIF segment, as jpeg.Encode writes none.
+	Density float64
 	// QuantTable picks the quantization tables, 0 to NQuantTables-1, as
 	// mozjpeg's -quant-table does (see qtables.go), or QuantTableJpegli
 	// (qtables_jpegli.go). 0, the tables of the JPEG standard, is what the
@@ -1210,6 +1215,11 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 	e.buf[1] = 0xd8
 	e.write(e.buf[:2])
 	if o != nil {
+		if o.Density > 0 {
+			// JFIF 1.02, in dots per inch, no thumbnail.
+			d := uint16(max(1, min(math.Round(o.Density), 65535)))
+			e.write([]byte{0xff, 0xe0, 0, 16, 'J', 'F', 'I', 'F', 0, 1, 2, 1, byte(d >> 8), byte(d), byte(d >> 8), byte(d), 0, 0})
+		}
 		e.writeMeta(o.Exif, o.ICC)
 	}
 	// Write the quantization tables.

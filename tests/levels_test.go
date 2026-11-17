@@ -108,7 +108,9 @@ func TestLevelFormulas(t *testing.T) {
 		}
 	}
 	check("Negate", FromImage(m).Negate(), func(v uint8) uint8 { return 255 - v })
-	check("Linear", FromImage(m).Linear(1.7, -40.5), func(v uint8) uint8 { return uint8(math.Max(0, math.Min(255, 1.7*float64(v)-40.5))) })
+	// (The product rounded before the sum, as the library does it on every
+	// processor: without float64 Go may fuse the two on some.)
+	check("Linear", FromImage(m).Linear(1.7, -40.5), func(v uint8) uint8 { return uint8(math.Max(0, math.Min(255, float64(1.7*float64(v))-40.5))) })
 	check("Linear 1, 0", FromImage(m).Linear(1, 0), func(v uint8) uint8 { return v })
 	check("Gamma", FromImage(m).Gamma(2.2), func(v uint8) uint8 { return uint8(math.Round(255 * math.Pow(float64(v)/255, 1/2.2))) })
 	check("Gamma 1", FromImage(m).Gamma(1), func(v uint8) uint8 { return v })

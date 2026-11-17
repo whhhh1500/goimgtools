@@ -8,7 +8,7 @@ PNG、JPEG、GIF、BMP、TIFF 的解码与编码以及默认缩放均改写自�
 
 - 解码：Go 与 `x/image` 自带的 164 幅测试图像（PNG 85、JPEG 31、TIFF 17、WebP 17、BMP 9、GIF 5）解码所得像素与标准解码器相同（WebP 见下文）；对于截断文件和单字节损坏的文件，凡标准解码器报错者，本库同样报错。
 - 缩放：默认算法与 `draw.CatmullRom.Scale` 逐字节一致。灰度图像仅计算单一通道并输出为灰度图像，其数值即 `x/image` 输出的红、绿、蓝三个相等通道的值。
-- 编码：JPEG（不设选项时）与 GIF（启用 `FixedPalette` 时；同时启用 `NoDither` 时与使用 `draw.Src` 的 `gif.Encode` 一致）与标准库逐字节一致；BMP、TIFF 与 `x/image` 逐字节一致（不含元数据时）。PNG（不减色时）在使用 6 级（指定，或 Go 1.26 下的默认值）且图像数据不超过一个压缩块（256KB）时与 `png.Encode` 逐字节一致；Go 1.27 下默认使用 7 级（见[压缩](compression.md)），更大的图像分块压缩，像素相同。
+- 编码：JPEG（不设选项时）与 GIF（启用 `FixedPalette` 时；同时启用 `NoDither` 时与使用 `draw.Src` 的 `gif.Encode` 一致）与标准库逐字节一致；BMP、TIFF 与 `x/image` 逐字节一致（不含元数据和分辨率时）。PNG（不减色时）在使用 6 级（指定，或 Go 1.26 下的默认值）且图像数据不超过一个压缩块（256KB）时与 `png.Encode` 逐字节一致；Go 1.27 下默认使用 7 级（见[压缩](compression.md)），更大的图像分块压缩，像素相同。
 - 模糊与反锐化掩模：对于不含透明通道的图像，`Blur` 与 Pillow 12.1.1 的 `GaussianBlur`、`Sharpen(SharpenOptions{...})` 与其 `UnsharpMask` 逐字节一致（测试中存有 Pillow 生成的参考图像，sigma 0.7–40）。算法与定点运算移植自 Pillow 的 C 代码。
 - 灰度：与 Pillow 的 `convert("L")` 逐字节一致，即 `color.RGBToYCbCr` 的亮度；在全部 1677 万种颜色上，与精确的 Rec. 601 亮度最多相差 0.5 级。（`color.GrayModel` 先计算至 16 位再舍去低 8 位，最多相差 0.99 级，且 16% 的颜色未取到最近的一级，故未采用。）
 - 色彩调整：与 sharp 0.35（libvips 8.18）的 `modulate` 相比，每个像素相差不超过 1，平均 0.14。
@@ -23,6 +23,8 @@ PNG、JPEG、GIF、BMP、TIFF 的解码与编码以及默认缩放均改写自�
 
 - **GIF 调色板**：标准库将所有非调色板图像一律降为固定的 256 色（Plan 9 调色板），照片仅 25dB。本库默认依据图像内容选色，同一照片可达 39dB；界面截图由 29dB 提高到 58dB，且文件更小。`FixedPalette` 可切换回标准库的方式。动画同样依据全部帧统一选色。
 - **有损 WebP 的颜色**：`x/image` 按 JPEG 的取值范围换算 WebP 的亮度与色度，颜色对比度低于 libwebp（浏览器）的结果，平均相差 6–8 个色阶，最大 33；而且每个色度样本直接用于整个 2×2 块，色彩边缘处会出现色块。本库按 libwebp 的方式换算（色度在样本之间插值，采用 libwebp 的整数运算），解码像素与 libwebp（`dwebp`）逐字节相同，已在 `x/image` 的有损文件、奇数尺寸与带透明通道的文件以及一张 1550 万像素的照片上核对。`Metadata()` 对这类文件仍报告 `ycbcr`，即其存储方式。
+- **JPEG 压缩的 TIFF**：条带或图块为 JPEG 流的 TIFF 文件（压缩方式 7，即 libtiff 的写法，libvips 与 sharp 默认如此），`x/image` 不支持，本库可以读取：每个块连同各块共用的表（JPEGTables）按 JPEG 解码，支持彩色（YCbCr）与灰度。像素与同样的 JPEG 流作为文件解码所得相同（在带或不带共用表的条带文件，以及 sharp 写出的条带与图块 TIFF 上核对）。
+- **分辨率**：输入记录的分辨率默认写入 JPEG、PNG、TIFF、BMP 输出（JFIF 段、pHYs 块、分辨率标签、文件头字段），标准库不写这些；输入没有分辨率时，JPEG 输出不变（没有 JFIF 段）；调用 `Density(0)` 后所有输出均不变。分辨率的读取方式与 sharp 0.35 相同（在 sharp 写出的 JPEG、PNG、TIFF、WebP 文件上核对，sharp 也能读回本库写出的值）：优先取 EXIF 的，每英寸 25.4 像素及以下视为未记录；按每米或每厘米存储、可由整数 dpi 换算得到的值还原为该整数，sharp 则把所有分辨率都四舍五入为整数。
 - **ICC**：输入带有 ICC 色彩配置时默认写入输出，因此此类图像的输出比标准库编码多出 ICC 数据；调用 `StripICC()` 后两者相同。
 - 以 JPEG、YCbCr、CMYK 等为来源输出 PNG 时写为 8 位 RGB；`png.Encode` 写为 16 位。
 - 基线 JPEG 文件若在一次完整扫描之后再出现扫描（极少见），则予以拒绝。

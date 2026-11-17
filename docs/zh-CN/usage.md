@@ -103,7 +103,7 @@ err := goimgtools.Open("in.jpg").
 | `ToFormat(name, 选项)` | 按名称选择输出格式（`"jpeg"`、`"png"`、`".tif"`……，以及已注册的格式）；选项为该格式的选项结构体，可省略 |
 | `MaxFileSize(n)` | 输出不超过 n 字节：自动选用满足该限制的最高质量（JPEG、有损 WebP，以及提供 `Quality` 的注册格式）。与 `Animated()` 同用于动画时返回包装了 `errors.ErrUnsupported` 的错误；单帧 GIF 按静态图像处理 |
 | `ToFile(path)` / `ToWriter(w)` / `ToBytes()` | 执行并写出。`ToFile` 未指定格式时按扩展名确定；仅当全程成功时才生成文件 |
-| `Metadata()` | 仅读取文件头，描述**输入**：格式、存储的宽高、颜色类型（灰度 / 调色板 / RGB / YCbCr / CMYK）与位深、是否含透明、EXIF 方向、是否含 ICC / EXIF。不受链上操作影响 |
+| `Metadata()` | 仅读取文件头，描述**输入**：格式、存储的宽高、颜色类型（灰度 / 调色板 / RGB / YCbCr / CMYK）与位深、是否含透明、EXIF 方向、是否含 ICC / EXIF，以及分辨率（`Density`，每英寸像素数：有 EXIF 分辨率时取 EXIF 的，否则取格式自身的；25.4 及以下视为未记录，因为 libvips 在不知道分辨率时写入该值，与 sharp 相同）。不受链上操作影响 |
 | `Frames()` | 输入的帧数、单次播放时长、循环次数（仅 GIF 可多于一帧）。须读取整个文件，但不解码像素 |
 | `OutputSize()` | **结果**的尺寸：链上全部操作完成后的宽高，不解码像素 |
 | `ToImage()` | 执行并返回完整的 `image.Image`（全图驻留内存，计入内存上限） |
@@ -119,6 +119,7 @@ err := goimgtools.Open("in.jpg").
 |---|---|
 | `KeepExif()` | 将输入的 EXIF（相机、时间、GPS）保留至输出。默认丢弃 |
 | `StripICC()` | 丢弃 ICC 色彩配置。默认保留，否则广色域照片会出现偏色 |
+| `Density(dpi)` | 在输出中记录每英寸 `dpi` 个像素的分辨率（1–65535）：JPEG 的 JFIF 段、PNG 的 pHYs 块、TIFF 的分辨率标签、BMP 的文件头，以及保留的 EXIF 块中的分辨率字段（WebP 与 GIF 没有专门的位置）。默认保留输入的分辨率，缩放后也保留，与 libvips 和 sharp 相同；`Density(0)` 表示不记录 |
 | `ToSRGB()` | 依据输入的色彩配置将颜色转换至 sRGB，输出不再附带配置：在忽略色彩配置的程序中颜色同样正确，文件也略小。转换为 GIF、BMP（无法附带配置）时自动执行 |
 | `MemoryLimit(bytes)` | 工作内存上限，默认 64MB |
 | `Threads(n)` | 单次处理最多使用的核数，默认 1，最大为 CPU 核数（见 [CPU 与线程](performance.md#cpu-与线程)） |
@@ -252,7 +253,7 @@ goimgtools.Text("第一行\n第二行 Mixed", goimgtools.TextOptions{
 
 | 命令行 | 库 | 说明 |
 |---|---|---|
-| `goimgtools info 文件...` | `img.Metadata()`、`img.Frames()` | 每个文件输出一行：格式、宽高、颜色类型与位深、像素数、文件大小、动画（GIF、WebP、APNG）的帧数与时长、EXIF 方向、是否含 ICC / EXIF。加 `-json` 时每个文件输出一行 JSON |
+| `goimgtools info 文件...` | `img.Metadata()`、`img.Frames()` | 每个文件输出一行：格式、宽高、颜色类型与位深、像素数、文件大小、动画（GIF、WebP、APNG）的帧数与时长、EXIF 方向、分辨率（dpi）、是否含 ICC / EXIF。加 `-json` 时每个文件输出一行 JSON |
 | `goimgtools check 文件...` | `inspect.Verify(img)` | 完整解码一遍，报告损坏、截断或并非图像的文件。`info` 仅读取文件头，无法发现文件后半部分的损坏 |
 | `goimgtools compare a b` | `inspect.Compare(a, b)` | 逐像素比较两幅图像，格式不同亦可：给出是否完全相同；若不同，则给出 PSNR（越高越接近，40 以上肉眼难以分辨）、最大差值及差异像素数。`-min-psnr 35` 可用作质量门槛：未达到时以非零状态退出 |
 | `goimgtools stats 文件...` | `inspect.Stats(img)` | 遍历全部像素：平均色、亮度、面积占比最大的几种颜色、是否实为灰度图像、是否确有透明像素、颜色数（不超过 256 种时）。可用于选取占位色、决定使用深色或浅色文字、判断能否存储为灰度或调色板图像。另有 sharp 的 `stats()` 所报告的各项，数值一致到末几位：`Channels`（红、绿、蓝、透明各通道的最低与最高值及其首次出现的位置、总和、平均值、标准差）、`Entropy`（熵）与 `Sharpness`（锐度） |

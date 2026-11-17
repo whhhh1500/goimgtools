@@ -13,6 +13,7 @@ import (
 	"math"
 	"reflect"
 
+	"github.com/whhhh1500/goimgtools/internal/density"
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
@@ -208,7 +209,11 @@ func rowOpaque(row []byte) bool {
 // It does not close src. If it returns an error, what was written to w is
 // not a valid image and must be discarded. Unlike bmp.Encode, an image with
 // no pixels is an error.
-func Encode(w io.Writer, src pipeline.Source) error {
+func Encode(w io.Writer, src pipeline.Source) error { return EncodeDensity(w, src, 0) }
+
+// EncodeDensity is Encode recording a resolution of dpi pixels per inch
+// in the header (stored per metre); 0 records none, as Encode.
+func EncodeDensity(w io.Writer, src pipeline.Source, dpi float64) error {
 	b := src.Bounds()
 	dx, dy := b.Dx(), b.Dy()
 	if dx <= 0 || dy <= 0 {
@@ -317,6 +322,10 @@ func Encode(w io.Writer, src pipeline.Source) error {
 		height:        uint32(dy),
 		colorPlane:    1,
 		bpp:           24,
+	}
+	if dpi > 0 {
+		h.xPixelsPerMeter = density.PerMetre(dpi)
+		h.yPixelsPerMeter = h.xPixelsPerMeter
 	}
 	var palette []byte
 	switch kind {

@@ -102,7 +102,11 @@ type decoder struct {
 	features  map[int][]uint
 	ifd       map[int][ifdLen]byte
 	palette   []color.Color
-	icc       []byte // the colour profile, if the file has one
+	icc       []byte  // the colour profile, if the file has one
+	xres      float64 // the resolution across, in resUnit
+	// jpegTables are the tables JPEG-compressed blocks share.
+	jpegTables []byte
+	resUnit    uint
 
 	buf   []byte
 	off   int    // Current offset in buf.
@@ -264,6 +268,29 @@ func (d *decoder) parseIFD(p []byte) (int, error) {
 			if b, err := safeReadAt(d.r, uint64(n), int64(d.byteOrder.Uint32(p[8:12]))); err == nil {
 				d.icc = b
 			}
+		}
+	case tJPEGTables:
+		// goimgtools addition: the tables of JPEG compression.
+		dt := d.byteOrder.Uint16(p[2:4])
+		n := d.byteOrder.Uint32(p[4:8])
+		if (dt == dtUndefined || dt == dtByte) && n > 4 && n <= 1<<20 && d.jpegTables == nil {
+			if b, err := safeReadAt(d.r, uint64(n), int64(d.byteOrder.Uint32(p[8:12]))); err == nil {
+				d.jpegTables = b
+			}
+		}
+	case tXResolution:
+		// goimgtools addition: the resolution across, a fraction at an
+		// offset. One that cannot be read is left out.
+		if d.byteOrder.Uint16(p[2:4]) == dtRational && d.byteOrder.Uint32(p[4:8]) >= 1 {
+			if b, err := safeReadAt(d.r, 8, int64(d.byteOrder.Uint32(p[8:12]))); err == nil {
+				if den := d.byteOrder.Uint32(b[4:]); den != 0 {
+					d.xres = float64(d.byteOrder.Uint32(b)) / float64(den)
+				}
+			}
+		}
+	case tResolutionUnit:
+		if val, err := d.ifdUint(p, smallEntryMaxCount); err == nil && len(val) > 0 {
+			d.resUnit = val[0]
 		}
 	case tSampleFormat:
 		// Page 27 of the spec: If the SampleFormat is present and
@@ -681,10 +708,18 @@ func newDecoder(r io.ReaderAt) (*decoder, error) {
 		} else {
 			d.config.ColorModel = color.GrayModel
 		}
+	case pYCbCr:
+		// goimgtools addition: YCbCr compressed as JPEG, which the JPEG
+		// decoder turns into RGB.
+		if d.firstVal(tCompression) != cJPEG || d.bpp != 8 || len(d.features[tBitsPerSample]) != 3 {
+			return nil, UnsupportedError("color model")
+		}
+		d.mode = mRGB
+		d.config.ColorModel = color.RGBAModel
 	default:
 		return nil, UnsupportedError("color model")
 	}
-	if d.firstVal(tPhotometricInterpretation) != pRGB {
+	if p := d.firstVal(tPhotometricInterpretation); p != pRGB && p != pYCbCr {
 		if len(d.features[tBitsPerSample]) != 1 {
 			return nil, UnsupportedError("extra samples")
 		}

@@ -23,6 +23,7 @@ import (
 	"io"
 	"math/bits"
 
+	"github.com/whhhh1500/goimgtools/internal/density"
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
@@ -117,6 +118,7 @@ type stream struct {
 	bpp        int
 	topDown    bool
 	allowAlpha bool
+	density    float64 // pixels per inch, 0 when not given
 
 	dataOff     int64 // file offset of the first stored row
 	bytesPerRow int64 // size of a stored row, padding included
@@ -151,6 +153,14 @@ func Open(r io.ReaderAt, size int64, env *pipeline.Env) (pipeline.Source, error)
 		return nil, err
 	}
 	s := &stream{r: r, env: env, c: c, bpp: bpp, topDown: topDown, allowAlpha: allowAlpha, dataOff: dataOff}
+	// goimgtools addition: the resolution across, pixels per metre in the
+	// info header (0 when not given).
+	var ppm [4]byte
+	if _, err := r.ReadAt(ppm[:], 38); err == nil {
+		if v := int32(readUint32(ppm[:])); v > 0 {
+			s.density = density.FromPerMetre(float64(v))
+		}
+	}
 	width := int64(c.Width)
 	var outPerRow int64
 	switch bpp {
@@ -207,6 +217,9 @@ func (s *stream) ColorModel() color.Model {
 // for 32 bit-per-pixel files with a V4 or V5 header, whose alpha channel
 // bmp.Decode keeps.
 func (s *stream) Opaque() bool { return !s.allowAlpha }
+
+// Meta returns the resolution the file records.
+func (s *stream) Meta() pipeline.Meta { return pipeline.Meta{Density: s.density} }
 
 func (s *stream) Close() error {
 	if s.reserved != 0 {

@@ -11,6 +11,7 @@ import (
 	"image/color"
 	"io"
 
+	"github.com/whhhh1500/goimgtools/internal/density"
 	"github.com/whhhh1500/goimgtools/internal/inflate"
 	"github.com/whhhh1500/goimgtools/internal/tiffstream/lzw"
 	"golang.org/x/image/ccitt"
@@ -52,6 +53,7 @@ type stream struct {
 	br        io.Reader
 	lz        *lzw.Reader     // LZW reader, reused from block to block
 	zr        *inflate.Reader // zlib reader, reused from block to block
+	jr        *jpegRows       // the JPEG decoder of the block, if any
 	blkW      int
 	blkH      int
 	blockRead int64 // decompressed bytes read from the block so far
@@ -179,6 +181,11 @@ func open(r io.ReaderAt, env *pipeline.Env) (_ *stream, err error) {
 	// first block; they do not depend on the pixel data, so report them now.
 	switch d.firstVal(tCompression) {
 	case cNone, 0, cG3, cG4, cLZW, cDeflate, cDeflateOld, cPackBits:
+	case cJPEG:
+		// 8-bit grey or colour only.
+		if d.bpp != 8 || (d.mode != mRGB && d.mode != mGray && d.mode != mGrayInvert) {
+			return nil, UnsupportedError("JPEG compression of this kind of image")
+		}
 	default:
 		return nil, UnsupportedError(fmt.Sprintf("compression value %d", d.firstVal(tCompression)))
 	}
@@ -270,7 +277,16 @@ func (s *stream) Env() *pipeline.Env { return s.env }
 
 // Meta is the colour profile of the file. (EXIF, which TIFF keeps in a
 // directory of its own, is not read.)
-func (s *stream) Meta() pipeline.Meta { return pipeline.Meta{ICC: s.d.icc} }
+func (s *stream) Meta() pipeline.Meta {
+	m := pipeline.Meta{ICC: s.d.icc}
+	switch s.d.resUnit {
+	case 0, resPerInch: // inches when the unit is not given
+		m.Density = density.FromPerInch(s.d.xres)
+	case resPerCM:
+		m.Density = density.FromPerCm(s.d.xres)
+	}
+	return m
+}
 
 func (s *stream) Bounds() image.Rectangle {
 	return image.Rect(0, 0, s.d.config.Width, s.d.config.Height)
@@ -390,6 +406,7 @@ func (s *stream) nextTileRow() (image.Image, error) {
 // openBlock opens a streaming decompressor on block (i, j). It is the
 // compression switch of x/image's Decode with the io.ReadAll calls removed.
 func (s *stream) openBlock(i, j int) (err error) {
+	s.closeBlock()
 	d := s.d
 	blkW := s.blockWidth
 	if !s.blockPadding && i == s.blocksAcross-1 && d.config.Width%s.blockWidth != 0 {
@@ -454,6 +471,12 @@ func (s *stream) openBlock(i, j int) (err error) {
 			return err
 		}
 		s.br = s.zr
+	case cJPEG:
+		s.jr, err = newJPEGRows(d.r, offset, n, d.jpegTables, d.mode != mRGB, s.env)
+		if err != nil {
+			return err
+		}
+		s.br = s.jr
 	case cPackBits:
 		// unpackBits has no silent limit: it reads to the end of the block
 		// and fails if that yields more than blockMaxDataSize bytes.
@@ -546,4 +569,8 @@ func (s *stream) finishBlock() error {
 
 func (s *stream) closeBlock() {
 	s.br = nil
+	if s.jr != nil {
+		s.jr.Close()
+		s.jr = nil
+	}
 }

@@ -34,6 +34,8 @@ Nothing exported by 0.1.0 was removed or changed in its signature (checked with 
 - `CompositeOptions.WidthRatio` / `HeightRatio`: watermark size as a fraction of the base image; `-watermark-width N%`.
 - Lossy WebP: segments with individual quantizers (spatial noise shaping, ported from libwebp).
 - `pipeline.Env.SetHelpers`, `Helpers`, `Parallel` and `Go`, allowing stages to distribute their work across cores.
+- TIFF files with JPEG compression (compression 7: libtiff's, the default of libvips and sharp) are read, in strips and in tiles, colour and grey.
+- Resolution: `Info.Density` (pixels per inch, read from JFIF, EXIF, pHYs, TIFF and BMP), kept in the output by default, `Density(dpi)` / `-density` to set it; `EncodeOptions.Density` and `pipeline.Meta.Density` for formats of one's own. `info` prints it.
 - `ExtendWith` (type `Extension`: `ExtendCopy`, `ExtendRepeat`, `ExtendMirror`) / `-extend-with`: borders made of the image, pixel for pixel sharp's `extend` with `extendWith`; `Do("extend")` takes copy, repeat or mirror in place of the colour.
 - `ResizeOptions.LinearLight` / `-linear-light`: resizing in linear light, as libvips' `thumbnail` with `linear`; `Do("resize")` takes `linear` as a sixth word.
 - `ResizeOptions.Position` (the part `FitCover` keeps, where `FitContain` puts the image) and `ResizeOptions.Interesting` (type `Interesting`: `InterestingEntropy`, `InterestingAttention`, as sharp's smart crop strategies) / `-position`. `Do("resize")` takes them as a fifth word.

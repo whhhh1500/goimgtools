@@ -58,6 +58,10 @@ type EncodeOptions struct {
 	// "MM") and the colour profile to put into the file; nil for none. An
 	// encoder whose format cannot hold them leaves them out.
 	Exif, ICC []byte
+	// Density is the resolution to record, in pixels per inch; 0 for none
+	// (an encoder whose format needs one writes its usual default). An
+	// encoder whose format cannot hold it leaves it out.
+	Density float64
 	// Options is what the caller gave for the format: the options value
 	// of JPEG, PNG, WebP, GIF or TIFF (a JPEGOptions and so on) or the one
 	// given to ToFormat. Nil when nothing was given.
@@ -174,7 +178,7 @@ var builtin = []*formatDef{
 			if q < 1 || q > 100 {
 				return fmt.Errorf("goimgtools: JPEG quality must be 1 to 100, got %d", q)
 			}
-			return jpegstream.Encode(w, src, &jpegstream.Options{Quality: q, Exif: o.Exif, ICC: o.ICC,
+			return jpegstream.Encode(w, src, &jpegstream.Options{Quality: q, Exif: o.Exif, ICC: o.ICC, Density: o.Density,
 				Optimize: jo.Optimize, Progressive: jo.Progressive, Trellis: jo.Trellis, QuantTable: int(jo.QuantTable)})
 		},
 		quality: func(options any) (int, bool) {
@@ -205,7 +209,7 @@ var builtin = []*formatDef{
 			if level == 0 {
 				level = DefaultPNGLevel
 			}
-			return pngstream.Encode(w, src, &pngstream.Options{Level: level, Exif: o.Exif, ICC: o.ICC})
+			return pngstream.Encode(w, src, &pngstream.Options{Level: level, Exif: o.Exif, ICC: o.ICC, Density: o.Density})
 		},
 		check: checks[PNGOptions]("png"),
 	},
@@ -295,8 +299,8 @@ var builtin = []*formatDef{
 		open: func(in *input, env *pipeline.Env) (pipeline.Source, error) {
 			return in.openAt(env, bmpstream.Open)
 		},
-		encode: func(w io.Writer, src pipeline.Source, _ EncodeOptions) error {
-			return bmpstream.Encode(w, src)
+		encode: func(w io.Writer, src pipeline.Source, o EncodeOptions) error {
+			return bmpstream.EncodeDensity(w, src, o.Density)
 		},
 		check: func(options any) error {
 			if options != nil {
@@ -318,7 +322,7 @@ var builtin = []*formatDef{
 			if err != nil {
 				return err
 			}
-			out := &tiffstream.Options{ICC: o.ICC}
+			out := &tiffstream.Options{ICC: o.ICC, Density: o.Density}
 			switch to.Compression {
 			case TIFFNone:
 			case TIFFDeflate:

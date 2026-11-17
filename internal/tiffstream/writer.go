@@ -15,6 +15,7 @@ import (
 	"reflect"
 	"sort"
 
+	"github.com/whhhh1500/goimgtools/internal/density"
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
@@ -134,6 +135,9 @@ type Options struct {
 	// ICC is a colour profile to embed (tag 34675), at most
 	// pipeline.MaxMetaBytes.
 	ICC []byte
+	// Density, when above 0, is the resolution to record, in pixels per
+	// inch; otherwise 72, as the reference writes.
+	Density float64
 }
 
 var (
@@ -298,6 +302,11 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 	}
 	compression := uint32(cNone)
 	var icc []byte
+	res := []uint32{72, 1}
+	if o != nil && o.Density > 0 {
+		num, den := density.Rational(o.Density)
+		res = []uint32{num, den}
+	}
 	if o != nil {
 		compression = o.Compression.specValue()
 		if len(o.ICC) <= pipeline.MaxMetaBytes {
@@ -493,10 +502,9 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 		{tag: tSamplesPerPixel, datatype: dtShort, data: []uint32{samplesPerPixel}},
 		{tag: tRowsPerStrip, datatype: sizeType(dy), data: []uint32{uint32(dy)}},
 		{tag: tStripByteCounts, datatype: dtLong, data: []uint32{uint32(imageLen)}},
-		// There is currently no support for storing the image
-		// resolution, so give a bogus value of 72x72 dpi.
-		{tag: tXResolution, datatype: dtRational, data: []uint32{72, 1}},
-		{tag: tYResolution, datatype: dtRational, data: []uint32{72, 1}},
+		// The resolution given, else 72x72 dpi as the reference writes.
+		{tag: tXResolution, datatype: dtRational, data: res},
+		{tag: tYResolution, datatype: dtRational, data: res},
 		{tag: tResolutionUnit, datatype: dtShort, data: []uint32{resPerInch}},
 	}
 	if len(colorMap) != 0 {

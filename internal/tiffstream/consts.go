@@ -68,7 +68,9 @@ const (
 	tExtraSamples = 338
 	// tICCProfile holds an ICC colour profile (InterColorProfile, from the
 	// TIFF/EP and the ICC specifications).
-	tICCProfile   = 34675
+	tICCProfile = 34675
+	// tJPEGTables holds the tables the JPEG-compressed blocks share.
+	tJPEGTables   = 347
 	tSampleFormat = 339
 )
 

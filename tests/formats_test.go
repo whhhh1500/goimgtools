@@ -71,7 +71,7 @@ func checkFile(t *testing.T, path string, ref func(io.Reader) (image.Image, erro
 	}
 	for how, in := range inputs {
 		// Level 6 is that of png.Encode; the reference has no profile.
-		got, gerr := in().StripICC().PNG(PNGOptions{CompressionLevel: 6}).ToBytes()
+		got, gerr := in().StripICC().Density(0).PNG(PNGOptions{CompressionLevel: 6}).ToBytes()
 		if werr != nil || want.Bounds().Empty() {
 			if gerr == nil {
 				t.Errorf("%s (%s): reference failed (%v) but the library produced output", name, how, werr)
@@ -155,7 +155,7 @@ func TestFormatsThroughChain(t *testing.T) {
 			if err := enc(&in, src[name]); err != nil {
 				t.Fatalf("%s/%s: encode: %v", format, name, err)
 			}
-			got, err := FromBytes(in.Bytes()).
+			got, err := FromBytes(in.Bytes()).Density(0).
 				Resize(200, 200, ResizeOptions{Fit: FitInside}).
 				Flatten(color.White).
 				JPEG(85).ToBytes()

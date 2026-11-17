@@ -114,6 +114,8 @@ type Image struct {
 	autoOrient bool   // Rotate() was asked to follow the EXIF orientation
 	keepExif   bool
 	stripICC   bool
+	density    float64 // to record in the output (0: none), when densitySet
+	densitySet bool
 	err        error
 }
 

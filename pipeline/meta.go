@@ -12,6 +12,9 @@ type Meta struct {
 	Exif []byte
 	// ICC is the embedded colour profile.
 	ICC []byte
+	// Density is the resolution the file records, in pixels per inch
+	// (dots per inch), horizontally; 0 when it records none.
+	Density float64
 }
 
 // MetaSource is implemented by decoders that read metadata.

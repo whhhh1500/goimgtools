@@ -3,6 +3,7 @@ package pngstream
 import (
 	"bytes"
 	"compress/zlib"
+	"encoding/binary"
 	"errors"
 	"image"
 	"image/color"
@@ -10,6 +11,7 @@ import (
 	"io"
 	"strconv"
 
+	"github.com/whhhh1500/goimgtools/internal/density"
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
@@ -22,6 +24,9 @@ type Options struct {
 	// set. They are the only bytes png.Encode would not write.
 	Exif []byte
 	ICC  []byte
+	// Density, when above 0, is the resolution to record in a pHYs chunk,
+	// in pixels per inch (stored per metre).
+	Density float64
 }
 
 // Encode writes src to w as a PNG. writer.go is the standard library's
@@ -166,6 +171,14 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 	e.writeIHDR()
 	if o != nil {
 		e.writeMeta(o.Exif, o.ICC)
+		if o.Density > 0 {
+			var b [9]byte
+			ppm := density.PerMetre(o.Density)
+			binary.BigEndian.PutUint32(b[0:], ppm)
+			binary.BigEndian.PutUint32(b[4:], ppm)
+			b[8] = 1 // the metre
+			e.writeChunk(b[:], "pHYs")
+		}
 	}
 	if pal != nil {
 		e.writePLTEAndTRNS(pal)

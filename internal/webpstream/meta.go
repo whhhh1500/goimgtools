@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 
+	"github.com/whhhh1500/goimgtools/internal/density"
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
@@ -41,6 +42,8 @@ func (s *source) readMeta(name string, r io.ReaderAt, pos int64, n uint32) {
 		buf = bytes.TrimPrefix(buf, []byte("Exif\x00\x00"))
 		if s.meta.Exif == nil && len(buf) >= 8 && (string(buf[:2]) == "II" || string(buf[:2]) == "MM") {
 			s.meta.Exif = buf
+			// WebP has no resolution of its own: that of the EXIF block.
+			s.meta.Density = density.FromExif(buf)
 		}
 	}
 }

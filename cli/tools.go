@@ -6,7 +6,9 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/whhhh1500/goimgtools"
@@ -36,6 +38,7 @@ type fileInfo struct {
 	Orientation int     `json:"orientation,omitempty"`
 	ICC         bool    `json:"icc"`
 	Exif        bool    `json:"exif"`
+	Density     float64 `json:"density,omitempty"` // pixels per inch
 	Frames      int     `json:"frames,omitempty"`
 	DurationMS  int64   `json:"duration_ms,omitempty"`
 	// LoopCount: 0 for ever, n times, -1 when the file does not say.
@@ -54,7 +57,7 @@ func describe(file string) fileInfo {
 	out.Format, out.Width, out.Height = m.Format, m.Width, m.Height
 	out.Megapixels = float64(m.Width) * float64(m.Height) / 1e6
 	out.Color, out.Bits, out.Alpha = m.Color, m.Bits, m.HasAlpha
-	out.Orientation, out.ICC, out.Exif = m.Orientation, m.HasProfile, m.HasExif
+	out.Orientation, out.ICC, out.Exif, out.Density = m.Orientation, m.HasProfile, m.HasExif, m.Density
 	out.Frames = 1
 	if st, err := os.Stat(file); err == nil {
 		out.Bytes = st.Size()
@@ -104,6 +107,9 @@ func (f fileInfo) line() string {
 		if f.Orientation >= 5 {
 			fmt.Fprintf(&b, " (upright it is %dx%d)", f.Height, f.Width)
 		}
+	}
+	if f.Density > 0 {
+		fmt.Fprintf(&b, ", %s dpi", strconv.FormatFloat(math.Round(f.Density*100)/100, 'f', -1, 64))
 	}
 	if f.ICC {
 		b.WriteString(", ICC profile")

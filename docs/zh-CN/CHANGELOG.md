@@ -34,6 +34,8 @@
 - `CompositeOptions.WidthRatio` / `HeightRatio`：按底图的比例确定水印尺寸；`-watermark-width N%`。
 - 有损 WebP 分段量化：各段使用独立的量化级别（移植自 libwebp 的空间噪声整形）。
 - `pipeline.Env.SetHelpers`、`Helpers`、`Parallel`、`Go`：供处理环节将工作分摊至多个核。
+- 可读取 JPEG 压缩的 TIFF 文件（压缩方式 7：libtiff 的写法，libvips 与 sharp 的默认设置），条带与图块、彩色与灰度均支持。
+- 分辨率：`Info.Density`（每英寸像素数，读取自 JFIF、EXIF、pHYs、TIFF 与 BMP），默认保留到输出，`Density(dpi)` / `-density` 可设置；自定义格式可用 `EncodeOptions.Density` 与 `pipeline.Meta.Density`。`info` 会显示它。
 - `ExtendWith`（类型 `Extension`：`ExtendCopy`、`ExtendRepeat`、`ExtendMirror`）/ `-extend-with`：用图像本身扩边，与 sharp 带 `extendWith` 的 `extend` 逐像素一致；`Do("extend")` 在颜色的位置接受 copy、repeat 或 mirror。
 - `ResizeOptions.LinearLight` / `-linear-light`：在线性光下缩放，同 libvips `thumbnail` 的 `linear`；`Do("resize")` 以第六个参数 `linear` 接受。
 - `ResizeOptions.Position`（`FitCover` 保留的部分、`FitContain` 放置图像的位置）与 `ResizeOptions.Interesting`（类型 `Interesting`：`InterestingEntropy`、`InterestingAttention`，即 sharp 的智能裁剪策略）/ `-position`。`Do("resize")` 以第五个参数接受它们。

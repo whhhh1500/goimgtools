@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/whhhh1500/goimgtools/internal/density"
 	"github.com/whhhh1500/goimgtools/internal/iccprof"
 	"github.com/whhhh1500/goimgtools/internal/jpegstream"
 	"github.com/whhhh1500/goimgtools/internal/ops"
@@ -33,6 +34,22 @@ func (m *Image) KeepExif() *Image { m.keepExif = true; return m }
 // colours together with it. Without it the values are taken for sRGB, as
 // they are; see ToSRGB for converting them.
 func (m *Image) StripICC() *Image { m.stripICC = true; return m }
+
+// Density sets the resolution recorded in the output, in pixels per inch
+// (dots per inch, 1 to 65535): for print, the size the image is meant to
+// have, the width in pixels divided by dpi inches. JPEG (JFIF), PNG (pHYs),
+// TIFF and BMP record it; WebP and GIF have no place for it. When the EXIF
+// block is kept (KeepExif), its resolution fields are set to it too.
+// Without Density, the resolution of the input is kept (as libvips and
+// sharp do), also when the image is resized. Density(0) records none
+// (TIFF, which must, records 72; a kept EXIF block is left as it is).
+func (m *Image) Density(dpi float64) *Image {
+	if dpi != 0 && !(dpi >= 1 && dpi <= 65535) {
+		return m.fail(errors.New("goimgtools: Density must be 1 to 65535 pixels per inch, or 0 for none"))
+	}
+	m.density, m.densitySet = dpi, true
+	return m
+}
 
 // ToSRGB converts the colours of an image with an ICC profile other than
 // sRGB (a Display P3 or Adobe RGB photograph) to sRGB at the end of the
@@ -427,17 +444,17 @@ func (m *Image) write(w io.Writer, ext string) (err error) {
 	if err != nil {
 		return err
 	}
-	exif, icc := m.outputMeta(meta)
+	out := m.outputMeta(meta)
 	defer closer.Close()
-	src, icc = m.manageColour(src, icc, format)
+	src, out.ICC = m.manageColour(src, out.ICC, format)
 	if m.threadCount() >= 3 {
 		src = pipeline.Async(src)
 	}
 	defer src.Close()
 	if m.maxBytes > 0 {
-		return m.writeWithin(w, src, format, exif, icc)
+		return m.writeWithin(w, src, format, out)
 	}
-	return m.encode(w, src, format, 0, exif, icc)
+	return m.encode(w, src, format, 0, out)
 }
 
 // createBeside creates a new, empty file in the directory of path, for a
@@ -463,23 +480,31 @@ func createBeside(path string) (*os.File, error) {
 	}
 }
 
-// outputMeta returns what of the input's metadata goes into the output.
-func (m *Image) outputMeta(meta pipeline.Meta) (exif, icc []byte) {
+// outputMeta returns what of the input's metadata goes into the output,
+// and the resolution to record.
+func (m *Image) outputMeta(meta pipeline.Meta) (out pipeline.Meta) {
+	out.Density = meta.Density
+	if m.densitySet {
+		out.Density = m.density
+	}
 	if m.keepExif {
-		exif = meta.Exif
+		out.Exif = meta.Exif
 		if m.autoOrient {
-			exif = pipeline.ExifUpright(exif)
+			out.Exif = pipeline.ExifUpright(out.Exif)
+		}
+		if m.density > 0 {
+			out.Exif = density.SetExif(out.Exif, m.density)
 		}
 	}
 	if !m.stripICC {
-		icc = meta.ICC
+		out.ICC = meta.ICC
 	}
-	return exif, icc
+	return out
 }
 
 // encode writes src in the given format. quality, when positive, replaces
 // the quality asked for.
-func (m *Image) encode(w io.Writer, src pipeline.Source, format string, quality int, exif, icc []byte) error {
+func (m *Image) encode(w io.Writer, src pipeline.Source, format string, quality int, meta pipeline.Meta) error {
 	if m.ctx != nil {
 		// Also here: an encoder can work for a long time on pixels that
 		// were read long ago (a second pass, another try at a file size).
@@ -489,7 +514,7 @@ func (m *Image) encode(w io.Writer, src pipeline.Source, format string, quality 
 	if def == nil || def.encode == nil {
 		return fmt.Errorf("goimgtools: cannot write %s (%s)", format, formatList())
 	}
-	o := EncodeOptions{Exif: exif, ICC: icc, Options: m.optionsFor(format)}
+	o := EncodeOptions{Exif: meta.Exif, ICC: meta.ICC, Density: meta.Density, Options: m.optionsFor(format)}
 	if def.quality != nil {
 		if q, ok := def.quality(o.Options); ok {
 			o.Quality = q
@@ -513,7 +538,7 @@ func (m *Image) optionsFor(format string) any {
 
 // writeWithin encodes src at the highest quality whose file is at most
 // m.maxBytes.
-func (m *Image) writeWithin(w io.Writer, src pipeline.Source, format string, exif, icc []byte) error {
+func (m *Image) writeWithin(w io.Writer, src pipeline.Source, format string, meta pipeline.Meta) error {
 	def := formatNamed(format)
 	if def == nil || def.encode == nil {
 		return fmt.Errorf("goimgtools: cannot write %s (%s)", format, formatList())
@@ -548,7 +573,7 @@ func (m *Image) writeWithin(w io.Writer, src pipeline.Source, format string, exi
 			return false, 0, err
 		}
 		out := pipeline.NewSpill(env)
-		err = m.encode(out, in, format, q, exif, icc)
+		err = m.encode(out, in, format, q, meta)
 		in.Close()
 		if err != nil {
 			out.Close()

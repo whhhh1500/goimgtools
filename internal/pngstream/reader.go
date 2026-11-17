@@ -26,6 +26,7 @@ import (
 	"image/color"
 	"io"
 
+	"github.com/whhhh1500/goimgtools/internal/density"
 	"github.com/whhhh1500/goimgtools/internal/inflate"
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
@@ -128,6 +129,7 @@ type decoder struct {
 	stage         int
 	idatLength    uint32
 	meta          pipeline.Meta
+	physDensity   float64 // of the pHYs chunk, pixels per inch
 	tmp           [3 * 256]byte
 	interlace     int
 
@@ -453,7 +455,16 @@ func Open(r io.Reader, env *pipeline.Env) (pipeline.Source, error) {
 func (s *stream) Env() *pipeline.Env { return s.env }
 
 // Meta returns the colour profile and EXIF block found ahead of the pixels.
-func (s *stream) Meta() pipeline.Meta     { return s.d.meta }
+// Meta returns the colour profile, the EXIF block and the resolution:
+// that of the EXIF block when it has one, as libvips takes it, else that
+// of the pHYs chunk.
+func (s *stream) Meta() pipeline.Meta {
+	m := s.d.meta
+	if m.Density = density.FromExif(m.Exif); m.Density == 0 {
+		m.Density = s.d.physDensity
+	}
+	return m
+}
 func (s *stream) Bounds() image.Rectangle { return image.Rect(0, 0, s.d.width, s.d.height) }
 func (s *stream) ColorModel() color.Model {
 	if p, ok := s.band.(*image.Paletted); ok {
@@ -958,9 +969,10 @@ func (d *decoder) parseChunk(atStart bool) error {
 		}
 		d.stage = dsSeentRNS
 		return d.parsetRNS(length)
-	case "iCCP", "eXIf":
-		// goimgtools addition: keep the colour profile and the EXIF block
-		// (the standard library skips both). Only ahead of the pixels.
+	case "iCCP", "eXIf", "pHYs":
+		// goimgtools addition: keep the colour profile, the EXIF block and
+		// the resolution (the standard library skips them). Only ahead of
+		// the pixels.
 		if d.stage >= dsSeenIHDR && d.stage < dsSeenIDAT && length <= pipeline.MaxMetaBytes {
 			return d.parseMeta(string(d.tmp[4:8]), length)
 		}
@@ -1063,6 +1075,13 @@ func (d *decoder) parseMeta(name string, length uint32) error {
 	if name == "eXIf" {
 		if d.meta.Exif == nil && len(buf) > 0 {
 			d.meta.Exif = buf
+		}
+		return nil
+	}
+	if name == "pHYs" {
+		// Pixels per unit across and down, and the unit: 1 is the metre.
+		if len(buf) == 9 && buf[8] == 1 {
+			d.physDensity = density.FromPerMetre(float64(binary.BigEndian.Uint32(buf)))
 		}
 		return nil
 	}

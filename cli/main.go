@@ -112,6 +112,7 @@ type options struct {
 	jpegTrellis                                    *bool
 	jpegQuantTable                                 *int
 	animated, keepExif, stripICC, toSRGB           *bool
+	density                                        *float64
 	mem, threads, maxPixels                        *int
 	skipLarger                                     *bool
 	tmp                                            *string
@@ -188,6 +189,7 @@ func register(fs *flag.FlagSet) *options {
 		animated:       fs.Bool("animated", false, "process every frame of an animated GIF, WebP or PNG and write an animated GIF or WebP; only what changes is stored (GIF: one palette for all frames, -gif-colors, -no-dither); another output format is an error"),
 		keepExif:       fs.Bool("keep-exif", false, "copy the EXIF block (camera, date, GPS) to the output"),
 		stripICC:       fs.Bool("strip-icc", false, "drop the ICC colour profile instead of copying it"),
+		density:        fs.Float64("density", 0, "record a resolution of `DPI` pixels per inch in the output (JPEG, PNG, TIFF, BMP); by default the input's is kept"),
 		toSRGB:         fs.Bool("srgb", false, "convert the colours to sRGB from the image's ICC profile (Display P3, Adobe RGB...) and leave the profile out; GIF and BMP output always are"),
 		mem:            fs.Int("mem", 64, "working memory limit in `MB` for one image; beyond it data goes to temporary files"),
 		threads:        fs.Int("threads", 1, "CPU cores to use for one image, at most the number of CPUs: 2 decodes on a core of its own, 3 encodes on another, more go to resizing, -blur, -sharpen, -modulate, -rotate and JPEG and PNG encoding"),
@@ -429,6 +431,9 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 	}
 	if *o.stripICC {
 		im.StripICC()
+	}
+	if *o.density != 0 {
+		im.Density(*o.density)
 	}
 	if *o.toSRGB {
 		im.ToSRGB()
