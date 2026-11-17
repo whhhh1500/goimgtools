@@ -432,8 +432,12 @@ func (m *Image) ToBytes() ([]byte, error) {
 
 // ToFile runs the chain and writes the result to path. Without an explicit
 // output format the file extension decides. The file appears only if
-// everything succeeded.
+// everything succeeded. A path ending in .dzi or .dz is ToTiles (a Deep
+// Zoom pyramid, with the default TileOptions), as sharp's toFile.
 func (m *Image) ToFile(path string) (err error) {
+	if ext := strings.ToLower(filepath.Ext(path)); ext == ".dzi" || ext == ".dz" {
+		return m.ToTiles(path)
+	}
 	tmp, err := createBeside(path)
 	if err != nil {
 		return err

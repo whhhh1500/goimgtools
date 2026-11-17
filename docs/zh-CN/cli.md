@@ -98,6 +98,7 @@ goimgtools -op median:3 -op normalize -op "tint:#704214" scan.jpg out.jpg
 | `-jpeg-quant-table N` | JPEG：量化表 0–8，编号与 mozjpeg 的 `-quant-table` 一致（默认 0 为标准表，3 为 mozjpeg 的默认表）；9 为按 jpegli 方法生成的表，文件最小（见[压缩](compression.md)） |
 | `-png-colors N`、`-no-dither` | PNG：减至 N 色（2–256）；关闭抖动 |
 | `-max-size 大小` | 文件大小不超过此值（`200KB`、`1.5MB` 或字节数），自动降低质量（JPEG、有损 WebP）或颜色数（PNG 先试无损；GIF）；与 `-animated` 同用时动画报错 |
+| `-tile-size N`、`-tile-overlap N` | 输出文件名以 `.dzi` 或 `.dz` 结尾时写 Deep Zoom 瓦片金字塔（同 sharp 的 `tile`）：瓦片边长（256）与重叠像素（0） |
 | `-skip-larger` | 结果不小于原文件（同格式）时保留原文件；适用于仅做压缩的任务 |
 | `-webp-lossless`、`-webp-effort N` | 无损 WebP；力度 1（最快）至 9（文件最小），默认 5。力度也作用于有损 WebP：5 已用上全部手段（5 以上只在透明通道上多做），1 耗时约减半 |
 | `-png-level N`、`-gif-colors N`、`-gif-fixed-palette`、`-tiff-compression none\|deflate\|lzw`、`-tiff-predictor` | 各格式专用选项 |

@@ -105,6 +105,7 @@ type options struct {
 	fontSize, strokeW                              *float64
 	textWidth, shadowBlr                           *int
 	format, maxSize, tiffComp                      *string
+	tileSize, tileOverlap                          *int
 	quality, pngLevel, pngColors, gifColors        *int
 	gifFixed                                       *bool
 	gifLossy                                       *int
@@ -194,6 +195,8 @@ func register(fs *flag.FlagSet) *options {
 		pngLevel:       fs.Int("png-level", 0, fmt.Sprintf("PNG compression 1 (fastest) to 9 (smallest); default %d", goimgtools.DefaultPNGLevel)),
 		format:         fs.String("format", "", "output format: "+formatNames()+" (default: from the output file name)"),
 		skipLarger:     fs.Bool("skip-larger", false, "when the result is not smaller than the input file (same format), keep the input file as it is; for runs that only compress"),
+		tileSize:       fs.Int("tile-size", 256, "the side of a tile, for an output named .dzi or .dz (a Deep Zoom pyramid of tiles, as sharp's tile)"),
+		tileOverlap:    fs.Int("tile-overlap", 0, "how many pixels of its neighbours a tile also holds on each side (.dzi output)"),
 		maxSize:        fs.String("max-size", "", "make the file at most this `size` by lowering the quality (JPEG, lossy WebP) or the number of colours (PNG, GIF): 200KB, 1.5MB, or a number of bytes"),
 		lossless:       fs.Bool("webp-lossless", false, "WebP: write without loss"),
 		webpEffort:     fs.Int("webp-effort", 0, "WebP: effort 1 (fastest) to 9 (smallest file); default 5 (for lossy, all there is but for transparency)"),
@@ -321,6 +324,9 @@ var tempCount atomic.Int64
 // reduction and re-encoding can both make a file larger than it was, for a
 // picture that was already small.
 func (o *options) finish(im *goimgtools.Image, in, out string) (kept bool, err error) {
+	if ext := strings.ToLower(filepath.Ext(out)); ext == ".dzi" || ext == ".dz" {
+		return false, im.ToTiles(out, goimgtools.TileOptions{Size: *o.tileSize, Overlap: *o.tileOverlap})
+	}
 	kind, _ := o.outputKind(out) // a wrong -format was reported when the chain was made
 	before, statErr := os.Stat(in)
 	if !*o.skipLarger || in == "" || statErr != nil || kind == "" || kind != formatOf(in) {
