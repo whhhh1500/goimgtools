@@ -343,6 +343,7 @@ func TestDoBuiltIns(t *testing.T) {
 		{"grayscale", nil, func(m *Image) *Image { return m.Grayscale() }},
 		{"modulate", []string{"1.2", "0.5", "-40"}, func(m *Image) *Image { return m.Modulate(1.2, 0.5, -40) }},
 		{"blur", []string{"0.8"}, func(m *Image) *Image { return m.Blur(0.8) }},
+		{"blur", []string{"1.5", "kernel"}, func(m *Image) *Image { return m.Blur(1.5, BlurOptions{Method: BlurKernel}) }},
 		{"sharpen", nil, func(m *Image) *Image { return m.Sharpen() }},
 		{"sharpen", []string{"2", "1", "4"}, func(m *Image) *Image { return m.Sharpen(SharpenOptions{Sigma: 2, Amount: 1, Threshold: 4}) }},
 		{"flatten", []string{"white"}, func(m *Image) *Image { return m.Flatten(color.White) }},
@@ -385,6 +386,34 @@ func TestDoBuiltIns(t *testing.T) {
 		if d.Name == "" || d.Help == "" {
 			t.Errorf("operation %q without help", d.Name)
 		}
+	}
+}
+
+// TestDoWordsNeverPanic: every built-in name, given up to three of a few
+// words in any order, makes a step or an error, never a panic.
+func TestDoWordsNeverPanic(t *testing.T) {
+	words := []string{"0", "1", "2.5", "-3", "300", "x", "NaN", "kernel", "alpha", "channels", "linear", "lineart",
+		"white", "#0f08", "contain", "copy"}
+	for _, d := range Operations() {
+		var args []string
+		var try func(n int)
+		try = func(n int) {
+			defer func() {
+				if p := recover(); p != nil {
+					t.Fatalf("%s %q: panic %v", d.Name, args, p)
+				}
+			}()
+			if d.New != nil {
+				d.New(args...)
+			}
+			FromBytes(nil).Do(d.Name, args...)
+			for i := 0; n > 0 && i < len(words); i++ {
+				args = append(args, words[i])
+				try(n - 1)
+				args = args[:len(args)-1]
+			}
+		}
+		try(3)
 	}
 }
 

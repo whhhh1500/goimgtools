@@ -123,7 +123,8 @@ type options struct {
 	trim, extend, extendWith, modulate, sharpen    *string
 	ops                                            []string // -op, in order
 	grayscale, grayLinear                          *bool
-	blur                                           *float64
+	blur, blurMinAmp                               *float64
+	blurMethod                                     *string
 }
 
 // register defines the shared options on fs.
@@ -146,7 +147,9 @@ func register(fs *flag.FlagSet) *options {
 		grayscale:      fs.Bool("grayscale", false, "turn the image into shades of grey"),
 		grayLinear:     fs.Bool("grayscale-linear", false, "turn the image into shades of grey by the luminance of its linear light, as sharp's greyscale"),
 		modulate:       fs.String("modulate", "", "change `B,S,H[,L]`: brightness and saturation factors, hue degrees and lightness added (L*, 0 to 100); 1.2,0.8,0 is brighter and less vivid"),
-		blur:           fs.Float64("blur", 0, "Gaussian blur of this `sigma` in pixels (as Pillow's GaussianBlur)"),
+		blur:           fs.Float64("blur", 0, "Gaussian blur of this `sigma` in pixels (as Pillow's GaussianBlur, or sharp's with -blur-method kernel)"),
+		blurMethod:     fs.String("blur-method", "boxes", "how -blur works out its Gaussian: boxes (as Pillow) or kernel (as sharp)"),
+		blurMinAmp:     fs.Float64("blur-min-amplitude", 0, "cut the Gaussian of -blur-method kernel off below this `fraction` of its peak, 0.001 to 1 (0.2 by default, as sharp)"),
 		sharpen:        fs.String("sharpen", "", "sharpen: mild (a quick 3x3 sharpen, good after shrinking), or an unsharp mask `SIGMA[,AMOUNT[,THRESHOLD]]` as Pillow's (amount 1.5, threshold 0 by default)"),
 		kernel:         fs.String("kernel", "cubic", "resize filter: nearest, linear, cubic, mitchell, lanczos2, lanczos3"),
 		noEnlarge:      fs.Bool("no-enlarge", false, "never make the image larger than it is"),
@@ -564,7 +567,11 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 		im.Modulate(v[0], v[1], v[2], goimgtools.ModulateOptions{Lightness: v[3]})
 	}
 	if *o.blur != 0 {
-		im.Blur(*o.blur)
+		method, ok := map[string]goimgtools.BlurMethod{"boxes": goimgtools.BlurBoxes, "kernel": goimgtools.BlurKernel}[*o.blurMethod]
+		if !ok {
+			return nil, fmt.Errorf("-blur-method: want boxes or kernel, got %q", *o.blurMethod)
+		}
+		im.Blur(*o.blur, goimgtools.BlurOptions{Method: method, MinAmplitude: *o.blurMinAmp})
 	}
 	if *o.sharpen != "" {
 		if strings.EqualFold(*o.sharpen, "mild") {

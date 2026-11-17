@@ -370,6 +370,85 @@ func TestBlur(t *testing.T) {
 	}
 }
 
+// TestBlurKernel: BlurKernel is sharp's blur to the byte, with the 8-bit
+// weights of libvips' vector path (sigma 2, and 3 cut off at 0.01 of the
+// peak), with the integer weights of a mask wider than 1024 (sigma 300),
+// and on an image with transparency, premultiplied as libvips does it.
+func TestBlurKernel(t *testing.T) {
+	rgb, rgba := sourcePNG(t, "pillow/source.png"), sourcePNG(t, "pillow/median-rgba-source.png")
+	for _, c := range []struct {
+		name  string
+		src   []byte
+		sigma float64
+		min   float64
+	}{
+		{"blur-kernel-2", rgb, 2, 0},
+		{"blur-kernel-3-0.01", rgb, 3, 0.01},
+		{"blur-kernel-300", rgb, 300, 0},
+		{"blur-kernel-rgba-0.7", rgba, 0.7, 0},
+		{"blur-kernel-rgba-25", rgba, 25, 0},
+	} {
+		out, err := FromBytes(c.src).Blur(c.sigma, BlurOptions{Method: BlurKernel, MinAmplitude: c.min}).PNG().ToBytes()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if maxd, mean, _ := channelDiff(t, decodePNG(t, out), readPNG(t, "sharp/"+c.name+".png")); maxd != 0 {
+			t.Errorf("%s: differs from sharp by up to %d, %.3f on average", c.name, maxd, mean)
+		}
+		if info, err := FromBytes(out).Metadata(); err != nil || info.HasAlpha != (c.name >= "blur-kernel-rgba") {
+			t.Errorf("%s: alpha %v (%v)", c.name, info.HasAlpha, err)
+		}
+	}
+	// Narrower than Pillow's at the same sigma: the mask stops at 1.8 sigma.
+	box, err := FromBytes(rgb).Blur(2).PNG().ToBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if maxd, _, _ := channelDiff(t, decodePNG(t, box), readPNG(t, "sharp/blur-kernel-2.png")); maxd == 0 {
+		t.Error("BlurBoxes gave sharp's blur")
+	}
+	// Under a small limit the window of rows goes to a temporary file (at
+	// sigma 100 it is the 300 rows of the image, 3.6MB), with the same
+	// result as in memory, opaque or not, and everything is given back.
+	dir := t.TempDir()
+	for name, in := range map[string][]byte{"opaque": pngBytes(t, photoLike(3000, 300)),
+		"translucent": pngBytes(t, testutil.Images(3000, 300)["nrgba"])} {
+		for _, sigma := range []float64{10, 100} {
+			o := BlurOptions{Method: BlurKernel}
+			big, used := budgetAfter(t, FromBytes(in).Blur(sigma, o), 64<<20, dir)
+			small, used2 := budgetAfter(t, FromBytes(in).Blur(sigma, o), 2<<20, dir)
+			if used != 0 || used2 != 0 {
+				t.Errorf("%s, sigma %v: %d and %d bytes still reserved", name, sigma, used, used2)
+			}
+			sameImage(t, fmt.Sprintf("%s, kernel %v on disk and in memory", name, sigma), small, big)
+		}
+	}
+	if n := tempFiles(dir); n != 0 {
+		t.Errorf("%d temporary files left", n)
+	}
+	for _, o := range []BlurOptions{{Method: 2}, {Method: -1}, {MinAmplitude: 0.2}, {Method: BlurKernel, MinAmplitude: 0.0005},
+		{Method: BlurKernel, MinAmplitude: 1.5}, {Method: BlurKernel, MinAmplitude: math.NaN()}} {
+		if _, err := FromBytes(rgb).Blur(2, o).ToBytes(); err == nil {
+			t.Errorf("Blur(2, %+v) accepted", o)
+		}
+	}
+	// By name, and the words of the steps.
+	var words [][]string
+	FromBytes(rgb).Do("blur", "2").Do("blur", "2", "kernel").Do("blur", "3", "kernel", "0.05").
+		Around(func(s Step, in pipeline.Source, run func(pipeline.Source) (pipeline.Source, error)) (pipeline.Source, error) {
+			words = append(words, append([]string{s.Name}, s.Args...))
+			return run(in)
+		}).PNG().ToBytes()
+	if fmt.Sprint(words) != "[[blur 2] [blur 2 kernel] [blur 3 kernel 0.05]]" {
+		t.Errorf("steps %v", words)
+	}
+	for _, args := range [][]string{{}, {"2", "boxes"}, {"2", "kernel", "x"}, {"2", "kernel", "0.05", "1"}, {"2", "kernel", "2"}} {
+		if _, err := FromBytes(rgb).Do("blur", args...).PNG().ToBytes(); err == nil {
+			t.Errorf("blur %v accepted", args)
+		}
+	}
+}
+
 // TestSharpen: the unsharp mask is Pillow's UnsharpMask to the byte; the
 // mild sharpen its 3x3 kernel as computed here.
 func TestSharpen(t *testing.T) {

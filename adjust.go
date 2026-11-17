@@ -1,7 +1,9 @@
 package goimgtools
 
 import (
+	"cmp"
 	"errors"
+	"fmt"
 	"image/color"
 	"math"
 	"strconv"
@@ -69,18 +71,59 @@ func (m *Image) Modulate(brightness, saturation, hue float64, opts ...ModulateOp
 }
 
 // Blur blurs the image with a Gaussian of standard deviation sigma pixels,
-// above 0 and at most 1000 (as sharp). It is Pillow's GaussianBlur: three
-// box blurs across and three down, so the time it takes does not grow with
-// sigma, and for an image without transparency the result is Pillow's to
-// the byte. The memory it takes grows with sigma times the width of the
-// image, and goes to a temporary file beyond its share of the limit.
-// Transparent pixels lend no colour to their neighbours.
-func (m *Image) Blur(sigma float64) *Image {
+// above 0 and at most 1000 (as sharp). By default it is Pillow's
+// GaussianBlur, and for an image without transparency the result is
+// Pillow's to the byte; BlurOptions.Method BlurKernel makes it sharp's, to
+// the byte. Either way the time it takes hardly grows with sigma, the
+// memory it takes grows with sigma times the width of the image and goes
+// to a temporary file beyond its share of the limit, and transparent
+// pixels lend no colour to their neighbours.
+func (m *Image) Blur(sigma float64, opts ...BlurOptions) *Image {
+	m.atMostOne("Blur", len(opts))
 	if !(sigma > 0) || sigma > ops.MaxSigma {
 		return m.fail(errors.New("goimgtools: Blur sigma must be above 0 and at most 1000"))
 	}
-	return m.add(blurOp{sigma})
+	o := first(opts)
+	switch {
+	case o.Method != BlurBoxes && o.Method != BlurKernel:
+		return m.fail(fmt.Errorf("goimgtools: unknown BlurMethod %d", o.Method))
+	case o.MinAmplitude != 0 && o.Method != BlurKernel:
+		return m.fail(errors.New("goimgtools: Blur MinAmplitude is for BlurKernel"))
+	case o.MinAmplitude != 0 && !(o.MinAmplitude >= 0.001 && o.MinAmplitude <= 1):
+		return m.fail(errors.New("goimgtools: Blur MinAmplitude must be 0.001 to 1"))
+	}
+	return m.add(blurOp{sigma, o})
 }
+
+// BlurOptions are the optional settings of Blur.
+type BlurOptions struct {
+	// Method is the way the Gaussian is worked out: BlurBoxes, Pillow's
+	// (the default), or BlurKernel, sharp's.
+	Method BlurMethod
+	// MinAmplitude is where BlurKernel cuts the Gaussian off: where it
+	// falls below this fraction of its peak, 0.001 to 1, as sharp's
+	// minAmplitude; 0 means sharp's default, 0.2. Smaller makes the edges
+	// of the blur smoother and it a little slower.
+	MinAmplitude float64
+}
+
+// BlurMethod is a way of working out a Gaussian blur.
+type BlurMethod int
+
+const (
+	// BlurBoxes is Pillow's GaussianBlur: three box blurs across and three
+	// down, of the width that comes closest to the Gaussian, each rounded
+	// to 8 bits. For an image without transparency the result is Pillow's
+	// to the byte.
+	BlurBoxes BlurMethod = iota
+	// BlurKernel is sharp's blur (libvips' gaussblur at its default
+	// integer precision): the Gaussian itself, its weights twentieths of
+	// its peak rounded and cut off at MinAmplitude, across and then down,
+	// each rounded to 8 bits. The result is sharp's to the byte,
+	// transparency included. It blurs less than BlurBoxes at the same
+	// sigma, the mask being cut off at 1.8 sigma by default.
+	BlurKernel
+)
 
 // SharpenOptions are the optional settings of Sharpen.
 type SharpenOptions struct {
@@ -260,11 +303,17 @@ func (o modulateOp) apply(src pipeline.Source, r *run) (pipeline.Source, error) 
 	return ops.Modulate(src, o.brightness, o.saturation, o.hue, o.lightness)
 }
 
-type blurOp struct{ sigma float64 }
+type blurOp struct {
+	sigma float64
+	o     BlurOptions
+}
 
 func (o blurOp) apply(src pipeline.Source, r *run) (pipeline.Source, error) {
 	if r.sizeOnly {
 		return src, nil
+	}
+	if o.o.Method == BlurKernel {
+		return ops.BlurKernel(src, o.sigma, cmp.Or(o.o.MinAmplitude, ops.MinAmplitude))
 	}
 	return ops.Blur(src, o.sigma)
 }

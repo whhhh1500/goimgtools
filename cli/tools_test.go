@@ -331,6 +331,9 @@ func TestAdjustOptions(t *testing.T) {
 			return m.Trim(10).Extend(1, 2, 3, 4, color.NRGBA{255, 0, 0, 128})
 		}},
 		{[]string{"-grayscale", "-modulate", "1.2,0.5,30"}, func(m *goimgtools.Image) *goimgtools.Image { return m.Grayscale().Modulate(1.2, 0.5, 30) }},
+		{[]string{"-blur", "3", "-blur-method", "kernel", "-blur-min-amplitude", "0.05"}, func(m *goimgtools.Image) *goimgtools.Image {
+			return m.Blur(3, goimgtools.BlurOptions{Method: goimgtools.BlurKernel, MinAmplitude: 0.05})
+		}},
 		{[]string{"-grayscale-linear", "-modulate", "1,1.3,0,-8"}, func(m *goimgtools.Image) *goimgtools.Image {
 			return m.Grayscale(goimgtools.GrayscaleOptions{Linear: true}).Modulate(1, 1.3, 0, goimgtools.ModulateOptions{Lightness: -8})
 		}},

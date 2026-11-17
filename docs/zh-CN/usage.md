@@ -61,7 +61,7 @@ err := goimgtools.Open("in.jpg").
 | `CLAHE(CLAHEOptions{Width, Height, MaxSlope})` | 局部对比度增强（限制对比度的自适应直方图均衡），提亮暗部、压低亮部以显出细节：每个色阶变为其在像素周围 `Width` × `Height` 窗口中的排位，窗口中每个色阶最多计 `MaxSlope` 个像素（默认 3）。不含透明的图像与 sharp 的 `clahe` 逐字节一致；24 MP、64×64 窗口单核 18s，4 核 7s（sharp：7.6s、8.7s） |
 | `Median(size)` | 中值滤波：每个像素的每个通道取其周围 size × size 方块（奇数，3–99）的中值，去除噪点而保留边缘。与 Pillow 的 `MedianFilter` 及 sharp 的 `median` 逐字节一致 |
 | `Convolve(Convolution{Width, Height, Weights, Scale, Offset})` | 自定义卷积核（边长为奇数，最大 99）：窗口加权和除以 `Scale`（默认为权重之和）再加 `Offset`。与 sharp 的 `convolve` 逐字节一致；例如权重 `0,-1,0,-1,5,-1,0,-1,0` 为锐化，`-1,-1,-1,-1,8,-1,-1,-1,-1` 配合 `Scale: 1` 为边缘检测 |
-| `Blur(sigma)` | 高斯模糊，sigma 须大于 0 且不超过 1000 像素；采用 Pillow 的 `GaussianBlur` 算法，耗时不随 sigma 变化 |
+| `Blur(sigma, BlurOptions{Method, MinAmplitude})` | 高斯模糊，sigma 须大于 0 且不超过 1000 像素。默认（`BlurBoxes`）为 Pillow 的 `GaussianBlur`：三次方框模糊，不含透明的图像与 Pillow 逐字节一致。`BlurKernel` 与 sharp 的 `blur` 逐字节一致（含透明图像）：直接用高斯核，权重为 libvips 的整数权重，在低于峰值的 `MinAmplitude` 处截断（默认 0.2，即 sharp 的 `minAmplitude`，因此同一 sigma 下比 Pillow 模糊得轻）。两种方式的耗时都几乎不随 sigma 变化 |
 | `Sharpen()` | 轻度锐化（sharp 的 3×3 卷积核），适用于缩小之后 |
 | `Sharpen(SharpenOptions{Sigma, Amount, Threshold})` | 反锐化掩模（Pillow 的 `UnsharpMask`），`Amount` 默认为 1.5 |
 | `Flatten(color)` | 去除透明，铺底色 |
@@ -88,7 +88,7 @@ err := goimgtools.Open("in.jpg").
 
 灰度图像缩放后仍为灰度图像（单通道），不会转为彩色。
 
-模糊、锐化、色彩调整与扩边均按行流式处理，仅额外占用少量行的内存（模糊约多占 6×sigma 行，反锐化掩模再多占 3×sigma 行；超出内存份额时写入临时文件）。`Trim` 与 `RotateBy` 须先读取全图：像素先写入暂存区（超出内存份额时为临时文件），再重新读取；因此链中含 `Trim` 时，`OutputSize` 也须读取一遍像素。带透明通道的图像在模糊、锐化时按预乘透明度计算，透明区域的颜色不会渗入相邻像素。
+模糊、锐化、色彩调整与扩边均按行流式处理，仅额外占用少量行的内存（模糊约多占 6×sigma 行，`BlurKernel` 约 3.6×sigma 行，反锐化掩模再多占 3×sigma 行；超出内存份额时写入临时文件）。`Trim` 与 `RotateBy` 须先读取全图：像素先写入暂存区（超出内存份额时为临时文件），再重新读取；因此链中含 `Trim` 时，`OutputSize` 也须读取一遍像素。带透明通道的图像在模糊、锐化时按预乘透明度计算，透明区域的颜色不会渗入相邻像素。
 
 ### 输出
 

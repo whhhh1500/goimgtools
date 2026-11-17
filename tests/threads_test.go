@@ -51,10 +51,16 @@ func TestSameWithHelpers(t *testing.T) {
 		"narrow 9x200":        pngBytes(t, photoLike(9, 200)),
 	}
 	ops := map[string]func(*Image) *Image{
-		"blur 0.7":     func(m *Image) *Image { return m.Blur(0.7) },
-		"blur 3":       func(m *Image) *Image { return m.Blur(3) },
-		"blur 40":      func(m *Image) *Image { return m.Blur(40) },
-		"blur 600":     func(m *Image) *Image { return m.Blur(600) },
+		"blur 0.7":   func(m *Image) *Image { return m.Blur(0.7) },
+		"blur 3":     func(m *Image) *Image { return m.Blur(3) },
+		"blur 40":    func(m *Image) *Image { return m.Blur(40) },
+		"blur 600":   func(m *Image) *Image { return m.Blur(600) },
+		"kernel 0.7": func(m *Image) *Image { return m.Blur(0.7, BlurOptions{Method: BlurKernel}) },
+		"kernel 12":  func(m *Image) *Image { return m.Blur(12, BlurOptions{Method: BlurKernel}) },
+		"kernel 5, 0.001": func(m *Image) *Image {
+			return m.Blur(5, BlurOptions{Method: BlurKernel, MinAmplitude: 0.001})
+		},
+		"kernel 400":   func(m *Image) *Image { return m.Blur(400, BlurOptions{Method: BlurKernel}) },
 		"unsharp 2":    func(m *Image) *Image { return m.Sharpen(SharpenOptions{Sigma: 2, Amount: 1.2, Threshold: 2}) },
 		"unsharp 25":   func(m *Image) *Image { return m.Sharpen(SharpenOptions{Sigma: 25}) },
 		"mild sharpen": func(m *Image) *Image { return m.Sharpen() },

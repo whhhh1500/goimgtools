@@ -70,6 +70,8 @@ Operations run in a fixed order: rotate → flip → trim → crop → resize �
 | `-grayscale-linear` | Convert to grayscale by the luminance of linear light, as sharp's `greyscale` |
 | `-modulate B,S,H[,L]` | Brightness factor, saturation factor, hue in degrees and lightness added (L\*, 0 to 100), e.g. `1.2,0.8,0` |
 | `-blur sigma` | Gaussian blur |
+| `-blur-method boxes\|kernel` | `boxes` (default): as Pillow's `GaussianBlur`; `kernel`: as sharp's `blur` |
+| `-blur-min-amplitude F` | Where `-blur-method kernel` cuts the Gaussian off, 0.001 to 1 (default 0.2) |
 | `-sharpen mild\|SIGMA[,AMOUNT[,THRESHOLD]]` | `mild` applies mild sharpening; otherwise an unsharp mask (`AMOUNT` defaults to 1.5, `THRESHOLD` to 0) |
 | `-flatten color` | Flatten onto a background colour |
 | `-watermark file` / `-watermark-text text` | Image watermark / text watermark (`\n` inserts a line break) |

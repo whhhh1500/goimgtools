@@ -128,6 +128,12 @@ func describe(op operation) (string, []string) {
 		}
 		return "modulate", []string{f(o.brightness), f(o.saturation), f(o.hue)}
 	case blurOp:
+		switch {
+		case o.o.MinAmplitude != 0:
+			return "blur", []string{f(o.sigma), "kernel", f(o.o.MinAmplitude)}
+		case o.o.Method == BlurKernel:
+			return "blur", []string{f(o.sigma), "kernel"}
+		}
 		return "blur", []string{f(o.sigma)}
 	case sharpenOp:
 		if o.o.Sigma == 0 {
@@ -652,16 +658,30 @@ var builtInOps = map[string]OperationDef{
 			m.Modulate(v[0], v[1], v[2], o)
 			return nil
 		}},
-	"blur": {Name: "blur", Usage: "SIGMA", Help: "Blur: Gaussian, sigma in pixels",
+	"blur": {Name: "blur", Usage: "SIGMA[,kernel[,MIN_AMPLITUDE]]", Help: "Blur: Gaussian, sigma in pixels, as Pillow's; kernel: as sharp's, cut off below MIN_AMPLITUDE of its peak (0.2 by default)",
 		builtIn: func(m *Image, a []string) error {
-			if err := wantArgs(a, 1, 1); err != nil {
+			if err := wantArgs(a, 1, 3); err != nil {
 				return err
 			}
-			v, err := argFloats(a)
+			if len(a) >= 2 && a[1] != "kernel" {
+				return errors.New("the word after SIGMA is kernel")
+			}
+			nums := a[:1:1]
+			if len(a) == 3 {
+				nums = append(nums, a[2])
+			}
+			v, err := argFloats(nums)
 			if err != nil {
 				return err
 			}
-			m.Blur(v[0])
+			var o BlurOptions
+			if len(a) >= 2 {
+				o.Method = BlurKernel
+			}
+			if len(v) == 2 {
+				o.MinAmplitude = v[1]
+			}
+			m.Blur(v[0], o)
 			return nil
 		}},
 	"sharpen": {Name: "sharpen", Usage: "[SIGMA[,AMOUNT[,THRESHOLD]]]", Help: "Sharpen: mild without arguments, else an unsharp mask",

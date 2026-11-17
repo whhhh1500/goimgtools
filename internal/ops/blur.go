@@ -31,6 +31,12 @@ type rowSource interface {
 	nextRow() ([]uint8, error)
 }
 
+// rowPass filters a row on its own into dst (whose alpha stays as it is
+// when only the colours are filtered).
+type rowPass interface {
+	apply(dst, row []uint8)
+}
+
 // ---- work shared with helpers ----
 
 // batch says how the passes of a filter share their work. Without helpers
@@ -74,7 +80,7 @@ type inputRows struct {
 	cur   *image.RGBA
 	y     int // rows taken from the source
 	keep  rowStore
-	hblur []*hbox // one for each part of the work; nil for none
+	hblur []rowPass // one for each part of the work; nil for none
 	work  batch
 	// The batch: rows of cur, or their blurred copies in out; n of them,
 	// handed of those handed out.
@@ -439,13 +445,19 @@ type filterStage struct {
 	onDisk   bool // a store went to a temporary file
 	reserved int64
 	opaque   bool
+	straight bool // the rows finished are NRGBA
 	work     batch
 }
 
 func (f *filterStage) Env() *pipeline.Env      { return f.env }
 func (f *filterStage) Bounds() image.Rectangle { return f.src.Bounds() }
-func (f *filterStage) ColorModel() color.Model { return color.RGBAModel }
-func (f *filterStage) Opaque() bool            { return f.opaque }
+func (f *filterStage) ColorModel() color.Model {
+	if f.straight {
+		return color.NRGBAModel
+	}
+	return color.RGBAModel
+}
+func (f *filterStage) Opaque() bool { return f.opaque }
 
 func (f *filterStage) Close() error {
 	for _, s := range f.stores {
@@ -488,6 +500,9 @@ func (f *filterStage) Next() (image.Image, error) {
 		if err := f.in.drain(); err != nil {
 			return nil, err
 		}
+	}
+	if f.straight {
+		return &image.NRGBA{Pix: out.Pix, Stride: out.Stride, Rect: out.Rect}, nil
 	}
 	return out, nil
 }
@@ -611,7 +626,7 @@ func (f *filterStage) blurPasses(sigma float64) (rowSource, error) {
 		nc = 3
 	}
 	f.in.out = rowBatch(rows, w4)
-	f.in.hblur = make([]*hbox, ways)
+	f.in.hblur = make([]rowPass, ways)
 	for g := range f.in.hblur {
 		f.in.hblur[g] = &hbox{b: b, w: w, nc: nc, t: [2][]uint8{opaqueRow(w4), opaqueRow(w4)}}
 	}

@@ -9,7 +9,7 @@ PNG、JPEG、GIF、BMP、TIFF 的解码与编码以及默认缩放均改写自�
 - 解码：Go 与 `x/image` 自带的 164 幅测试图像（PNG 85、JPEG 31、TIFF 17、WebP 17、BMP 9、GIF 5）解码所得像素与标准解码器相同（WebP 见下文）；对于截断文件和单字节损坏的文件，凡标准解码器报错者，本库同样报错。
 - 缩放：默认算法与 `draw.CatmullRom.Scale` 逐字节一致。灰度图像仅计算单一通道并输出为灰度图像，其数值即 `x/image` 输出的红、绿、蓝三个相等通道的值。
 - 编码：JPEG（不设选项时）与 GIF（启用 `FixedPalette` 时；同时启用 `NoDither` 时与使用 `draw.Src` 的 `gif.Encode` 一致）与标准库逐字节一致；BMP、TIFF 与 `x/image` 逐字节一致（不含元数据和分辨率时；压缩的 TIFF 限像素数据不超过 1MB：更大的压缩图像按约 1MB 一条分条带写入，与 libtiff 相同，而 `x/image` 只写一条，其压缩数据超过 50MB 时 libvips 无法读取）。PNG（不减色时）在使用 6 级（指定，或 Go 1.26 下的默认值）且图像数据不超过一个压缩块（256KB）时与 `png.Encode` 逐字节一致；Go 1.27 下默认使用 7 级（见[压缩](compression.md)），更大的图像分块压缩，像素相同。
-- 模糊与反锐化掩模：对于不含透明通道的图像，`Blur` 与 Pillow 12.1.1 的 `GaussianBlur`、`Sharpen(SharpenOptions{...})` 与其 `UnsharpMask` 逐字节一致（测试中存有 Pillow 生成的参考图像，sigma 0.7–40）。算法与定点运算移植自 Pillow 的 C 代码。
+- 模糊与反锐化掩模：对于不含透明通道的图像，`Blur` 与 Pillow 12.1.1 的 `GaussianBlur`、`Sharpen(SharpenOptions{...})` 与其 `UnsharpMask` 逐字节一致（测试中存有 Pillow 生成的参考图像，sigma 0.7–40）。算法与定点运算移植自 Pillow 的 C 代码。使用 `BlurKernel` 的 `Blur` 与 sharp 0.35 的 `blur` 在 8 位图像上逐字节一致，含透明与不含透明的图像均如此（核对了 sigma 0.7、2、25、300，以及 `minAmplitude` 0.01 时的 3）：整数权重与舍入方式与 libvips 的 `gaussblur` 相同，包括其 8 位向量路径、核宽超过 1024 时的整数路径，以及单精度的预乘透明度。
 - 灰度：与 Pillow 的 `convert("L")` 逐字节一致，即 `color.RGBToYCbCr` 的亮度；在全部 1677 万种颜色上，与精确的 Rec. 601 亮度最多相差 0.5 级。（`color.GrayModel` 先计算至 16 位再舍去低 8 位，最多相差 0.99 级，且 16% 的颜色未取到最近的一级，故未采用。）
 - 色彩调整：与 sharp 0.35（libvips 8.18）的 `modulate` 相比，每个像素相差不超过 1，平均 0.14。
 - `Trim`：像素相同时，裁剪范围（大小与位置）与 sharp 0.35 的 `trim` 相同（在带噪点的 JPEG 白边上以阈值 0、3、10、40 核对，并核对了灰尘斑点、带与不带 `LineArt` 的线稿、指定背景色及边距）。

@@ -247,7 +247,7 @@ func FuzzChain(f *testing.F) {
 			m.Modulate(float64(w%30)/10, float64(h%30)/10, float64(int16(w)))
 		}
 		if has(2) {
-			m.Blur(0.3 + float64(more>>9))
+			m.Blur(0.3+float64(more>>9), BlurOptions{Method: BlurMethod(h & 1)})
 		}
 		if has(3) {
 			m.Sharpen()
