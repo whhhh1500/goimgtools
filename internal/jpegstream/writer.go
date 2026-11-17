@@ -349,11 +349,14 @@ func (e *encoder) writeMarkerHeader(marker uint8, markerlen int) {
 	e.write(e.buf[:4])
 }
 
-// writeDQT writes the Define Quantization Table marker.
-func (e *encoder) writeDQT() {
-	const markerlen = 2 + int(nQuantIndex)*(1+blockSize)
-	e.writeMarkerHeader(dqtMarker, markerlen)
+// writeDQT writes a Define Quantization Table marker for each table the
+// components use (a gray image only the first), as libjpeg does.
+func (e *encoder) writeDQT(nComponent int) {
 	for i := range e.quant {
+		if i > 0 && nComponent == 1 {
+			break
+		}
+		e.writeMarkerHeader(dqtMarker, 2+1+blockSize)
 		e.writeByte(uint8(i))
 		e.write(e.quant[i][:])
 	}
@@ -393,23 +396,14 @@ func (e *encoder) writeSOF(marker uint8, size image.Point, nComponent int) {
 	e.write(e.buf[:3*(nComponent-1)+9])
 }
 
-// writeDHT writes the Define Huffman Table marker.
+// writeDHT writes the standard Huffman tables.
 func (e *encoder) writeDHT(nComponent int) {
-	markerlen := 2
 	specs := theHuffmanSpec[:]
 	if nComponent == 1 {
 		// Drop the Chrominance tables.
 		specs = specs[:2]
 	}
-	for _, s := range specs {
-		markerlen += 1 + 16 + len(s.value)
-	}
-	e.writeMarkerHeader(dhtMarker, markerlen)
-	for i, s := range specs {
-		e.writeByte("\x00\x10\x01\x11"[i])
-		e.write(s.count[:])
-		e.write(s.value)
-	}
+	e.writeDHTSpecs([]byte("\x00\x10\x01\x11")[:len(specs)], specs)
 }
 
 // writeBlock writes a block of pixel data using the given quantization table,
@@ -565,10 +559,7 @@ func toYCbCr(m image.Image, p image.Point, yBlock, cbBlock, crBlock *block) {
 	for j := 0; j < 8; j++ {
 		for i := 0; i < 8; i++ {
 			r, g, b, _ := m.At(min(p.X+i, xmax), min(p.Y+j, ymax)).RGBA()
-			yy, cb, cr := color.RGBToYCbCr(uint8(r>>8), uint8(g>>8), uint8(b>>8))
-			yBlock[8*j+i] = int32(yy)
-			cbBlock[8*j+i] = int32(cb)
-			crBlock[8*j+i] = int32(cr)
+			yBlock[8*j+i], cbBlock[8*j+i], crBlock[8*j+i] = ycc(int32(r>>8), int32(g>>8), int32(b>>8))
 		}
 	}
 }
@@ -587,12 +578,14 @@ func grayToY(m *image.Gray, p image.Point, yBlock *block) {
 	}
 }
 
-// ycc is color.RGBToYCbCr, small enough to be inlined: the clamping of Cb
-// and Cr to [0, 255] gives the same values as its bit twiddling.
+// ycc converts RGB to YCbCr as libjpeg does (jccolor.c), so that a JPEG
+// comes out as libjpeg-turbo writes it: its 16-bit fixed-point factors,
+// with Cb and Cr rounded by one half less a little, which keeps them
+// within 0 to 255.
 func ycc(r, g, b int32) (yy, cb, cr int32) {
 	yy = (19595*r + 38470*g + 7471*b + 1<<15) >> 16
-	cb = min(max((-11056*r-21712*g+32768*b+257<<15)>>16, 0), 0xff)
-	cr = min(max((32768*r-27440*g-5328*b+257<<15)>>16, 0), 0xff)
+	cb = (-11059*r - 21709*g + 32768*b + 128<<16 + 1<<15 - 1) >> 16
+	cr = (32768*r - 27439*g - 5329*b + 128<<16 + 1<<15 - 1) >> 16
 	return yy, cb, cr
 }
 
@@ -647,7 +640,8 @@ func paletteYCbCr(pal color.Palette, lut *[256][3]uint8) {
 			break
 		}
 		r, g, b, _ := c.RGBA()
-		lut[i][0], lut[i][1], lut[i][2] = color.RGBToYCbCr(uint8(r>>8), uint8(g>>8), uint8(b>>8))
+		yy, cb, cr := ycc(int32(r>>8), int32(g>>8), int32(b>>8))
+		lut[i][0], lut[i][1], lut[i][2] = uint8(yy), uint8(cb), uint8(cr)
 	}
 }
 
@@ -731,7 +725,7 @@ func chroma444(m *image.YCbCr, plane []byte, p image.Point, dst *block) {
 		r1 := plane[off+m.CStride : off+m.CStride+16 : off+m.CStride+16]
 		d := dst[8*j : 8*j+8 : 8*j+8]
 		for i := range d {
-			d[i] = (int32(r0[2*i]) + int32(r0[2*i+1]) + int32(r1[2*i]) + int32(r1[2*i+1]) + 2) >> 2
+			d[i] = (int32(r0[2*i]) + int32(r0[2*i+1]) + int32(r1[2*i]) + int32(r1[2*i+1]) + 1 + int32(i&1)) >> 2
 		}
 		off += 2 * m.CStride
 	}
@@ -797,7 +791,8 @@ func chroma420(m *image.YCbCr, plane []byte, p image.Point, dst *block) {
 }
 
 // scale scales the 16x16 region represented by the 4 src blocks to the 8x8
-// dst block.
+// dst block, averaging squares of 4, the rounding bias alternating 1 and 2
+// across as libjpeg's h2v2 downsampling does.
 func scale(dst *block, src *[4]block) {
 	for i := 0; i < 4; i++ {
 		dstOff := (i&2)<<4 | (i&1)<<2
@@ -805,7 +800,7 @@ func scale(dst *block, src *[4]block) {
 			for x := 0; x < 4; x++ {
 				j := 16*y + 2*x
 				sum := src[i][j] + src[i][j+1] + src[i][j+8] + src[i][j+9]
-				dst[8*y+x+dstOff] = (sum + 2) >> 2
+				dst[8*y+x+dstOff] = (sum + 1 + int32(x&1)) >> 2
 			}
 		}
 	}
@@ -888,7 +883,13 @@ func (e *encoder) quantBlocks(src pipeline.Source, first image.Image, sink func(
 	if ways == 1 && !e.trellis {
 		var zz qblock
 		return e.scanBlocks(src, first, func(b *block, comp int) {
-			e.quantize(b, quantIndex((comp+1)/2), &zz)
+			if b == nil {
+				// A dummy block: the DC of the block before, which zz
+				// still holds.
+				clear(zz[1:])
+			} else {
+				e.quantize(b, quantIndex((comp+1)/2), &zz)
+			}
 			sink(&zz, comp)
 		})
 	}
@@ -927,10 +928,15 @@ func (e *encoder) quantBlocks(src pipeline.Source, first image.Image, sink func(
 				k := u * c.perUnit
 				c.unit(u, &t, func(b *block, comp int) {
 					q := quantIndex((comp + 1) / 2)
-					if e.trellis {
+					switch {
+					case b == nil:
+						// A dummy block: the DC of the block before, in
+						// the same unit.
+						buf[k] = qblock{0: buf[k-1][0]}
+					case e.trellis:
 						fdct(b)
 						dcs[k] = tt[q].trellisBlock(b, &buf[k])
-					} else {
+					default:
 						e.quantize(b, q, &buf[k])
 					}
 					comps[k] = int8(comp)
@@ -981,10 +987,14 @@ type bandConv struct {
 	// direct444: ycbcr is 4:4:4; the chroma blocks of an MCU with nothing
 	// to clamp are averaged from it directly (see chroma444).
 	direct444 bool
-	across    int // blocks (gray) or MCUs (colour) across
-	hY, vY    int // the sampling factors of Y (colour)
-	units     int
-	perUnit   int // blocks a unit has
+	// dummies: a Y block of an MCU that lies past the right or the bottom
+	// edge of the image is handed on as nil, for libjpeg's dummy block (no
+	// AC coefficients, the DC of the block before).
+	dummies bool
+	across  int // blocks (gray) or MCUs (colour) across
+	hY, vY  int // the sampling factors of Y (colour)
+	units   int
+	perUnit int // blocks a unit has
 }
 
 // unit hands the blocks of unit u to sink, as scanBlocks does.
@@ -1008,7 +1018,7 @@ func (c *bandConv) unit(u int, t *unitTemp, sink func(b *block, comp int)) {
 		// 4:2:2: two blocks across, the chroma averaged in pairs.
 		for i := 0; i < 2; i++ {
 			c.convert(image.Pt(x+8*i, y), &t.b, &t.cb[i], &t.cr[i])
-			sink(&t.b, 0)
+			sink(c.yBlock(&t.b, x+8*i, y), 0)
 		}
 		scaleH(&t.b, &t.cb)
 		sink(&t.b, 1)
@@ -1030,7 +1040,7 @@ func (c *bandConv) unit(u int, t *unitTemp, sink func(b *block, comp int)) {
 	if c.direct420 {
 		for i := 0; i < 4; i++ {
 			yOfYCbCr(c.ycbcr, image.Pt(x+(i&1)*8, y+(i&2)*4), &t.b)
-			sink(&t.b, 0)
+			sink(c.yBlock(&t.b, x+(i&1)*8, y+(i&2)*4), 0)
 		}
 		chroma420(c.ycbcr, c.ycbcr.Cb, image.Pt(x, y), &t.b)
 		sink(&t.b, 1)
@@ -1042,12 +1052,34 @@ func (c *bandConv) unit(u int, t *unitTemp, sink func(b *block, comp int)) {
 		xOff := (i & 1) * 8
 		yOff := (i & 2) * 4
 		c.convert(image.Pt(x+xOff, y+yOff), &t.b, &t.cb[i], &t.cr[i])
-		sink(&t.b, 0)
+		sink(c.yBlock(&t.b, x+xOff, y+yOff), 0)
 	}
+	// Below the image, libjpeg repeats the last row of chroma it made
+	// (jcprepct.c), not the last row of pixels.
+	rows := c.bounds.Max.Y - y
 	scale(&t.b, &t.cb)
+	padRows(&t.b, (rows+1)/2)
 	sink(&t.b, 1)
 	scale(&t.b, &t.cr)
+	padRows(&t.b, (rows+1)/2)
 	sink(&t.b, 2)
+}
+
+// padRows repeats row n-1 of b in the rows below it, if n < 8.
+func padRows(b *block, n int) {
+	for r := n; r < 8 && n > 0; r++ {
+		copy(b[8*r:8*r+8], b[8*(n-1):8*n])
+	}
+}
+
+// yBlock is b, the Y block whose top-left corner is (x, y), or nil when
+// it lies past the right or the bottom edge of the image and is a dummy
+// block (see dummies).
+func (c *bandConv) yBlock(b *block, x, y int) *block {
+	if c.dummies && (x >= c.bounds.Max.X || y >= c.bounds.Max.Y) {
+		return nil
+	}
+	return b
 }
 
 // convert makes the Y, Cb and Cr blocks of the 8x8 region of the band
@@ -1116,6 +1148,7 @@ func (e *encoder) bands(src pipeline.Source, first image.Image, do func(c *bandC
 				}
 			}
 			c.hY, c.vY = e.hY, e.vY
+			c.dummies = !e.trellis
 			c.across = (bounds.Dx() + 8*c.hY - 1) / (8 * c.hY)
 			c.units = c.across * ((bounds.Dy() + 8*c.vY - 1) / (8 * c.vY))
 			c.perUnit = c.hY*c.vY + 2
@@ -1291,14 +1324,15 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 	e.write(e.buf[:2])
 	if o != nil {
 		if o.Density > 0 {
-			// JFIF 1.02, in dots per inch, no thumbnail.
+			// JFIF 1.01 (as libjpeg writes it), in dots per inch, no
+			// thumbnail.
 			d := uint16(max(1, min(math.Round(o.Density), 65535)))
-			e.write([]byte{0xff, 0xe0, 0, 16, 'J', 'F', 'I', 'F', 0, 1, 2, 1, byte(d >> 8), byte(d), byte(d >> 8), byte(d), 0, 0})
+			e.write([]byte{0xff, 0xe0, 0, 16, 'J', 'F', 'I', 'F', 0, 1, 1, 1, byte(d >> 8), byte(d), byte(d >> 8), byte(d), 0, 0})
 		}
 		e.writeMeta(o.Exif, o.ICC, o.Xmp)
 	}
 	// Write the quantization tables.
-	e.writeDQT()
+	e.writeDQT(nComponent)
 	switch {
 	case o != nil && o.Progressive:
 		if err := e.writeProgressive(bands, first, b.Size(), nComponent); err != nil {

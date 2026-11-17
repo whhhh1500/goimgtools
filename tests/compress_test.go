@@ -58,7 +58,7 @@ func TestJPEGOptimizeAndProgressive(t *testing.T) {
 				t.Fatalf("%s q%d progressive: %v", name, q, err)
 			}
 			if !bytes.Equal(plain, jpegBytes(decodePNG(t, in), q)) {
-				t.Errorf("%s q%d: without options the file is not the standard library's", name, q)
+				t.Errorf("%s q%d: without options the file is not the plain encoding of the pixels", name, q)
 			}
 			sameImage(t, name+" optimized", decode(opt), decode(plain))
 			sameImage(t, name+" progressive", decode(prog), decode(plain))

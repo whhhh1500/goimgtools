@@ -13,6 +13,7 @@
 - GIF 的 `Frames().LoopCount` 为播放次数（与文档一致），比 0.1.0 返回的多 1。
 - Go 1.27 下 PNG 默认级别为 7（原为 6）：文件更小，写得更慢。`PNGOptions{CompressionLevel: 6}` 可得原来的文件。
 - `Threads(n)` 不再以 3 为上限：n 更大时即用更多核心。
+- JPEG 按 libjpeg-turbo 的方式写出（即 Pillow、sharp 的字节），不再按 `image/jpeg` 的方式：同一质量下像素相差约一个色阶，文件大小相当。
 
 ### 新增
 
@@ -59,6 +60,7 @@
 
 ### 变更
 
+- JPEG 按 libjpeg-turbo 的方式写出，逐字节一致（与 sharp 的文件完全相同，与 Pillow 的文件只差其 JFIF 段）：libjpeg 的颜色转换、下采样、精确整数正 DCT、边外填充块、优化哈夫曼表与标记，速度不变。分辨率按 libjpeg 写为 JFIF 1.01。
 - `FastShrinkOnLoad` 也用于无 alpha 的有损 WebP：缩小至三分之一以下时，按 libwebp 解码时的缩放方式以结果两倍的尺寸解码，其余由缩放核完成（6000×4000 的缩到 400×400 以内 0.39s，原为 0.74s；与不用此选项的结果相比 48–51dB）。
 - `FastShrinkOnLoad` 改用 libjpeg 的缩小反 DCT（`jidctred.c`）缩小各块，不再用自行推导的平均，速度不变：4:4:4 与灰度 JPEG 的平面与 libjpeg 的缩放解码（Pillow 的 `draft`）相同，与完整解码后缩放的结果一样接近（46.7–50.5dB）。
 - JPEG 改为按 libjpeg-turbo 的方式解码，因此与 Pillow、sharp 逐字节一致（精确整数反 DCT、下采样色度的 fancy 上采样、YCbCr 转 RGB 查表），不再与 `image/jpeg` 相同：下采样色彩的边缘更平滑（一张 4:2:2 照片与原图的差距少 0.36 dB），所有与 Pillow、sharp 结果一致的操作在 JPEG 输入上也一致。彩色 JPEG 的行带改为 RGBA 而非 YCbCr，直接写成 JPEG 或有损 WebP 时除外。

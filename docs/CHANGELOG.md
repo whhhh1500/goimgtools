@@ -13,6 +13,7 @@ Nothing exported by 0.1.0 was removed or changed in its signature (checked with 
 - `Frames().LoopCount` of a GIF is the number of times it plays, as documented, one more than 0.1.0 returned.
 - The default PNG level is 7 with Go 1.27 (6 before): smaller files, written more slowly. `PNGOptions{CompressionLevel: 6}` keeps the old files.
 - `Threads(n)` is no longer capped at 3: a larger n uses that many cores.
+- JPEG files are written as libjpeg-turbo writes them (Pillow's and sharp's bytes), no longer as `image/jpeg` does: at the same quality, pixels a level or so apart, files of about the same size.
 
 ### Added
 
@@ -59,6 +60,7 @@ Nothing exported by 0.1.0 was removed or changed in its signature (checked with 
 
 ### Changed
 
+- JPEG files are written as libjpeg-turbo writes them, to the byte (sharp's files as they are, Pillow's without their JFIF segment): libjpeg's colour conversion, downsampling, accurate integer forward DCT, dummy blocks past the edges, optimized Huffman tables and markers, at the same speed. A resolution is written as JFIF 1.01, as libjpeg writes it.
 - `FastShrinkOnLoad` applies to a lossy WebP without alpha too: reduced to a third or less, it is decoded at twice the size of the result, as libwebp scales while decoding, and the kernel does the rest (a 6000×4000 one to fit 400×400 in 0.39s instead of 0.74s, 48–51dB from the result without the option).
 - `FastShrinkOnLoad` reduces the blocks with libjpeg's reduced inverse DCTs (`jidctred.c`) instead of averages worked out afresh, at the same speed: the planes of a 4:4:4 or grey JPEG are those of libjpeg's scaled decoding (Pillow's `draft`), and the result as close to a resize of the full image (46.7–50.5dB).
 - JPEG files are decoded as libjpeg-turbo decodes them, and so Pillow and sharp, to the byte (its accurate integer inverse DCT, its fancy upsampling of subsampled chroma, its YCbCr to RGB tables), instead of as `image/jpeg` does: subsampled colour edges are smoother (a 4:2:2 photograph 0.36 dB closer to the original), and every operation that gives Pillow's or sharp's pixels does so on JPEG input too. Colour JPEG strips are RGBA rather than YCbCr, but where a JPEG goes straight into a JPEG or lossy WebP file.

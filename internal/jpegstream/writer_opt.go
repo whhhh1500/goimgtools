@@ -43,7 +43,6 @@ func optimalSpec(freq *[257]int64) huffmanSpec {
 		codesize [257]int
 		others   [257]int
 	)
-	orig := *freq
 	used := false
 	for _, f := range freq[:256] {
 		used = used || f != 0
@@ -124,22 +123,16 @@ func optimalSpec(freq *[257]int64) huffmanSpec {
 	for i := range s.count {
 		s.count[i] = byte(bits[i+1])
 	}
-	// The symbols in order of code length. The lengths in bits may differ
-	// from codesize after the limiting, the order does not. libjpeg orders
-	// symbols of one codesize by value; ordering them by frequency instead
-	// costs nothing and matters when the limiting gave symbols of one
-	// codesize different lengths: the more frequent get the shorter.
+	// The symbols in order of code length, those of one length by value,
+	// as libjpeg orders them. (The lengths in bits may differ from codesize
+	// after the limiting, the order does not.)
 	for sym, cs := range codesize[:256] {
 		if cs != 0 {
 			s.value = append(s.value, byte(sym))
 		}
 	}
 	sort.SliceStable(s.value, func(i, j int) bool {
-		a, b := s.value[i], s.value[j]
-		if codesize[a] != codesize[b] {
-			return codesize[a] < codesize[b]
-		}
-		return orig[a] > orig[b]
+		return codesize[s.value[i]] < codesize[s.value[j]]
 	})
 	return s
 }
@@ -174,15 +167,12 @@ func (e *encoder) emitCode(h *codeLUT, sym uint8) {
 	e.emit(x&(1<<24-1), x>>24)
 }
 
-// writeDHTSpecs writes one Define Huffman Table marker holding specs;
-// ids[i] is table i's class (high 4 bits: 0 DC, 1 AC) and number.
+// writeDHTSpecs writes a Define Huffman Table marker for each of specs, as
+// libjpeg does; ids[i] is table i's class (high 4 bits: 0 DC, 1 AC) and
+// number.
 func (e *encoder) writeDHTSpecs(ids []byte, specs []huffmanSpec) {
-	markerlen := 2
 	for i := range specs {
-		markerlen += 1 + 16 + len(specs[i].value)
-	}
-	e.writeMarkerHeader(dhtMarker, markerlen)
-	for i := range specs {
+		e.writeMarkerHeader(dhtMarker, 2+1+16+len(specs[i].value))
 		e.writeByte(ids[i])
 		e.write(specs[i].count[:])
 		e.write(specs[i].value)

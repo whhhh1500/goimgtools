@@ -7,7 +7,6 @@ import (
 	"image/color"
 	stddraw "image/draw"
 	"image/gif"
-	"image/jpeg"
 	"image/png"
 	"os"
 	"path/filepath"
@@ -27,10 +26,15 @@ func pngBytes(t *testing.T, m image.Image) []byte {
 	return buf.Bytes()
 }
 
+// jpegBytes is m as a JPEG of quality q as this library writes it (the
+// bytes of libjpeg-turbo, checked in internal/jpegstream): a reference for
+// the steps before the encoding, and an input.
 func jpegBytes(m image.Image, q int) []byte {
-	var buf bytes.Buffer
-	jpeg.Encode(&buf, m, &jpeg.Options{Quality: q})
-	return buf.Bytes()
+	b, err := FromImage(m).JPEG(q).ToBytes()
+	if err != nil {
+		panic(err)
+	}
+	return b
 }
 
 func scaled(m image.Image, w, h int) *image.RGBA {

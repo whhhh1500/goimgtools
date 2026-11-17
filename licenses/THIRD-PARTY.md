@@ -28,11 +28,16 @@ rows at a time instead of on a whole image; the pixel arithmetic is theirs.
 
 This software is based in part on the work of the Independent JPEG Group.
 
-Two files contain Go ports of routines of the Independent JPEG Group's JPEG
-library as it is kept in libjpeg-turbo:
+These files contain Go ports of routines of the Independent JPEG Group's
+JPEG library as it is kept in libjpeg-turbo:
 
 | Here | Ported from |
 |---|---|
+| `internal/jpegstream/islow.go` | `jidctint.c`: `jpeg_idct_islow` |
+| `internal/jpegstream/idctred.go` | `jidctred.c`: `jpeg_idct_4x4`, `jpeg_idct_2x2`, `jpeg_idct_1x1` |
+| `internal/jpegstream/ycc.go` | `jdsample.c` (fancy upsampling), `jdcolor.c` (YCbCr to RGB) |
+| `internal/jpegstream/fdct.go` | `jfdctint.c`: `jpeg_fdct_islow` |
+| `internal/jpegstream/writer.go`: `ycc`, `scale`, `scaleH`, `padRows`, the dummy blocks past the edges, the markers | `jccolor.c`: `rgb_ycc_convert`; `jcsample.c`: `h2v2_downsample`, `h2v1_downsample`; `jcprepct.c`: `expand_bottom_edge`; `jccoefct.c`: `compress_data`; `jcmarker.c` |
 | `internal/jpegstream/writer_opt.go`: `optimalSpec` | `jchuff.c`: `jpeg_gen_optimal_table` |
 | `internal/jpegstream/writer_prog.go`: the progressive scan script and the coding of a progressive scan | `jcparam.c`: `jpeg_simple_progression`; `jcphuff.c` |
 

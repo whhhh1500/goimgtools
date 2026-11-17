@@ -103,13 +103,13 @@ func TestSameOnEveryProcessor(t *testing.T) {
 		do   func() ([]byte, error)
 		want string
 	}{
-		{"jpeg", func() ([]byte, error) { return photo.Clone().JPEG(83).ToBytes() }, "72272b88c25cc018"},
+		{"jpeg", func() ([]byte, error) { return photo.Clone().JPEG(83).ToBytes() }, "17e7e54b996696d4"},
 		{"jpeg progressive", func() ([]byte, error) {
 			return photo.Clone().JPEG(83, JPEGOptions{Progressive: true, Optimize: true}).ToBytes()
-		}, "15fdeecd80749ec2"},
+		}, "fa220cd8e057ac2d"},
 		{"jpeg trellis", func() ([]byte, error) {
 			return photo.Clone().JPEG(77, JPEGOptions{Optimize: true, Trellis: true}).ToBytes()
-		}, "1e6064dbc5840d3a"},
+		}, "8b4c90a04ea104ff"},
 		{"png text level 7", func() ([]byte, error) {
 			return FromImage(textLike(320, 200)).PNG(PNGOptions{CompressionLevel: 7}).ToBytes()
 		}, byFlate("d83e8dfe83edf793", "ee8dde29d4265e21")},
@@ -124,16 +124,16 @@ func TestSameOnEveryProcessor(t *testing.T) {
 		{"gif lossy", func() ([]byte, error) { return photo.Clone().GIF(GIFOptions{Lossy: 24}).ToBytes() }, "0d853b8290dead48"},
 		{"jpeg jpegli tables", func() ([]byte, error) {
 			return photo.Clone().JPEG(77, JPEGOptions{QuantTable: QuantTableJpegli, Progressive: true}).ToBytes()
-		}, "2bab35f640292b20"},
+		}, "da2d555832c82e5f"},
 		{"jpeg 4:4:4 progressive", func() ([]byte, error) {
 			return photo.Clone().JPEG(83, JPEGOptions{Progressive: true, ChromaSubsampling: Chroma444}).ToBytes()
-		}, "e4a400f261123064"},
+		}, "0fbd533c18adfad7"},
 		{"jpeg 4:2:2 trellis", func() ([]byte, error) {
 			return photo.Clone().JPEG(77, JPEGOptions{Optimize: true, Trellis: true, ChromaSubsampling: Chroma422}).ToBytes()
-		}, "bbbf99c1ae746ae6"},
+		}, "12036896ee7978f7"},
 		{"jpeg quant table 3", func() ([]byte, error) {
 			return photo.Clone().JPEG(77, JPEGOptions{QuantTable: QuantTableImageMagick}).ToBytes()
-		}, "32485d8a9a2c7f60"},
+		}, "39b0657868638dd1"},
 		{"png", func() ([]byte, error) { return clear.Clone().PNG().ToBytes() }, byFlate("7d6848e3147d24ec", "2a1b227d06566024")},
 		{"png 40 colours", func() ([]byte, error) { return photo.Clone().PNG(PNGOptions{Colors: 40}).ToBytes() }, byFlate("844bdcb3467662a1", "81d23e2c5193b24f")},
 		{"webp", func() ([]byte, error) { return photo.Clone().WebP(WebPOptions{Quality: 70}).ToBytes() }, "3a3429d921a08e95"},

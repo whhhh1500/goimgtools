@@ -263,9 +263,95 @@ func TestOptimizedMeta(t *testing.T) {
 	}
 }
 
+// libjpegTable is jpeg_gen_optimal_table of libjpeg-turbo 3.1 (jchuff.c),
+// transliterated as a reference: the number of codes of each length (1 to
+// 16) and the symbols in their order. ok is false where libjpeg fails: a
+// code longer than 32 bits before the limiting.
+func libjpegTable(freq [257]int64) (bits [17]byte, vals []byte, ok bool) {
+	var b, bitPos [33]int
+	var codesize, nz, others [257]int
+	for i := range others {
+		others[i] = -1
+	}
+	freq[256] = 1
+	n := 0
+	for i := 0; i < 257; i++ {
+		if freq[i] != 0 {
+			nz[n], freq[n] = i, freq[i]
+			n++
+		}
+	}
+	for {
+		c1, c2 := -1, -1
+		v, v2 := int64(1000000000), int64(1000000000)
+		for i := 0; i < n; i++ {
+			if freq[i] <= v2 {
+				if freq[i] <= v {
+					c2, v2, v, c1 = c1, v, freq[i], i
+				} else {
+					v2, c2 = freq[i], i
+				}
+			}
+		}
+		if c2 < 0 {
+			break
+		}
+		freq[c1] += freq[c2]
+		freq[c2] = 1000000001
+		codesize[c1]++
+		for others[c1] >= 0 {
+			c1 = others[c1]
+			codesize[c1]++
+		}
+		others[c1] = c2
+		codesize[c2]++
+		for others[c2] >= 0 {
+			c2 = others[c2]
+			codesize[c2]++
+		}
+	}
+	for i := 0; i < n; i++ {
+		if codesize[i] > 32 {
+			return bits, nil, false
+		}
+		b[codesize[i]]++
+	}
+	p := 0
+	for i := 1; i <= 32; i++ {
+		bitPos[i] = p
+		p += b[i]
+	}
+	i := 32
+	for ; i > 16; i-- {
+		for b[i] > 0 {
+			j := i - 2
+			for b[j] == 0 {
+				j--
+			}
+			b[i] -= 2
+			b[i-1]++
+			b[j+1] += 2
+			b[j]--
+		}
+	}
+	for b[i] == 0 {
+		i--
+	}
+	b[i]--
+	for k := 1; k <= 16; k++ {
+		bits[k] = byte(b[k])
+	}
+	vals = make([]byte, n-1)
+	for k := 0; k < n-1; k++ {
+		vals[bitPos[codesize[k]]] = byte(nz[k])
+		bitPos[codesize[k]]++
+	}
+	return bits, vals, true
+}
+
 // TestOptimalSpec checks the table rules for many frequency distributions:
 // every used symbol has a code, none longer than 16 bits, the code of all
-// ones stays free, and rarer symbols never get shorter codes.
+// ones stays free; and the table is libjpeg's.
 func TestOptimalSpec(t *testing.T) {
 	r := rand.New(rand.NewSource(11))
 	check := func(what string, freq [257]int64) {
@@ -302,14 +388,20 @@ func TestOptimalSpec(t *testing.T) {
 			if size[byte(sym)] == 0 {
 				t.Fatalf("%s: symbol %d has no code", what, sym)
 			}
-			for sym2, f2 := range orig[:256] {
-				if f2 > f && size[byte(sym2)] > size[byte(sym)] {
-					t.Fatalf("%s: symbol %d (%d times) has a longer code than %d (%d times)", what, sym2, f2, sym, f)
-				}
-			}
 		}
 		if used > 0 && len(size) != used {
 			t.Fatalf("%s: %d codes for %d used symbols", what, len(size), used)
+		}
+		// libjpeg's table, where libjpeg makes one: counts below its
+		// sentinel of 10^9 and codes of at most 32 bits before limiting.
+		var total int64
+		for _, f := range orig[:256] {
+			total += f
+		}
+		if used > 0 && total < 1e9 {
+			if bits, vals, ok := libjpegTable(orig); ok && (!bytes.Equal(bits[1:], s.count[:]) || !bytes.Equal(vals, s.value)) {
+				t.Fatalf("%s: %v %v, libjpeg's %v %v", what, s.count, s.value, bits[1:], vals)
+			}
 		}
 		// The table must be one the decoder accepts and the encoder can use.
 		var lut codeLUT
