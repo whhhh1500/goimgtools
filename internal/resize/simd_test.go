@@ -64,6 +64,9 @@ func TestVipsSIMD(t *testing.T) {
 // TestScaleSIMDLayout: the assembly passes read source and contrib at these
 // offsets.
 func TestScaleSIMDLayout(t *testing.T) {
+	if !useSIMD {
+		t.Skip("no SIMD")
+	}
 	var s source
 	var c contrib
 	if unsafe.Sizeof(s) != 24 || unsafe.Offsetof(s.j) != 4 || unsafe.Offsetof(s.invTotalWeightFFFF) != 16 ||
