@@ -264,6 +264,16 @@ func FuzzChain(f *testing.F) {
 		}
 		if has(7) {
 			m.RotateBy(float64(int16(h))/7, color.Transparent, RotateOptions{Method: RotateMethod(more & 1), Interpolator: Interpolator(w % 3), Expand: h&2 != 0})
+			if more&4 != 0 {
+				f := func(b uint16, d float64) float64 { return float64(int8(b)) / d }
+				tr := []Transformation{
+					TransformAffine(f(w, 40), f(h, 90), f(more, 3), f(w>>3, 90), f(h>>2, 40), f(more>>4, 3)),
+					TransformExtent(f(w, 2), f(h, 2), f(more, 1), f(w^h, 1)),
+					TransformPerspective(f(w, 40), f(h, 90), f(more, 3), f(w>>3, 90), f(h>>2, 40), f(more>>4, 3), f(w>>5, 5000), f(h>>5, 5000)),
+					TransformQuad(f(w, 2), f(h, 2), f(more, 2), f(w>>2, 1), f(h>>3, 1), f(more>>2, 1), f(w>>4, 1), f(h>>1, 2)),
+				}[more>>3%4]
+				m.Transform(1+int(w%61), 1+int(h%53), tr, TransformOptions{Interpolator: Interpolator(h % 3), Background: color.NRGBA{uint8(w), 3, uint8(h), uint8(more)}})
+			}
 		}
 		// The level and window operations, each a quarter of the time, from
 		// bits the operations above use too.
