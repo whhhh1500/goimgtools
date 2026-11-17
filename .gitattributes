@@ -11,3 +11,4 @@ tests/testdata/fuzz/** text eol=lf
 *.avif binary
 *.heic binary
 *.icc binary
+*.s text eol=lf
