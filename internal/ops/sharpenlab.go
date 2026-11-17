@@ -17,7 +17,7 @@ import (
 // to its blur is mapped by the curve of m1, m2, x1, y2 and y3 (in L* units)
 // through libvips' table of 65536 entries and added to the lightness; a*
 // and b* stay. With transparency the colours are premultiplied and divided
-// again as for BlurKernel. The result is NRGBA.
+// again as for BlurLibvips. The result is NRGBA.
 func SharpenLab(src pipeline.Source, sigma, m1, m2, x1, y2, y3 float64) (pipeline.Source, error) {
 	for _, v := range []float64{sigma, m1, m2, x1, y2, y3} {
 		if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {

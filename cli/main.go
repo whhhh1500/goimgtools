@@ -150,10 +150,10 @@ func register(fs *flag.FlagSet) *options {
 		grayscale:      fs.Bool("grayscale", false, "turn the image into shades of grey"),
 		grayLinear:     fs.Bool("grayscale-linear", false, "turn the image into shades of grey by the luminance of its linear light, as sharp's greyscale"),
 		modulate:       fs.String("modulate", "", "change `B,S,H[,L]`: brightness and saturation factors, hue degrees and lightness added (L*, 0 to 100); 1.2,0.8,0 is brighter and less vivid"),
-		blur:           fs.Float64("blur", 0, "Gaussian blur of this `sigma` in pixels (as Pillow's GaussianBlur, or sharp's with -blur-method kernel)"),
-		blurMethod:     fs.String("blur-method", "boxes", "how -blur works out its Gaussian: boxes (as Pillow) or kernel (as sharp)"),
-		blurMinAmp:     fs.Float64("blur-min-amplitude", 0, "cut the Gaussian of -blur-method kernel off below this `fraction` of its peak, 0.001 to 1 (0.2 by default, as sharp)"),
-		sharpen:        fs.String("sharpen", "", "sharpen: mild (a quick 3x3 sharpen, good after shrinking), an unsharp mask `SIGMA[,AMOUNT[,THRESHOLD]]` as Pillow's (amount 1.5, threshold 0 by default), or SIGMA,lightness[,FLAT,JAGGED,JAGGED_FROM,MAX_BRIGHTEN,MAX_DARKEN] as sharp's (the lightness alone; 1,2,2,10,20 by default)"),
+		blur:           fs.Float64("blur", 0, "Gaussian blur of this `sigma` in pixels (as Pillow's GaussianBlur, or sharp's with -blur-method libvips)"),
+		blurMethod:     fs.String("blur-method", "pillow", "how -blur works out its Gaussian: pillow (Pillow's boxes) or libvips (sharp's kernel)"),
+		blurMinAmp:     fs.Float64("blur-min-amplitude", 0, "cut the Gaussian of -blur-method libvips off below this `fraction` of its peak, 0.001 to 1 (0.2 by default, as sharp)"),
+		sharpen:        fs.String("sharpen", "", "sharpen: mild (a quick 3x3 sharpen, good after shrinking), an unsharp mask `SIGMA[,AMOUNT[,THRESHOLD]]` as Pillow's (amount 1.5, threshold 0 by default), or SIGMA,libvips[,FLAT,JAGGED,JAGGED_FROM,MAX_BRIGHTEN,MAX_DARKEN] as sharp's (the lightness alone; 1,2,2,10,20 by default)"),
 		kernel:         fs.String("kernel", "cubic", "resize filter: nearest, linear, cubic, mitchell, lanczos2, lanczos3, mks2013, mks2021, box, hamming"),
 		noEnlarge:      fs.Bool("no-enlarge", false, "never make the image larger than it is"),
 		fast:           fs.Bool("fast-shrink", false, "let a JPEG reduced to half size or less, or a lossy WebP without alpha to a third, be shrunk while it is decoded (with -resize-method libvips, sharp's fastShrinkOnLoad, every WebP): faster, pixels differ slightly"),
@@ -556,7 +556,7 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 		case "":
 			im.Extend(v[0], v[1], v[2], v[3], bg)
 		case "copy", "repeat", "mirror":
-			im.ExtendWith(v[0], v[1], v[2], v[3], map[string]goimgtools.Extension{
+			im.ExtendWith(v[0], v[1], v[2], v[3], map[string]goimgtools.ExtendMode{
 				"copy": goimgtools.ExtendCopy, "repeat": goimgtools.ExtendRepeat, "mirror": goimgtools.ExtendMirror}[*o.extendWith])
 		default:
 			return nil, fmt.Errorf("-extend-with: unknown way %q", *o.extendWith)
@@ -577,22 +577,22 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 		im.Modulate(v[0], v[1], v[2], goimgtools.ModulateOptions{Lightness: v[3]})
 	}
 	if *o.blur != 0 {
-		method, ok := map[string]goimgtools.BlurMethod{"boxes": goimgtools.BlurBoxes, "kernel": goimgtools.BlurKernel}[*o.blurMethod]
+		method, ok := map[string]goimgtools.BlurMethod{"pillow": goimgtools.BlurPillow, "libvips": goimgtools.BlurLibvips}[*o.blurMethod]
 		if !ok {
-			return nil, fmt.Errorf("-blur-method: want boxes or kernel, got %q", *o.blurMethod)
+			return nil, fmt.Errorf("-blur-method: want pillow or libvips, got %q", *o.blurMethod)
 		}
 		im.Blur(*o.blur, goimgtools.BlurOptions{Method: method, MinAmplitude: *o.blurMinAmp})
 	}
 	if *o.sharpen != "" {
-		if parts := strings.Split(*o.sharpen, ","); len(parts) >= 2 && strings.EqualFold(parts[1], "lightness") {
+		if parts := strings.Split(*o.sharpen, ","); len(parts) >= 2 && strings.EqualFold(parts[1], "libvips") {
 			if len(parts) != 2 && len(parts) != 7 {
-				return nil, fmt.Errorf("-sharpen: want SIGMA,lightness or SIGMA,lightness,FLAT,JAGGED,JAGGED_FROM,MAX_BRIGHTEN,MAX_DARKEN, got %q", *o.sharpen)
+				return nil, fmt.Errorf("-sharpen: want SIGMA,libvips or SIGMA,libvips,FLAT,JAGGED,JAGGED_FROM,MAX_BRIGHTEN,MAX_DARKEN, got %q", *o.sharpen)
 			}
 			v, err := floats(strings.Join(append(parts[:1:1], parts[2:]...), ","), len(parts)-1)
 			if err != nil {
 				return nil, fmt.Errorf("-sharpen: %w", err)
 			}
-			so := goimgtools.SharpenOptions{Sigma: v[0], Method: goimgtools.SharpenLightness}
+			so := goimgtools.SharpenOptions{Sigma: v[0], Method: goimgtools.SharpenLibvips}
 			if len(v) == 6 {
 				so.Curve = &goimgtools.SharpenCurve{Flat: v[1], Jagged: v[2], JaggedFrom: v[3], MaxBrighten: v[4], MaxDarken: v[5]}
 			}

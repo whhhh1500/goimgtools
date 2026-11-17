@@ -69,10 +69,10 @@ err := goimgtools.Open("in.jpg").
 | `Rank(size, rank)` | 排序滤波：每个像素的每个通道取 size × size 方块（奇数，1–99）中第 rank 小的值（从 0 起）。rank 为 0 即 Pillow 的 `MinFilter`（暗部扩张），size×size−1 即其 `MaxFilter`（亮部扩张）；与 Pillow 的 `RankFilter` 逐字节一致 |
 | `Dilate(width)`、`Erode(width)` | 与 sharp 的 `dilate`、`erode` 逐字节一致：每个通道取 2·width+1 像素方块（1–65536）的按位与（dilate）或按位或（erode）。在黑白图像（如 `Threshold` 的结果）上，dilate 让黑色图形（白底上的文字）扩张 width 像素，erode 让其收缩；其他图像请用 `Rank`。耗时几乎不随 width 增长 |
 | `Convolve(Convolution{Width, Height, Weights, Scale, Offset})` | 自定义卷积核（边长为奇数，最大 99）：窗口加权和除以 `Scale`（默认为权重之和）再加 `Offset`。与 sharp 的 `convolve` 逐字节一致；例如权重 `0,-1,0,-1,5,-1,0,-1,0` 为锐化，`-1,-1,-1,-1,8,-1,-1,-1,-1` 配合 `Scale: 1` 为边缘检测 |
-| `Blur(sigma, BlurOptions{Method, MinAmplitude})` | 高斯模糊，sigma 须大于 0 且不超过 1000 像素。默认（`BlurBoxes`）为 Pillow 的 `GaussianBlur`：三次方框模糊，不含透明的图像与 Pillow 逐字节一致。`BlurKernel` 与 sharp 的 `blur` 逐字节一致（含透明图像）：直接用高斯核，权重为 libvips 的整数权重，在低于峰值的 `MinAmplitude` 处截断（默认 0.2，即 sharp 的 `minAmplitude`，因此同一 sigma 下比 Pillow 模糊得轻）。两种方式的耗时都几乎不随 sigma 变化 |
+| `Blur(sigma, BlurOptions{Method, MinAmplitude})` | 高斯模糊，sigma 须大于 0 且不超过 1000 像素。默认（`BlurPillow`）为 Pillow 的 `GaussianBlur`：三次方框模糊，不含透明的图像与 Pillow 逐字节一致。`BlurLibvips` 与 sharp 的 `blur` 逐字节一致（含透明图像）：直接用高斯核，权重为 libvips 的整数权重，在低于峰值的 `MinAmplitude` 处截断（默认 0.2，即 sharp 的 `minAmplitude`，因此同一 sigma 下比 Pillow 模糊得轻）。两种方式的耗时都几乎不随 sigma 变化 |
 | `Sharpen()` | 轻度锐化（sharp 的 3×3 卷积核），适用于缩小之后 |
 | `Sharpen(SharpenOptions{Sigma, Amount, Threshold})` | 反锐化掩模（Pillow 的 `UnsharpMask`），`Amount` 默认为 1.5 |
-| `Sharpen(SharpenOptions{Sigma, Method: SharpenLightness, Curve})` | sharp 带 sigma 的 `sharpen`：只锐化明度（L\*a\*b\* 的 L\*），颜色不偏移；`Curve`（`SharpenCurve{Flat, Jagged, JaggedFrom, MaxBrighten, MaxDarken}`，即 sharp 的 m1、m2、x1、y2、y3；nil 为 sharp 的默认值）把与模糊的差映射为改变量。与 sharp 的结果仅在少数像素上相差 1 级 |
+| `Sharpen(SharpenOptions{Sigma, Method: SharpenLibvips, Curve})` | sharp 带 sigma 的 `sharpen`：只锐化明度（L\*a\*b\* 的 L\*），颜色不偏移；`Curve`（`SharpenCurve{Flat, Jagged, JaggedFrom, MaxBrighten, MaxDarken}`，即 sharp 的 m1、m2、x1、y2、y3；nil 为 sharp 的默认值）把与模糊的差映射为改变量。与 sharp 的结果仅在少数像素上相差 1 级 |
 | `Flatten(color)` | 去除透明，铺底色 |
 | `Recomb(matrix)` | 按矩阵重组通道：3 行 3 列（或 4 行 4 列，第四行生成透明度），每行给出结果的一个通道，即各通道值乘以该行各数之和，舍去小数。与 sharp 的 `recomb` 逐字节一致；`{{0.393, 0.769, 0.189}, {0.349, 0.686, 0.168}, {0.272, 0.534, 0.131}}` 为褐色调 |
 | `Unflatten()` | 白色像素变为透明（灰度按 sharp 的方式计算为 255 的像素）；在 `Threshold` 之后使用，则达到阈值的像素全部变透明。与 sharp 的 `unflatten` 逐字节一致 |
@@ -100,7 +100,7 @@ err := goimgtools.Open("in.jpg").
 
 灰度图像缩放后仍为灰度图像（单通道），不会转为彩色。
 
-模糊、锐化、色彩调整与扩边均按行流式处理，仅额外占用少量行的内存（模糊约多占 6×sigma 行，`BlurKernel` 约 3.6×sigma 行，反锐化掩模再多占 3×sigma 行；超出内存份额时写入临时文件）。`Trim` 与 `RotateBy` 须先读取全图：像素先写入暂存区（超出内存份额时为临时文件），再重新读取；因此链中含 `Trim` 时，`OutputSize` 也须读取一遍像素。带透明通道的图像在模糊、锐化时按预乘透明度计算，透明区域的颜色不会渗入相邻像素。
+模糊、锐化、色彩调整与扩边均按行流式处理，仅额外占用少量行的内存（模糊约多占 6×sigma 行，`BlurLibvips` 约 3.6×sigma 行，反锐化掩模再多占 3×sigma 行；超出内存份额时写入临时文件）。`Trim` 与 `RotateBy` 须先读取全图：像素先写入暂存区（超出内存份额时为临时文件），再重新读取；因此链中含 `Trim` 时，`OutputSize` 也须读取一遍像素。带透明通道的图像在模糊、锐化时按预乘透明度计算，透明区域的颜色不会渗入相邻像素。
 
 ### 输出
 

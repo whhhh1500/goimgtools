@@ -331,8 +331,8 @@ func TestAdjustOptions(t *testing.T) {
 			return m.Trim(10).Extend(1, 2, 3, 4, color.NRGBA{255, 0, 0, 128})
 		}},
 		{[]string{"-grayscale", "-modulate", "1.2,0.5,30"}, func(m *goimgtools.Image) *goimgtools.Image { return m.Grayscale().Modulate(1.2, 0.5, 30) }},
-		{[]string{"-sharpen", "1.5,lightness,0.5,3,1.5,15,25"}, func(m *goimgtools.Image) *goimgtools.Image {
-			return m.Sharpen(goimgtools.SharpenOptions{Sigma: 1.5, Method: goimgtools.SharpenLightness,
+		{[]string{"-sharpen", "1.5,libvips,0.5,3,1.5,15,25"}, func(m *goimgtools.Image) *goimgtools.Image {
+			return m.Sharpen(goimgtools.SharpenOptions{Sigma: 1.5, Method: goimgtools.SharpenLibvips,
 				Curve: &goimgtools.SharpenCurve{Flat: 0.5, Jagged: 3, JaggedFrom: 1.5, MaxBrighten: 15, MaxDarken: 25}})
 		}},
 		{[]string{"-resize", "37x37", "-kernel", "lanczos3", "-resize-method", "pillow", "-reducing-gap", "2", "-no-enlarge"}, func(m *goimgtools.Image) *goimgtools.Image {
@@ -344,8 +344,8 @@ func TestAdjustOptions(t *testing.T) {
 		{[]string{"-resize", "37x21", "-fit", "fill", "-kernel", "lanczos3", "-resize-method", "libvips"}, func(m *goimgtools.Image) *goimgtools.Image {
 			return m.Resize(37, 21, goimgtools.ResizeOptions{Fit: goimgtools.FitFill, Kernel: goimgtools.KernelLanczos3, Method: goimgtools.ResizeLibvips})
 		}},
-		{[]string{"-blur", "3", "-blur-method", "kernel", "-blur-min-amplitude", "0.05"}, func(m *goimgtools.Image) *goimgtools.Image {
-			return m.Blur(3, goimgtools.BlurOptions{Method: goimgtools.BlurKernel, MinAmplitude: 0.05})
+		{[]string{"-blur", "3", "-blur-method", "libvips", "-blur-min-amplitude", "0.05"}, func(m *goimgtools.Image) *goimgtools.Image {
+			return m.Blur(3, goimgtools.BlurOptions{Method: goimgtools.BlurLibvips, MinAmplitude: 0.05})
 		}},
 		{[]string{"-grayscale-linear", "-modulate", "1,1.3,0,-8"}, func(m *goimgtools.Image) *goimgtools.Image {
 			return m.Grayscale(goimgtools.GrayscaleOptions{Linear: true}).Modulate(1, 1.3, 0, goimgtools.ModulateOptions{Lightness: -8})

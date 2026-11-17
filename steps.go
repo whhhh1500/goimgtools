@@ -137,17 +137,17 @@ func describe(op operation) (string, []string) {
 	case blurOp:
 		switch {
 		case o.o.MinAmplitude != 0:
-			return "blur", []string{f(o.sigma), "kernel", f(o.o.MinAmplitude)}
-		case o.o.Method == BlurKernel:
-			return "blur", []string{f(o.sigma), "kernel"}
+			return "blur", []string{f(o.sigma), "libvips", f(o.o.MinAmplitude)}
+		case o.o.Method == BlurLibvips:
+			return "blur", []string{f(o.sigma), "libvips"}
 		}
 		return "blur", []string{f(o.sigma)}
 	case sharpenOp:
 		if o.o.Sigma == 0 {
 			return "sharpen", nil
 		}
-		if c := o.o.Curve; o.o.Method == SharpenLightness {
-			return "sharpen", []string{f(o.o.Sigma), "lightness", f(c.Flat), f(c.Jagged), f(c.JaggedFrom), f(c.MaxBrighten), f(c.MaxDarken)}
+		if c := o.o.Curve; o.o.Method == SharpenLibvips {
+			return "sharpen", []string{f(o.o.Sigma), "libvips", f(c.Flat), f(c.Jagged), f(c.JaggedFrom), f(c.MaxBrighten), f(c.MaxDarken)}
 		}
 		return "sharpen", []string{f(o.o.Sigma), f(o.o.Amount), d(o.o.Threshold)}
 	case extendOp:
@@ -207,7 +207,7 @@ var (
 	interestingNames = map[Interesting]string{InterestingEntropy: "entropy", InterestingAttention: "attention"}
 	lightNames       = map[bool]string{false: "srgb", true: "linear"}
 	methodNames      = map[ResizeMethod]string{ResizeDraw: "draw", ResizeLibvips: "libvips", ResizePillow: "pillow"}
-	extensionNames   = map[Extension]string{ExtendCopy: "copy", ExtendRepeat: "repeat", ExtendMirror: "mirror"}
+	extensionNames   = map[ExtendMode]string{ExtendCopy: "copy", ExtendRepeat: "repeat", ExtendMirror: "mirror"}
 )
 
 // colorWord writes c as ParseColor reads it.
@@ -721,13 +721,13 @@ var builtInOps = map[string]OperationDef{
 			m.Modulate(v[0], v[1], v[2], o)
 			return nil
 		}},
-	"blur": {Name: "blur", Usage: "SIGMA[,kernel[,MIN_AMPLITUDE]]", Help: "Blur: Gaussian, sigma in pixels, as Pillow's; kernel: as sharp's, cut off below MIN_AMPLITUDE of its peak (0.2 by default)",
+	"blur": {Name: "blur", Usage: "SIGMA[,libvips[,MIN_AMPLITUDE]]", Help: "Blur: Gaussian, sigma in pixels, as Pillow's; libvips: as sharp's, cut off below MIN_AMPLITUDE of its peak (0.2 by default)",
 		builtIn: func(m *Image, a []string) error {
 			if err := wantArgs(a, 1, 3); err != nil {
 				return err
 			}
-			if len(a) >= 2 && a[1] != "kernel" {
-				return errors.New("the word after SIGMA is kernel")
+			if len(a) >= 2 && a[1] != "libvips" {
+				return errors.New("the word after SIGMA is libvips")
 			}
 			nums := a[:1:1]
 			if len(a) == 3 {
@@ -739,7 +739,7 @@ var builtInOps = map[string]OperationDef{
 			}
 			var o BlurOptions
 			if len(a) >= 2 {
-				o.Method = BlurKernel
+				o.Method = BlurLibvips
 			}
 			if len(v) == 2 {
 				o.MinAmplitude = v[1]
@@ -747,18 +747,18 @@ var builtInOps = map[string]OperationDef{
 			m.Blur(v[0], o)
 			return nil
 		}},
-	"sharpen": {Name: "sharpen", Usage: "[SIGMA[,AMOUNT[,THRESHOLD]]] or SIGMA,lightness[,FLAT,JAGGED,JAGGED_FROM,MAX_BRIGHTEN,MAX_DARKEN]",
+	"sharpen": {Name: "sharpen", Usage: "[SIGMA[,AMOUNT[,THRESHOLD]]] or SIGMA,libvips[,FLAT,JAGGED,JAGGED_FROM,MAX_BRIGHTEN,MAX_DARKEN]",
 		Help: "Sharpen: mild without arguments, else an unsharp mask (Pillow's), or sharp's on the lightness",
 		builtIn: func(m *Image, a []string) error {
-			if len(a) >= 2 && a[1] == "lightness" {
+			if len(a) >= 2 && a[1] == "libvips" {
 				if len(a) != 2 && len(a) != 7 {
-					return errors.New("want SIGMA,lightness, then FLAT,JAGGED,JAGGED_FROM,MAX_BRIGHTEN,MAX_DARKEN")
+					return errors.New("want SIGMA,libvips, then FLAT,JAGGED,JAGGED_FROM,MAX_BRIGHTEN,MAX_DARKEN")
 				}
 				v, err := argFloats(append(a[:1:1], a[2:]...))
 				if err != nil {
 					return err
 				}
-				o := SharpenOptions{Sigma: v[0], Method: SharpenLightness}
+				o := SharpenOptions{Sigma: v[0], Method: SharpenLibvips}
 				if len(v) == 6 {
 					o.Curve = &SharpenCurve{Flat: v[1], Jagged: v[2], JaggedFrom: v[3], MaxBrighten: v[4], MaxDarken: v[5]}
 				}

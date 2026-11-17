@@ -343,7 +343,7 @@ func TestDoBuiltIns(t *testing.T) {
 		{"grayscale", nil, func(m *Image) *Image { return m.Grayscale() }},
 		{"modulate", []string{"1.2", "0.5", "-40"}, func(m *Image) *Image { return m.Modulate(1.2, 0.5, -40) }},
 		{"blur", []string{"0.8"}, func(m *Image) *Image { return m.Blur(0.8) }},
-		{"blur", []string{"1.5", "kernel"}, func(m *Image) *Image { return m.Blur(1.5, BlurOptions{Method: BlurKernel}) }},
+		{"blur", []string{"1.5", "libvips"}, func(m *Image) *Image { return m.Blur(1.5, BlurOptions{Method: BlurLibvips}) }},
 		{"sharpen", nil, func(m *Image) *Image { return m.Sharpen() }},
 		{"sharpen", []string{"2", "1", "4"}, func(m *Image) *Image { return m.Sharpen(SharpenOptions{Sigma: 2, Amount: 1, Threshold: 4}) }},
 		{"flatten", []string{"white"}, func(m *Image) *Image { return m.Flatten(color.White) }},

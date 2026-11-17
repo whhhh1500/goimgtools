@@ -37,19 +37,19 @@
 - 有损 WebP 分段量化：各段使用独立的量化级别（移植自 libwebp 的空间噪声整形）。
 - `pipeline.Env.SetHelpers`、`Helpers`、`Parallel`、`Go`：供处理环节将工作分摊至多个核。
 - TIFF 输出：`TIFFLZW` 压缩（libtiff 的写法）与 `TIFFOptions.Predictor`（水平差分，sharp 的默认设置）：一张 2400 万像素照片 LZW 82 → 52MB、Deflate 67 → 45MB；`-tiff-compression lzw`、`-tiff-predictor`。
-- `SharpenOptions.Method` 新增 `SharpenLightness`，配合 `SharpenOptions.Curve`（`SharpenCurve`、`DefaultSharpenCurve`）：sharp 带 sigma 的 `sharpen`，只锐化明度（仅在少数像素上相差 1 级）；按名字调用 `sharpen SIGMA,lightness[,FLAT,JAGGED,JAGGED_FROM,MAX_BRIGHTEN,MAX_DARKEN]`，命令行 `-sharpen` 同样写法。
+- `SharpenOptions.Method` 新增 `SharpenLibvips`，配合 `SharpenOptions.Curve`（`SharpenCurve`、`DefaultSharpenCurve()`）：sharp 带 sigma 的 `sharpen`，只锐化明度（仅在少数像素上相差 1 级）；按名字调用 `sharpen SIGMA,libvips[,FLAT,JAGGED,JAGGED_FROM,MAX_BRIGHTEN,MAX_DARKEN]`，命令行 `-sharpen` 同样写法。
 - `Affine(a, b, c, d, AffineOptions{...})`：与 sharp 的 `affine` 逐字节一致（`Interpolator` 可选双线性、最近邻、双三次，含透明与不含透明）；按名字调用 `affine A,B,C,D[,BACKGROUND[,IDX,IDY,ODX,ODY]][,bilinear|nearest|bicubic]`。
 - `EnsureAlpha`（与 sharp 的 `ensureAlpha` 逐字节一致）；按名字调用 `ensure-alpha [ALPHA]`。
 - 缩放核 `KernelMKS2013` 与 `KernelMKS2021`（Magic Kernel Sharp，即 sharp 的 `mks2013`、`mks2021`）；命令行 `-kernel mks2013|mks2021`。
 - `Rank`（Pillow 的 `RankFilter`、`MinFilter`、`MaxFilter`）、`Dilate` 与 `Erode`（sharp 的 `dilate`、`erode`），均逐字节一致；按名字调用 `rank SIZE,RANK`、`dilate [WIDTH]`、`erode [WIDTH]`。dilate 与 erode 的耗时几乎不随宽度增长（libvips 随宽度的平方增长）。
-- `BlurOptions`（`Method`：默认 `BlurBoxes` 即 Pillow 的算法，或 `BlurKernel`，与 sharp 的 `blur` 逐字节一致，含透明图像；`MinAmplitude` 即 sharp 的 `minAmplitude`）；按名字调用 `blur SIGMA,kernel[,MIN_AMPLITUDE]`；命令行 `-blur-method`、`-blur-min-amplitude`。高斯核拆成至多 20 个嵌套方框计算，耗时几乎不随 sigma 增长。
+- `BlurOptions`（`Method`：默认 `BlurPillow` 即 Pillow 的算法，或 `BlurLibvips`，与 sharp 的 `blur` 逐字节一致，含透明图像；`MinAmplitude` 即 sharp 的 `minAmplitude`）；按名字调用 `blur SIGMA,libvips[,MIN_AMPLITUDE]`；命令行 `-blur-method`、`-blur-min-amplitude`。高斯核拆成至多 20 个嵌套方框计算，耗时几乎不随 sigma 增长。
 - 仿照 sharp 的选项：`NegateOptions.Alpha`（透明度也取反，sharp 的默认做法）、`ThresholdOptions.PerChannel`（即 sharp 的 `greyscale: false`）、`ModulateOptions.Lightness`（即 sharp 的 `lightness`）与 `GrayscaleOptions.Linear`（即 sharp 的 `greyscale`，逐字节一致）；按名字调用 `negate alpha`、`threshold LEVEL,channels`、`modulate B,S,H,L`、`grayscale linear`；命令行 `-grayscale-linear`，`-modulate` 可加第四个数。
 - XMP：`KeepXmp()` / `-keep-xmp` 在 JPEG、PNG、WebP、TIFF 输出中保留 XMP 数据包；`Info.HasXmp`、`inspect.ReadXmp`；自定义格式可用 `EncodeOptions.Xmp` 与 `pipeline.Meta.Xmp`。读写方式与 sharp 相同（在 sharp 写出的文件上双向核对）。
 - `Trim` 的找边方式与 sharp 的 `trim`（libvips 的 `find_trim`）相同：在 3×3 中值滤波后的图像上找边，噪点与斑点不再妨碍裁剪（像素相同时裁剪范围与 sharp 完全一致）；`TrimOptions` 可指定 `Background`、`LineArt`（不做中值滤波，适用于细线条绘图）与 `Margin`；命令行 `-trim-background`、`-trim-line-art`、`-trim-margin`。
 - `JPEGOptions.ChromaSubsampling`（类型 `ChromaSubsampling`：默认 `Chroma420`、`Chroma422`、`Chroma444`）/ `-jpeg-chroma`：JPEG 输出可保留全部色度或横向一半，普通、优化、渐进与网格量化均支持（即 sharp 的 `chromaSubsampling`）。
 - 可读取 JPEG 压缩的 TIFF 文件（压缩方式 7：libtiff 的写法，libvips 与 sharp 的默认设置），条带与图块、彩色与灰度均支持。
 - 分辨率：`Info.Density`（每英寸像素数，读取自 JFIF、EXIF、pHYs、TIFF 与 BMP），默认保留到输出，`Density(dpi)` / `-density` 可设置；自定义格式可用 `EncodeOptions.Density` 与 `pipeline.Meta.Density`。`info` 会显示它。
-- `ExtendWith`（类型 `Extension`：`ExtendCopy`、`ExtendRepeat`、`ExtendMirror`）/ `-extend-with`：用图像本身扩边，与 sharp 带 `extendWith` 的 `extend` 逐像素一致；`Do("extend")` 在颜色的位置接受 copy、repeat 或 mirror。
+- `ExtendWith`（类型 `ExtendMode`：`ExtendCopy`、`ExtendRepeat`、`ExtendMirror`）/ `-extend-with`：用图像本身扩边，与 sharp 带 `extendWith` 的 `extend` 逐像素一致；`Do("extend")` 在颜色的位置接受 copy、repeat 或 mirror。
 - `Filter`（类型 `ImageFilter`）：Pillow 的内置滤镜（模糊、轮廓、细节、边缘增强、浮雕、找边、锐化、平滑），以及 `Convolution.Method` 的 `ConvolvePillow`：其 `ImageFilter.Kernel`，逐字节一致；按名字调用 `filter NAME` 与 `convolve …,pillow`。
 - Pillow 的 `ImageOps` 与 `ImageEnhance`，逐字节一致：`Posterize`、`Solarize`、`Equalize`、`AutoContrast`（`AutoContrastOptions`）与 `Enhance`（类型 `Enhancement`：`EnhanceColor`、`EnhanceContrast`、`EnhanceBrightness`、`EnhanceSharpness`）；按名字调用 posterize、solarize、equalize、autocontrast、enhance。
 - `ResizeOptions.Method`（类型 `ResizeMethod`）/ `-resize-method`：`ResizeLibvips` 即 sharp 的 `resize`，逐字节一致，涵盖所有核、fit、位置与背景，包括解码时缩小的 JPEG，以及配合 `FastShrinkOnLoad` 时按 libwebp 的方式在解码时缩放的 WebP（在 sharp 上核对了 578 次缩放）；`ResizePillow` 即 Pillow 的 `Image.resize`，逐字节一致（核对了 346 次缩放），各种 fit 即 `ImageOps` 的 `contain`、`cover`、`pad`、`fit`，配合 `ResizeOptions.ReducingGap`（`-reducing-gap`）即其 `reducing_gap` 与 `Image.thumbnail`；默认的 `ResizeDraw` 与以前相同。`Do("resize")` 以第七个参数接受 `draw`、`libvips` 或 `pillow`。`KernelBox` 与 `KernelHamming`（`-kernel box`、`hamming`）：Pillow 的 `BOX` 与 `HAMMING`。

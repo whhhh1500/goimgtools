@@ -72,10 +72,10 @@ Operations run in a fixed order: rotate → flip → trim → crop → resize �
 | `-grayscale-linear` | Convert to grayscale by the luminance of linear light, as sharp's `greyscale` |
 | `-modulate B,S,H[,L]` | Brightness factor, saturation factor, hue in degrees and lightness added (L\*, 0 to 100), e.g. `1.2,0.8,0` |
 | `-blur sigma` | Gaussian blur |
-| `-blur-method boxes\|kernel` | `boxes` (default): as Pillow's `GaussianBlur`; `kernel`: as sharp's `blur` |
-| `-blur-min-amplitude F` | Where `-blur-method kernel` cuts the Gaussian off, 0.001 to 1 (default 0.2) |
+| `-blur-method pillow\|libvips` | `pillow` (default): as Pillow's `GaussianBlur`; `libvips`: as sharp's `blur` |
+| `-blur-min-amplitude F` | Where `-blur-method libvips` cuts the Gaussian off, 0.001 to 1 (default 0.2) |
 | `-sharpen mild\|SIGMA[,AMOUNT[,THRESHOLD]]` | `mild` applies mild sharpening; otherwise an unsharp mask (`AMOUNT` defaults to 1.5, `THRESHOLD` to 0) |
-| `-sharpen SIGMA,lightness[,FLAT,JAGGED,JAGGED_FROM,MAX_BRIGHTEN,MAX_DARKEN]` | sharp's sharpen with a sigma: the lightness alone, by its curve (sharp's m1, m2, x1, y2, y3; 1,2,2,10,20 by default) |
+| `-sharpen SIGMA,libvips[,FLAT,JAGGED,JAGGED_FROM,MAX_BRIGHTEN,MAX_DARKEN]` | sharp's sharpen with a sigma: the lightness alone, by its curve (sharp's m1, m2, x1, y2, y3; 1,2,2,10,20 by default) |
 | `-flatten color` | Flatten onto a background colour |
 | `-watermark file` / `-watermark-text text` | Image watermark / text watermark (`\n` inserts a line break) |
 | `-watermark-width N\|N%` | Scale the watermark to a width of N pixels, or to N% of the main image's width (so that the watermark is the same size when batch-processing images of different sizes) |

@@ -438,14 +438,14 @@ func (s rgbaStrips) Next() (image.Image, error) {
 	return &image.RGBA{Pix: n.Pix, Stride: n.Stride, Rect: n.Rect}, nil
 }
 
-// MinAmplitude is the default cut-off of BlurKernel, as sharp's.
+// MinAmplitude is the default cut-off of BlurLibvips, as sharp's.
 const MinAmplitude = 0.2
 
-// BlurKernel blurs src as sharp's blur does (see gaussKernel), to the
+// BlurLibvips blurs src as sharp's blur does (see gaussKernel), to the
 // byte: with the Gaussian of standard deviation sigma pixels, cut off where
 // it falls below minAmpl of its peak. An image with transparency gives
 // NRGBA strips, one without RGBA.
-func BlurKernel(src pipeline.Source, sigma, minAmpl float64) (pipeline.Source, error) {
+func BlurLibvips(src pipeline.Source, sigma, minAmpl float64) (pipeline.Source, error) {
 	if err := checkSigma(sigma); err != nil {
 		return nil, err
 	}

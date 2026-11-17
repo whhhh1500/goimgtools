@@ -320,7 +320,7 @@ func FuzzChain(f *testing.F) {
 			m.RemoveAlpha()
 		}
 		if extra>>26&3 == 3 {
-			m.ExtendWith(int(w%5), int(h%9), int(w%3), int(h%70), Extension(more%3))
+			m.ExtendWith(int(w%5), int(h%9), int(w%3), int(h%70), ExtendMode(more%3))
 		}
 		if extra>>28&3 == 3 {
 			if w&1 == 0 {

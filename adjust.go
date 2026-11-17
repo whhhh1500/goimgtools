@@ -73,7 +73,7 @@ func (m *Image) Modulate(brightness, saturation, hue float64, opts ...ModulateOp
 // Blur blurs the image with a Gaussian of standard deviation sigma pixels,
 // above 0 and at most 1000 (as sharp). By default it is Pillow's
 // GaussianBlur, and for an image without transparency the result is
-// Pillow's to the byte; BlurOptions.Method BlurKernel makes it sharp's, to
+// Pillow's to the byte; BlurOptions.Method BlurLibvips makes it sharp's, to
 // the byte. Either way the time it takes hardly grows with sigma, the
 // memory it takes grows with sigma times the width of the image and goes
 // to a temporary file beyond its share of the limit, and transparent
@@ -85,10 +85,10 @@ func (m *Image) Blur(sigma float64, opts ...BlurOptions) *Image {
 	}
 	o := first(opts)
 	switch {
-	case o.Method != BlurBoxes && o.Method != BlurKernel:
+	case o.Method != BlurPillow && o.Method != BlurLibvips:
 		return m.fail(fmt.Errorf("goimgtools: unknown BlurMethod %d", o.Method))
-	case o.MinAmplitude != 0 && o.Method != BlurKernel:
-		return m.fail(errors.New("goimgtools: Blur MinAmplitude is for BlurKernel"))
+	case o.MinAmplitude != 0 && o.Method != BlurLibvips:
+		return m.fail(errors.New("goimgtools: Blur MinAmplitude is for BlurLibvips"))
 	case o.MinAmplitude != 0 && !(o.MinAmplitude >= 0.001 && o.MinAmplitude <= 1):
 		return m.fail(errors.New("goimgtools: Blur MinAmplitude must be 0.001 to 1"))
 	}
@@ -97,10 +97,10 @@ func (m *Image) Blur(sigma float64, opts ...BlurOptions) *Image {
 
 // BlurOptions are the optional settings of Blur.
 type BlurOptions struct {
-	// Method is the way the Gaussian is worked out: BlurBoxes, Pillow's
-	// (the default), or BlurKernel, sharp's.
+	// Method is the way the Gaussian is worked out: BlurPillow, Pillow's
+	// (the default), or BlurLibvips, sharp's.
 	Method BlurMethod
-	// MinAmplitude is where BlurKernel cuts the Gaussian off: where it
+	// MinAmplitude is where BlurLibvips cuts the Gaussian off: where it
 	// falls below this fraction of its peak, 0.001 to 1, as sharp's
 	// minAmplitude; 0 means sharp's default, 0.2. Smaller makes the edges
 	// of the blur smoother and it a little slower.
@@ -111,18 +111,18 @@ type BlurOptions struct {
 type BlurMethod int
 
 const (
-	// BlurBoxes is Pillow's GaussianBlur: three box blurs across and three
+	// BlurPillow is Pillow's GaussianBlur: three box blurs across and three
 	// down, of the width that comes closest to the Gaussian, each rounded
 	// to 8 bits. For an image without transparency the result is Pillow's
 	// to the byte.
-	BlurBoxes BlurMethod = iota
-	// BlurKernel is sharp's blur (libvips' gaussblur at its default
+	BlurPillow BlurMethod = iota
+	// BlurLibvips is sharp's blur (libvips' gaussblur at its default
 	// integer precision): the Gaussian itself, its weights twentieths of
 	// its peak rounded and cut off at MinAmplitude, across and then down,
 	// each rounded to 8 bits. The result is sharp's to the byte,
-	// transparency included. It blurs less than BlurBoxes at the same
+	// transparency included. It blurs less than BlurPillow at the same
 	// sigma, the mask being cut off at 1.8 sigma by default.
-	BlurKernel
+	BlurLibvips
 )
 
 // SharpenOptions are the optional settings of Sharpen.
@@ -139,15 +139,15 @@ type SharpenOptions struct {
 	// that flat areas do not get grainy. The default is 0: every difference
 	// is sharpened. Pillow's UnsharpMask uses 3.
 	Threshold int
-	// Method is the unsharp mask a Sigma makes: SharpenChannels (the
+	// Method is the unsharp mask a Sigma makes: SharpenPillow (the
 	// default), Pillow's UnsharpMask, which sharpens red, green and blue
-	// each with Amount and Threshold; or SharpenLightness, sharp's sharpen
+	// each with Amount and Threshold; or SharpenLibvips, sharp's sharpen
 	// with a sigma, which sharpens the lightness alone (L* of L*a*b*), so
 	// that colours do not shift, by its Curve.
 	Method SharpenMethod
-	// Curve is how SharpenLightness turns the difference of the lightness
+	// Curve is how SharpenLibvips turns the difference of the lightness
 	// to its blur into the change it makes; nil is sharp's default
-	// (DefaultSharpenCurve).
+	// (DefaultSharpenCurve()).
 	Curve *SharpenCurve
 }
 
@@ -155,18 +155,18 @@ type SharpenOptions struct {
 type SharpenMethod int
 
 const (
-	// SharpenChannels is Pillow's UnsharpMask: red, green and blue each
+	// SharpenPillow is Pillow's UnsharpMask: red, green and blue each
 	// sharpened by Amount where they differ from their blur by more than
 	// Threshold.
-	SharpenChannels SharpenMethod = iota
-	// SharpenLightness is sharp's sharpen with a sigma (libvips' sharpen):
+	SharpenPillow SharpenMethod = iota
+	// SharpenLibvips is sharp's sharpen with a sigma (libvips' sharpen):
 	// the lightness alone, by SharpenCurve, colours unchanged. The result
 	// is sharp's, within a level on a few pixels (where sharp's own result
 	// depends on the system's C library).
-	SharpenLightness
+	SharpenLibvips
 )
 
-// SharpenCurve is how SharpenLightness maps the difference of a pixel's
+// SharpenCurve is how SharpenLibvips maps the difference of a pixel's
 // lightness to its blur (in L* units, 0 to 100) to the lightness it adds:
 // Flat times the difference up to JaggedFrom either way, Jagged times what
 // lies beyond, at most MaxBrighten and MaxDarken in all. The fields are
@@ -175,16 +175,18 @@ type SharpenCurve struct {
 	Flat, Jagged, JaggedFrom, MaxBrighten, MaxDarken float64
 }
 
-// DefaultSharpenCurve is sharp's: flat areas sharpened by 1, jagged ones
-// (differences of more than 2) by 2, at most 10 lighter and 20 darker.
-var DefaultSharpenCurve = SharpenCurve{Flat: 1, Jagged: 2, JaggedFrom: 2, MaxBrighten: 10, MaxDarken: 20}
+// DefaultSharpenCurve is sharp's curve: flat areas sharpened by 1, jagged
+// ones (differences of more than 2) by 2, at most 10 lighter and 20 darker.
+func DefaultSharpenCurve() SharpenCurve {
+	return SharpenCurve{Flat: 1, Jagged: 2, JaggedFrom: 2, MaxBrighten: 10, MaxDarken: 20}
+}
 
 // Sharpen makes the image crisper. Without options it is sharp's mild
 // sharpen, a 3x3 kernel, cheap and the usual choice after making an image
 // smaller. With a Sigma it is an unsharp mask (see SharpenOptions): for an
 // image without transparency the result is that of Pillow's UnsharpMask,
 // to the byte (Amount counts in whole percent, as there); with Method
-// SharpenLightness, sharp's sharpen with a sigma.
+// SharpenLibvips, sharp's sharpen with a sigma.
 func (m *Image) Sharpen(opts ...SharpenOptions) *Image {
 	m.atMostOne("Sharpen", len(opts))
 	o := first(opts)
@@ -201,19 +203,19 @@ func (m *Image) Sharpen(opts ...SharpenOptions) *Image {
 		return m.fail(errors.New("goimgtools: Sharpen Threshold must be 0 to 255"))
 	}
 	switch o.Method {
-	case SharpenChannels:
+	case SharpenPillow:
 		if o.Curve != nil {
-			return m.fail(errors.New("goimgtools: Sharpen Curve goes with SharpenLightness"))
+			return m.fail(errors.New("goimgtools: Sharpen Curve goes with SharpenLibvips"))
 		}
 		if o.Sigma > 0 && o.Amount == 0 {
 			o.Amount = 1.5
 		}
-	case SharpenLightness:
+	case SharpenLibvips:
 		if o.Sigma == 0 || o.Amount != 0 || o.Threshold != 0 {
-			return m.fail(errors.New("goimgtools: SharpenLightness takes a Sigma and a Curve, not Amount and Threshold"))
+			return m.fail(errors.New("goimgtools: SharpenLibvips takes a Sigma and a Curve, not Amount and Threshold"))
 		}
 		if o.Curve == nil {
-			c := DefaultSharpenCurve
+			c := DefaultSharpenCurve()
 			o.Curve = &c
 		}
 		c := *o.Curve
@@ -242,12 +244,12 @@ func (m *Image) Extend(top, right, bottom, left int, background color.Color) *Im
 	return m.add(extendOp{top: top, right: right, bottom: bottom, left: left, background: background})
 }
 
-// Extension is how ExtendWith fills a border from the image.
-type Extension int
+// ExtendMode is how ExtendWith fills a border from the image.
+type ExtendMode int
 
 const (
 	// ExtendCopy repeats the pixels at the edges.
-	ExtendCopy Extension = iota
+	ExtendCopy ExtendMode = iota
 	// ExtendRepeat repeats the image, as tiles.
 	ExtendRepeat
 	// ExtendMirror mirrors the image at its edges (the edge pixel taken
@@ -257,16 +259,16 @@ const (
 
 // ExtendWith adds a border of the given widths (top, right, bottom, left,
 // in pixels) filled from the image itself, as sharp's extend with
-// extendWith copy, repeat or mirror (to the byte): see Extension. A
+// extendWith copy, repeat or mirror (to the byte): see ExtendMode. A
 // border wider than the image goes on repeating or mirroring it. A top or
 // bottom border that repeats or mirrors the image keeps the image in
 // working storage (a temporary file beyond its share of the limit).
-func (m *Image) ExtendWith(top, right, bottom, left int, how Extension) *Image {
+func (m *Image) ExtendWith(top, right, bottom, left int, how ExtendMode) *Image {
 	if top < 0 || right < 0 || bottom < 0 || left < 0 {
 		return m.fail(errors.New("goimgtools: ExtendWith takes widths of 0 and more"))
 	}
 	if how < ExtendCopy || how > ExtendMirror {
-		return m.fail(errors.New("goimgtools: unknown Extension"))
+		return m.fail(errors.New("goimgtools: unknown ExtendMode"))
 	}
 	return m.add(extendOp{top: top, right: right, bottom: bottom, left: left, with: how, from: true})
 }
@@ -377,8 +379,8 @@ func (o blurOp) apply(src pipeline.Source, r *run) (pipeline.Source, error) {
 	if r.sizeOnly {
 		return src, nil
 	}
-	if o.o.Method == BlurKernel {
-		return ops.BlurKernel(src, o.sigma, cmp.Or(o.o.MinAmplitude, ops.MinAmplitude))
+	if o.o.Method == BlurLibvips {
+		return ops.BlurLibvips(src, o.sigma, cmp.Or(o.o.MinAmplitude, ops.MinAmplitude))
 	}
 	return ops.Blur(src, o.sigma)
 }
@@ -389,7 +391,7 @@ func (o sharpenOp) apply(src pipeline.Source, r *run) (pipeline.Source, error) {
 	if r.sizeOnly {
 		return src, nil
 	}
-	if o.o.Method == SharpenLightness {
+	if o.o.Method == SharpenLibvips {
 		c := o.o.Curve
 		return ops.SharpenLab(src, o.o.Sigma, c.Flat, c.Jagged, c.JaggedFrom, c.MaxBrighten, c.MaxDarken)
 	}
@@ -401,7 +403,7 @@ type extendOp struct {
 	background               color.Color
 	// from: filled from the image (ExtendWith), as with says.
 	from bool
-	with Extension
+	with ExtendMode
 }
 
 func (o extendOp) apply(src pipeline.Source, r *run) (pipeline.Source, error) {

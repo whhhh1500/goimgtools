@@ -370,11 +370,11 @@ func TestBlur(t *testing.T) {
 	}
 }
 
-// TestBlurKernel: BlurKernel is sharp's blur to the byte, with the 8-bit
+// TestBlurLibvips: BlurLibvips is sharp's blur to the byte, with the 8-bit
 // weights of libvips' vector path (sigma 2, and 3 cut off at 0.01 of the
 // peak), with the integer weights of a mask wider than 1024 (sigma 300),
 // and on an image with transparency, premultiplied as libvips does it.
-func TestBlurKernel(t *testing.T) {
+func TestBlurLibvips(t *testing.T) {
 	rgb, rgba := sourcePNG(t, "pillow/source.png"), sourcePNG(t, "pillow/median-rgba-source.png")
 	for _, c := range []struct {
 		name  string
@@ -388,7 +388,7 @@ func TestBlurKernel(t *testing.T) {
 		{"blur-kernel-rgba-0.7", rgba, 0.7, 0},
 		{"blur-kernel-rgba-25", rgba, 25, 0},
 	} {
-		out, err := FromBytes(c.src).Blur(c.sigma, BlurOptions{Method: BlurKernel, MinAmplitude: c.min}).PNG().ToBytes()
+		out, err := FromBytes(c.src).Blur(c.sigma, BlurOptions{Method: BlurLibvips, MinAmplitude: c.min}).PNG().ToBytes()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -405,7 +405,7 @@ func TestBlurKernel(t *testing.T) {
 		t.Fatal(err)
 	}
 	if maxd, _, _ := channelDiff(t, decodePNG(t, box), readPNG(t, "sharp/blur-kernel-2.png")); maxd == 0 {
-		t.Error("BlurBoxes gave sharp's blur")
+		t.Error("BlurPillow gave sharp's blur")
 	}
 	// Under a small limit the window of rows goes to a temporary file (at
 	// sigma 100 it is the 300 rows of the image, 3.6MB), with the same
@@ -414,7 +414,7 @@ func TestBlurKernel(t *testing.T) {
 	for name, in := range map[string][]byte{"opaque": pngBytes(t, photoLike(3000, 300)),
 		"translucent": pngBytes(t, testutil.Images(3000, 300)["nrgba"])} {
 		for _, sigma := range []float64{10, 100} {
-			o := BlurOptions{Method: BlurKernel}
+			o := BlurOptions{Method: BlurLibvips}
 			big, used := budgetAfter(t, FromBytes(in).Blur(sigma, o), 64<<20, dir)
 			small, used2 := budgetAfter(t, FromBytes(in).Blur(sigma, o), 2<<20, dir)
 			if used != 0 || used2 != 0 {
@@ -426,43 +426,43 @@ func TestBlurKernel(t *testing.T) {
 	if n := tempFiles(dir); n != 0 {
 		t.Errorf("%d temporary files left", n)
 	}
-	for _, o := range []BlurOptions{{Method: 2}, {Method: -1}, {MinAmplitude: 0.2}, {Method: BlurKernel, MinAmplitude: 0.0005},
-		{Method: BlurKernel, MinAmplitude: 1.5}, {Method: BlurKernel, MinAmplitude: math.NaN()}} {
+	for _, o := range []BlurOptions{{Method: 2}, {Method: -1}, {MinAmplitude: 0.2}, {Method: BlurLibvips, MinAmplitude: 0.0005},
+		{Method: BlurLibvips, MinAmplitude: 1.5}, {Method: BlurLibvips, MinAmplitude: math.NaN()}} {
 		if _, err := FromBytes(rgb).Blur(2, o).ToBytes(); err == nil {
 			t.Errorf("Blur(2, %+v) accepted", o)
 		}
 	}
 	// By name, and the words of the steps.
 	var words [][]string
-	FromBytes(rgb).Do("blur", "2").Do("blur", "2", "kernel").Do("blur", "3", "kernel", "0.05").
+	FromBytes(rgb).Do("blur", "2").Do("blur", "2", "libvips").Do("blur", "3", "libvips", "0.05").
 		Around(func(s Step, in pipeline.Source, run func(pipeline.Source) (pipeline.Source, error)) (pipeline.Source, error) {
 			words = append(words, append([]string{s.Name}, s.Args...))
 			return run(in)
 		}).PNG().ToBytes()
-	if fmt.Sprint(words) != "[[blur 2] [blur 2 kernel] [blur 3 kernel 0.05]]" {
+	if fmt.Sprint(words) != "[[blur 2] [blur 2 libvips] [blur 3 libvips 0.05]]" {
 		t.Errorf("steps %v", words)
 	}
-	for _, args := range [][]string{{}, {"2", "boxes"}, {"2", "kernel", "x"}, {"2", "kernel", "0.05", "1"}, {"2", "kernel", "2"}} {
+	for _, args := range [][]string{{}, {"2", "boxes"}, {"2", "libvips", "x"}, {"2", "libvips", "0.05", "1"}, {"2", "libvips", "2"}} {
 		if _, err := FromBytes(rgb).Do("blur", args...).PNG().ToBytes(); err == nil {
 			t.Errorf("blur %v accepted", args)
 		}
 	}
 }
 
-// TestSharpenLightness: SharpenLightness is sharp's sharpen with a sigma,
+// TestSharpenLibvips: SharpenLibvips is sharp's sharpen with a sigma,
 // within a level on a few values (where sharp's cube roots, the C
 // library's, are a unit in the last place off the exact ones), with the
 // default curve, another, and with transparency.
-func TestSharpenLightness(t *testing.T) {
+func TestSharpenLibvips(t *testing.T) {
 	rgb, rgba := sourcePNG(t, "pillow/source.png"), sourcePNG(t, "pillow/median-rgba-source.png")
 	for _, c := range []struct {
 		name string
 		m    *Image
 	}{
-		{"sharpen-lightness-1", FromBytes(rgb).Sharpen(SharpenOptions{Sigma: 1, Method: SharpenLightness})},
-		{"sharpen-lightness-curve", FromBytes(rgb).Sharpen(SharpenOptions{Sigma: 2.5, Method: SharpenLightness,
+		{"sharpen-lightness-1", FromBytes(rgb).Sharpen(SharpenOptions{Sigma: 1, Method: SharpenLibvips})},
+		{"sharpen-lightness-curve", FromBytes(rgb).Sharpen(SharpenOptions{Sigma: 2.5, Method: SharpenLibvips,
 			Curve: &SharpenCurve{Flat: 0.5, Jagged: 3, JaggedFrom: 1.5, MaxBrighten: 15, MaxDarken: 25}})},
-		{"sharpen-lightness-rgba", FromBytes(rgba).Sharpen(SharpenOptions{Sigma: 1, Method: SharpenLightness})},
+		{"sharpen-lightness-rgba", FromBytes(rgba).Sharpen(SharpenOptions{Sigma: 1, Method: SharpenLibvips})},
 	} {
 		got := decodePNG(t, must(c.m.PNG().ToBytes()))
 		maxd, mean, over := channelDiff(t, got, readPNG(t, "sharp/"+c.name+".png"))
@@ -471,13 +471,13 @@ func TestSharpenLightness(t *testing.T) {
 		}
 	}
 	// The curve is what was asked; by name the same.
-	a := must(FromBytes(rgb).Sharpen(SharpenOptions{Sigma: 0.8, Method: SharpenLightness, Curve: &SharpenCurve{Flat: 0, Jagged: 4, JaggedFrom: 1, MaxBrighten: 5, MaxDarken: 5}}).PNG().ToBytes())
-	b := must(FromBytes(rgb).Do("sharpen", "0.8", "lightness", "0", "4", "1", "5", "5").PNG().ToBytes())
+	a := must(FromBytes(rgb).Sharpen(SharpenOptions{Sigma: 0.8, Method: SharpenLibvips, Curve: &SharpenCurve{Flat: 0, Jagged: 4, JaggedFrom: 1, MaxBrighten: 5, MaxDarken: 5}}).PNG().ToBytes())
+	b := must(FromBytes(rgb).Do("sharpen", "0.8", "libvips", "0", "4", "1", "5", "5").PNG().ToBytes())
 	if !bytes.Equal(a, b) {
 		t.Error("by name: another image")
 	}
-	for _, o := range []SharpenOptions{{Method: SharpenLightness}, {Sigma: 1, Method: SharpenLightness, Amount: 2},
-		{Sigma: 1, Curve: &SharpenCurve{}}, {Sigma: 1, Method: 5}, {Sigma: 1, Method: SharpenLightness, Curve: &SharpenCurve{Flat: -1}}} {
+	for _, o := range []SharpenOptions{{Method: SharpenLibvips}, {Sigma: 1, Method: SharpenLibvips, Amount: 2},
+		{Sigma: 1, Curve: &SharpenCurve{}}, {Sigma: 1, Method: 5}, {Sigma: 1, Method: SharpenLibvips, Curve: &SharpenCurve{Flat: -1}}} {
 		if _, err := FromBytes(rgb).Sharpen(o).PNG().ToBytes(); err == nil {
 			t.Errorf("Sharpen(%+v) accepted", o)
 		}
@@ -789,7 +789,7 @@ func TestExtendWith(t *testing.T) {
 		src.Pix[i] = uint8(20 * i)
 	}
 	for _, c := range []struct {
-		how    Extension
+		how    ExtendMode
 		trbl   [4]int
 		result string
 	}{
@@ -861,7 +861,7 @@ func TestExtendWith(t *testing.T) {
 	photo := photoLike(900, 600)
 	pat := func(x, y int) color.NRGBA { return color.NRGBAModel.Convert(photo.At(x, y)).(color.NRGBA) }
 	for _, c := range []struct {
-		how  Extension
+		how  ExtendMode
 		trbl [4]int
 		at   func(x, y int) (int, int)
 	}{

@@ -109,7 +109,7 @@ Staged data is kept in memory up to 1/8 of the memory limit (8MB by default); be
 
 ## Versioning
 
-Before 1.0, the API may change in incompatible ways. Changes are recorded in the [changelog](docs/CHANGELOG.md).
+From 0.1.0 on, releases only add to the API: nothing exported is removed, renamed or changed in its signature, which every push checks against the last release with `apidiff`. Output may change where it becomes more faithful (as JPEG files becoming libjpeg-turbo's); such changes are listed under "Upgrading" in the [changelog](docs/CHANGELOG.md). A release that has to break the API would be a new major version.
 
 ## Contributing
 

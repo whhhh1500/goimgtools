@@ -55,12 +55,12 @@ func TestSameWithHelpers(t *testing.T) {
 		"blur 3":     func(m *Image) *Image { return m.Blur(3) },
 		"blur 40":    func(m *Image) *Image { return m.Blur(40) },
 		"blur 600":   func(m *Image) *Image { return m.Blur(600) },
-		"kernel 0.7": func(m *Image) *Image { return m.Blur(0.7, BlurOptions{Method: BlurKernel}) },
-		"kernel 12":  func(m *Image) *Image { return m.Blur(12, BlurOptions{Method: BlurKernel}) },
+		"kernel 0.7": func(m *Image) *Image { return m.Blur(0.7, BlurOptions{Method: BlurLibvips}) },
+		"kernel 12":  func(m *Image) *Image { return m.Blur(12, BlurOptions{Method: BlurLibvips}) },
 		"kernel 5, 0.001": func(m *Image) *Image {
-			return m.Blur(5, BlurOptions{Method: BlurKernel, MinAmplitude: 0.001})
+			return m.Blur(5, BlurOptions{Method: BlurLibvips, MinAmplitude: 0.001})
 		},
-		"kernel 400":   func(m *Image) *Image { return m.Blur(400, BlurOptions{Method: BlurKernel}) },
+		"kernel 400":   func(m *Image) *Image { return m.Blur(400, BlurOptions{Method: BlurLibvips}) },
 		"unsharp 2":    func(m *Image) *Image { return m.Sharpen(SharpenOptions{Sigma: 2, Amount: 1.2, Threshold: 2}) },
 		"unsharp 25":   func(m *Image) *Image { return m.Sharpen(SharpenOptions{Sigma: 25}) },
 		"mild sharpen": func(m *Image) *Image { return m.Sharpen() },
@@ -89,7 +89,7 @@ func TestSameWithHelpers(t *testing.T) {
 			return m.Resize(31, 0, ResizeOptions{Kernel: KernelNearest, Method: ResizeLibvips})
 		},
 		"sharpen lightness": func(m *Image) *Image {
-			return m.Sharpen(SharpenOptions{Sigma: 1.3, Method: SharpenLightness})
+			return m.Sharpen(SharpenOptions{Sigma: 1.3, Method: SharpenLibvips})
 		},
 		"modulate":  func(m *Image) *Image { return m.Modulate(1.1, 1.4, 33) },
 		"median 5":  func(m *Image) *Image { return m.Median(5) },

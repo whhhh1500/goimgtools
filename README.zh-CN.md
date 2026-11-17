@@ -109,7 +109,7 @@ goimgtools batch -resize 1920x1920 -no-enlarge -quality 80 -format jpeg in_dir o
 
 ## 版本
 
-1.0 之前 API 可能发生不兼容变更。各版本变更见[变更记录](docs/zh-CN/CHANGELOG.md)。
+自 0.1.0 起，各版本只增加 API：已导出的内容不删除、不改名、不改签名，每次推送都用 `apidiff` 与上一个发布版本核对。输出可能因更准确而变化（如 JPEG 文件改为 libjpeg-turbo 的字节），此类变化列在[变更记录](docs/zh-CN/CHANGELOG.md)的“升级”一节。必须破坏 API 的版本将升主版本号。
 
 ## 参与贡献
 
