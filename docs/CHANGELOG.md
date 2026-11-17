@@ -48,6 +48,7 @@ Nothing exported by 0.1.0 was removed or changed in its signature (checked with 
 - TIFF files with JPEG compression (compression 7: libtiff's, the default of libvips and sharp) are read, in strips and in tiles, colour and grey.
 - Resolution: `Info.Density` (pixels per inch, read from JFIF, EXIF, pHYs, TIFF and BMP), kept in the output by default, `Density(dpi)` / `-density` to set it; `EncodeOptions.Density` and `pipeline.Meta.Density` for formats of one's own. `info` prints it.
 - `ExtendWith` (type `Extension`: `ExtendCopy`, `ExtendRepeat`, `ExtendMirror`) / `-extend-with`: borders made of the image, pixel for pixel sharp's `extend` with `extendWith`; `Do("extend")` takes copy, repeat or mirror in place of the colour.
+- `ResizeOptions.Method` (type `ResizeMethod`) / `-resize-method`: `ResizeLibvips` is sharp's `resize`, to the byte, for every kernel, fit, position and background, JPEGs shrunk on load included (checked against sharp on 495 resizes); `ResizeDraw`, the default, works as before. `Do("resize")` takes `draw` or `libvips` as a seventh word.
 - `ResizeOptions.LinearLight` / `-linear-light`: resizing in linear light, as libvips' `thumbnail` with `linear`; `Do("resize")` takes `linear` as a sixth word.
 - `ResizeOptions.Position` (the part `FitCover` keeps, where `FitContain` puts the image) and `ResizeOptions.Interesting` (type `Interesting`: `InterestingEntropy`, `InterestingAttention`, as sharp's smart crop strategies) / `-position`. `Do("resize")` takes them as a fifth word.
 - `Recomb`, `Unflatten`, `ExtractChannel` (type `Channel`) and `RemoveAlpha`, after sharp's `recomb`, `unflatten`, `extractChannel` and `removeAlpha` (the first two byte-for-byte identical), and by name: recomb, unflatten, extract-channel, remove-alpha.
@@ -56,6 +57,7 @@ Nothing exported by 0.1.0 was removed or changed in its signature (checked with 
 
 ### Changed
 
+- `FastShrinkOnLoad` reduces the blocks with libjpeg's reduced inverse DCTs (`jidctred.c`) instead of averages worked out afresh, at the same speed: the planes of a 4:4:4 or grey JPEG are those of libjpeg's scaled decoding (Pillow's `draft`), and the result as close to a resize of the full image (46.7–50.5dB).
 - JPEG files are decoded as libjpeg-turbo decodes them, and so Pillow and sharp, to the byte (its accurate integer inverse DCT, its fancy upsampling of subsampled chroma, its YCbCr to RGB tables), instead of as `image/jpeg` does: subsampled colour edges are smoother (a 4:2:2 photograph 0.36 dB closer to the original), and every operation that gives Pillow's or sharp's pixels does so on JPEG input too. Colour JPEG strips are RGBA rather than YCbCr, but where a JPEG goes straight into a JPEG or lossy WebP file.
 - TIFF decoding: LZW 1.5 times faster (a 6000×4000 RGBA image in 0.45s instead of 0.68s; libtiff 0.31s), with the same bytes and errors as `x/image` on any input (fuzzed), and Deflate blocks read 64KB at a time (0.26s instead of 0.30s; libtiff 0.27s).
 - `FitCover` puts a centred crop where sharp does: when the image is an odd number of pixels larger than the box, the odd pixel is cut on the left (top) rather than the right (bottom).
@@ -85,6 +87,9 @@ Nothing exported by 0.1.0 was removed or changed in its signature (checked with 
 - The command-line code has moved from `cmd/goimgtools` to package `cli`; `cmd/goimgtools` builds the same program.
 
 ### Fixed
+
+- `Extend` and `FitContain` of an image with transparency kept as NRGBA (a PNG with alpha) went through premultiplied 8-bit RGBA, which moved the colours of translucent pixels (by up to 255/alpha levels: 4 at alpha 55); they keep them now.
+- `FastShrinkOnLoad` on a JPEG whose components are sampled in ways the decoder does not reduce itself (Go's test files 121121, 211211, 221122, 222112) failed with "shrink: unsupported pixel type"; the decoded image is averaged again.
 
 - A compressed TIFF of a large image was one strip, which libvips (and so sharp) refuses once its compressed data exceeds 50MB: compressed images of more than 1MB of pixel data are now written in strips of about 1MB.
 - On processors that fuse a multiplication and an addition into one instruction (ARM64, such as Apple silicon and AWS Graviton, POWER, s390x, RISC-V, LoongArch), some results could differ from those on x86 by a level or a pixel: `Linear`, the blend modes, `Convolve` with fractional weights, the palettes of GIF and few-colour PNG, the Mitchell kernel, watermarks placed by ratio, the size of `RotateBy`, `Blur`'s boxes, text outlines, and choices made by the lossless WebP and jpegli encoders. Every product is now rounded before it is added, as on x86, and CI checks that the compiler fuses none of them on those processors.

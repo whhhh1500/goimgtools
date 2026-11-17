@@ -335,6 +335,9 @@ func TestAdjustOptions(t *testing.T) {
 			return m.Sharpen(goimgtools.SharpenOptions{Sigma: 1.5, Method: goimgtools.SharpenLightness,
 				Curve: &goimgtools.SharpenCurve{Flat: 0.5, Jagged: 3, JaggedFrom: 1.5, MaxBrighten: 15, MaxDarken: 25}})
 		}},
+		{[]string{"-resize", "37x21", "-fit", "fill", "-kernel", "lanczos3", "-resize-method", "libvips"}, func(m *goimgtools.Image) *goimgtools.Image {
+			return m.Resize(37, 21, goimgtools.ResizeOptions{Fit: goimgtools.FitFill, Kernel: goimgtools.KernelLanczos3, Method: goimgtools.ResizeLibvips})
+		}},
 		{[]string{"-blur", "3", "-blur-method", "kernel", "-blur-min-amplitude", "0.05"}, func(m *goimgtools.Image) *goimgtools.Image {
 			return m.Blur(3, goimgtools.BlurOptions{Method: goimgtools.BlurKernel, MinAmplitude: 0.05})
 		}},

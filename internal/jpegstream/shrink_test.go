@@ -41,7 +41,7 @@ func shrunkPlanes(m image.Image) (p [][]byte, w, h, cw, ch []int) {
 }
 
 // TestShrinkOnLoad decodes the standard library's test files reduced by 2, 4
-// and 8 and compares them with the full decode averaged over cells
+// and 8 and compares their YCbCr with the full decode's averaged over cells
 // (resize.Shrink), which they match but for rounding, the cells cut by the
 // image edge and pixels that the full decode clips.
 func TestShrinkOnLoad(t *testing.T) {
@@ -51,6 +51,7 @@ func TestShrinkOnLoad(t *testing.T) {
 			if err != nil {
 				continue
 			}
+			full.(*stream).KeepYCbCr()
 			box, err := resize.Shrink(full, k)
 			if err != nil {
 				full.Close()
@@ -72,6 +73,7 @@ func TestShrinkOnLoad(t *testing.T) {
 				}
 				continue
 			}
+			src.(*stream).KeepYCbCr()
 			if src.Bounds() != want.Bounds() {
 				t.Fatalf("%s /%d: bounds %v, want %v", name, k, src.Bounds(), want.Bounds())
 			}
@@ -82,7 +84,7 @@ func TestShrinkOnLoad(t *testing.T) {
 			}
 			gp, gw, gh, gs, _ := shrunkPlanes(got)
 			wp, ww, wh, ws, _ := shrunkPlanes(want)
-			if len(gp) != len(wp) {
+			if len(gp) == 0 || len(gp) != len(wp) {
 				t.Fatalf("%s /%d: %T, want %T", name, k, got, want)
 			}
 			var n, sum, far, worst int
@@ -109,7 +111,9 @@ func TestShrinkOnLoad(t *testing.T) {
 				}
 			}
 			// Where the full decode clips ringing around black or white,
-			// its average is a few levels off the reduced IDCT's.
+			// its average is a few levels off the reduced IDCT's; and
+			// libjpeg's reduced IDCTs leave out a few high frequencies,
+			// which in coarsely quantized detail is more.
 			mean := float64(sum) / float64(n)
 			if mean > 0.6 || far*50 > n || worst > 16 {
 				t.Errorf("%s /%d: mean difference %.3f, %d of %d pixels off by more than 2, at most %d", name, k, mean, far, n, worst)

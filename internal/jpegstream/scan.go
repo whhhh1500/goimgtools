@@ -791,7 +791,8 @@ func (d *decoder) reconstructBlock(b *block, bx, by, compIndex int) error {
 	}
 
 	// bs is the side of the block in pixels.
-	bs := 8 >> d.scale
+	sc := d.cscale[compIndex]
+	bs := 8 >> sc
 	dst, stride := []byte(nil), 0
 	if d.nComp == 1 {
 		dst, stride = d.img1.Pix[bs*(by*d.img1.Stride+bx):], d.img1.Stride
@@ -831,10 +832,10 @@ func (d *decoder) reconstructBlock(b *block, bx, by, compIndex int) error {
 	}
 
 	if d.dcOnly {
-		dcStore(b[0], dst, stride, d.scale)
+		dcStore(b[0], dst, stride, sc)
 		return nil
 	}
-	switch d.scale {
+	switch sc {
 	case 0:
 		islowStore(b, dst, stride)
 	case 1:

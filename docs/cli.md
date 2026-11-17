@@ -62,6 +62,7 @@ Operations run in a fixed order: rotate → flip → trim → crop → resize �
 | `-position` | The part `-fit cover` keeps and where `-fit contain` places the image: `center` (default), `northwest` … `southeast`; for `cover` also `entropy` (the most detail) or `attention` (what draws the eye) |
 | `-background color` | Colour of the padding for `-fit contain`, of the `-extend` borders, and of the corners after `-rotate` by an oblique angle: `white`, `black`, `transparent`, `#rrggbb`, `#rrggbbaa` |
 | `-kernel` | `nearest`, `linear`, `cubic` (default), `mitchell`, `lanczos2`, `lanczos3`, `mks2013`, `mks2021` |
+| `-resize-method` | `draw` (default) or `libvips`: sharp's resize, to the byte (sharp's default kernel is `lanczos3`) |
 | `-no-enlarge` | Do not enlarge the image |
 | `-fast-shrink` | When a JPEG is reduced to less than half its size, shrink it first during decoding |
 | `-extend T,R,B,L` | Add borders on all four sides (in pixels) in the `-background` colour |

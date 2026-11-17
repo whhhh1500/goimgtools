@@ -302,7 +302,7 @@ func (s *stream) allocBand() {
 	if d.nComp == 1 {
 		d.img1 = image.NewGray(band)
 	} else {
-		d.img3 = image.NewYCbCr(band, d.ratio)
+		d.img3 = image.NewYCbCr(band, d.bandRatio())
 	}
 	if d.nComp == 4 {
 		d.blackStride = 8 * d.comp[3].h * d.mxx
@@ -314,7 +314,8 @@ func (s *stream) allocBand() {
 	if s.converts() {
 		w, h := s.size()
 		s.rgba = image.NewRGBA(image.Rect(0, 0, w, s.chunkRows()))
-		s.up = newUpsampler(d.ratio, w, h, d.isRGB(), s.env)
+		// libjpeg interpolates chroma unless it decodes blocks to a pixel.
+		s.up = newUpsampler(d.bandRatio(), w, h, d.isRGB(), d.scale < 3, s.env)
 	}
 }
 
@@ -354,25 +355,26 @@ func (s *stream) size() (w, h int) {
 }
 
 // ShrinkOnLoad makes the decoder produce the image reduced by k (2, 4 or 8):
-// each 8×8 block becomes 4×4, 2×2 or 1×1 pixels, the averages of the block's
-// pixels before rounding and clipping, worked out from the coefficients
-// (libjpeg's scaled decoding). The image is ceil(w/k) × ceil(h/k). It must be
-// called before the first Next, and reports false, leaving the image as it
-// is, for CMYK and RGB images and for subsampling other than 4:4:4, 4:2:2,
-// 4:2:0 and 4:4:0.
-func (s *stream) ShrinkOnLoad(k int) bool {
+// each 8×8 block of every component becomes 4×4, 2×2 or 1×1 pixels by
+// libjpeg's reduced inverse DCTs (idctred.go), the chroma keeping its
+// subsampling. The image is ceil(w/k) × ceil(h/k). It must be called before
+// the first Next, and reports false, leaving the image as it is, for CMYK
+// and RGB images and for subsampling other than 4:4:4, 4:2:2, 4:2:0 and
+// 4:4:0.
+func (s *stream) ShrinkOnLoad(k int) bool { return s.shrinkOnLoad(k, false) }
+
+// ShrinkOnLoadLibjpeg is ShrinkOnLoad as libjpeg-turbo's scaled decoding
+// does it, to the byte: the chroma of a 4:2:0 image at twice the luma's
+// reduction, so that it needs no upsampling (the strips' chroma is 4:4:4),
+// the chroma of 4:2:2 and 4:4:0 brought up as libjpeg does (interpolated,
+// but at 1/8).
+func (s *stream) ShrinkOnLoadLibjpeg(k int) bool { return s.shrinkOnLoad(k, true) }
+
+func (s *stream) shrinkOnLoad(k int, libjpeg bool) bool {
 	d := s.d
 	if s.started || d.flex || d.nComp == 4 || (d.nComp == 3 && d.isRGB()) {
 		return false
 	}
-	raw := s.raw
-	s.raw = true // the reduced strips are YCbCr
-	defer func() {
-		if d.scale == 0 {
-			s.raw = raw
-			s.planBand()
-		}
-	}()
 	if d.nComp == 3 {
 		switch d.ratio {
 		case image.YCbCrSubsampleRatio444, image.YCbCrSubsampleRatio422,
@@ -383,22 +385,49 @@ func (s *stream) ShrinkOnLoad(k int) bool {
 	}
 	switch k {
 	case 2:
-		d.scale = 1
+		d.setScale(1, libjpeg)
 	case 4:
-		d.scale = 2
+		d.setScale(2, libjpeg)
 	case 8:
-		d.scale = 3
+		d.setScale(3, libjpeg)
 	default:
 		return false
 	}
 	if err := s.planBand(); err != nil {
 		// A smaller band than the one reserved always fits; this is
 		// only for safety.
-		d.scale = 0
+		d.setScale(0, false)
 		s.planBand()
 		return false
 	}
 	return true
+}
+
+// setScale has the image decoded reduced by 2^scale: every component's
+// blocks alike, or (libjpeg) at the size libjpeg-turbo's
+// jpeg_calc_output_dimensions gives them, twice the size while the
+// component's blocks, at twice, still fit the image's (a chroma half the
+// size across and down takes blocks twice as large, and comes out at the
+// size of the luma).
+func (d *decoder) setScale(scale uint, libjpeg bool) {
+	d.scale = scale
+	least := 8 >> scale
+	for i := 0; i < d.nComp; i++ {
+		c, size, sc := d.comp[i], least, scale
+		for libjpeg && size < 8 && (d.maxH*least)%(c.h*size*2) == 0 && (d.maxV*least)%(c.v*size*2) == 0 {
+			size, sc = size*2, sc-1
+		}
+		d.cscale[i] = sc
+	}
+}
+
+// bandRatio is the subsampling of the band's chroma as decoded: the
+// image's, but for 4:2:0 shrunk, whose chroma comes out at full size.
+func (d *decoder) bandRatio() image.YCbCrSubsampleRatio {
+	if d.nComp == 3 && d.scale > 0 && d.cscale[1] < d.scale {
+		return image.YCbCrSubsampleRatio444
+	}
+	return d.ratio
 }
 
 // nextSegment is one iteration of the marker loop in the standard library's
@@ -495,16 +524,17 @@ func (s *stream) Opaque() bool { return true }
 // Meta returns the EXIF block and ICC profile found before the first scan.
 func (s *stream) Meta() pipeline.Meta { return s.d.meta }
 
-// Subsampling reports the chroma subsampling of the image, that of the
-// strips when they are Gray (gray true) or YCbCr (with KeepYCbCr or
-// ShrinkOnLoad); ok is false for CMYK and RGB images.
+// Subsampling reports the chroma subsampling of the image as decoded,
+// that of the strips when they are Gray (gray true) or YCbCr (with
+// KeepYCbCr): the image's, but 4:4:4 for a 4:2:0 image shrunk on load; ok is
+// false for CMYK and RGB images.
 func (s *stream) Subsampling() (ratio image.YCbCrSubsampleRatio, gray, ok bool) {
 	d := s.d
 	switch {
 	case d.nComp == 1:
 		return 0, true, true
 	case d.nComp == 3 && !d.isRGB():
-		return d.ratio, false, true
+		return d.bandRatio(), false, true
 	}
 	return 0, false, false
 }

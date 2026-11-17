@@ -64,6 +64,15 @@ func TestSameWithHelpers(t *testing.T) {
 		"unsharp 2":    func(m *Image) *Image { return m.Sharpen(SharpenOptions{Sigma: 2, Amount: 1.2, Threshold: 2}) },
 		"unsharp 25":   func(m *Image) *Image { return m.Sharpen(SharpenOptions{Sigma: 25}) },
 		"mild sharpen": func(m *Image) *Image { return m.Sharpen() },
+		"resize libvips down": func(m *Image) *Image {
+			return m.Resize(97, 0, ResizeOptions{Kernel: KernelLanczos3, Method: ResizeLibvips})
+		},
+		"resize libvips up and down": func(m *Image) *Image {
+			return m.Resize(1100, 70, ResizeOptions{Fit: FitFill, Kernel: KernelMitchell, Method: ResizeLibvips})
+		},
+		"resize libvips nearest": func(m *Image) *Image {
+			return m.Resize(31, 0, ResizeOptions{Kernel: KernelNearest, Method: ResizeLibvips})
+		},
 		"sharpen lightness": func(m *Image) *Image {
 			return m.Sharpen(SharpenOptions{Sigma: 1.3, Method: SharpenLightness})
 		},

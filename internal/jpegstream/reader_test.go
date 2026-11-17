@@ -448,7 +448,7 @@ func TestKeepYCbCr(t *testing.T) {
 			if !ok {
 				t.Fatalf("%v %v: KeepYCbCr gave %T", ratio, sz, raw)
 			}
-			u := newUpsampler(y.SubsampleRatio, sz[0], sz[1], false, nil)
+			u := newUpsampler(y.SubsampleRatio, sz[0], sz[1], false, true, nil)
 			whole := image.NewRGBA(image.Rect(0, 0, sz[0], sz[1]))
 			band := *y
 			band.Rect = image.Rect(0, 0, sz[0], sz[1])

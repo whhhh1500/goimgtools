@@ -118,6 +118,7 @@ func (r resizeSpec) target(sw, sh int) (dw, dh int) {
 type resizeOp struct {
 	spec   resizeSpec
 	kernel *draw.Kernel
+	vips   resize.VipsKernel // for ResizeLibvips
 }
 
 func (z resizeOp) apply(src pipeline.Source, r *run) (pipeline.Source, error) {
@@ -129,6 +130,9 @@ func (z resizeOp) apply(src pipeline.Source, r *run) (pipeline.Source, error) {
 // has already reduced: the size aimed for is then the one the full image
 // would have given.
 func (z resizeOp) resize(src pipeline.Source, turn ops.Orientation, pre preShrunk, r *run) (pipeline.Source, error) {
+	if z.spec.o.Method == ResizeLibvips {
+		return z.resizeVips(src, turn, pre, r)
+	}
 	b := src.Bounds()
 	sw, sh := b.Dx(), b.Dy()
 	ew, eh := float64(sw), float64(sh) // the part of src the result spans
@@ -160,7 +164,80 @@ func (z resizeOp) resize(src pipeline.Source, turn ops.Orientation, pre preShrun
 			return nil, err
 		}
 	}
-	out = ops.Orient(out, turn)
+	return z.fitBox(ops.Orient(out, turn), dw, dh)
+}
+
+// resizeVips is resize with ResizeLibvips: sharp's resize of src, which is
+// then turned by turn (sharp's EXIF turn, which it does after the resize).
+// src may be a JPEG the decoder has reduced (pre): libvips keeps of it
+// floor(w/k) × floor(h/k), what libjpeg makes of the last partial block
+// cut off.
+func (z resizeOp) resizeVips(src pipeline.Source, turn ops.Orientation, pre preShrunk, r *run) (pipeline.Source, error) {
+	if pre.k > 1 {
+		w, h := pre.orig.X/pre.k, pre.orig.Y/pre.k
+		if b := src.Bounds(); w < b.Dx() || h < b.Dy() {
+			var err error
+			if src, err = ops.Crop(src, 0, 0, min(w, b.Dx()), min(h, b.Dy())); err != nil {
+				return nil, err
+			}
+		}
+	}
+	b := src.Bounds()
+	sw, sh := b.Dx(), b.Dy()
+	// The box, before the turn.
+	tw, th := turn.Size(z.spec.width, z.spec.height)
+	hs, vs := z.spec.shrinks(sw, sh, tw, th)
+	iw, ih, err := resize.VipsSize(sw, sh, hs, vs, z.vips)
+	if err != nil {
+		return nil, err
+	}
+	dw, dh := turn.Size(iw, ih)
+	if err := r.fits(dw, dh); err != nil {
+		return nil, err
+	}
+	out := src
+	if hs != 1 || vs != 1 {
+		if out, err = resize.Vips(src, hs, vs, z.vips); err != nil {
+			return nil, err
+		}
+	}
+	return z.fitBox(ops.Orient(out, turn), dw, dh)
+}
+
+// shrinks are the factors sharp reduces a sw × sh image by for a box of
+// tw × th (its ResolveShrink): each side's size over the box's, the larger
+// of the two for FitInside and FitContain, the smaller for FitCover and
+// FitOutside; with a side of 0 the other's; at least 1 with
+// WithoutEnlargement, and at most the size.
+func (r resizeSpec) shrinks(sw, sh, tw, th int) (hs, vs float64) {
+	hs, vs = 1, 1
+	switch {
+	case tw > 0 && th > 0:
+		hs, vs = float64(sw)/float64(tw), float64(sh)/float64(th)
+		switch r.o.Fit {
+		case FitCover, FitOutside:
+			hs = min(hs, vs)
+			vs = hs
+		case FitInside, FitContain:
+			hs = max(hs, vs)
+			vs = hs
+		}
+	case tw > 0:
+		hs = float64(sw) / float64(tw)
+		vs = hs
+	case th > 0:
+		vs = float64(sh) / float64(th)
+		hs = vs
+	}
+	if r.o.WithoutEnlargement {
+		hs, vs = max(1, hs), max(1, vs)
+	}
+	return min(hs, float64(sw)), min(vs, float64(sh))
+}
+
+// fitBox crops or pads out, a dw × dh image, to the box of z: what
+// FitCover and FitContain do after the resize.
+func (z resizeOp) fitBox(out pipeline.Source, dw, dh int) (pipeline.Source, error) {
 	o, width, height := z.spec.o, z.spec.width, z.spec.height
 	switch {
 	case o.Fit == FitCover && width > 0 && height > 0 && (dw > width || dh > height):
@@ -179,11 +256,29 @@ func (z resizeOp) resize(src pipeline.Source, turn ops.Orientation, pre preShrun
 		if o.Background != nil {
 			bg = o.Background
 		}
+		if o.Method == ResizeLibvips && !pipeline.IsOpaque(out) {
+			bg = vipsBackground(bg)
+		}
 		gx, gy := o.Position.gridOr(1, 1)
 		left, top := (width-dw)*gx/2, (height-dh)*gy/2
 		return ops.Extend(out, left, top, width-dw-left, height-dh-top, bg)
 	}
 	return out, nil
+}
+
+// vipsBackground is the colour sharp pads an image with transparency with:
+// as sharp pads the image while its colours are multiplied by alpha, the
+// colour is multiplied by alpha (in double precision, the fraction dropped)
+// and divided again with the image (255/alpha in single precision, the
+// fraction dropped).
+func vipsBackground(c color.Color) color.Color {
+	n := color.NRGBAModel.Convert(c).(color.NRGBA)
+	if n.A == 255 || n.A == 0 {
+		return color.NRGBA{R: n.R * (n.A / 255), G: n.G * (n.A / 255), B: n.B * (n.A / 255), A: n.A}
+	}
+	na, f := float64(n.A)/255, float32(255/float64(n.A))
+	ch := func(v uint8) uint8 { return uint8(min(float32(uint8(float64(v)*na))*f, 255)) }
+	return color.NRGBA{R: ch(n.R), G: ch(n.G), B: ch(n.B), A: n.A}
 }
 
 // extractOp is Extract.
@@ -368,6 +463,11 @@ func applyOps(list []operation, src pipeline.Source, r *run, pre preShrunk) (_ p
 			if i == 0 {
 				p = pre
 			}
+			if z.spec.o.Method == ResizeLibvips && !autoTurns(list[i:end]) {
+				// As sharp: turns asked for before the resize are done
+				// before it.
+				src, turn = ops.Orient(src, turn), ops.Upright
+			}
 			next, err = z.resize(src, turn, p, r)
 			i = end + 1
 		case end > i:
@@ -385,6 +485,64 @@ func applyOps(list []operation, src pipeline.Source, r *run, pre preShrunk) (_ p
 		}
 	}
 	return src, nil
+}
+
+// firstResizeAt is the index of the operation after the turns a chain
+// starts with.
+func firstResizeAt(list []operation, r *run) int {
+	_, end := turnsFrom(list, 0, r)
+	return end
+}
+
+// autoTurns reports whether the turns of list all follow the EXIF
+// orientation (Rotate without an angle).
+func autoTurns(list []operation) bool {
+	for _, op := range list {
+		if t, ok := op.(turnOp); ok && !t.auto {
+			return false
+		}
+	}
+	return true
+}
+
+// vipsShrinkOnLoad is the factor sharp has libjpeg reduce a JPEG by while
+// it decodes it, for the resize z (with ResizeLibvips) after turn: of the
+// factors the resize reduces the two sides by, the smaller one; 8, 4 or 2,
+// the largest it reaches (twice that without FastShrinkOnLoad, which
+// leaves at least 2 to the resize), halved when the factor is that whole
+// number; 1 for none, or when the decoder cannot reduce the image.
+func vipsShrinkOnLoad(src pipeline.Source, z resizeSpec, turn ops.Orientation) int {
+	j, ok := src.(interface {
+		Subsampling() (image.YCbCrSubsampleRatio, bool, bool)
+	})
+	if !ok {
+		return 1
+	}
+	ratio, gray, ok := j.Subsampling()
+	if !ok || (!gray && !resize.ShrinkRatio(ratio)) {
+		return 1
+	}
+	b := src.Bounds()
+	tw, th := turn.Size(z.width, z.height)
+	hs, vs := z.shrinks(b.Dx(), b.Dy(), tw, th)
+	shrink := min(hs, vs)
+	f := 2.0
+	if z.o.FastShrinkOnLoad {
+		f = 1
+	}
+	k := 1
+	switch {
+	case shrink >= 8*f:
+		k = 8
+	case shrink >= 4*f:
+		k = 4
+	case shrink >= 2*f:
+		k = 2
+	}
+	if k > 1 && int(shrink) == k {
+		k /= 2
+	}
+	return k
 }
 
 // shrinkFactor picks the largest of 8, 4 and 2 that still leaves the resize

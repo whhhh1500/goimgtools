@@ -63,6 +63,10 @@ func TestSameOnEveryProcessor(t *testing.T) {
 		{"attention crop", photo.Clone().Resize(120, 140, ResizeOptions{Fit: FitCover, Interesting: InterestingAttention}), "689cfd7a72fd4c9e"},
 		{"entropy crop", photo.Clone().Resize(150, 60, ResizeOptions{Fit: FitCover, Interesting: InterestingEntropy}), "d5a7e04db11ef0a0"},
 		{"alpha channel", clear.Clone().ExtractChannel(ChannelAlpha), "e880988a7dc509ad"},
+		{"resize libvips", photo.Clone().Resize(97, 0, ResizeOptions{Kernel: KernelLanczos3, Method: ResizeLibvips}), "0021404ad205d433"},
+		{"resize libvips translucent", clear.Clone().Resize(400, 50, ResizeOptions{Fit: FitFill, Kernel: KernelMKS2021, Method: ResizeLibvips}), "75485f3a5472db7f"},
+		{"resize libvips contain", clear.Clone().Resize(60, 60, ResizeOptions{Fit: FitContain, Kernel: KernelCubic,
+			Background: color.NRGBA{200, 10, 90, 99}, Method: ResizeLibvips}), "9ff49d5906aebc1c"},
 	}
 	for _, c := range cases {
 		env := pipeline.NewEnv(0, t.TempDir())

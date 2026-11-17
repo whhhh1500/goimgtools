@@ -142,7 +142,7 @@ type upsampler struct {
 	env            *pipeline.Env // whose helpers share out the rows, if any
 }
 
-func newUpsampler(ratio image.YCbCrSubsampleRatio, w, h int, rgb bool, env *pipeline.Env) *upsampler {
+func newUpsampler(ratio image.YCbCrSubsampleRatio, w, h int, rgb, fancy bool, env *pipeline.Env) *upsampler {
 	u := &upsampler{rgb: rgb, hdiv: 1, vdiv: 1, w: w, h: h, env: env}
 	switch ratio {
 	case image.YCbCrSubsampleRatio422:
@@ -157,8 +157,8 @@ func newUpsampler(ratio image.YCbCrSubsampleRatio, w, h int, rgb bool, env *pipe
 		u.hdiv, u.vdiv = 4, 2
 	}
 	u.cw, u.ch = (w+u.hdiv-1)/u.hdiv, (h+u.vdiv-1)/u.vdiv
-	u.fancyH = u.hdiv == 2 && u.cw > 2
-	u.fancyV = u.vdiv == 2 && (u.hdiv == 1 || u.fancyH)
+	u.fancyH = fancy && u.hdiv == 2 && u.cw > 2
+	u.fancyV = fancy && u.vdiv == 2 && (u.hdiv == 1 || u.fancyH)
 	n := 4 * u.cw
 	u.heldY = make([]byte, w)
 	u.prevCb, u.prevCr = make([]byte, u.cw), make([]byte, u.cw)

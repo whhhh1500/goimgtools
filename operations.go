@@ -104,9 +104,35 @@ type ResizeOptions struct {
 	// is reduced instead of darkening, and colours mix as light does. It
 	// takes a little longer (a 24-megapixel PNG reduced to 1500 x 1000:
 	// 0.74s instead of 0.64s). With FastShrinkOnLoad, the reduction the
-	// decoder makes comes first, on the encoded levels.
+	// decoder makes comes first, on the encoded levels. It is not
+	// available with ResizeLibvips.
 	LinearLight bool
+	// Method is the way the pixels are worked out: ResizeDraw, the
+	// default, or ResizeLibvips, sharp's resize to the byte.
+	Method ResizeMethod
 }
+
+// ResizeMethod is the way Resize works out the pixels.
+type ResizeMethod int
+
+const (
+	// ResizeDraw weights the source for each pixel at its own place, in
+	// double precision, across and down at once: the arithmetic of
+	// golang.org/x/image/draw's Scale, to the byte.
+	ResizeDraw ResizeMethod = iota
+	// ResizeLibvips is sharp's resize, to the byte: libvips' vips_resize
+	// on the colours multiplied by alpha in 8 bits, as sharp runs it. Down
+	// the columns and then across the rows, each direction that shrinks is
+	// rounded to 8 bits on its own, a reduction by more than 2 first
+	// averaged in boxes of whole pixels, the kernel weighed at 1/64 of a
+	// pixel in 12-bit fixed point; a direction that grows is interpolated
+	// (nearest for KernelNearest, bilinear for KernelLinear, bicubic for
+	// the others and for a Filter). sharp's default kernel is
+	// KernelLanczos3. As sharp, turns written before the Resize (Rotate
+	// with an angle, Flip, Flop) are done before it, and the EXIF turn
+	// (Rotate without one) after it.
+	ResizeLibvips
+)
 
 // Interesting is how FitCover chooses the part of the image it keeps.
 type Interesting int
@@ -314,7 +340,30 @@ func (m *Image) Resize(width, height int, opts ...ResizeOptions) *Image {
 	if err != nil {
 		return m.fail(err)
 	}
-	return m.add(resizeOp{resizeSpec{width, height, o}, kernel})
+	z := resizeOp{spec: resizeSpec{width, height, o}, kernel: kernel}
+	switch o.Method {
+	case ResizeDraw:
+	case ResizeLibvips:
+		if o.LinearLight {
+			return m.fail(errors.New("goimgtools: LinearLight is not available with ResizeLibvips"))
+		}
+		z.vips = vipsKernel(o)
+	default:
+		return m.fail(errors.New("goimgtools: unknown ResizeOptions.Method"))
+	}
+	return m.add(z)
+}
+
+// vipsKernel is the kernel of ResizeLibvips (resizeKernel has checked it).
+func vipsKernel(o ResizeOptions) resize.VipsKernel {
+	if f := o.Filter; f != nil {
+		return resize.VipsKernel{Kind: resize.VipsCustom, At: f.At, Support: f.Support}
+	}
+	return resize.VipsKernel{Kind: map[Kernel]int{
+		KernelCubic: resize.VipsCubic, KernelNearest: resize.VipsNearest, KernelLinear: resize.VipsLinear,
+		KernelMitchell: resize.VipsMitchell, KernelLanczos2: resize.VipsLanczos2, KernelLanczos3: resize.VipsLanczos3,
+		KernelMKS2013: resize.VipsMKS2013, KernelMKS2021: resize.VipsMKS2021,
+	}[o.Kernel]}
 }
 
 func resizeKernel(o ResizeOptions) (*draw.Kernel, error) {

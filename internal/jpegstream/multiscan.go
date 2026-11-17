@@ -47,11 +47,20 @@ const (
 )
 
 // unused reports whether a scan changes nothing that the pixels are made
-// from: when the image is shrunk by 8 each block becomes the mean of its
-// pixels, its DC coefficient over 8, and a scan of AC coefficients can go
-// unread (a corrupt one then goes unnoticed).
+// from: a block decoded to one pixel (an image shrunk by 8, but for chroma
+// libjpeg decodes at twice that) is its DC coefficient over 8, and a scan of
+// AC coefficients of such blocks can go unread (a corrupt one then goes
+// unnoticed).
 func (d *decoder) unused(sc *scanState) bool {
-	return d.scale == 3 && sc.zigStart > 0
+	if sc.zigStart == 0 {
+		return false
+	}
+	for i := 0; i < sc.nComp; i++ {
+		if d.cscale[sc.comps[i].compIndex] != 3 {
+			return false
+		}
+	}
+	return true
 }
 
 // enter makes the decoder read c's scan.

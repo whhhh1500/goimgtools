@@ -48,6 +48,7 @@
 - 可读取 JPEG 压缩的 TIFF 文件（压缩方式 7：libtiff 的写法，libvips 与 sharp 的默认设置），条带与图块、彩色与灰度均支持。
 - 分辨率：`Info.Density`（每英寸像素数，读取自 JFIF、EXIF、pHYs、TIFF 与 BMP），默认保留到输出，`Density(dpi)` / `-density` 可设置；自定义格式可用 `EncodeOptions.Density` 与 `pipeline.Meta.Density`。`info` 会显示它。
 - `ExtendWith`（类型 `Extension`：`ExtendCopy`、`ExtendRepeat`、`ExtendMirror`）/ `-extend-with`：用图像本身扩边，与 sharp 带 `extendWith` 的 `extend` 逐像素一致；`Do("extend")` 在颜色的位置接受 copy、repeat 或 mirror。
+- `ResizeOptions.Method`（类型 `ResizeMethod`）/ `-resize-method`：`ResizeLibvips` 即 sharp 的 `resize`，逐字节一致，涵盖所有核、fit、位置与背景，包括解码时缩小的 JPEG（在 sharp 上核对了 495 次缩放）；默认的 `ResizeDraw` 与以前相同。`Do("resize")` 以第七个参数接受 `draw` 或 `libvips`。
 - `ResizeOptions.LinearLight` / `-linear-light`：在线性光下缩放，同 libvips `thumbnail` 的 `linear`；`Do("resize")` 以第六个参数 `linear` 接受。
 - `ResizeOptions.Position`（`FitCover` 保留的部分、`FitContain` 放置图像的位置）与 `ResizeOptions.Interesting`（类型 `Interesting`：`InterestingEntropy`、`InterestingAttention`，即 sharp 的智能裁剪策略）/ `-position`。`Do("resize")` 以第五个参数接受它们。
 - `Recomb`、`Unflatten`、`ExtractChannel`（类型 `Channel`）、`RemoveAlpha`，仿照 sharp 的 `recomb`、`unflatten`、`extractChannel`、`removeAlpha`（前两者逐字节一致），也可按名称调用：recomb、unflatten、extract-channel、remove-alpha。
@@ -56,6 +57,7 @@
 
 ### 变更
 
+- `FastShrinkOnLoad` 改用 libjpeg 的缩小反 DCT（`jidctred.c`）缩小各块，不再用自行推导的平均，速度不变：4:4:4 与灰度 JPEG 的平面与 libjpeg 的缩放解码（Pillow 的 `draft`）相同，与完整解码后缩放的结果一样接近（46.7–50.5dB）。
 - JPEG 改为按 libjpeg-turbo 的方式解码，因此与 Pillow、sharp 逐字节一致（精确整数反 DCT、下采样色度的 fancy 上采样、YCbCr 转 RGB 查表），不再与 `image/jpeg` 相同：下采样色彩的边缘更平滑（一张 4:2:2 照片与原图的差距少 0.36 dB），所有与 Pillow、sharp 结果一致的操作在 JPEG 输入上也一致。彩色 JPEG 的行带改为 RGBA 而非 YCbCr，直接写成 JPEG 或有损 WebP 时除外。
 - TIFF 解码：LZW 快 1.5 倍（6000×4000 的 RGBA 图像 0.45 秒，原为 0.68 秒；libtiff 0.31 秒），对任何输入的输出与错误都与 `x/image` 相同（经模糊测试核对）；Deflate 块按 64KB 读取（0.26 秒，原为 0.30 秒；libtiff 0.27 秒）。
 - `FitCover` 居中裁剪的位置与 sharp 相同：图像比框多出奇数个像素时，多出的那一个从左侧（上方）而非右侧（下方）裁去。
@@ -85,6 +87,9 @@
 - 命令行代码由 `cmd/goimgtools` 移至 `cli` 包；`cmd/goimgtools` 构建的仍为同一程序。
 
 ### 修复
+
+- 以 NRGBA 保存的带透明图像（带 alpha 的 PNG）做 `Extend` 与 `FitContain` 时经过预乘的 8 位 RGBA，半透明像素的颜色会偏移（最多 255/alpha 级：alpha 为 55 时 4 级）；现在保持不变。
+- 对分量采样方式特殊、解码器无法自行缩小的 JPEG（Go 测试文件 121121、211211、221122、222112）使用 `FastShrinkOnLoad` 时报错 “shrink: unsupported pixel type”；现在改为对解码结果再做平均。
 
 - 大图像的压缩 TIFF 只有一个条带，压缩数据超过 50MB 时 libvips（因而 sharp）拒绝读取：现在像素数据超过 1MB 的压缩图像按约 1MB 一条分条带写入。
 - 在把乘法与加法融合为一条指令的处理器上（ARM64，如 Apple 芯片与 AWS Graviton；POWER、s390x、RISC-V、LoongArch），部分结果可能与 x86 相差一级或一个像素：`Linear`、混合模式、带小数权重的 `Convolve`、GIF 与少色 PNG 的调色板、Mitchell 核、按比例定位的水印、`RotateBy` 的尺寸、`Blur` 的方框、文字描边，以及无损 WebP 与 jpegli 编码器所做的选择。现在每个乘积都先取整再相加（与 x86 相同），自动测试会检查编译器在这些处理器上没有融合任何一处。

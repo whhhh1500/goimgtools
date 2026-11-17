@@ -149,17 +149,46 @@ func (m *Image) buildFrom(env *pipeline.Env, top bool, f *input, format string, 
 	if format == "jpeg" && !sizeOnly {
 		// With hooks the steps are done as written: only a resize that
 		// comes first can have the decoder's help.
-		if z, turn, ok := firstResize(m.chain, r); ok && z.spec.o.FastShrinkOnLoad && (len(m.hooks) == 0 || turn == ops.Upright && len(m.chain) > 0 && isResize(m.chain[0])) {
-			if k := shrinkFactor(src, z.spec, turn); k > 1 {
+		if z, turn, ok := firstResize(m.chain, r); ok && (z.spec.o.FastShrinkOnLoad || z.spec.o.Method == ResizeLibvips) && (len(m.hooks) == 0 || turn == ops.Upright && len(m.chain) > 0 && isResize(m.chain[0])) {
+			var k int
+			switch {
+			case z.spec.o.Method != ResizeLibvips:
+				k = shrinkFactor(src, z.spec, turn)
+			case autoTurns(m.chain[:firstResizeAt(m.chain, r)]):
+				// sharp reduces a JPEG as it decodes it unless it turns
+				// it first.
+				k = vipsShrinkOnLoad(src, z.spec, turn)
+			}
+			if k > 1 {
 				pre = preShrunk{orig: src.Bounds().Size(), k: k}
-				if j, ok := src.(interface {
-					Subsampling() (image.YCbCrSubsampleRatio, bool, bool)
-				}); ok {
-					pre.ratio, pre.gray, pre.planes = j.Subsampling()
-				}
 				// The decoder reduces the blocks as it decodes them;
 				// failing that, the decoded pixels are averaged.
-				if j, ok := src.(interface{ ShrinkOnLoad(k int) bool }); !ok || !j.ShrinkOnLoad(k) {
+				shrunk := false
+				if z.spec.o.Method == ResizeLibvips {
+					// libvips' decoder is libjpeg: its scaled decoding.
+					j, ok := src.(interface{ ShrinkOnLoadLibjpeg(k int) bool })
+					shrunk = ok && j.ShrinkOnLoadLibjpeg(k)
+				} else if j, ok := src.(interface{ ShrinkOnLoad(k int) bool }); ok {
+					shrunk = j.ShrinkOnLoad(k)
+				}
+				if shrunk {
+					if z.spec.o.Method != ResizeLibvips {
+						// The resize scales the planes as they are
+						// decoded.
+						if j, ok := src.(interface{ KeepYCbCr() }); ok {
+							j.KeepYCbCr()
+						}
+						if j, ok := src.(interface {
+							Subsampling() (image.YCbCrSubsampleRatio, bool, bool)
+						}); ok {
+							pre.ratio, pre.gray, pre.planes = j.Subsampling()
+						}
+					}
+				} else {
+					// resize.Shrink averages the decoder's YCbCr.
+					if j, ok := src.(interface{ KeepYCbCr() }); ok {
+						j.KeepYCbCr()
+					}
 					small, err := resize.Shrink(src, k)
 					if err != nil {
 						src.Close()

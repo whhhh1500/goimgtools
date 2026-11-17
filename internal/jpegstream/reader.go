@@ -183,6 +183,8 @@ type decoder struct {
 	// the run into the next scan (tests compare the pixels only without).
 	overrun bool
 	tables  int // Huffman tables defined
+	// cscale is the scale each component is decoded at (setScale).
+	cscale [maxComponents]uint
 	// dcOnly tells reconstructBlock that the block's AC coefficients are
 	// all zero (decodeBlock, stepRows).
 	dcOnly bool

@@ -7,6 +7,7 @@ import (
 	"math"
 	"math/big"
 
+	"github.com/whhhh1500/goimgtools/internal/resize"
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
@@ -228,31 +229,6 @@ func (t *rotated) renderAffine(out *image.RGBA, x0, x1 int, c *tileCache) error 
 	return nil
 }
 
-// catmull is libvips' table of Catmull-Rom weights at 65 places between
-// two pixels, in double precision and in 12-bit fixed point (dropped to
-// whole numbers).
-var catmull = func() (t struct {
-	f [65][4]float64
-	i [65][4]int
-}) {
-	for x := range t.f {
-		v := float64(float32(x) / 64)
-		cr1 := 1 - v
-		cr2 := float64(-0.5 * v)
-		cr3 := float64(cr1 * cr2)
-		one := float64(cr1 * cr3)
-		fou := float64(v * cr3)
-		cr4 := fou - one
-		two := cr1 - one + cr4
-		thr := v - fou - cr4
-		t.f[x] = [4]float64{one, two, thr, fou}
-		for i, c := range t.f[x] {
-			t.i[x][i] = int(float64(c * 4096))
-		}
-	}
-	return t
-}()
-
 // bicubic interpolates the 4 x 4 pixels about (ix, iy), whose whole parts
 // are xi, yi, into d, as libvips' bicubic does (see affineMap).
 func (t *rotated) bicubic(d []uint8, ix, iy float64, xi, yi int, at func(x, y int) ([4]uint8, error), pre func([4]uint8, int) float32) error {
@@ -268,7 +244,7 @@ func (t *rotated) bicubic(d []uint8, ix, iy float64, xi, yi int, at func(x, y in
 		}
 	}
 	if !t.aff.float {
-		cx, cy := catmull.i[tx], catmull.i[ty]
+		cx, cy := resize.Catmull.I[tx], resize.Catmull.I[ty]
 		for ch := 0; ch < 3; ch++ {
 			var r [4]int
 			for j := range q {
@@ -280,7 +256,7 @@ func (t *rotated) bicubic(d []uint8, ix, iy float64, xi, yi int, at func(x, y in
 		d[3] = 255
 		return nil
 	}
-	cx, cy := catmull.f[tx], catmull.f[ty]
+	cx, cy := resize.Catmull.F[tx], resize.Catmull.F[ty]
 	var v [4]float32
 	for ch := 0; ch < 4; ch++ {
 		var r [4]float32

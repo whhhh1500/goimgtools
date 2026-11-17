@@ -16,6 +16,7 @@ import (
 type rgbaBand struct {
 	env      *pipeline.Env
 	band     *image.RGBA
+	nband    *image.NRGBA
 	reserved int64
 }
 
@@ -34,12 +35,27 @@ func (b *rgbaBand) get(r image.Rectangle) (*image.RGBA, error) {
 	return pipeline.Relabel(b.band, r).(*image.RGBA), nil
 }
 
+// getNRGBA is get for an NRGBA strip.
+func (b *rgbaBand) getNRGBA(r image.Rectangle) (*image.NRGBA, error) {
+	if b.nband == nil || b.nband.Rect.Dy() < r.Dy() {
+		b.release()
+		rows := max(r.Dy(), 16)
+		need := int64(r.Dx()) * 4 * int64(rows)
+		if err := b.env.Budget.Reserve(need, "strip buffer"); err != nil {
+			return nil, err
+		}
+		b.reserved = need
+		b.nband = image.NewNRGBA(image.Rect(r.Min.X, 0, r.Max.X, rows))
+	}
+	return pipeline.Relabel(b.nband, r).(*image.NRGBA), nil
+}
+
 func (b *rgbaBand) release() {
 	if b.reserved != 0 {
 		b.env.Budget.Release(b.reserved)
 		b.reserved = 0
 	}
-	b.band = nil
+	b.band, b.nband = nil, nil
 }
 
 // ---- crop ----
