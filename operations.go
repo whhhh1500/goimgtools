@@ -306,6 +306,13 @@ type CompositeOptions struct {
 // where both are there: as CSS's mix-blend-mode and PDF define them (and
 // libvips' composite, so sharp's blend). The mix is then put over the
 // image as BlendOver puts the overlay, with its transparency.
+//
+// The Porter-Duff operators (BlendClear to BlendXor) and BlendAdd and
+// BlendSaturate combine the two by their transparency instead, as libvips
+// computes them (sharp's blend of the same names). BlendClear, BlendSource,
+// BlendIn, BlendOut, BlendDestIn and BlendDestAtop also clear the image
+// where the overlay is not: BlendDestIn with a mask the size of the image
+// keeps the image where the mask is opaque (rounded corners, a shape).
 type BlendMode int
 
 // The blend modes.
@@ -322,13 +329,28 @@ const (
 	BlendSoftLight                   // a softer hard light
 	BlendDifference                  // the difference, larger less smaller
 	BlendExclusion                   // like difference, of lower contrast
+	BlendClear                       // nothing: all transparent
+	BlendSource                      // the overlay alone
+	BlendIn                          // the overlay where the image is
+	BlendOut                         // the overlay where the image is not
+	BlendAtop                        // the overlay over the image, only where the image is
+	BlendDest                        // the image alone
+	BlendDestOver                    // the image over the overlay
+	BlendDestIn                      // the image where the overlay is: a mask
+	BlendDestOut                     // the image where the overlay is not: a cut-out
+	BlendDestAtop                    // the image over the overlay, only where the overlay is
+	BlendXor                         // each where the other is not
+	BlendAdd                         // the sum of the two
+	BlendSaturate                    // the overlay added as far as the image leaves room
 )
 
 var blendNames = [...]string{"over", "multiply", "screen", "overlay", "darken", "lighten",
-	"color-dodge", "color-burn", "hard-light", "soft-light", "difference", "exclusion"}
+	"color-dodge", "color-burn", "hard-light", "soft-light", "difference", "exclusion",
+	"clear", "source", "in", "out", "atop", "dest", "dest-over", "dest-in", "dest-out", "dest-atop",
+	"xor", "add", "saturate"}
 
-// String returns the CSS name of the mode ("multiply", "color-dodge"), or
-// "BlendMode(n)" for no mode.
+// String returns the CSS (or sharp) name of the mode ("multiply",
+// "color-dodge", "dest-in"), or "BlendMode(n)" for no mode.
 func (b BlendMode) String() string {
 	if b >= 0 && int(b) < len(blendNames) {
 		return blendNames[b]

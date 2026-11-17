@@ -271,8 +271,35 @@ func TestBlendModes(t *testing.T) {
 	if s := BlendColorDodge.String(); s != "color-dodge" {
 		t.Errorf("BlendColorDodge is %q", s)
 	}
-	if _, err := FromBytes(src).Composite(over, CompositeOptions{Blend: BlendExclusion + 1}).PNG().ToBytes(); err == nil {
+	if _, err := FromBytes(src).Composite(over, CompositeOptions{Blend: BlendSaturate + 1}).PNG().ToBytes(); err == nil {
 		t.Error("an unknown blend mode: no error")
+	}
+	// The Porter-Duff modes, and add and saturate, on a base with
+	// transparency, the overlay over part of it only (the modes that clear
+	// the image where the overlay is not do so). The pixels are kept
+	// multiplied by alpha in 8 bits where libvips keeps them in floating
+	// point: what shows of a colour (times its alpha) is within 2 levels of
+	// sharp's, alpha within 1.
+	rgba := sourcePNG(t, "pillow/median-rgba-source.png")
+	pd := nrgbaOf(readPNG(t, "sharp/blend-pd.png"))
+	for mode := BlendClear; mode <= BlendSaturate; mode++ {
+		got := nrgbaOf(decodePNG(t, must(FromBytes(rgba).Extract(40, 30, 24, 16).Composite(over.Clone().Extract(0, 0, 16, 10),
+			CompositeOptions{Left: 5, Top: 3, Blend: mode}).PNG().ToBytes())))
+		row := int(mode - BlendClear)
+		for i := 0; i < len(got.Pix); i += 4 {
+			w := pd.Pix[row*16*pd.Stride+i:]
+			if d := int(got.Pix[i+3]) - int(w[3]); d < -1 || d > 1 {
+				t.Fatalf("%v: pixel %d alpha %d, sharp's %d", mode, i/4, got.Pix[i+3], w[3])
+			}
+			for c := 0; c < 3; c++ {
+				if d := (int(got.Pix[i+c]) - int(w[c])) * int(w[3]) / 255; d < -2 || d > 2 {
+					t.Fatalf("%v: pixel %d %v, sharp's %v", mode, i/4, got.Pix[i:i+4], w[:4])
+				}
+			}
+		}
+	}
+	if s := BlendDestIn.String(); s != "dest-in" {
+		t.Errorf("BlendDestIn is %q", s)
 	}
 }
 

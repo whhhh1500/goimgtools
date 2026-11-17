@@ -174,7 +174,7 @@ func register(fs *flag.FlagSet) *options {
 		shadowBlr:      fs.Int("shadow-blur", 0, "soften the shadow over this many `pixels`"),
 		wmOpacity:      fs.Float64("watermark-opacity", 1, "how much of the watermark shows, 0 to 1"),
 		wmTile:         fs.Bool("watermark-tile", false, "repeat the watermark over the whole image"),
-		wmBlend:        fs.String("watermark-blend", "over", "how the watermark's colours mix with the image's: over, multiply, screen, overlay, darken, lighten, color-dodge, color-burn, hard-light, soft-light, difference, exclusion"),
+		wmBlend:        fs.String("watermark-blend", "over", "how the watermark's colours mix with the image's: over, multiply, screen, overlay, darken, lighten, color-dodge, color-burn, hard-light, soft-light, difference, exclusion; or the Porter-Duff clear, source, in, out, atop, dest, dest-over, dest-in (a mask), dest-out, dest-atop, xor, and add, saturate"),
 		wmGap:          fs.String("watermark-gap", "0,0", "space between repeated watermarks, `X,Y` pixels"),
 		wmWidth:        fs.String("watermark-width", "", "scale the watermark to this `width`: pixels (300), or a share of the image's width (20%), which keeps it the same to the eye on images of any size"),
 		gravity:        fs.String("gravity", "southeast", "watermark anchor: northwest, north, northeast, west, center, east, southwest, south, southeast"),
@@ -672,7 +672,7 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 		}
 		co := goimgtools.CompositeOptions{Gravity: g, Left: dx, Top: dy, Angle: *o.wmAngle, Opacity: *o.wmOpacity, Tile: *o.wmTile}
 		co.Blend = -1
-		for b := goimgtools.BlendOver; b <= goimgtools.BlendExclusion; b++ {
+		for b := goimgtools.BlendOver; b <= goimgtools.BlendSaturate; b++ {
 			if b.String() == strings.ToLower(*o.wmBlend) {
 				co.Blend = b
 			}

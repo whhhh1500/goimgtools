@@ -26,8 +26,107 @@ const (
 	BlendSoftLight
 	BlendDifference
 	BlendExclusion
+	// The Porter-Duff operators, and add and saturate, as libvips has them.
+	BlendClear
+	BlendSource
+	BlendIn
+	BlendOut
+	BlendAtop
+	BlendDest
+	BlendDestOver
+	BlendDestIn
+	BlendDestOut
+	BlendDestAtop
+	BlendXor
+	BlendAdd
+	BlendSaturate
 	blendModes
 )
+
+// consumes reports a mode in which the image is gone where the overlay is
+// not (its alpha 0 makes the result's 0): there the image turns
+// transparent.
+func consumes(mode int) bool {
+	switch mode {
+	case BlendClear, BlendSource, BlendIn, BlendOut, BlendDestIn, BlendDestAtop:
+		return true
+	}
+	return false
+}
+
+// porterDuff works out a Porter-Duff mode (or add, saturate) as libvips'
+// vips_composite_base_blend: from the overlay's colours A and the image's B,
+// multiplied by their alphas aA and aB, the result's alpha and colours
+// (multiplied by it); false for a mode that is not one of them.
+func porterDuff(mode int, A, B *[3]float64, aA, aB float64) (float64, bool) {
+	var aR float64
+	switch mode {
+	case BlendClear:
+		*B = [3]float64{}
+		return 0, true
+	case BlendSource:
+		*B = *A
+		return aA, true
+	case BlendIn, BlendOut:
+		if mode == BlendIn {
+			aR = float64(aA * aB)
+		} else {
+			aR = float64(aA * (1 - aB))
+		}
+		if aA != 0 {
+			for c := range B {
+				B[c] = float64(A[c]*aR) / aA
+			}
+		}
+	case BlendAtop:
+		aR = aB
+		for c := range B {
+			B[c] = A[c] + float64((1-aA)*B[c])
+		}
+	case BlendDest:
+		aR = aB
+	case BlendDestOver:
+		aR = aB + float64(aA*(1-aB))
+		for c := range B {
+			B[c] = B[c] + float64((1-aB)*A[c])
+		}
+	case BlendDestIn, BlendDestOut:
+		if mode == BlendDestIn {
+			aR = float64(aA * aB)
+		} else {
+			aR = float64((1 - aA) * aB)
+		}
+		if aB != 0 {
+			for c := range B {
+				B[c] *= aR / aB
+			}
+		}
+	case BlendDestAtop:
+		aR = aA
+		for c := range B {
+			B[c] = float64((1-aB)*A[c]) + B[c]
+		}
+	case BlendXor:
+		aR = aA + aB - float64(2*aA*aB)
+		for c := range B {
+			B[c] = float64((1-aB)*A[c]) + float64((1-aA)*B[c])
+		}
+	case BlendAdd:
+		aR = math.Min(1, aA+aB)
+		for c := range B {
+			B[c] = A[c] + B[c]
+		}
+	case BlendSaturate:
+		aR = math.Min(1, aA+aB)
+		t := math.Min(aA, 1-aB)
+		for c := range B {
+			B[c] = float64(t*A[c]) + B[c]
+		}
+	default:
+		return 0, false
+	}
+	return aR, true
+}
 
 // ValidBlend reports whether m is one of the blend modes.
 func ValidBlend(m int) bool { return m >= 0 && m < blendModes }
@@ -94,9 +193,13 @@ func blendOf(mode int) func(a, b float64) float64 {
 }
 
 // drawBlend draws the part r of top (straight colours; its point sp at
-// r.Min) over out (multiplied by alpha) in the given mode, which is not
-// BlendOver.
-func drawBlend(out *image.RGBA, r image.Rectangle, top *image.NRGBA, sp image.Point, mode int) {
+// r.Min) over base into out (both multiplied by alpha; base may be out) in
+// the given mode, which is not BlendOver.
+func drawBlend(out, base *image.RGBA, r image.Rectangle, top *image.NRGBA, sp image.Point, mode int) {
+	if _, pd := porterDuff(mode, &[3]float64{}, &[3]float64{}, 0, 0); pd {
+		drawPorterDuff(out, base, r, top, sp, mode)
+		return
+	}
 	f := blendOf(mode)
 	for y := r.Min.Y; y < r.Max.Y; y++ {
 		d := out.Pix[out.PixOffset(r.Min.X, y):][:4*r.Dx()]
@@ -114,6 +217,35 @@ func drawBlend(out *image.RGBA, r image.Rectangle, top *image.NRGBA, sp image.Po
 				v := (float64((1-aB)*A) + float64((1-aA)*B) + float64(aA*aB*f(A, B))) / aR
 				cut := uint32(math.Max(0, math.Min(255, v*255)))
 				// Kept multiplied by alpha, as the band is.
+				d[i+c] = uint8((cut*uint32(ar) + 127) / 255)
+			}
+			d[i+3] = ar
+		}
+	}
+}
+
+// drawPorterDuff is drawBlend for the Porter-Duff modes (and add,
+// saturate): every pixel of r, transparent ones of the overlay too.
+func drawPorterDuff(out, base *image.RGBA, r image.Rectangle, top *image.NRGBA, sp image.Point, mode int) {
+	for y := r.Min.Y; y < r.Max.Y; y++ {
+		d := out.Pix[out.PixOffset(r.Min.X, y):][:4*r.Dx()]
+		b := base.Pix[base.PixOffset(r.Min.X, y):][:4*r.Dx()]
+		s := top.Pix[top.PixOffset(sp.X, sp.Y+y-r.Min.Y):][:4*r.Dx()]
+		for i := 0; i < len(d); i += 4 {
+			aA, aB := float64(s[i+3])/255, float64(b[i+3])/255
+			var A, B [3]float64
+			for c := 0; c < 3; c++ {
+				A[c] = float64(s[i+c]) / 255 * aA
+				B[c] = float64(b[i+c]) / 255
+			}
+			aR, _ := porterDuff(mode, &A, &B, aA, aB)
+			ar := uint8(math.Max(0, math.Min(255, aR*255))) // cut, as libvips casts
+			for c := 0; c < 3; c++ {
+				var v float64
+				if aR > 0 {
+					v = B[c] / aR
+				}
+				cut := uint32(math.Max(0, math.Min(255, v*255)))
 				d[i+c] = uint8((cut*uint32(ar) + 127) / 255)
 			}
 			d[i+3] = ar

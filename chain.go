@@ -810,4 +810,8 @@ var blendModes = map[BlendMode]int{
 	BlendOverlay: ops.BlendOverlay, BlendDarken: ops.BlendDarken, BlendLighten: ops.BlendLighten,
 	BlendColorDodge: ops.BlendColorDodge, BlendColorBurn: ops.BlendColorBurn, BlendHardLight: ops.BlendHardLight,
 	BlendSoftLight: ops.BlendSoftLight, BlendDifference: ops.BlendDifference, BlendExclusion: ops.BlendExclusion,
+	BlendClear: ops.BlendClear, BlendSource: ops.BlendSource, BlendIn: ops.BlendIn, BlendOut: ops.BlendOut,
+	BlendAtop: ops.BlendAtop, BlendDest: ops.BlendDest, BlendDestOver: ops.BlendDestOver, BlendDestIn: ops.BlendDestIn,
+	BlendDestOut: ops.BlendDestOut, BlendDestAtop: ops.BlendDestAtop, BlendXor: ops.BlendXor, BlendAdd: ops.BlendAdd,
+	BlendSaturate: ops.BlendSaturate,
 }

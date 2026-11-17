@@ -216,7 +216,7 @@ func handle(ctx context.Context, in io.Reader, out io.Writer) error {
 其他选项：
 
 - `Opacity`：0–1，整体不透明度，与水印自身的透明度相乘；未设置时保持原样。
-- `Blend`：叠加图颜色与底图颜色的混合方式：`BlendOver`（默认，与 `image/draw` 的 `Over` 相同）、`BlendMultiply`（正片叠底）、`BlendScreen`（滤色）、`BlendOverlay`（叠加）、`BlendDarken`（变暗）、`BlendLighten`（变亮）、`BlendColorDodge`（颜色减淡）、`BlendColorBurn`（颜色加深）、`BlendHardLight`（强光）、`BlendSoftLight`（柔光）、`BlendDifference`（差值）、`BlendExclusion`（排除）；计算方式与 sharp 的 `blend`（libvips 的 composite）相同，底图不透明时相差不超过 1。命令行：`-watermark-blend multiply`。
+- `Blend`：叠加图颜色与底图颜色的混合方式：`BlendOver`（默认，与 `image/draw` 的 `Over` 相同）、`BlendMultiply`（正片叠底）、`BlendScreen`（滤色）、`BlendOverlay`（叠加）、`BlendDarken`（变暗）、`BlendLighten`（变亮）、`BlendColorDodge`（颜色减淡）、`BlendColorBurn`（颜色加深）、`BlendHardLight`（强光）、`BlendSoftLight`（柔光）、`BlendDifference`（差值）、`BlendExclusion`（排除）；计算方式与 sharp 的 `blend`（libvips 的 composite）相同，底图不透明时相差不超过 1。另有 Porter-Duff 算子，与 sharp 同名者相同：`BlendClear`、`BlendSource`、`BlendIn`、`BlendOut`、`BlendAtop`、`BlendDest`、`BlendDestOver`、`BlendDestIn`（遮罩：只保留叠加图不透明处的底图）、`BlendDestOut`（挖空）、`BlendDestAtop`、`BlendXor`，以及 `BlendAdd`、`BlendSaturate`；其中 clear、source、in、out、dest-in、dest-atop 还会清空叠加图以外的底图。带透明时颜色可见部分与 sharp 相差不超过 2（像素以 8 位预乘保存，libvips 用浮点）。命令行：`-watermark-blend multiply`、`-watermark-blend dest-in`。
 - `Tile`、`TileGapX`、`TileGapY`：在全图范围内平铺，间距可设置。与 `Angle` 配合时，各水印单独旋转，行列仍保持水平与垂直。
 - `WidthRatio`、`HeightRatio`：先将水印缩放至底图宽度（高度）的该比例，保持宽高比；两者均设置时，缩放至同时满足两者。批量处理尺寸不一的图像时，水印在每幅图像上的视觉大小因此一致。命令行写法为 `-watermark-width 20%`。
 

@@ -203,6 +203,8 @@ type overlay struct {
 	// mode is the blend mode (see blend.go); for one but BlendOver, top is
 	// an *image.NRGBA.
 	mode int
+	// base keeps the strip in a mode that consumes the image (start).
+	base *image.RGBA
 }
 
 // Overlay draws top over src with its top-left corner at (x, y) relative to
@@ -232,14 +234,36 @@ func Overlay(src pipeline.Source, top image.Image, x, y, mode int) (pipeline.Sou
 	return &overlay{src: src, env: env, top: top, at: at, band: rgbaBand{env: env}, reserved: need, mode: mode}, nil
 }
 
-// put draws the part in of the copy of top at "at" over out.
-func (o *overlay) put(out *image.RGBA, in, at image.Rectangle) {
+// put draws the part in of the copy of top at "at" over base into out.
+func (o *overlay) put(out, base *image.RGBA, in, at image.Rectangle) {
 	sp := o.top.Bounds().Min.Add(in.Min.Sub(at.Min))
 	if o.mode == BlendOver {
 		draw.Draw(out, in, o.top, sp, draw.Over)
 		return
 	}
-	drawBlend(out, in, o.top.(*image.NRGBA), sp, o.mode)
+	drawBlend(out, base, in, o.top.(*image.NRGBA), sp, o.mode)
+}
+
+// start fills out with the strip s, or, in a mode that consumes the image
+// where the overlay is not, with transparency, the strip then kept in base
+// for the parts the overlay covers.
+func (o *overlay) start(out *image.RGBA, s image.Image, r image.Rectangle) (*image.RGBA, error) {
+	draw.Draw(out, r, s, r.Min, draw.Src)
+	if !consumes(o.mode) {
+		return out, nil
+	}
+	if o.base == nil || len(o.base.Pix) < len(out.Pix) {
+		need := int64(len(out.Pix))
+		if err := o.env.Budget.Reserve(need, "overlay strip"); err != nil {
+			return nil, err
+		}
+		o.reserved += need
+		o.base = &image.RGBA{Pix: make([]byte, len(out.Pix))}
+	}
+	base := &image.RGBA{Pix: o.base.Pix[:len(out.Pix)], Stride: out.Stride, Rect: out.Rect}
+	copy(base.Pix, out.Pix)
+	clear(out.Pix)
+	return base, nil
 }
 
 // OverlayTiled is Overlay with top repeated over the whole image: one copy
@@ -308,7 +332,10 @@ func (o *overlay) Next() (image.Image, error) {
 		if err != nil {
 			return nil, err
 		}
-		draw.Draw(out, r, s, r.Min, draw.Src)
+		base, err := o.start(out, s, r)
+		if err != nil {
+			return nil, err
+		}
 		w, h := o.at.Dx(), o.at.Dy()
 		// The copies whose rows and columns reach into this strip.
 		j0, j1 := floorDiv(r.Min.Y-o.at.Min.Y-h+1+o.stepY-1, o.stepY), floorDiv(r.Max.Y-1-o.at.Min.Y, o.stepY)
@@ -317,23 +344,26 @@ func (o *overlay) Next() (image.Image, error) {
 			for i := i0; i <= i1; i++ {
 				at := o.at.Add(image.Pt(i*o.stepX, j*o.stepY))
 				if in := r.Intersect(at); !in.Empty() {
-					o.put(out, in, at)
+					o.put(out, base, in, at)
 				}
 			}
 		}
 		return out, nil
 	}
 	in := r.Intersect(o.at)
-	if _, ok := s.(*image.RGBA); ok && in.Empty() {
+	if _, ok := s.(*image.RGBA); ok && in.Empty() && !consumes(o.mode) {
 		return s, nil
 	}
 	out, err := o.band.get(r)
 	if err != nil {
 		return nil, err
 	}
-	draw.Draw(out, r, s, r.Min, draw.Src)
+	base, err := o.start(out, s, r)
+	if err != nil {
+		return nil, err
+	}
 	if !in.Empty() {
-		o.put(out, in, o.at)
+		o.put(out, base, in, o.at)
 	}
 	return out, nil
 }
