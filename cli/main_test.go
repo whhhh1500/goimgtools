@@ -80,6 +80,21 @@ func TestConvert(t *testing.T) {
 	if _, err := jpeg.Decode(bytes.NewReader(mustRead(t, odd))); err != nil {
 		t.Errorf("-format jpeg did not write a JPEG: %v", err)
 	}
+	// Tiles: Deep Zoom by the name, the other layouts by -tile-layout.
+	if _, _, err := cli("-tile-size", "128", in, filepath.Join(dir, "deep.dzi")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := cli("-tile-layout", "google", "-tile-size", "128", in, filepath.Join(dir, "map.dz")); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"deep.dzi", "deep_files/10/4_3.jpeg", "map/blank.png", "map/3/3/4.jpg"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Errorf("tiles: %v", err)
+		}
+	}
+	if _, _, err := cli("-tile-layout", "mosaic", in, filepath.Join(dir, "x.dz")); err == nil || !strings.Contains(err.Error(), "-tile-layout") {
+		t.Errorf("-tile-layout mosaic: %v", err)
+	}
 }
 
 func mustRead(t *testing.T, path string) []byte {

@@ -14,6 +14,7 @@
 - Go 1.27 下 PNG 默认级别为 7（原为 6）：文件更小，写得更慢。`PNGOptions{CompressionLevel: 6}` 可得原来的文件。
 - `Threads(n)` 不再以 3 为上限：n 更大时即用更多核心。
 - JPEG 按 libjpeg-turbo 的方式写出（即 Pillow、sharp 的字节），不再按 `image/jpeg` 的方式：同一质量下像素相差约一个色阶，文件大小相当。
+- 颜色未乘以 alpha 的图像（PNG、WebP 等大多数图像）的 `Flatten`，以及带透明图像的 JPEG 输出（铺黑底），改按 libvips 的算法取色：`(颜色×alpha + 背景×(255−alpha)) / 255`，舍去小数，与 sharp 逐字节相同；以前个别像素相差 1。
 - 不带色彩配置的 CMYK 文件（JPEG、TIFF）按 libvips 的 CMYK 配置转为 sRGB，与 libvips、sharp 相同，不再按 `color.CMYK` 的简单公式：印刷油墨呈现为印刷出的颜色（满版青色为 RGB 0,153,228，不再是 0,255,255）。交给 `FromImage` 的 `*image.CMYK` 仍保持 `color.CMYK` 的值。
 
 ### 新增
@@ -55,7 +56,7 @@
 - `Filter`（类型 `ImageFilter`）：Pillow 的内置滤镜（模糊、轮廓、细节、边缘增强、浮雕、找边、锐化、平滑），以及 `Convolution.Method` 的 `ConvolvePillow`：其 `ImageFilter.Kernel`，逐字节一致；按名字调用 `filter NAME` 与 `convolve …,pillow`。
 - `BoxBlur(radius)`（`boxblur`）：即 Pillow 的 `ImageFilter.BoxBlur`，逐字节一致，含小数半径。
 - `RotateBy` 的 `RotateOptions`（`Method`：`RotateLibvips` 即 sharp 的，或 `RotatePillow` 即 Pillow 的 `Image.rotate`，逐字节一致；`Interpolator`；`Expand`）；按名字调用 `rotate DEGREES[,BACKGROUND][,pillow][,nearest|bilinear|bicubic][,expand]`。
-- `ToTiles(path, TileOptions)`：Deep Zoom 瓦片金字塔，与 sharp 的 `tile`（libvips 的 `dzsave`）相同，JPEG 瓦片与 `.dzi` 逐字节一致；流式处理，瓦片在辅助线程上编码；也可 `ToFile("x.dzi")`，命令行输出名为 `.dzi` 时配合 `-tile-size`、`-tile-overlap`。
+- `ToTiles(path, TileOptions)`：瓦片金字塔，与 sharp 的 `tile`（libvips 的 `dzsave`）相同，JPEG 瓦片及描述文件逐字节一致，带透明的图像也一样：Deep Zoom（`.dzi`）、Google 地图（`TileGoogle`，含 `blank.png`）、IIIF Image API 2 与 3（`TileIIIF`、`TileIIIF3`，含 `info.json`）、Zoomify（`TileZoomify`）；`TileOptions.Depth`（`TileDepth`）、`Background`、`Center`、`SkipBlanks`、`ID` 对应 sharp 的 `depth`、`background`、`centre`、`skipBlanks`、`id`；流式处理，瓦片在辅助线程上编码；也可 `ToFile("x.dzi")`，命令行输出名为 `.dzi` 时配合 `-tile-size`、`-tile-overlap`、`-tile-layout`。
 - sharp composite 的 Porter-Duff 混合模式及 add、saturate：`BlendClear` 至 `BlendXor`、`BlendAdd`、`BlendSaturate`（`BlendDestIn` 配遮罩只保留遮罩不透明处的底图）；`-watermark-blend` 也可用。
 - 模块 `github.com/whhhh1500/goimgtools/heic`：用 gen2brain/h265（纯 Go 的 HEVC 编解码器，解码与一致性测试集逐位一致；有 SIMD，`-tags noasm` 时不用，像素相同）读写 HEIC：网格、透明、irot/imir/clap（随后 EXIF 方向设为 1）、EXIF、XMP、色彩配置（nclx 声明 Display P3 时补上 P3 配置）均读出并可写入；`heic.Options{Quality, Effort, Lossless, Chroma444}`，MaxFileSize 按其质量。
 - 模块 `github.com/whhhh1500/goimgtools/avif`：读写 AVIF（libavif 配 dav1d 与 aom，编译为 WebAssembly，经 gen2brain/avif；无需 cgo），导入即注册；`avif.Options{Quality, Effort, Lossless, Chroma444}`，MaxFileSize 按其质量；按 irot、imir 转正。

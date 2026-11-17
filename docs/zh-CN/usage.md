@@ -76,7 +76,7 @@ err := goimgtools.Open("in.jpg").
 | `Sharpen()` | 轻度锐化（sharp 的 3×3 卷积核），适用于缩小之后 |
 | `Sharpen(SharpenOptions{Sigma, Amount, Threshold})` | 反锐化掩模（Pillow 的 `UnsharpMask`），`Amount` 默认为 1.5 |
 | `Sharpen(SharpenOptions{Sigma, Method: SharpenLibvips, Curve})` | sharp 带 sigma 的 `sharpen`：只锐化明度（L\*a\*b\* 的 L\*），颜色不偏移；`Curve`（`SharpenCurve{Flat, Jagged, JaggedFrom, MaxBrighten, MaxDarken}`，即 sharp 的 m1、m2、x1、y2、y3；nil 为 sharp 的默认值）把与模糊的差映射为改变量。与 sharp 的结果仅在少数像素上相差 1 级 |
-| `Flatten(color)` | 去除透明，铺底色 |
+| `Flatten(color)` | 去除透明，铺底色，与 sharp 的 `flatten`（libvips）逐字节相同；带透明的图像输出为 JPEG 时同样按此铺黑底，与 sharp 写出的相同 |
 | `Recomb(matrix)` | 按矩阵重组通道：3 行 3 列（或 4 行 4 列，第四行生成透明度），每行给出结果的一个通道，即各通道值乘以该行各数之和，舍去小数。与 sharp 的 `recomb` 逐字节一致；`{{0.393, 0.769, 0.189}, {0.349, 0.686, 0.168}, {0.272, 0.534, 0.131}}` 为褐色调 |
 | `Unflatten()` | 白色像素变为透明（灰度按 sharp 的方式计算为 255 的像素）；在 `Threshold` 之后使用，则达到阈值的像素全部变透明。与 sharp 的 `unflatten` 逐字节一致 |
 | `ExtractChannel(c)` | 取出一个通道作为灰度图像：`ChannelRed`、`ChannelGreen`、`ChannelBlue` 或 `ChannelAlpha`（sharp 的 `extractChannel`） |
@@ -118,7 +118,7 @@ err := goimgtools.Open("in.jpg").
 | `ToFormat(name, 选项)` | 按名称选择输出格式（`"jpeg"`、`"png"`、`".tif"`……，以及已注册的格式）；选项为该格式的选项结构体，可省略 |
 | `MaxFileSize(n)` | 输出不超过 n 字节：自动选用满足该限制的最高质量（JPEG、有损 WebP，以及提供 `Quality` 的注册格式）；PNG 与 GIF 选用能满足的最多颜色数（PNG 先试无损）。与 `Animated()` 同用于动画时返回包装了 `errors.ErrUnsupported` 的错误；单帧 GIF 按静态图像处理 |
 | `ToFile(path)` / `ToWriter(w)` / `ToBytes()` | 执行并写出。`ToFile` 未指定格式时按扩展名确定；仅当全程成功时才生成文件 |
-| `ToTiles(path, TileOptions{Size, Overlap, Layout})` | 把图像写成 Deep Zoom 瓦片金字塔，供可缩放查看器（OpenSeadragon）使用：`path.dzi` 与 `path_files/级别/列_行.jpeg`，与 sharp 的 `tile`（libvips 的 `dzsave`）相同，JPEG 瓦片与 `.dzi` 逐字节一致（每一级由上一级每四个像素取平均缩小，奇数的末行或末列重复一次）。瓦片默认 256 像素，`Overlap` 为每边多含的相邻像素；格式取链上的输出格式，默认 JPEG 质量 80、优化霍夫曼表（同 sharp）。流式处理：每级只保留一行瓦片所需的像素，同一行瓦片交给辅助线程并行编码。`ToFile("x.dzi")`（或 `.dz`）即按默认设置的 `ToTiles`。灰度图像得到灰度瓦片（sharp 为 RGB），带透明图像的 JPEG 瓦片与 sharp 相差不超过 1 |
+| `ToTiles(path, TileOptions{...})` | 把图像写成瓦片金字塔，供可缩放查看器使用，与 sharp 的 `tile`（libvips 的 `dzsave`）相同，JPEG 瓦片及描述文件逐字节一致（每一级由上一级每四个像素取平均缩小，奇数的末行或末列重复一次；带透明时颜色按 alpha 加权）。`Layout`：`TileDeepZoom`（默认；OpenSeadragon：`path.dzi` 与 `path_files/级别/列_行.jpeg`）、`TileGoogle`（Leaflet、OpenLayers：`path/级别/行/列.jpg`，画布由 `Background`（默认白色）铺成整块瓦片，图像放在左上角或按 `Center` 居中，只有背景的瓦片不写，由 `path/blank.png` 代替）、`TileIIIF` 与 `TileIIIF3`（IIIF Image API 0 级，`path/info.json`，地址取 `ID`）、`TileZoomify`（`path/ImageProperties.xml`、`path/TileGroupN/级别-列-行.jpg`）。瓦片边长 `Size`（256）；`Overlap` 为与相邻瓦片共享的像素（0）；`Depth` 缩到一个像素、一块瓦片或只一级（`TileDepthOnePixel`、`TileDepthOneTile`、`TileDepthOne`；默认取布局的设定）；`SkipBlanks` 不写与背景相差不超过该值的瓦片（Google 默认 5）。格式取链上的输出格式，默认 JPEG 质量 80、优化霍夫曼表（同 sharp）。流式处理：每级只保留一行瓦片所需的像素，同一行瓦片交给辅助线程并行编码。`ToFile("x.dzi")`（或 `.dz`）即按默认设置的 `ToTiles`。灰度图像得到灰度瓦片（sharp 为 RGB） |
 | `Metadata()` | 仅读取文件头，描述**输入**：格式、存储的宽高、颜色类型（灰度 / 调色板 / RGB / YCbCr / CMYK）与位深、是否含透明、EXIF 方向、是否含 ICC / EXIF，以及分辨率（`Density`，每英寸像素数：有 EXIF 分辨率时取 EXIF 的，否则取格式自身的；25.4 及以下视为未记录，因为 libvips 在不知道分辨率时写入该值，与 sharp 相同）。不受链上操作影响 |
 | `Frames()` | 输入的帧数、单次播放时长、循环次数（仅 GIF 可多于一帧）。须读取整个文件，但不解码像素 |
 | `OutputSize()` | **结果**的尺寸：链上全部操作完成后的宽高，不解码像素 |

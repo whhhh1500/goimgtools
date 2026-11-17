@@ -532,7 +532,9 @@ func (m *Image) Extract(left, top, width, height int) *Image {
 	return m.add(extractOp{left, top, width, height})
 }
 
-// Flatten removes transparency by placing the image on a background colour.
+// Flatten removes transparency by placing the image on a background colour,
+// as sharp's flatten does (libvips' flatten, to the byte): each colour
+// (colour*alpha + background*(255-alpha)) / 255, the fraction dropped.
 func (m *Image) Flatten(background color.Color) *Image {
 	if background == nil {
 		return m.fail(errors.New("goimgtools: Flatten needs a background colour"))

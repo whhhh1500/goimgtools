@@ -106,6 +106,7 @@ type options struct {
 	textWidth, shadowBlr                           *int
 	format, maxSize, tiffComp                      *string
 	tileSize, tileOverlap                          *int
+	tileLayout                                     *string
 	quality, pngLevel, pngColors, gifColors        *int
 	gifFixed                                       *bool
 	gifLossy                                       *int
@@ -197,6 +198,7 @@ func register(fs *flag.FlagSet) *options {
 		skipLarger:     fs.Bool("skip-larger", false, "when the result is not smaller than the input file (same format), keep the input file as it is; for runs that only compress"),
 		tileSize:       fs.Int("tile-size", 256, "the side of a tile, for an output named .dzi or .dz (a Deep Zoom pyramid of tiles, as sharp's tile)"),
 		tileOverlap:    fs.Int("tile-overlap", 0, "how many pixels of its neighbours a tile also holds on each side (.dzi output)"),
+		tileLayout:     fs.String("tile-layout", "dz", "the layout of the tiles of a .dzi or .dz output: dz (Deep Zoom), google, iiif, iiif3 or zoomify"),
 		maxSize:        fs.String("max-size", "", "make the file at most this `size` by lowering the quality (JPEG, lossy WebP) or the number of colours (PNG, GIF): 200KB, 1.5MB, or a number of bytes"),
 		lossless:       fs.Bool("webp-lossless", false, "WebP: write without loss"),
 		webpEffort:     fs.Int("webp-effort", 0, "WebP: effort 1 (fastest) to 9 (smallest file); default 5 (for lossy, all there is but for transparency)"),
@@ -325,7 +327,13 @@ var tempCount atomic.Int64
 // picture that was already small.
 func (o *options) finish(im *goimgtools.Image, in, out string) (kept bool, err error) {
 	if ext := strings.ToLower(filepath.Ext(out)); ext == ".dzi" || ext == ".dz" {
-		return false, im.ToTiles(out, goimgtools.TileOptions{Size: *o.tileSize, Overlap: *o.tileOverlap})
+		layouts := map[string]goimgtools.TileLayout{"dz": goimgtools.TileDeepZoom, "google": goimgtools.TileGoogle,
+			"iiif": goimgtools.TileIIIF, "iiif3": goimgtools.TileIIIF3, "zoomify": goimgtools.TileZoomify}
+		layout, ok := layouts[strings.ToLower(*o.tileLayout)]
+		if !ok {
+			return false, fmt.Errorf("-tile-layout: unknown layout %q (dz, google, iiif, iiif3 or zoomify)", *o.tileLayout)
+		}
+		return false, im.ToTiles(out, goimgtools.TileOptions{Size: *o.tileSize, Overlap: *o.tileOverlap, Layout: layout})
 	}
 	kind, _ := o.outputKind(out) // a wrong -format was reported when the chain was made
 	before, statErr := os.Stat(in)

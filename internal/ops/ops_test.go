@@ -89,6 +89,8 @@ func TestCrop(t *testing.T) {
 	same(t, "crop of crop", full.(subImager).SubImage(image.Rect(15, 26, 45, 66)), got)
 }
 
+// TestFlatten: over the background as draw.Over composites it, and image.NRGBA
+// as libvips flattens it.
 func TestFlatten(t *testing.T) {
 	bg := color.NRGBA{250, 240, 30, 255}
 	for name, m := range testutil.Images(97, 131) {
@@ -97,6 +99,17 @@ func TestFlatten(t *testing.T) {
 		want := image.NewRGBA(m.Bounds())
 		draw.Draw(want, want.Bounds(), image.NewUniform(bg), image.Point{}, draw.Src)
 		draw.Draw(want, want.Bounds(), m, m.Bounds().Min, draw.Over)
+		if n, ok := m.(*image.NRGBA); ok {
+			// As libvips flattens: (colour*alpha + background*(255-alpha))
+			// / 255, the fraction dropped.
+			ink := [3]int{int(bg.R), int(bg.G), int(bg.B)}
+			for i := 0; i < len(n.Pix); i += 4 {
+				a := int(n.Pix[i+3])
+				for c := range 3 {
+					want.Pix[i+c] = uint8((int(n.Pix[i+c])*a + ink[c]*(255-a)) / 255)
+				}
+			}
+		}
 		same(t, name, want, got)
 		pix := got.(*image.RGBA).Pix
 		for i := 3; i < len(pix); i += 4 {

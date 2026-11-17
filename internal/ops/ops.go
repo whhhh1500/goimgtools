@@ -152,11 +152,16 @@ type flatten struct {
 	src  pipeline.Source
 	env  *pipeline.Env
 	bg   *image.Uniform
+	ink  [3]int // the background in 8 bits
 	band rgbaBand
 }
 
 // Flatten composites src over the background colour, removing transparency.
-// A source known to be opaque is returned unchanged.
+// A source known to be opaque is returned unchanged. Colours not
+// multiplied by alpha (image.NRGBA) are flattened as libvips flattens them
+// (sharp's flatten, and its JPEG of an image with transparency, over
+// black): (colour*alpha + background*(255-alpha)) / 255, the fraction
+// dropped.
 func Flatten(src pipeline.Source, bg color.Color) pipeline.Source {
 	if pipeline.IsOpaque(src) {
 		return src
@@ -164,7 +169,8 @@ func Flatten(src pipeline.Source, bg color.Color) pipeline.Source {
 	env := pipeline.EnvOf(src)
 	r, g, b, _ := bg.RGBA()
 	opaque := color.RGBA64{uint16(r), uint16(g), uint16(b), 0xffff}
-	return &flatten{src: src, env: env, bg: image.NewUniform(opaque), band: rgbaBand{env: env}}
+	return &flatten{src: src, env: env, bg: image.NewUniform(opaque), band: rgbaBand{env: env},
+		ink: [3]int{int(r >> 8), int(g >> 8), int(b >> 8)}}
 }
 
 func (f *flatten) Env() *pipeline.Env      { return f.env }
@@ -182,6 +188,20 @@ func (f *flatten) Next() (image.Image, error) {
 	out, err := f.band.get(r)
 	if err != nil {
 		return nil, err
+	}
+	if n, ok := s.(*image.NRGBA); ok {
+		for y := r.Min.Y; y < r.Max.Y; y++ {
+			p := n.Pix[(y-r.Min.Y)*n.Stride : (y-r.Min.Y)*n.Stride+4*r.Dx()]
+			q := out.Pix[(y-r.Min.Y)*out.Stride:]
+			for i := 0; i < len(p); i += 4 {
+				a := int(p[i+3])
+				for c := range 3 {
+					q[i+c] = uint8((int(p[i+c])*a + f.ink[c]*(255-a)) / 255)
+				}
+				q[i+3] = 255
+			}
+		}
+		return out, nil
 	}
 	draw.Draw(out, r, f.bg, image.Point{}, draw.Src)
 	draw.Draw(out, r, s, r.Min, draw.Over)

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"image/color"
 	"io"
 	"strings"
 	"sync"
@@ -181,6 +182,8 @@ var builtin = []*formatDef{
 			if q < 1 || q > 100 {
 				return fmt.Errorf("goimgtools: JPEG quality must be 1 to 100, got %d", q)
 			}
+			// Transparency over black, as libvips (sharp) flattens it.
+			src = ops.Flatten(src, color.Black)
 			return jpegstream.Encode(w, src, &jpegstream.Options{Quality: q, Exif: o.Exif, ICC: o.ICC, Xmp: o.Xmp, Density: o.Density,
 				Optimize: jo.Optimize, Progressive: jo.Progressive, Trellis: jo.Trellis, QuantTable: int(jo.QuantTable),
 				Subsampling: int(jo.ChromaSubsampling)})
