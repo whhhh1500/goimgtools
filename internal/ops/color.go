@@ -141,8 +141,8 @@ func (g *grayscale) Next() (image.Image, error) {
 // (libvips) does: in the LCh colour space (CIE L*a*b* under D65 in polar
 // form), L is multiplied by brightness, C by saturation, and hue degrees
 // are added to h. Transparency is kept. 1, 1, 0 leaves the image as it is.
-func Modulate(src pipeline.Source, brightness, saturation, hue float64) (pipeline.Source, error) {
-	for _, v := range []float64{brightness, saturation, hue} {
+func Modulate(src pipeline.Source, brightness, saturation, hue, lightness float64) (pipeline.Source, error) {
+	for _, v := range []float64{brightness, saturation, hue, lightness} {
 		if math.IsNaN(v) || math.IsInf(v, 0) {
 			return nil, errors.New("goimgtools: Modulate takes finite numbers")
 		}
@@ -150,14 +150,14 @@ func Modulate(src pipeline.Source, brightness, saturation, hue float64) (pipelin
 	if brightness < 0 || saturation < 0 {
 		return nil, errors.New("goimgtools: Modulate brightness and saturation are factors, at least 0")
 	}
-	if brightness == 1 && saturation == 1 && math.Mod(hue, 360) == 0 {
+	if brightness == 1 && saturation == 1 && math.Mod(hue, 360) == 0 && lightness == 0 {
 		return src, nil
 	}
 	t := labTables()
 	sin, cos := math.Sincos(hue * math.Pi / 180)
 	// Hue turns (a, b) about the grey axis; saturation scales it.
 	ka, kb := float32(saturation*cos), float32(saturation*sin)
-	br := float32(brightness)
+	br, lt := float32(brightness), float32(lightness)
 	env := pipeline.EnvOf(src)
 	ways := env.Helpers() + 1
 	// The pixels of a part of a strip.
@@ -175,7 +175,7 @@ func Modulate(src pipeline.Source, brightness, saturation, hue float64) (pipelin
 				continue
 			}
 			L, a, b := t.toLab(p[0], p[1], p[2])
-			L *= br
+			L = float32(L*br) + lt
 			// Each product rounded before it is added: see toLab.
 			a, b = float32(a*ka)-float32(b*kb), float32(a*kb)+float32(b*ka)
 			p[0], p[1], p[2] = t.fromLab(L, a, b)

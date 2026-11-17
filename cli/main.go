@@ -122,7 +122,7 @@ type options struct {
 	tmp                                            *string
 	trim, extend, extendWith, modulate, sharpen    *string
 	ops                                            []string // -op, in order
-	grayscale                                      *bool
+	grayscale, grayLinear                          *bool
 	blur                                           *float64
 }
 
@@ -144,7 +144,8 @@ func register(fs *flag.FlagSet) *options {
 		extend:         fs.String("extend", "", "add a border of `T,R,B,L` pixels in -background"),
 		extendWith:     fs.String("extend-with", "", "fill the border of -extend from the image: copy (the edge pixels), repeat (the image) or mirror (the image mirrored)"),
 		grayscale:      fs.Bool("grayscale", false, "turn the image into shades of grey"),
-		modulate:       fs.String("modulate", "", "change `B,S,H`: brightness and saturation factors and hue degrees (1.2,0.8,0 is brighter and less vivid)"),
+		grayLinear:     fs.Bool("grayscale-linear", false, "turn the image into shades of grey by the luminance of its linear light, as sharp's greyscale"),
+		modulate:       fs.String("modulate", "", "change `B,S,H[,L]`: brightness and saturation factors, hue degrees and lightness added (L*, 0 to 100); 1.2,0.8,0 is brighter and less vivid"),
 		blur:           fs.Float64("blur", 0, "Gaussian blur of this `sigma` in pixels (as Pillow's GaussianBlur)"),
 		sharpen:        fs.String("sharpen", "", "sharpen: mild (a quick 3x3 sharpen, good after shrinking), or an unsharp mask `SIGMA[,AMOUNT[,THRESHOLD]]` as Pillow's (amount 1.5, threshold 0 by default)"),
 		kernel:         fs.String("kernel", "cubic", "resize filter: nearest, linear, cubic, mitchell, lanczos2, lanczos3"),
@@ -548,15 +549,19 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 			return nil, fmt.Errorf("-extend-with: unknown way %q", *o.extendWith)
 		}
 	}
-	if *o.grayscale {
-		im.Grayscale()
+	if *o.grayscale || *o.grayLinear {
+		im.Grayscale(goimgtools.GrayscaleOptions{Linear: *o.grayLinear})
 	}
 	if *o.modulate != "" {
-		v, err := floats(*o.modulate, 3)
+		s := *o.modulate
+		if strings.Count(s, ",") == 2 {
+			s += ",0" // no lightness
+		}
+		v, err := floats(s, 4)
 		if err != nil {
 			return nil, fmt.Errorf("-modulate: %w", err)
 		}
-		im.Modulate(v[0], v[1], v[2])
+		im.Modulate(v[0], v[1], v[2], goimgtools.ModulateOptions{Lightness: v[3]})
 	}
 	if *o.blur != 0 {
 		im.Blur(*o.blur)

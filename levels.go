@@ -15,10 +15,21 @@ import (
 // They work a few rows at a time, except Normalize, which counts the whole
 // image first.
 
+// NegateOptions are the optional settings of Negate.
+type NegateOptions struct {
+	// Alpha negates the transparency too, as sharp's negate does by
+	// default: what was opaque becomes clear and the other way round. An
+	// image whose format stores no transparency has none to negate.
+	Alpha bool
+}
+
 // Negate turns every colour into its opposite: each red, green and blue
-// level v becomes 255 - v. Transparency is kept (sharp's negate with alpha
-// false, to the byte).
-func (m *Image) Negate() *Image { return m.add(levelsOp{name: "negate"}) }
+// level v becomes 255 - v. Transparency is kept unless NegateOptions.Alpha
+// (to the byte sharp's negate with alpha false, and with alpha true).
+func (m *Image) Negate(opts ...NegateOptions) *Image {
+	m.atMostOne("Negate", len(opts))
+	return m.add(levelsOp{name: "negate", alpha: first(opts).Alpha})
+}
 
 // Linear changes every red, green and blue level v to a*v + b, kept within
 // 0 to 255 with its fraction dropped, as sharp's linear (to the byte): a
@@ -43,18 +54,27 @@ func (m *Image) Gamma(g float64) *Image {
 	return m.add(levelsOp{name: "gamma", a: g})
 }
 
+// ThresholdOptions are the optional settings of Threshold.
+type ThresholdOptions struct {
+	// PerChannel makes each of red, green and blue 0 or 255 on its own,
+	// by whether it is level or more (sharp's greyscale false): the image
+	// keeps eight colours instead of becoming black and white.
+	PerChannel bool
+}
+
 // Threshold makes the image black and white, as sharp's threshold (to the
 // byte, for an image without transparency): pixels whose grey is level or
 // more become white, the others black; the grey is that of their linear
 // light, as sharp's (not the brightness Grayscale works out). level is 0
 // to 255, sharp's default 128. An image without transparency becomes a
 // one-channel greyscale image; transparency is kept (sharp thresholds it
-// too).
-func (m *Image) Threshold(level int) *Image {
+// too). See ThresholdOptions.PerChannel for a threshold of each channel.
+func (m *Image) Threshold(level int, opts ...ThresholdOptions) *Image {
+	m.atMostOne("Threshold", len(opts))
 	if level < 0 || level > 255 {
 		return m.fail(errors.New("goimgtools: Threshold level must be 0 to 255"))
 	}
-	return m.add(levelsOp{name: "threshold", a: float64(level)})
+	return m.add(levelsOp{name: "threshold", a: float64(level), alpha: first(opts).PerChannel})
 }
 
 // Tint gives the image the colour c and keeps the brightness of its
@@ -198,10 +218,13 @@ func (m *Image) Convolve(c Convolution) *Image {
 
 // ---- the operations ----
 
-// levelsOp is an operation done with a table of levels.
+// levelsOp is an operation done with a table of levels. alpha is
+// NegateOptions.Alpha for negate, ThresholdOptions.PerChannel for
+// threshold.
 type levelsOp struct {
-	name string
-	a, b float64
+	name  string
+	a, b  float64
+	alpha bool
 }
 
 func (o levelsOp) lut() *[256]uint8 {
@@ -220,8 +243,17 @@ func (o levelsOp) apply(src pipeline.Source, r *run) (pipeline.Source, error) {
 	if r.sizeOnly {
 		return src, nil
 	}
-	if o.name == "threshold" {
+	switch {
+	case o.name == "threshold" && o.alpha:
+		var t [256]uint8
+		for i := int(o.a); i < 256; i++ {
+			t[i] = 255
+		}
+		return ops.Levels(src, &t), nil
+	case o.name == "threshold":
 		return ops.Threshold(src, int(o.a)), nil
+	case o.name == "negate" && o.alpha:
+		return ops.NegateAll(src), nil
 	}
 	return ops.Levels(src, o.lut()), nil
 }
@@ -231,8 +263,17 @@ func (o levelsOp) words() []string {
 	switch o.name {
 	case "linear":
 		return []string{f(o.a), f(o.b)}
-	case "gamma", "threshold":
+	case "gamma":
 		return []string{f(o.a)}
+	case "threshold":
+		if o.alpha {
+			return []string{f(o.a), "channels"}
+		}
+		return []string{f(o.a)}
+	case "negate":
+		if o.alpha {
+			return []string{"alpha"}
+		}
 	}
 	return nil
 }
@@ -293,12 +334,15 @@ func (o convolveOp) words() []string {
 
 // levelOps are the named operations of this file (see builtInOps).
 var levelOps = map[string]OperationDef{
-	"negate": {Name: "negate", Help: "Negate: every colour its opposite",
+	"negate": {Name: "negate", Usage: "[alpha]", Help: "Negate: every colour its opposite; alpha: the transparency too",
 		builtIn: func(m *Image, a []string) error {
-			if err := wantArgs(a, 0, 0); err != nil {
+			if err := wantArgs(a, 0, 1); err != nil {
 				return err
 			}
-			m.Negate()
+			if len(a) == 1 && a[0] != "alpha" {
+				return errors.New("the word after negate is alpha")
+			}
+			m.Negate(NegateOptions{Alpha: len(a) == 1})
 			return nil
 		}},
 	"linear": {Name: "linear", Usage: "A,B", Help: "Linear: every level v becomes A*v+B",
@@ -325,20 +369,23 @@ var levelOps = map[string]OperationDef{
 			m.Gamma(v[0])
 			return nil
 		}},
-	"threshold": {Name: "threshold", Usage: "[LEVEL]", Help: "Threshold: black and white, white from brightness LEVEL (128 by default)",
+	"threshold": {Name: "threshold", Usage: "[LEVEL[,channels]]", Help: "Threshold: black and white, white from brightness LEVEL (128 by default); channels: each of red, green and blue on its own",
 		builtIn: func(m *Image, a []string) error {
-			if err := wantArgs(a, 0, 1); err != nil {
+			if err := wantArgs(a, 0, 2); err != nil {
 				return err
 			}
 			level := 128
-			if len(a) == 1 {
-				v, err := argInts(a)
+			if len(a) >= 1 {
+				v, err := argInts(a[:1])
 				if err != nil {
 					return err
 				}
 				level = v[0]
 			}
-			m.Threshold(level)
+			if len(a) == 2 && a[1] != "channels" {
+				return errors.New("the word after LEVEL is channels")
+			}
+			m.Threshold(level, ThresholdOptions{PerChannel: len(a) == 2})
 			return nil
 		}},
 	"tint": {Name: "tint", Usage: "COLOR", Help: "Tint: the colour COLOR at the brightness of each pixel (#704214 for sepia)",

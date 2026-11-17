@@ -22,8 +22,29 @@ import (
 // to the byte; image/color's GrayModel drops a fraction instead and can be
 // a level lower). For a JPEG it is the brightness the file stores. An
 // image without transparency becomes a one-channel greyscale image, which
-// a JPEG or PNG then stores as such, smaller; transparency is kept.
-func (m *Image) Grayscale() *Image { return m.add(grayscaleOp{}) }
+// a JPEG or PNG then stores as such, smaller; transparency is kept. See
+// GrayscaleOptions.Linear for sharp's grey.
+func (m *Image) Grayscale(opts ...GrayscaleOptions) *Image {
+	m.atMostOne("Grayscale", len(opts))
+	return m.add(grayscaleOp{first(opts).Linear})
+}
+
+// GrayscaleOptions are the optional settings of Grayscale.
+type GrayscaleOptions struct {
+	// Linear gives each pixel the grey of the luminance of its linear
+	// light (Rec. 709 weights), as sharp's greyscale (libvips' B_W), to the
+	// byte: reds and blues come out darker and greens lighter than with
+	// Rec. 601 brightness, closer to how light they look.
+	Linear bool
+}
+
+// ModulateOptions are the optional settings of Modulate.
+type ModulateOptions struct {
+	// Lightness is added to the lightness (L* of L*a*b*, 0 to 100) after
+	// it is multiplied by the brightness, as sharp's lightness: 10 lightens
+	// the darkest pixels as much as the others.
+	Lightness float64
+}
 
 // Modulate changes brightness and saturation by a factor and turns the
 // hue by a number of degrees, the way sharp does: in the LCh colour space,
@@ -33,8 +54,10 @@ func (m *Image) Grayscale() *Image { return m.add(grayscaleOp{}) }
 // fifth brighter and less vivid; Modulate(1, 1, 180) gives the opposite
 // colours. Transparency is kept. The result is within one level of
 // sharp's (0.35) on every pixel.
-func (m *Image) Modulate(brightness, saturation, hue float64) *Image {
-	for _, v := range []float64{brightness, saturation, hue} {
+func (m *Image) Modulate(brightness, saturation, hue float64, opts ...ModulateOptions) *Image {
+	m.atMostOne("Modulate", len(opts))
+	lightness := first(opts).Lightness
+	for _, v := range []float64{brightness, saturation, hue, lightness} {
 		if math.IsNaN(v) || math.IsInf(v, 0) {
 			return m.fail(errors.New("goimgtools: Modulate takes finite numbers"))
 		}
@@ -42,7 +65,7 @@ func (m *Image) Modulate(brightness, saturation, hue float64) *Image {
 	if brightness < 0 || saturation < 0 {
 		return m.fail(errors.New("goimgtools: Modulate brightness and saturation are factors, at least 0"))
 	}
-	return m.add(modulateOp{brightness, saturation, hue})
+	return m.add(modulateOp{brightness, saturation, hue, lightness})
 }
 
 // Blur blurs the image with a Gaussian of standard deviation sigma pixels,
@@ -216,22 +239,25 @@ func (m *Image) RotateBy(degrees float64, background color.Color) *Image {
 
 // ---- the operations ----
 
-type grayscaleOp struct{}
+type grayscaleOp struct{ linear bool }
 
-func (grayscaleOp) apply(src pipeline.Source, r *run) (pipeline.Source, error) {
+func (o grayscaleOp) apply(src pipeline.Source, r *run) (pipeline.Source, error) {
 	if r.sizeOnly {
 		return src, nil
+	}
+	if o.linear {
+		return ops.GrayscaleLinear(src), nil
 	}
 	return ops.Grayscale(src), nil
 }
 
-type modulateOp struct{ brightness, saturation, hue float64 }
+type modulateOp struct{ brightness, saturation, hue, lightness float64 }
 
 func (o modulateOp) apply(src pipeline.Source, r *run) (pipeline.Source, error) {
 	if r.sizeOnly {
 		return src, nil
 	}
-	return ops.Modulate(src, o.brightness, o.saturation, o.hue)
+	return ops.Modulate(src, o.brightness, o.saturation, o.hue, o.lightness)
 }
 
 type blurOp struct{ sigma float64 }

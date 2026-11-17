@@ -585,3 +585,67 @@ func absDiff(a, b uint8) int {
 	}
 	return int(b - a)
 }
+
+// TestSharpOptions: the options of Negate, Threshold, Modulate and
+// Grayscale that sharp 0.35 has: negate with alpha and threshold per
+// channel are its results to the byte (255 - v, and 255 where v is at
+// least the level); grayscale linear its greyscale to the byte; modulate
+// with lightness within a level.
+func TestSharpOptions(t *testing.T) {
+	rgb, rgba := sourcePNG(t, "pillow/source.png"), sourcePNG(t, "pillow/median-rgba-source.png")
+	src := decodePNG(t, rgba)
+	out := decodePNG(t, must(FromBytes(rgba).Negate(NegateOptions{Alpha: true}).PNG().ToBytes()))
+	opaque := decodePNG(t, rgb)
+	per := decodePNG(t, must(FromBytes(rgb).Threshold(120, ThresholdOptions{PerChannel: true}).PNG().ToBytes()))
+	for y := 0; y < 103; y++ {
+		for x := 0; x < 150; x++ {
+			p, q := color.NRGBAModel.Convert(src.At(x, y)).(color.NRGBA), color.NRGBAModel.Convert(out.At(x, y)).(color.NRGBA)
+			if want := (color.NRGBA{255 - p.R, 255 - p.G, 255 - p.B, 255 - p.A}); q != want && want.A != 0 {
+				t.Fatalf("negate alpha at %d,%d: %v, want %v", x, y, q, want)
+			}
+			o, r := color.NRGBAModel.Convert(opaque.At(x, y)).(color.NRGBA), color.NRGBAModel.Convert(per.At(x, y)).(color.NRGBA)
+			th := func(v uint8) uint8 {
+				if v >= 120 {
+					return 255
+				}
+				return 0
+			}
+			if want := (color.NRGBA{th(o.R), th(o.G), th(o.B), 255}); r != want {
+				t.Fatalf("threshold per channel at %d,%d: %v, want %v", x, y, r, want)
+			}
+		}
+	}
+	// An image without transparency has none to negate.
+	if p := color.NRGBAModel.Convert(decodePNG(t, must(FromBytes(rgb).Negate(NegateOptions{Alpha: true}).PNG().ToBytes())).At(5, 5)).(color.NRGBA); p.A != 255 {
+		t.Errorf("negate alpha of an opaque image: %v", p)
+	}
+	for _, c := range []struct {
+		name string
+		m    *Image
+		max  int
+	}{
+		{"greyscale", FromBytes(rgb).Grayscale(GrayscaleOptions{Linear: true}), 0},
+		{"modulate-all", FromBytes(rgb).Modulate(0.8, 1.3, 30, ModulateOptions{Lightness: -10}), 1},
+	} {
+		got := decodePNG(t, must(c.m.PNG().ToBytes()))
+		if maxd, mean, _ := channelDiff(t, got, readPNG(t, "sharp/"+c.name+".png")); maxd > c.max {
+			t.Errorf("%s: differs from sharp by up to %d (mean %.3f), want at most %d", c.name, maxd, mean, c.max)
+		}
+	}
+	// By name, and the words of the steps.
+	var words [][]string
+	FromBytes(rgb).Do("negate", "alpha").Do("threshold", "90", "channels").Do("modulate", "1", "1", "0", "5").Do("grayscale", "linear").
+		Around(func(s Step, in pipeline.Source, run func(pipeline.Source) (pipeline.Source, error)) (pipeline.Source, error) {
+			words = append(words, append([]string{s.Name}, s.Args...))
+			return run(in)
+		}).PNG().ToBytes()
+	if fmt.Sprint(words) != "[[negate alpha] [threshold 90 channels] [modulate 1 1 0 5] [grayscale linear]]" {
+		t.Errorf("steps %v", words)
+	}
+	for _, m := range []*Image{FromBytes(rgb).Do("negate", "all"), FromBytes(rgb).Do("threshold", "9", "each"), FromBytes(rgb).Do("grayscale", "dark"),
+		FromBytes(rgb).Modulate(1, 1, 0, ModulateOptions{Lightness: math.NaN()})} {
+		if _, err := m.PNG().ToBytes(); err == nil {
+			t.Error("no error")
+		}
+	}
+}

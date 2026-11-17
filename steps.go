@@ -118,8 +118,14 @@ func describe(op operation) (string, []string) {
 	case compositeOp:
 		return "composite", nil
 	case grayscaleOp:
+		if o.linear {
+			return "grayscale", []string{"linear"}
+		}
 		return "grayscale", nil
 	case modulateOp:
+		if o.lightness != 0 {
+			return "modulate", []string{f(o.brightness), f(o.saturation), f(o.hue), f(o.lightness)}
+		}
 		return "modulate", []string{f(o.brightness), f(o.saturation), f(o.hue)}
 	case blurOp:
 		return "blur", []string{f(o.sigma)}
@@ -620,23 +626,30 @@ var builtInOps = map[string]OperationDef{
 			m.Extend(v[0], v[1], v[2], v[3], bg)
 			return nil
 		}},
-	"grayscale": {Name: "grayscale", Help: "Grayscale", builtIn: func(m *Image, a []string) error {
-		if err := wantArgs(a, 0, 0); err != nil {
+	"grayscale": {Name: "grayscale", Usage: "[linear]", Help: "Grayscale: Rec. 601 brightness (as Pillow), or linear: the luminance of linear light (as sharp)", builtIn: func(m *Image, a []string) error {
+		if err := wantArgs(a, 0, 1); err != nil {
 			return err
 		}
-		m.Grayscale()
+		if len(a) == 1 && a[0] != "linear" {
+			return errors.New("the word after grayscale is linear")
+		}
+		m.Grayscale(GrayscaleOptions{Linear: len(a) == 1})
 		return nil
 	}},
-	"modulate": {Name: "modulate", Usage: "BRIGHTNESS,SATURATION,HUE", Help: "Modulate: brightness and saturation factors, hue in degrees",
+	"modulate": {Name: "modulate", Usage: "BRIGHTNESS,SATURATION,HUE[,LIGHTNESS]", Help: "Modulate: brightness and saturation factors, hue in degrees, lightness added (L*, 0 to 100)",
 		builtIn: func(m *Image, a []string) error {
-			if err := wantArgs(a, 3, 3); err != nil {
+			if err := wantArgs(a, 3, 4); err != nil {
 				return err
 			}
 			v, err := argFloats(a)
 			if err != nil {
 				return err
 			}
-			m.Modulate(v[0], v[1], v[2])
+			var o ModulateOptions
+			if len(v) == 4 {
+				o.Lightness = v[3]
+			}
+			m.Modulate(v[0], v[1], v[2], o)
 			return nil
 		}},
 	"blur": {Name: "blur", Usage: "SIGMA", Help: "Blur: Gaussian, sigma in pixels",

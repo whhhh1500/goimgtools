@@ -50,12 +50,12 @@ err := goimgtools.Open("in.jpg").
 | `Trim(threshold, TrimOptions{Background, LineArt, Margin})` | 去除四周与左上角像素（或 `Background`）同色的边（红、绿、蓝、透明任一通道之差超过 `threshold` 才视为不同；sharp 的默认值 10 可消除 JPEG 噪点）。与 sharp 的 `trim`（libvips 的 `find_trim`）一样，先对图像做 3×3 中值滤波再找边，使边上的灰尘斑点与 JPEG 瑕疵不妨碍裁剪（保留的像素不受滤波影响）；`LineArt` 直接比较原像素，适用于由单像素细线构成的线稿（中值滤波会把细线滤掉）。`Margin` 在找到的范围外保留相应像素。像素相同时裁剪范围与 sharp 完全一致 |
 | `Extend(top, right, bottom, left, background)` | 四周扩边，宽度按 CSS 的上、右、下、左顺序给出 |
 | `ExtendWith(top, right, bottom, left, how)` | 用图像本身扩边：`ExtendCopy` 重复边缘像素，`ExtendRepeat` 平铺重复图像，`ExtendMirror` 镜像（边缘像素出现两次），边框比图像宽时继续重复或镜像。与 sharp 带 `extendWith` 的 `extend` 逐像素一致。顶部或底部边框需要重复或镜像时，图像存入工作存储 |
-| `Grayscale()` | 灰度化：Rec. 601 亮度四舍五入至最近的灰阶，与 Pillow 的 `convert("L")` 逐字节一致；JPEG 直接采用文件中存储的亮度。不透明图像输出为单通道灰度文件 |
-| `Modulate(brightness, saturation, hue)` | 在 LCh 色彩空间中将亮度、饱和度乘以系数，并将色相旋转指定度数（与 sharp 的做法相同），每个像素与 sharp 的结果相差不超过 1：`Modulate(1.2, 0.8, 0)` 使亮度提高 20%、色彩略淡 |
-| `Negate()` | 反色：每个颜色取其相反值（255 − 色阶），透明度不变。与 sharp 的 `negate({alpha: false})` 逐字节一致 |
+| `Grayscale(GrayscaleOptions{Linear})` | 灰度化：Rec. 601 亮度四舍五入至最近的灰阶，与 Pillow 的 `convert("L")` 逐字节一致；JPEG 直接采用文件中存储的亮度。`Linear` 改用线性光的亮度（Rec. 709 权重），与 sharp 的 `greyscale` 逐字节一致：红色与蓝色更暗、绿色更亮。不透明图像输出为单通道灰度文件 |
+| `Modulate(brightness, saturation, hue, ModulateOptions{Lightness})` | 在 LCh 色彩空间中将亮度、饱和度乘以系数，并将色相旋转指定度数（与 sharp 的做法相同）；`Lightness` 随后加到明度上（L\*，0–100），即 sharp 的 `lightness`。每个像素与 sharp 的结果相差不超过 1：`Modulate(1.2, 0.8, 0)` 使亮度提高 20%、色彩略淡 |
+| `Negate(NegateOptions{Alpha})` | 反色：每个颜色取其相反值（255 − 色阶），透明度不变；指定 `Alpha` 时透明度也取反。与 sharp 的 `negate({alpha: false})` 及 `negate()` 逐字节一致 |
 | `Linear(a, b)` | 每个红、绿、蓝色阶 v 变为 a·v + b，舍去小数并限制在 0–255，与 sharp 的 `linear` 逐字节一致：`Linear(1.2, -25)` 提高对比度 |
 | `Gamma(g)` | 每个色阶 v 变为 255·(v/255)^(1/g)，与 ImageMagick 的 `-gamma` 相同：大于 1 提亮中间调，小于 1 压暗；黑白不变 |
-| `Threshold(level)` | 黑白二值：灰度（按线性光计算，与 sharp 相同）不小于 `level` 的像素变白，其余变黑。不含透明的图像与 sharp 的 `threshold` 逐字节一致，并输出为单通道文件 |
+| `Threshold(level, ThresholdOptions{PerChannel})` | 黑白二值：灰度（按线性光计算，与 sharp 相同）不小于 `level` 的像素变白，其余变黑。不含透明的图像与 sharp 的 `threshold` 逐字节一致，并输出为单通道文件。`PerChannel` 让红、绿、蓝各自取 0 或 255（即 sharp 的 `threshold(level, {greyscale: false})`，逐字节一致） |
 | `Tint(color)` | 着色：按每个像素的亮度赋予该颜色，越接近黑白越淡（sharp 的 `tint`，与其相差不超过 1）：`Tint(color.RGBA{112, 66, 20, 255})` 为褐色调 |
 | `Normalize(NormalizeOptions{Lower, Upper})` | 拉伸明度（L*a*b* 中的 L*），使最暗的 `Lower`% 变黑、最亮的 `100-Upper`% 变白（默认 1 与 99），保持色相与饱和度；即 sharp 的 `normalise`，相差不超过 1（百分位与其完全相同）。需先读完整幅图像并保存在工作区 |
 | `CLAHE(CLAHEOptions{Width, Height, MaxSlope})` | 局部对比度增强（限制对比度的自适应直方图均衡），提亮暗部、压低亮部以显出细节：每个色阶变为其在像素周围 `Width` × `Height` 窗口中的排位，窗口中每个色阶最多计 `MaxSlope` 个像素（默认 3）。不含透明的图像与 sharp 的 `clahe` 逐字节一致；24 MP、64×64 窗口单核 18s，4 核 7s（sharp：7.6s、8.7s） |

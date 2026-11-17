@@ -67,7 +67,8 @@ Operations run in a fixed order: rotate → flip → trim → crop → resize �
 | `-extend T,R,B,L` | Add borders on all four sides (in pixels) in the `-background` colour |
 | `-extend-with copy\|repeat\|mirror` | Make the `-extend` borders of the image itself: its edge pixels repeated, the image repeated, or the image mirrored |
 | `-grayscale` | Convert to grayscale |
-| `-modulate B,S,H` | Brightness factor, saturation factor and hue in degrees, e.g. `1.2,0.8,0` |
+| `-grayscale-linear` | Convert to grayscale by the luminance of linear light, as sharp's `greyscale` |
+| `-modulate B,S,H[,L]` | Brightness factor, saturation factor, hue in degrees and lightness added (L\*, 0 to 100), e.g. `1.2,0.8,0` |
 | `-blur sigma` | Gaussian blur |
 | `-sharpen mild\|SIGMA[,AMOUNT[,THRESHOLD]]` | `mild` applies mild sharpening; otherwise an unsharp mask (`AMOUNT` defaults to 1.5, `THRESHOLD` to 0) |
 | `-flatten color` | Flatten onto a background colour |

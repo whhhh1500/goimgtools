@@ -28,6 +28,42 @@ func Levels(src pipeline.Source, lut *[256]uint8) pipeline.Source {
 	})
 }
 
+// GrayscaleLinear turns src into shades of grey as libvips' B_W does
+// (sharp's greyscale), to the byte: see grey. An opaque source gives
+// *image.Gray strips; transparency is kept.
+func GrayscaleLinear(src pipeline.Source) pipeline.Source {
+	t := labTables()
+	if !pipeline.IsOpaque(src) {
+		return pipeline.Map(src, func(strip *image.NRGBA) error {
+			for i := 0; i+3 < len(strip.Pix); i += 4 {
+				p := strip.Pix[i : i+4 : i+4]
+				v := t.grey(p[0], p[1], p[2])
+				p[0], p[1], p[2] = v, v, v
+			}
+			return nil
+		})
+	}
+	if src.ColorModel() == color.GrayModel {
+		return src // the grey of a grey is itself
+	}
+	return &grayOf{src: pipeline.Map(src, func(*image.NRGBA) error { return nil }), env: pipeline.EnvOf(src),
+		f: t.grey}
+}
+
+// NegateAll turns every channel of src into its opposite, alpha too (an
+// opaque source has no transparency to turn and keeps it).
+func NegateAll(src pipeline.Source) pipeline.Source {
+	if pipeline.IsOpaque(src) {
+		return Levels(src, NegateLUT())
+	}
+	return pipeline.Map(src, func(strip *image.NRGBA) error {
+		for i, v := range strip.Pix {
+			strip.Pix[i] = 255 - v
+		}
+		return nil
+	})
+}
+
 // NegateLUT turns every level into its opposite.
 func NegateLUT() *[256]uint8 {
 	var t [256]uint8

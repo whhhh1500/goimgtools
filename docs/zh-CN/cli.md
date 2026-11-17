@@ -67,7 +67,8 @@ goimgtools -op median:3 -op normalize -op "tint:#704214" scan.jpg out.jpg
 | `-extend T,R,B,L` | 四周扩边（单位为像素），颜色由 `-background` 指定 |
 | `-extend-with copy\|repeat\|mirror` | `-extend` 的边框改用图像本身：重复边缘像素、重复图像或镜像图像 |
 | `-grayscale` | 转为灰度 |
-| `-modulate B,S,H` | 亮度系数、饱和度系数、色相度数，例如 `1.2,0.8,0` |
+| `-grayscale-linear` | 按线性光的亮度转为灰度，与 sharp 的 `greyscale` 相同 |
+| `-modulate B,S,H[,L]` | 亮度系数、饱和度系数、色相度数与明度增量（L\*，0–100），例如 `1.2,0.8,0` |
 | `-blur sigma` | 高斯模糊 |
 | `-sharpen mild\|SIGMA[,AMOUNT[,THRESHOLD]]` | `mild` 为轻度锐化；否则为反锐化掩模（`AMOUNT` 默认 1.5，`THRESHOLD` 默认 0） |
 | `-flatten 颜色` | 以指定颜色铺底 |
