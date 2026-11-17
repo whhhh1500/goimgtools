@@ -19,3 +19,5 @@ func fdctQuantAVX2(b *block, half *[blockSize]int32, recip *[blockSize]uint32, o
 func rgbaBlockAVX2(pix *byte, stride int, y, cb, cr *block) { panic("unreachable") }
 
 func scaleAVX2(dst *block, src *[4]block) { panic("unreachable") }
+
+func idct4AVX2(b *block, dst *byte, stride int) { panic("unreachable") }

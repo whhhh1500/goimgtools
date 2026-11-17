@@ -298,6 +298,31 @@ type vipsAxis struct {
 	off      float64
 	n, pad   int
 	masks    []int32
+	// pairs are the masks for the AVX2 reduce: the weights two to a
+	// uint32 (16 bits each, the second in the high half; an odd last one
+	// with 0), np to a mask; nil when a weight does not fit 16 bits.
+	pairs []uint32
+	np    int
+}
+
+// packPairs sets a.pairs from a.masks.
+func (a *vipsAxis) packPairs() {
+	a.np = (a.n + 1) / 2
+	pairs := make([]uint32, 0, len(a.masks)/a.n*a.np)
+	for m := 0; m+a.n <= len(a.masks); m += a.n {
+		k := a.masks[m : m+a.n]
+		for j := 0; j < a.n; j += 2 {
+			w0, w1 := k[j], int32(0)
+			if j+1 < a.n {
+				w1 = k[j+1]
+			}
+			if w0 != int32(int16(w0)) || w1 != int32(int16(w1)) {
+				return
+			}
+			pairs = append(pairs, uint32(uint16(w0))|uint32(uint16(w1))<<16)
+		}
+	}
+	a.pairs = pairs
 }
 
 func planAxis(in int, shrink float64, k VipsKernel) (*vipsAxis, error) {
@@ -328,6 +353,9 @@ func planAxis(in int, shrink float64, k VipsKernel) (*vipsAxis, error) {
 	a.off = float64((1+extra)/2.0) - 1
 	if a.masks, err = k.masks(a.n, a.residual); err != nil {
 		return nil, err
+	}
+	if useAVX2 {
+		a.packPairs()
 	}
 	return a, nil
 }
@@ -476,8 +504,13 @@ type vipsResize struct {
 	parts []vipsScratch
 
 	hcol, hmask []int32 // reduceh: each output's first column (in the padded row) and mask
-	xi, xw      []int32 // the enlargement: each output's column and weight (or mask)
-	xok         []bool  // and whether it is within the image
+	// hpair is each output's first pair of weights in across.pairs, and
+	// the outputs from hxa to hxb-1 read no column outside the row: the
+	// AVX2 reduce makes them.
+	hpair    []int32
+	hxa, hxb int
+	xi, xw   []int32 // the enlargement: each output's column and weight (or mask)
+	xok      []bool  // and whether it is within the image
 
 	out  image.NRGBA
 	gout image.Gray // for gray
@@ -487,10 +520,11 @@ type vipsResize struct {
 }
 
 type vipsScratch struct {
-	acc []int32
-	row []uint8 // a row reduced down the columns
-	box []uint8 // and in boxes across
-	out []uint8 // an output row, for gray
+	acc  []int32
+	rows []*uint8 // the rows of a reduce down, for the AVX2 one
+	row  []uint8  // a row reduced down the columns
+	box  []uint8  // and in boxes across
+	out  []uint8  // an output row, for gray
 }
 
 func (s *vipsResize) Env() *pipeline.Env      { return s.env }
@@ -587,6 +621,9 @@ func (s *vipsResize) setup() error {
 		sc := &s.parts[i]
 		sc.acc = make([]int32, 4*p.w0)
 		sc.row = make([]uint8, 4*p.w0)
+		if v := p.down; v != nil && v.pairs != nil {
+			sc.rows = make([]*uint8, 2*v.np)
+		}
 		if h := p.across; h != nil && h.box > 1 {
 			sc.box = make([]uint8, 4*h.mid)
 		}
@@ -599,6 +636,19 @@ func (s *vipsResize) setup() error {
 			s.hcol[x] = int32(int(v) - h.pad)
 			s.hmask[x] = int32((sv&127+1)>>1) * int32(h.n)
 			v += h.residual
+		}
+		if h.pairs != nil {
+			s.hpair = make([]int32, p.w1)
+			for x := range p.w1 {
+				s.hpair[x] = s.hmask[x] / int32(h.n) * int32(h.np)
+			}
+			for s.hxa < p.w1 && s.hcol[s.hxa] < 0 {
+				s.hxa++
+			}
+			s.hxb = s.hxa
+			for s.hxb < p.w1 && int(s.hcol[s.hxb])+2*h.np <= h.mid {
+				s.hxb++
+			}
 		}
 	}
 	if p.up == upAffine {
@@ -711,30 +761,42 @@ func (s *vipsResize) reduceRow(j int, dst []uint8, sc *vipsScratch) {
 			r := min(max(py-v.pad+i, 0), v.mid-1)
 			return s.shrunk[r%len(s.shrunk)][:len(acc)]
 		}
+		from := 0
+		if v.pairs != nil && len(acc) >= 16 {
+			rows := sc.rows
+			for i := range k {
+				rows[i] = &at(i)[0]
+			}
+			if len(k)%2 == 1 {
+				rows[len(k)] = rows[len(k)-1] // with a weight of 0
+			}
+			from = len(acc) / 16 * 16
+			reduceVAVX2(&sc.row[0], &rows[0], &v.pairs[t*v.np], v.np, from/16)
+		}
 		// Four taps a pass over the row (the sums are whole numbers: in
 		// any order the same).
-		for x := range acc {
-			acc[x] = 2048
+		for x := range acc[from:] {
+			acc[from+x] = 2048
 		}
 		i := 0
 		for ; i+3 < len(k); i += 4 {
 			w0, w1, w2, w3 := k[i], k[i+1], k[i+2], k[i+3]
 			r0, r1, r2, r3 := at(i), at(i+1), at(i+2), at(i+3)
 			r0, r1, r2, r3 = r0[:len(acc)], r1[:len(acc)], r2[:len(acc)], r3[:len(acc)]
-			for x := range acc {
+			for x := from; x < len(acc); x++ {
 				acc[x] += w0*int32(r0[x]) + w1*int32(r1[x]) + w2*int32(r2[x]) + w3*int32(r3[x])
 			}
 		}
 		for ; i < len(k); i++ {
 			w, r0 := k[i], at(i)
 			r0 = r0[:len(acc)]
-			for x := range acc {
+			for x := from; x < len(acc); x++ {
 				acc[x] += w * int32(r0[x])
 			}
 		}
 		row = sc.row
-		for x, a := range acc {
-			row[x] = uint8(min(max(a>>12, 0), 255))
+		for x := from; x < len(acc); x++ {
+			row[x] = uint8(min(max(acc[x]>>12, 0), 255))
 		}
 	}
 	h := p.across
@@ -767,7 +829,18 @@ func (s *vipsResize) reduceRow(j int, dst []uint8, sc *vipsScratch) {
 		return
 	}
 	last := h.mid - 1
-	for x := range p.w1 {
+	xa, xb := 0, 0 // the outputs the AVX2 reduce made
+	if h.pairs != nil && s.hxb > s.hxa {
+		_ = row[4*h.mid-1]
+		_ = dst[4*s.hxb-1]
+		reduceHAVX2(&dst[4*s.hxa], &row[0], &s.hcol[s.hxa], &s.hpair[s.hxa], &h.pairs[0], h.np, s.hxb-s.hxa)
+		xa, xb = s.hxa, s.hxb
+	}
+	for x := 0; x < p.w1; x++ {
+		if x == xa && xb > xa {
+			x = xb - 1
+			continue
+		}
 		c0 := int(s.hcol[x])
 		k := h.masks[s.hmask[x]:][:h.n]
 		a0, a1, a2, a3 := int32(2048), int32(2048), int32(2048), int32(2048)

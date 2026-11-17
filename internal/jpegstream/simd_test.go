@@ -288,3 +288,50 @@ func TestRGBAToYCbCrAVX2(t *testing.T) {
 		}
 	}
 }
+
+// TestIdct4AVX2: the reduced inverse DCT (to 4x4) with AVX2 gives what
+// idct4Go gives, for the blocks of TestIslowAVX2's kinds.
+func TestIdct4AVX2(t *testing.T) {
+	if !useAVX2 {
+		t.Skip("no AVX2")
+	}
+	rng := rand.New(rand.NewPCG(15, 16))
+	for i := range 200000 {
+		var b block
+		switch i % 5 {
+		case 0:
+			b[0] = rng.Int32N(16384) - 8192
+		case 1:
+			for range 1 + rng.IntN(6) {
+				b[rng.IntN(64)] = rng.Int32N(2048) - 1024
+			}
+		case 2:
+			for j := range b {
+				b[j] = rng.Int32N(8192) - 4096
+			}
+		case 3:
+			k := rng.IntN(8)
+			for j := range 8 {
+				b[8*j+k] = rng.Int32N(4096) - 2048
+			}
+		case 4:
+			for j := range b {
+				if rng.IntN(3) == 0 {
+					b[j] = int32(rng.Uint32())
+				}
+			}
+		}
+		for _, stride := range []int{4, 11} {
+			want, got := make([]byte, 4*stride), make([]byte, 4*stride)
+			for j := range want {
+				want[j], got[j] = byte(j), byte(j)
+			}
+			wb, gb := b, b
+			idct4Go(&wb, want, stride)
+			idct4AVX2(&gb, &got[0], stride)
+			if !bytes.Equal(got, want) {
+				t.Fatalf("block %d %v, stride %d:\n got %v\nwant %v", i, b, stride, got, want)
+			}
+		}
+	}
+}

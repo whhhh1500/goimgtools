@@ -48,3 +48,9 @@ func rgbaBlockAVX2(pix *byte, stride int, y, cb, cr *block)
 //
 //go:noescape
 func scaleAVX2(dst *block, src *[4]block)
+
+// idct4AVX2 is idct4Store with AVX2; dst must hold 4 rows of 4 bytes,
+// stride apart.
+//
+//go:noescape
+func idct4AVX2(b *block, dst *byte, stride int)

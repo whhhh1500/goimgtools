@@ -36,7 +36,7 @@ JPEG library as it is kept in libjpeg-turbo:
 | `internal/jpegstream/islow.go` | `jidctint.c`: `jpeg_idct_islow` |
 | `internal/jpegstream/idctred.go` | `jidctred.c`: `jpeg_idct_4x4`, `jpeg_idct_2x2`, `jpeg_idct_1x1` |
 | `internal/jpegstream/ycc.go` | `jdsample.c` (fancy upsampling), `jdcolor.c` (YCbCr to RGB) |
-| `internal/jpegstream/idct_amd64.s`, `ycc_amd64.s`, `fdct_amd64.s`, `rgb_amd64.s` (AVX2) | the same routines, as `islow.go`, `ycc.go`, `fdct.go` and `writer.go` compute them, after the approach of libjpeg-turbo's SIMD code (`simd/x86_64`) |
+| `internal/jpegstream/idct_amd64.s`, `idct4_amd64.s`, `ycc_amd64.s`, `fdct_amd64.s`, `rgb_amd64.s` (AVX2) | the same routines, as `islow.go`, `idctred.go`, `ycc.go`, `fdct.go` and `writer.go` compute them, after the approach of libjpeg-turbo's SIMD code (`simd/x86_64`) |
 | `internal/jpegstream/fdct.go` | `jfdctint.c`: `jpeg_fdct_islow` |
 | `internal/jpegstream/writer.go`: `ycc`, `scale`, `scaleH`, `padRows`, the dummy blocks past the edges, the markers | `jccolor.c`: `rgb_ycc_convert`; `jcsample.c`: `h2v2_downsample`, `h2v1_downsample`; `jcprepct.c`: `expand_bottom_edge`; `jccoefct.c`: `compress_data`; `jcmarker.c` |
 | `internal/jpegstream/writer_opt.go`: `optimalSpec` | `jchuff.c`: `jpeg_gen_optimal_table` |
