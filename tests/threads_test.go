@@ -81,6 +81,8 @@ func TestSameWithHelpers(t *testing.T) {
 			return m.Recomb([][]float64{{0.4, 0.6, 0}, {0, 1, 0}, {0.2, 0.2, 0.6}}).Unflatten().ExtractChannel(ChannelAlpha)
 		},
 		"rotate 30":        func(m *Image) *Image { return m.RotateBy(30, color.White) },
+		"affine":           func(m *Image) *Image { return m.Affine(0.9, 0.35, -0.2, 1.1, AffineOptions{OutputX: 3.5}) },
+		"affine clear":     func(m *Image) *Image { return m.Affine(1.2, 0, 0, 0.8, AffineOptions{Background: color.Transparent}) },
 		"rotate -77.7":     func(m *Image) *Image { return m.RotateBy(-77.7, color.Transparent) },
 		"blur, rotate, sh": func(m *Image) *Image { return m.Blur(1.5).RotateBy(12, nil).Sharpen() },
 	}

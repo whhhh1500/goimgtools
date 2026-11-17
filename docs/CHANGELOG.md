@@ -16,7 +16,7 @@ Nothing exported by 0.1.0 was removed or changed in its signature (checked with 
 
 ### Added
 
-- Image adjustments: `Grayscale`, `Modulate`, `Blur`, `Sharpen` (mild sharpening or unsharp masking), `Extend`, `Trim` and `RotateBy` (arbitrary angle).
+- Image adjustments: `Grayscale`, `Modulate`, `Blur`, `Sharpen` (mild sharpening or unsharp masking), `Extend`, `Trim` and `RotateBy` (arbitrary angle, sharp's `rotate` to the byte).
 - `inspect.Stats`, `inspect.Hash` (perceptual hash) and `inspect.ReadExif` / `ParseExif`; the `stats`, `hash` and `exif` commands. `Stats` also reports what sharp's `stats()` does, to the last digits: `Channels` (type `ChannelStats`), `Entropy` and `Sharpness`.
 - Operations by name: `RegisterOperation`, `UnregisterOperation`, `LookupOperation`, `Operations` and `Image.Do`. Hooks around every step: `Image.Around`. `ParseColor`.
 - Package `cli`: the command line as a library (`cli.Main`, `cli.Run`), allowing programs to add their own operations; the `-op NAME[:ARGS]` flag and the `ops` command.
@@ -35,6 +35,7 @@ Nothing exported by 0.1.0 was removed or changed in its signature (checked with 
 - Lossy WebP: segments with individual quantizers (spatial noise shaping, ported from libwebp).
 - `pipeline.Env.SetHelpers`, `Helpers`, `Parallel` and `Go`, allowing stages to distribute their work across cores.
 - TIFF output: `TIFFLZW` compression (as libtiff writes it) and `TIFFOptions.Predictor` (horizontal differencing, sharp's default): a 24-megapixel photograph as LZW 82 → 52MB, as Deflate 67 → 45MB; `-tiff-compression lzw`, `-tiff-predictor`.
+- `Affine(a, b, c, d, AffineOptions{...})`: sharp's `affine` to the byte (bilinear, with and without transparency); by name `affine A,B,C,D[,BACKGROUND[,IDX,IDY,ODX,ODY]]`.
 - `EnsureAlpha` (sharp's `ensureAlpha`, to the byte); by name `ensure-alpha [ALPHA]`.
 - Resize kernels `KernelMKS2013` and `KernelMKS2021` (Magic Kernel Sharp, as sharp's `mks2013` and `mks2021`); `-kernel mks2013|mks2021`.
 - `Rank` (Pillow's `RankFilter`, `MinFilter`, `MaxFilter`), `Dilate` and `Erode` (sharp's `dilate` and `erode`), all to the byte; by name `rank SIZE,RANK`, `dilate [WIDTH]`, `erode [WIDTH]`. Dilate and erode take a time that hardly grows with the width (libvips' grows with its square).

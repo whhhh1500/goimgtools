@@ -185,8 +185,10 @@ func TestSmallestThroughOperations(t *testing.T) {
 		}, same},
 		{"extend, trim", func(m *Image, w, h int) *Image { return m.Extend(1, 2, 3, 4, color.RGBA{1, 2, 3, 255}).Trim(0) }, nil},
 		{"turn 33 degrees", func(m *Image, w, h int) *Image { return m.RotateBy(33, nil) }, func(w, h int) (int, int) {
+			// The box around the turned image, each side rounded (half away
+			// from zero), as libvips.
 			s, c := math.Sincos(33 * math.Pi / 180)
-			return int(math.Ceil(float64(w)*c + float64(h)*s - 1e-9)), int(math.Ceil(float64(w)*s + float64(h)*c - 1e-9))
+			return int(float64(w)*c + float64(h)*s + 0.5), int(float64(w)*s + float64(h)*c + 0.5)
 		}},
 	}
 	kernels := []Kernel{KernelCubic, KernelNearest, KernelLinear, KernelMitchell, KernelLanczos2, KernelLanczos3}

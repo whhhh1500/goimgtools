@@ -1262,3 +1262,50 @@ func TestRegisterWhileRunning(t *testing.T) {
 		t.Errorf("%d formats after registering seven names many times", n)
 	}
 }
+
+// TestAffine: Affine is sharp's affine to the byte: a turn (crossing
+// libvips' tiles of 128 columns), an enlargement (whole rows), and offsets
+// with a background, with and without transparency; the identity is the
+// image itself, and by name it takes the same words.
+func TestAffine(t *testing.T) {
+	rgb, rgba := sourcePNG(t, "pillow/source.png"), sourcePNG(t, "pillow/median-rgba-source.png")
+	// The sine and cosine of 30 degrees as JavaScript gives them, with
+	// which the references were made (math.Sincos gives a sine of 0.5,
+	// which moves the box around the turned image by a pixel).
+	sin, cos := 0.49999999999999994, 0.8660254037844387
+	offs := AffineOptions{Background: color.NRGBA{0x20, 0x50, 0xc0, 255}, InputX: 3, InputY: -2, OutputX: 10.5, OutputY: -5.25}
+	for _, c := range []struct {
+		name string
+		m    *Image
+	}{
+		{"affine-rot30", FromBytes(rgb).Affine(cos, -sin, sin, cos)},
+		{"affine-scale", FromBytes(rgb).Affine(1.5, 0, 0, 1.37)},
+		{"affine-offs", FromBytes(rgb).Affine(0.9, 0.2, -0.2, 1.1, offs)},
+		{"affine-rgba-rot30", FromBytes(rgba).Affine(cos, -sin, sin, cos)},
+		{"affine-rgba-offs", FromBytes(rgba).Affine(0.9, 0.2, -0.2, 1.1, offs)},
+	} {
+		for _, threads := range []int{1, 4} {
+			got := decodePNG(t, must(c.m.Clone().Threads(threads).PNG().ToBytes()))
+			if maxd, mean, _ := channelDiff(t, got, readPNG(t, "sharp/"+c.name+".png")); maxd != 0 {
+				t.Errorf("%s, %d threads: differs from sharp by up to %d (mean %.3f)", c.name, threads, maxd, mean)
+			}
+		}
+	}
+	if a, b := must(FromBytes(rgba).Affine(1, 0, 0, 1).PNG().ToBytes()), must(FromBytes(rgba).PNG().ToBytes()); !bytes.Equal(a, b) {
+		t.Error("the identity changed the image")
+	}
+	if w, h, err := FromBytes(rgb).Affine(1, 0.3, 0.1, 1).OutputSize(); err != nil || w != 181 || h != 118 {
+		t.Errorf("size %dx%d (%v), want 181x118 as sharp", w, h, err)
+	}
+	a := must(FromBytes(rgb).Affine(0.9, 0.2, -0.2, 1.1, offs).PNG().ToBytes())
+	b := must(FromBytes(rgb).Do("affine", "0.9", "0.2", "-0.2", "1.1", "#2050c0", "3", "-2", "10.5", "-5.25").PNG().ToBytes())
+	if !bytes.Equal(a, b) {
+		t.Error("by name: another image")
+	}
+	for _, m := range []*Image{FromBytes(rgb).Affine(1, 2, 2, 4), FromBytes(rgb).Affine(math.NaN(), 0, 0, 1), FromBytes(rgb).Affine(0.001, 0, 0, 1),
+		FromBytes(rgb).Do("affine", "1", "0", "0"), FromBytes(rgb).Do("affine", "1", "0", "0", "1", "pink")} {
+		if _, err := m.PNG().ToBytes(); err == nil {
+			t.Error("no error")
+		}
+	}
+}

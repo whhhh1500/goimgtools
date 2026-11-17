@@ -251,10 +251,13 @@ func (m *Image) Trim(threshold float64, opts ...TrimOptions) *Image {
 }
 
 // RotateBy turns the image clockwise by any number of degrees (negative:
-// anticlockwise). The canvas grows to hold the whole turned image; the
-// corners are the background colour, nil for black, color.Transparent for
-// none. The pixels are interpolated bilinearly. A multiple of 90 degrees
-// is a plain quarter or half turn instead, exact, as Rotate does it.
+// anticlockwise), as sharp's rotate, to the byte, with and without
+// transparency: an Affine by the matrix (cos, -sin; sin, cos), its sine
+// and cosine rounded as libvips' are. The canvas is the box around the
+// turned image (each side rounded to the nearest pixel); the corners are
+// the background colour, nil for black, color.Transparent for none. The
+// pixels are interpolated bilinearly. A multiple of 90 degrees is a plain
+// quarter or half turn instead, exact, as Rotate does it (and sharp).
 //
 // The whole image is kept in working storage first (a temporary file beyond
 // its share of the limit), as for a quarter turn.
@@ -385,11 +388,72 @@ func (o trimOp) words() []string {
 	return w
 }
 
+// AffineOptions are the optional settings of Affine.
+type AffineOptions struct {
+	// Background fills what the moved image leaves of its canvas; nil is
+	// black.
+	Background color.Color
+	// InputX and InputY move the image before the matrix is applied,
+	// OutputX and OutputY after it, in pixels (sharp's idx, idy, odx and
+	// ody); the canvas stays the same.
+	InputX, InputY, OutputX, OutputY float64
+}
+
+// Affine moves the pixels of the image by the matrix (a b; c d): the point
+// (x, y) goes to (a·x + b·y, c·x + d·y). It is sharp's affine with its
+// default bilinear interpolation, to the byte, with and without
+// transparency. The canvas is the box around the moved image: Affine(1, 0,
+// 0, 1) leaves the image as it is, Affine(-1, 0, 0, 1) mirrors it, (cos θ,
+// -sin θ, sin θ, cos θ) turns it, Affine(1, 0.3, 0, 1) slants it and
+// Affine(1.5, 0, 0, 1.5) enlarges it (Resize does that better). The matrix
+// must not be singular. As sharp, the matrix takes the corners of pixels,
+// not their centres.
+//
+// The whole image is kept in working storage first (a temporary file
+// beyond its share of the limit), as for RotateBy.
+func (m *Image) Affine(a, b, c, d float64, opts ...AffineOptions) *Image {
+	m.atMostOne("Affine", len(opts))
+	o := first(opts)
+	for _, v := range []float64{a, b, c, d, o.InputX, o.InputY, o.OutputX, o.OutputY} {
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return m.fail(errors.New("goimgtools: Affine takes finite numbers"))
+		}
+	}
+	if o.Background == nil {
+		o.Background = color.Black
+	}
+	return m.add(affineOp{[4]float64{a, b, c, d}, o})
+}
+
+type affineOp struct {
+	m [4]float64
+	o AffineOptions
+}
+
+func (o affineOp) apply(src pipeline.Source, _ *run) (pipeline.Source, error) {
+	a, b, c, d := o.m[0], o.m[1], o.m[2], o.m[3]
+	p := o.o
+	if a == 1 && b == 0 && c == 0 && d == 1 && p.InputX == 0 && p.InputY == 0 && p.OutputX == 0 && p.OutputY == 0 {
+		return src, nil // libvips copies the image
+	}
+	return ops.Affine(src, a, b, c, d, p.InputX, p.InputY, p.OutputX, p.OutputY, p.Background)
+}
+
+func (o affineOp) words() []string {
+	f := func(v float64) string { return strconv.FormatFloat(v, 'g', -1, 64) }
+	w := []string{f(o.m[0]), f(o.m[1]), f(o.m[2]), f(o.m[3]), colorWord(o.o.Background)}
+	if p := o.o; p.InputX != 0 || p.InputY != 0 || p.OutputX != 0 || p.OutputY != 0 {
+		w = append(w, f(p.InputX), f(p.InputY), f(p.OutputX), f(p.OutputY))
+	}
+	return w
+}
+
 type rotateAnyOp struct {
 	deg        float64
 	background color.Color
 }
 
 func (o rotateAnyOp) apply(src pipeline.Source, _ *run) (pipeline.Source, error) {
-	return ops.RotateAny(src, o.deg, o.background)
+	sin, cos := ops.SinCosDegrees(o.deg)
+	return ops.Affine(src, cos, -sin, sin, cos, 0, 0, 0, 0, o.background)
 }

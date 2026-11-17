@@ -149,6 +149,8 @@ func describe(op operation) (string, []string) {
 		return "trim", o.words()
 	case rotateAnyOp:
 		return "rotate", []string{f(o.deg), colorWord(o.background)}
+	case affineOp:
+		return "affine", o.words()
 	case levelsOp:
 		return o.name, o.words()
 	case tintOp:
@@ -565,6 +567,27 @@ var builtInOps = map[string]OperationDef{
 				}
 			}
 			m.RotateBy(v[0], bg)
+			return nil
+		}},
+	"affine": {Name: "affine", Usage: "A,B,C,D[,BACKGROUND[,IDX,IDY,ODX,ODY]]", Help: "Affine: (x, y) moves to (A·x + B·y, C·x + D·y), as sharp's affine",
+		builtIn: func(m *Image, a []string) error {
+			if len(a) != 4 && len(a) != 5 && len(a) != 9 {
+				return errors.New("want A,B,C,D, then BACKGROUND, then IDX,IDY,ODX,ODY")
+			}
+			v, err := argFloats(append(append([]string{}, a[:4]...), a[min(5, len(a)):]...))
+			if err != nil {
+				return err
+			}
+			var o AffineOptions
+			if len(a) >= 5 {
+				if o.Background, err = ParseColor(a[4]); err != nil {
+					return err
+				}
+			}
+			if len(v) == 8 {
+				o.InputX, o.InputY, o.OutputX, o.OutputY = v[4], v[5], v[6], v[7]
+			}
+			m.Affine(v[0], v[1], v[2], v[3], o)
 			return nil
 		}},
 	"flip": {Name: "flip", Help: "Flip: upside down", builtIn: func(m *Image, a []string) error {

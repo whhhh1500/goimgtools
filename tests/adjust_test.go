@@ -631,63 +631,29 @@ func TestTrim(t *testing.T) {
 	}
 }
 
-// rotateRef is RotateBy computed directly: every output pixel is the
-// bilinear interpolation of the premultiplied source at the point the
-// output's centre turned back by the angle reaches, the background beyond
-// the source.
-func rotateRef(src image.Image, deg float64, bg color.Color) *image.RGBA {
-	b := src.Bounds()
-	w, h := float64(b.Dx()), float64(b.Dy())
-	sin, cos := math.Sincos(deg * math.Pi / 180)
-	ow := int(math.Ceil(w*math.Abs(cos) + h*math.Abs(sin) - 1e-9))
-	oh := int(math.Ceil(w*math.Abs(sin) + h*math.Abs(cos) - 1e-9))
-	out := image.NewRGBA(image.Rect(0, 0, ow, oh))
-	br, bgg, bb, ba := bg.RGBA()
-	back := [4]float64{float64(br >> 8), float64(bgg >> 8), float64(bb >> 8), float64(ba >> 8)}
-	px := func(x, y int) [4]float64 {
-		if x < 0 || y < 0 || x >= b.Dx() || y >= b.Dy() {
-			return back
-		}
-		c := color.RGBAModel.Convert(src.At(b.Min.X+x, b.Min.Y+y)).(color.RGBA)
-		return [4]float64{float64(c.R), float64(c.G), float64(c.B), float64(c.A)}
-	}
-	for oy := 0; oy < oh; oy++ {
-		for ox := 0; ox < ow; ox++ {
-			dx, dy := float64(ox)+0.5-float64(ow)/2, float64(oy)+0.5-float64(oh)/2
-			sx := dx*cos + dy*sin + w/2 - 0.5
-			sy := -dx*sin + dy*cos + h/2 - 0.5
-			x0, y0 := int(math.Floor(sx)), int(math.Floor(sy))
-			fx, fy := sx-float64(x0), sy-float64(y0)
-			var acc [4]float64
-			for k, wgt := range []float64{(1 - fx) * (1 - fy), fx * (1 - fy), (1 - fx) * fy, fx * fy} {
-				p := px(x0+k%2, y0+k/2)
-				for c := range acc {
-					acc[c] += wgt * p[c]
-				}
-			}
-			a := math.Min(255, math.Round(acc[3]))
-			out.SetRGBA(ox, oy, color.RGBA{uint8(math.Min(a, math.Round(acc[0]))), uint8(math.Min(a, math.Round(acc[1]))), uint8(math.Min(a, math.Round(acc[2]))), uint8(a)})
-		}
-	}
-	return out
-}
-
-// TestRotateBy: any angle, as computed directly; quarter turns exactly as
-// Rotate; turned there and back, the picture again.
+// TestRotateBy: any angle as sharp's rotate, to the byte (30 and 60
+// degrees, whose sines and cosines must be rounded as libvips' are for the
+// box to be sharp's); quarter turns exactly as Rotate; turned there and
+// back, the picture again.
 func TestRotateBy(t *testing.T) {
-	src := testutil.Images(73, 41)["nrgba"]
-	for _, deg := range []float64{30, -10, 135, 200.5, 359, 0.25} {
-		for _, bg := range []color.Color{color.Transparent, color.NRGBA{255, 0, 255, 255}} {
-			out, err := FromImage(src).RotateBy(deg, bg).PNG().ToBytes()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if d := premulDiff(t, decodePNG(t, out), rotateRef(src, deg, bg)); d > 1 {
-				t.Errorf("%v degrees on %v: differs from the direct computation by up to %d", deg, bg, d)
-			}
+	rgb, rgba := sourcePNG(t, "pillow/source.png"), sourcePNG(t, "pillow/median-rgba-source.png")
+	for _, c := range []struct {
+		name string
+		m    *Image
+	}{
+		{"rotate-30", FromBytes(rgb).RotateBy(30, nil)},
+		{"rotate-60", FromBytes(rgb).RotateBy(60, nil)},
+		{"rotate--17.5", FromBytes(rgb).RotateBy(-17.5, color.White)},
+		{"rotate-200", FromBytes(rgb).RotateBy(200, color.NRGBA{0x33, 0x66, 0x99, 255})},
+		{"rotate-rgba-45", FromBytes(rgba).RotateBy(45, color.Transparent)},
+	} {
+		got := decodePNG(t, must(c.m.PNG().ToBytes()))
+		if maxd, mean, _ := channelDiff(t, got, readPNG(t, "sharp/"+c.name+".png")); maxd != 0 {
+			t.Errorf("%s: differs from sharp by up to %d (mean %.3f)", c.name, maxd, mean)
 		}
 	}
 	// Quarter turns are Rotate's, to the byte.
+	src := testutil.Images(73, 41)["nrgba"]
 	in := pngBytes(t, src)
 	for _, c := range []struct {
 		deg float64
@@ -718,8 +684,8 @@ func TestRotateBy(t *testing.T) {
 		t.Errorf("turned there and back: %.1f levels off on average", mean)
 	}
 	// Size, an opaque result for an opaque background, the pixel limit.
-	if w, h, err := FromImage(photo).RotateBy(30, nil).OutputSize(); err != nil || w != 360 || h != 324 {
-		t.Errorf("OutputSize %dx%d, %v; want 360x324", w, h, err)
+	if w, h, err := FromImage(photo).RotateBy(30, nil).OutputSize(); err != nil || w != 360 || h != 323 {
+		t.Errorf("OutputSize %dx%d, %v; want 360x323", w, h, err)
 	}
 	opq, _ := FromImage(photo).RotateBy(30, color.White).PNG().ToBytes()
 	if info, _ := FromBytes(opq).Metadata(); info.HasAlpha {
