@@ -4,6 +4,7 @@ import (
 	"errors"
 	"image/color"
 	"math"
+	"strconv"
 
 	"github.com/whhhh1500/goimgtools/internal/ops"
 	"github.com/whhhh1500/goimgtools/pipeline"
@@ -142,21 +143,45 @@ func (m *Image) ExtendWith(top, right, bottom, left int, how Extension) *Image {
 	return m.add(extendOp{top: top, right: right, bottom: bottom, left: left, with: how, from: true})
 }
 
-// Trim cuts away the edges that are the colour of the top-left pixel: the
-// rows and columns at the edges in which no pixel differs from it by more
-// than threshold (0 to 255) in red, green, blue or alpha. 10, as sharp
-// uses, also catches the slight noise of a JPEG; 0 takes only exactly that
+// TrimOptions are the optional settings of Trim.
+type TrimOptions struct {
+	// Background is the colour of the edges to cut away; nil: that of the
+	// top-left pixel.
+	Background color.Color
+	// LineArt compares the pixels as they are. By default the image is
+	// first smoothed with a 3x3 median filter (only to find the edges; the
+	// pixels kept are not changed), so that noise, JPEG artefacts and
+	// specks of dust in the edges do not stop the trim, as sharp does; that
+	// filter also removes lines one pixel thin, which a drawing (line art)
+	// may be made of: LineArt keeps them.
+	LineArt bool
+	// Margin keeps this many pixels of the edges around what is found
+	// (within the image).
+	Margin int
+}
+
+// Trim cuts away the edges that are the colour of the top-left pixel (or
+// TrimOptions.Background), as sharp's trim (libvips' find_trim): the rows
+// and columns at the edges in which no pixel differs from it by more than
+// threshold (0 to 255) in red, green, blue or alpha, after a 3x3 median
+// filter unless TrimOptions.LineArt (see there). 10, sharp's default, also
+// passes over the slight noise of a JPEG; 0 takes only exactly that
 // colour. An image of one colour is left as it is.
 //
 // Which edges go is only known once the whole image has been seen: it is
 // kept in working storage (a temporary file beyond its share of the limit)
 // and read once more. For the same reason OutputSize reads the pixels when
 // the recipe has a Trim.
-func (m *Image) Trim(threshold float64) *Image {
+func (m *Image) Trim(threshold float64, opts ...TrimOptions) *Image {
+	m.atMostOne("Trim", len(opts))
 	if !(threshold >= 0 && threshold <= 255) {
 		return m.fail(errors.New("goimgtools: Trim threshold must be 0 to 255"))
 	}
-	return m.add(trimOp{threshold})
+	o := first(opts)
+	if o.Margin < 0 {
+		return m.fail(errors.New("goimgtools: Trim Margin cannot be negative"))
+	}
+	return m.add(trimOp{threshold, o})
 }
 
 // RotateBy turns the image clockwise by any number of degrees (negative:
@@ -253,10 +278,36 @@ func (o extendOp) apply(src pipeline.Source, r *run) (pipeline.Source, error) {
 	return ops.Extend(src, o.left, o.top, o.right, o.bottom, bg)
 }
 
-type trimOp struct{ threshold float64 }
+type trimOp struct {
+	threshold float64
+	o         TrimOptions
+}
 
 func (o trimOp) apply(src pipeline.Source, _ *run) (pipeline.Source, error) {
-	return ops.Trim(src, o.threshold)
+	t := ops.TrimOptions{LineArt: o.o.LineArt, Margin: o.o.Margin}
+	if o.o.Background != nil {
+		c := color.NRGBAModel.Convert(o.o.Background).(color.NRGBA)
+		t.Background = &[4]uint8{c.R, c.G, c.B, c.A}
+	}
+	return ops.Trim(src, o.threshold, t)
+}
+
+// words are the arguments of the trim step: THRESHOLD, then BACKGROUND
+// (a colour or auto), MARGIN and lineart as far as they are set.
+func (o trimOp) words() []string {
+	w := []string{strconv.FormatFloat(o.threshold, 'g', -1, 64)}
+	if o.o.Background == nil && o.o.Margin == 0 && !o.o.LineArt {
+		return w
+	}
+	bg := "auto"
+	if o.o.Background != nil {
+		bg = colorWord(o.o.Background)
+	}
+	w = append(w, bg, strconv.Itoa(o.o.Margin))
+	if o.o.LineArt {
+		w = append(w, "lineart")
+	}
+	return w
 }
 
 type rotateAnyOp struct {

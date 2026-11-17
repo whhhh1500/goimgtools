@@ -311,11 +311,13 @@ func (s *progScan) mcuRow(st *progStore, m int) {
 			return
 		}
 		y, cb, cr := &st.comp[0], &st.comp[1], &st.comp[2]
+		h := y.stride / st.mxx // Y blocks across an MCU
 		for mx := 0; mx < st.mxx; mx++ {
-			dc(0, y.buf[(2*mx)*blockBytes:])
-			dc(0, y.buf[(2*mx+1)*blockBytes:])
-			dc(0, y.buf[(y.stride+2*mx)*blockBytes:])
-			dc(0, y.buf[(y.stride+2*mx+1)*blockBytes:])
+			for r := 0; r < y.v; r++ {
+				for x := 0; x < h; x++ {
+					dc(0, y.buf[(r*y.stride+h*mx+x)*blockBytes:])
+				}
+			}
 			dc(1, cb.buf[mx*blockBytes:])
 			dc(2, cr.buf[mx*blockBytes:])
 		}
@@ -401,9 +403,9 @@ func (e *encoder) writeProgressive(src pipeline.Source, first image.Image, size 
 		st.mxx, st.myy = bw, bh
 		st.comp = []progComp{{stride: bw, v: 1, bw: bw, bh: bh}}
 	} else {
-		st.mxx, st.myy = (size.X+15)/16, (size.Y+15)/16
+		st.mxx, st.myy = (size.X+8*e.hY-1)/(8*e.hY), (size.Y+8*e.vY-1)/(8*e.vY)
 		st.comp = []progComp{
-			{stride: 2 * st.mxx, v: 2, bw: (size.X + 7) / 8, bh: (size.Y + 7) / 8},
+			{stride: e.hY * st.mxx, v: e.vY, bw: (size.X + 7) / 8, bh: (size.Y + 7) / 8},
 			{stride: st.mxx, v: 1, bw: st.mxx, bh: st.myy},
 			{stride: st.mxx, v: 1, bw: st.mxx, bh: st.myy},
 		}
@@ -465,7 +467,7 @@ func (e *encoder) writeProgressive(src pipeline.Source, first image.Image, size 
 		c := &st.comp[comp]
 		bx, r := mx, 0
 		if comp == 0 && nComponent == 3 {
-			bx, r = 2*mx+nY&1, nY>>1
+			bx, r = e.hY*mx+nY%e.hY, nY/e.hY
 			nY++
 		}
 		w := c.buf[(r*c.stride+bx)*blockBytes:]

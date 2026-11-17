@@ -529,16 +529,19 @@ func (d *decoder) isRGB() bool {
 // processApp1 keeps the EXIF block of an APP1 segment (goimgtools addition;
 // the standard library ignores the segment).
 func (d *decoder) processApp1(n int) error {
-	const prefix = "Exif\x00\x00"
-	if d.metaDone || d.meta.Exif != nil || n <= len(prefix) {
+	const prefix, xmpPrefix = "Exif\x00\x00", "http://ns.adobe.com/xap/1.0/\x00"
+	if d.metaDone || (d.meta.Exif != nil && d.meta.Xmp != nil) || n <= len(prefix) {
 		return d.ignore(n)
 	}
 	buf := make([]byte, n)
 	if err := d.readFull(buf); err != nil {
 		return err
 	}
-	if string(buf[:len(prefix)]) == prefix {
+	switch {
+	case d.meta.Exif == nil && string(buf[:len(prefix)]) == prefix:
 		d.meta.Exif = buf[len(prefix):]
+	case d.meta.Xmp == nil && len(buf) > len(xmpPrefix) && string(buf[:len(xmpPrefix)]) == xmpPrefix:
+		d.meta.Xmp = buf[len(xmpPrefix):]
 	}
 	return nil
 }

@@ -198,7 +198,7 @@ func Open(r io.ReaderAt, size int64, env *pipeline.Env) (pipeline.Source, error)
 			if err := s.vp8(r, pos, chunkLen, avail, want); err != nil {
 				return nil, err
 			}
-			if seenVP8X && vp8xFlags&(flagEXIF|flagICC) != 0 {
+			if seenVP8X && vp8xFlags&(flagEXIF|flagICC|flagXMP) != 0 {
 				s.scanMeta(r, pos+int64(chunkLen)+int64(chunkLen&1), min(size, pos+int64(totalLen)))
 			}
 			return s, nil
@@ -214,7 +214,7 @@ func Open(r io.ReaderAt, size int64, env *pipeline.Env) (pipeline.Source, error)
 			if err := s.vp8l(r, pos, avail, want); err != nil {
 				return nil, err
 			}
-			if seenVP8X && vp8xFlags&(flagEXIF|flagICC) != 0 {
+			if seenVP8X && vp8xFlags&(flagEXIF|flagICC|flagXMP) != 0 {
 				s.scanMeta(r, pos+int64(chunkLen)+int64(chunkLen&1), min(size, pos+int64(totalLen)))
 			}
 			return s, nil
@@ -232,7 +232,7 @@ func Open(r io.ReaderAt, size int64, env *pipeline.Env) (pipeline.Source, error)
 			if err := s.openFrame(r, pos, chunkLen, canvas); err != nil {
 				return nil, err
 			}
-			if vp8xFlags&(flagEXIF|flagICC) != 0 {
+			if vp8xFlags&(flagEXIF|flagICC|flagXMP) != 0 {
 				s.scanMeta(r, pos+int64(chunkLen)+int64(chunkLen&1), min(size, pos+int64(totalLen)))
 			}
 			return s.onCanvas(canvas), nil
@@ -272,7 +272,7 @@ func Open(r io.ReaderAt, size int64, env *pipeline.Env) (pipeline.Source, error)
 			if avail < int64(chunkLen) {
 				return nil, errShortChunkData
 			}
-			if name := string(buf[:4]); name == "ICCP" || name == "EXIF" {
+			if name := string(buf[:4]); name == "ICCP" || name == "EXIF" || name == "XMP " {
 				s.readMeta(name, r, pos, chunkLen)
 			}
 		}

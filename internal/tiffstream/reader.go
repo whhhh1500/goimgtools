@@ -104,6 +104,7 @@ type decoder struct {
 	palette   []color.Color
 	icc       []byte  // the colour profile, if the file has one
 	xres      float64 // the resolution across, in resUnit
+	xmp       []byte  // the XMP packet, if the file has one
 	// jpegTables are the tables JPEG-compressed blocks share.
 	jpegTables []byte
 	resUnit    uint
@@ -267,6 +268,15 @@ func (d *decoder) parseIFD(p []byte) (int, error) {
 		if (dt == dtUndefined || dt == dtByte) && n > 4 && n <= pipeline.MaxMetaBytes && d.icc == nil {
 			if b, err := safeReadAt(d.r, uint64(n), int64(d.byteOrder.Uint32(p[8:12]))); err == nil {
 				d.icc = b
+			}
+		}
+	case tXMP:
+		// goimgtools addition: the XMP packet.
+		dt := d.byteOrder.Uint16(p[2:4])
+		n := d.byteOrder.Uint32(p[4:8])
+		if (dt == dtUndefined || dt == dtByte) && n > 4 && n <= pipeline.MaxMetaBytes && d.xmp == nil {
+			if b, err := safeReadAt(d.r, uint64(n), int64(d.byteOrder.Uint32(p[8:12]))); err == nil {
+				d.xmp = b
 			}
 		}
 	case tJPEGTables:

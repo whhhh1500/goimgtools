@@ -135,7 +135,7 @@ func TestBadArguments(t *testing.T) {
 		{"-rotate", "30", "-background", "pink", in, out},
 		{"-kernel", "sinc", "-resize", "10x10", in, out},
 		{"-fit", "contain", "-background", "pink", "-resize", "10x10", in, out},
-		{"-tiff-compression", "lzw", "-format", "tiff", in, out},
+		{"-tiff-compression", "zip", "-format", "tiff", in, out},
 		{"-watermark", in, "-watermark-text", "x", in, out},
 		{"-watermark", in, "-watermark-anchor", "middle", in, out},
 		{"-watermark", in, "-watermark-ratio", "0.5", in, out},

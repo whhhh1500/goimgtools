@@ -34,6 +34,10 @@
 - `CompositeOptions.WidthRatio` / `HeightRatio`：按底图的比例确定水印尺寸；`-watermark-width N%`。
 - 有损 WebP 分段量化：各段使用独立的量化级别（移植自 libwebp 的空间噪声整形）。
 - `pipeline.Env.SetHelpers`、`Helpers`、`Parallel`、`Go`：供处理环节将工作分摊至多个核。
+- TIFF 输出：`TIFFLZW` 压缩（libtiff 的写法）与 `TIFFOptions.Predictor`（水平差分，sharp 的默认设置）：一张 2400 万像素照片 LZW 82 → 52MB、Deflate 67 → 45MB；`-tiff-compression lzw`、`-tiff-predictor`。
+- XMP：`KeepXmp()` / `-keep-xmp` 在 JPEG、PNG、WebP、TIFF 输出中保留 XMP 数据包；`Info.HasXmp`、`inspect.ReadXmp`；自定义格式可用 `EncodeOptions.Xmp` 与 `pipeline.Meta.Xmp`。读写方式与 sharp 相同（在 sharp 写出的文件上双向核对）。
+- `Trim` 的找边方式与 sharp 的 `trim`（libvips 的 `find_trim`）相同：在 3×3 中值滤波后的图像上找边，噪点与斑点不再妨碍裁剪（像素相同时裁剪范围与 sharp 完全一致）；`TrimOptions` 可指定 `Background`、`LineArt`（不做中值滤波，适用于细线条绘图）与 `Margin`；命令行 `-trim-background`、`-trim-line-art`、`-trim-margin`。
+- `JPEGOptions.ChromaSubsampling`（类型 `ChromaSubsampling`：默认 `Chroma420`、`Chroma422`、`Chroma444`）/ `-jpeg-chroma`：JPEG 输出可保留全部色度或横向一半，普通、优化、渐进与网格量化均支持（即 sharp 的 `chromaSubsampling`）。
 - 可读取 JPEG 压缩的 TIFF 文件（压缩方式 7：libtiff 的写法，libvips 与 sharp 的默认设置），条带与图块、彩色与灰度均支持。
 - 分辨率：`Info.Density`（每英寸像素数，读取自 JFIF、EXIF、pHYs、TIFF 与 BMP），默认保留到输出，`Density(dpi)` / `-density` 可设置；自定义格式可用 `EncodeOptions.Density` 与 `pipeline.Meta.Density`。`info` 会显示它。
 - `ExtendWith`（类型 `Extension`：`ExtendCopy`、`ExtendRepeat`、`ExtendMirror`）/ `-extend-with`：用图像本身扩边，与 sharp 带 `extendWith` 的 `extend` 逐像素一致；`Do("extend")` 在颜色的位置接受 copy、repeat 或 mirror。
@@ -45,6 +49,7 @@
 
 ### 变更
 
+- TIFF 解码：LZW 快 1.5 倍（6000×4000 的 RGBA 图像 0.45 秒，原为 0.68 秒；libtiff 0.31 秒），对任何输入的输出与错误都与 `x/image` 相同（经模糊测试核对）；Deflate 块按 64KB 读取（0.26 秒，原为 0.30 秒；libtiff 0.27 秒）。
 - `FitCover` 居中裁剪的位置与 sharp 相同：图像比框多出奇数个像素时，多出的那一个从左侧（上方）而非右侧（下方）裁去。
 - JPEG 解码快 45%，像素不变：熵编码数据一次读 64 位，经 11 位查表把多数系数的值连同其码一起解出，系数边解边反量化，逆 DCT 跳过全零的行（6000×4000 的基线照片单核 98ms，原为 188ms）。启用 `FastShrinkOnLoad` 时由系数直接解出原尺寸 1/2、1/4 或 1/8 的图（同 libjpeg），不再完整解码后求平均，其余缩放直接在 Y、Cb、Cr 平面上以定点进行，不再转成 RGBA：把这张照片缩到 400×400 以内用时 82ms，原为 231ms（libvips 的 `vipsthumbnail`：97ms）；缩到 1536×1536 以内 157ms，原为 320ms（148ms；2 线程 108ms，对方 172ms）。
 - 从文件或内存读取的渐进式 JPEG 按扫描同步解码，逐行块进行，不再保存整幅图的系数（6000×4000 时 72MB，默认上限下写入临时文件），细化扫描只访问非零系数：6000×4000 的照片解码用时约为原来的三分之一（单核 0.24s，原为 0.70s），不用临时文件，内存多 0.5MB。启用 `FastShrinkOnLoad` 缩小 8 倍时每块即其像素的平均值，只解码 DC 系数的扫描：这张照片缩到 400×400 以内用时 50ms，原为 745ms（libvips 的 `vipsthumbnail`：228ms）。损坏的扫描留下未完的块结束游程时，游程随该扫描结束（同 libjpeg）；标准库会把它带入下一个扫描。
@@ -73,6 +78,7 @@
 
 ### 修复
 
+- 大图像的压缩 TIFF 只有一个条带，压缩数据超过 50MB 时 libvips（因而 sharp）拒绝读取：现在像素数据超过 1MB 的压缩图像按约 1MB 一条分条带写入。
 - 在把乘法与加法融合为一条指令的处理器上（ARM64，如 Apple 芯片与 AWS Graviton；POWER、s390x、RISC-V、LoongArch），部分结果可能与 x86 相差一级或一个像素：`Linear`、混合模式、带小数权重的 `Convolve`、GIF 与少色 PNG 的调色板、Mitchell 核、按比例定位的水印、`RotateBy` 的尺寸、`Blur` 的方框、文字描边，以及无损 WebP 与 jpegli 编码器所做的选择。现在每个乘积都先取整再相加（与 x86 相同），自动测试会检查编译器在这些处理器上没有融合任何一处。
 - 操作中发生 panic 时，处理链的输入可能未被关闭，继续占用内存预算与临时文件。
 - GIF 的 `Frames().LoopCount` 此前为其重复次数，比字段文档所述的播放次数少 1。

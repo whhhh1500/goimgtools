@@ -43,6 +43,8 @@ type Info struct {
 	Orientation int
 	HasProfile  bool // an ICC colour profile is embedded
 	HasExif     bool
+	// HasXmp reports whether the file carries an XMP packet (KeepXmp).
+	HasXmp bool
 	// Density is the resolution the file records, in pixels per inch
 	// (dots per inch); 0 when it records none.
 	Density float64
@@ -231,7 +233,7 @@ func (m *Image) Metadata() (info Info, err error) {
 	kind, bits := colorOf(model)
 	return Info{Format: format, Width: b.Dx(), Height: b.Dy(), HasAlpha: !pipeline.IsOpaque(src), Color: kind, Bits: bits,
 		Orientation: pipeline.ExifOrientation(meta.Exif), HasProfile: len(meta.ICC) > 0, HasExif: len(meta.Exif) > 0,
-		Density: meta.Density}, nil
+		HasXmp: len(meta.Xmp) > 0, Density: meta.Density}, nil
 }
 
 // colorOf names how a colour model stores a pixel, and with how many bits

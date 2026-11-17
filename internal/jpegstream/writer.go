@@ -217,6 +217,9 @@ type encoder struct {
 	freq *[nHuffIndex][257]int64
 	// trellis is set for Options.Trellis.
 	trellis bool
+	// hY and vY are the sampling factors of Y in a colour image: 2 and 2
+	// for 4:2:0, 2 and 1 for 4:2:2, 1 and 1 for 4:4:4 (Cb and Cr 1 and 1).
+	hY, vY int
 }
 
 // drain writes out the bytes of the bit-stream gathered in out.
@@ -379,8 +382,11 @@ func (e *encoder) writeSOF(marker uint8, size image.Point, nComponent int) {
 	} else {
 		for i := 0; i < nComponent; i++ {
 			e.buf[3*i+6] = uint8(i + 1)
-			// We use 4:2:0 chroma subsampling.
-			e.buf[3*i+7] = "\x22\x11\x11"[i]
+			// Y at hY x vY, Cb and Cr at 1 x 1.
+			e.buf[3*i+7] = 0x11
+			if i == 0 {
+				e.buf[7] = uint8(e.hY<<4 | e.vY)
+			}
 			e.buf[3*i+8] = "\x00\x01\x01"[i]
 		}
 	}
@@ -857,9 +863,10 @@ func (e *encoder) writeSOS(src pipeline.Source, first image.Image) error {
 
 // scanBlocks reads the image band by band and hands every 8x8 block of
 // samples to sink in the order of the baseline scan: for a gray image the
-// blocks row by row (comp 0), for a colour image per 16x16 MCU four Y blocks
-// (comp 0), then Cb (comp 1) and Cr (comp 2). The blocks are in natural (not
-// zig-zag) order and may be changed by sink.
+// blocks row by row (comp 0), for a colour image per MCU its Y blocks (comp
+// 0; four of a 16x16 MCU, two of a 16x8 one, one of an 8x8 one), then Cb
+// (comp 1) and Cr (comp 2). The blocks are in natural (not zig-zag) order
+// and may be changed by sink.
 func (e *encoder) scanBlocks(src pipeline.Source, first image.Image, sink func(b *block, comp int)) error {
 	var t unitTemp
 	return e.bands(src, first, func(c *bandConv) error {
@@ -974,7 +981,8 @@ type bandConv struct {
 	// direct444: ycbcr is 4:4:4; the chroma blocks of an MCU with nothing
 	// to clamp are averaged from it directly (see chroma444).
 	direct444 bool
-	across    int // gray: blocks across
+	across    int // blocks (gray) or MCUs (colour) across
+	hY, vY    int // the sampling factors of Y (colour)
 	units     int
 	perUnit   int // blocks a unit has
 }
@@ -987,7 +995,27 @@ func (c *bandConv) unit(u int, t *unitTemp, sink func(b *block, comp int)) {
 		sink(&t.b, 0)
 		return
 	}
-	x, y := c.bounds.Min.X+16*u, c.bounds.Min.Y
+	x, y := c.bounds.Min.X+8*c.hY*(u%c.across), c.bounds.Min.Y+8*c.vY*(u/c.across)
+	switch {
+	case c.hY == 1:
+		// 4:4:4: one block, its chroma as it is.
+		c.convert(image.Pt(x, y), &t.b, &t.cb[0], &t.cr[0])
+		sink(&t.b, 0)
+		sink(&t.cb[0], 1)
+		sink(&t.cr[0], 2)
+		return
+	case c.vY == 1:
+		// 4:2:2: two blocks across, the chroma averaged in pairs.
+		for i := 0; i < 2; i++ {
+			c.convert(image.Pt(x+8*i, y), &t.b, &t.cb[i], &t.cr[i])
+			sink(&t.b, 0)
+		}
+		scaleH(&t.b, &t.cb)
+		sink(&t.b, 1)
+		scaleH(&t.b, &t.cr)
+		sink(&t.b, 2)
+		return
+	}
 	if c.direct444 && x+16 <= c.bounds.Max.X && y+16 <= c.bounds.Max.Y {
 		for i := 0; i < 4; i++ {
 			yOfYCbCr(c.ycbcr, image.Pt(x+(i&1)*8, y+(i&2)*4), &t.b)
@@ -1013,25 +1041,45 @@ func (c *bandConv) unit(u int, t *unitTemp, sink func(b *block, comp int)) {
 	for i := 0; i < 4; i++ {
 		xOff := (i & 1) * 8
 		yOff := (i & 2) * 4
-		p := image.Pt(x+xOff, y+yOff)
-		switch {
-		case c.rgba != nil:
-			rgbaToYCbCr(c.rgba, p, &t.b, &t.cb[i], &t.cr[i])
-		case c.ycbcr != nil:
-			yCbCrToYCbCr(c.ycbcr, p, &t.b, &t.cb[i], &t.cr[i])
-		case c.nrgba != nil:
-			nrgbaToYCbCr(c.nrgba, p, &t.b, &t.cb[i], &t.cr[i])
-		case c.pal != nil:
-			palettedToYCbCr(c.pal, c.lut, p, &t.b, &t.cb[i], &t.cr[i])
-		default:
-			toYCbCr(c.m, p, &t.b, &t.cb[i], &t.cr[i])
-		}
+		c.convert(image.Pt(x+xOff, y+yOff), &t.b, &t.cb[i], &t.cr[i])
 		sink(&t.b, 0)
 	}
 	scale(&t.b, &t.cb)
 	sink(&t.b, 1)
 	scale(&t.b, &t.cr)
 	sink(&t.b, 2)
+}
+
+// convert makes the Y, Cb and Cr blocks of the 8x8 region of the band
+// whose top-left corner is p.
+func (c *bandConv) convert(p image.Point, y, cb, cr *block) {
+	switch {
+	case c.rgba != nil:
+		rgbaToYCbCr(c.rgba, p, y, cb, cr)
+	case c.ycbcr != nil:
+		yCbCrToYCbCr(c.ycbcr, p, y, cb, cr)
+	case c.nrgba != nil:
+		nrgbaToYCbCr(c.nrgba, p, y, cb, cr)
+	case c.pal != nil:
+		palettedToYCbCr(c.pal, c.lut, p, y, cb, cr)
+	default:
+		toYCbCr(c.m, p, y, cb, cr)
+	}
+}
+
+// scaleH scales the 16x8 region of the blocks src[0] and src[1] (left and
+// right) to the 8x8 dst block, averaging pairs across, the rounding bias
+// alternating as libjpeg's h2v1 downsampling does.
+func scaleH(dst *block, src *[4]block) {
+	for i := 0; i < 2; i++ {
+		for y := 0; y < 8; y++ {
+			s := src[i][8*y : 8*y+8 : 8*y+8]
+			d := dst[8*y+4*i : 8*y+4*i+4 : 8*y+4*i+4]
+			for x := range d {
+				d[x] = (s[2*x] + s[2*x+1] + int32(x&1)) >> 1
+			}
+		}
+	}
 }
 
 // bands reads the image band by band and hands each, cut into units, to do.
@@ -1067,7 +1115,10 @@ func (e *encoder) bands(src pipeline.Source, first image.Image, do func(c *bandC
 					paletteYCbCr(c.pal.Palette, &lut)
 				}
 			}
-			c.units, c.perUnit = (bounds.Dx()+15)/16, 6
+			c.hY, c.vY = e.hY, e.vY
+			c.across = (bounds.Dx() + 8*c.hY - 1) / (8 * c.hY)
+			c.units = c.across * ((bounds.Dy() + 8*c.vY - 1) / (8 * c.vY))
+			c.perUnit = c.hY*c.vY + 2
 		}
 		if err := do(c); err != nil {
 			return err
@@ -1094,10 +1145,11 @@ const DefaultQuality = 75
 // Quality ranges from 1 to 100 inclusive, higher is better.
 type Options struct {
 	Quality int
-	// Exif (in TIFF form) and ICC are written into the file when set. They
-	// are the only bytes jpeg.Encode would not write.
+	// Exif (in TIFF form), ICC and Xmp are written into the file when set.
+	// They are the only bytes jpeg.Encode would not write.
 	Exif []byte
 	ICC  []byte
+	Xmp  []byte
 	// Optimize computes Huffman tables for this image instead of using the
 	// standard ones. The pixels a decoder gets are the same; the file is
 	// smaller. The entropy-coded data is staged (see writer_opt.go).
@@ -1112,6 +1164,10 @@ type Options struct {
 	// smaller file at about the same look, with other pixels than plain
 	// rounding.
 	Trellis bool
+	// Subsampling is how the colour (Cb and Cr) is sampled: Subsample420
+	// (the default, half the width and height, as the standard library),
+	// Subsample422 (half the width) or Subsample444 (all of it).
+	Subsampling int
 	// Density, when above 0, is the resolution to record in a JFIF
 	// segment, in pixels per inch (rounded, 1 to 65535). Without it there
 	// is no JFIF segment, as jpeg.Encode writes none.
@@ -1122,6 +1178,13 @@ type Options struct {
 	// standard library uses.
 	QuantTable int
 }
+
+// The colour sampling of Options.Subsampling.
+const (
+	Subsample420 = iota
+	Subsample422
+	Subsample444
+)
 
 // Encode writes src to w in JPEG 4:2:0 baseline format, producing the same
 // bytes as the standard library's jpeg.Encode for the same pixels unless
@@ -1151,6 +1214,18 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 	}
 	var e encoder
 	e.trellis = o != nil && o.Trellis
+	e.hY, e.vY = 2, 2
+	if o != nil {
+		switch o.Subsampling {
+		case Subsample420:
+		case Subsample422:
+			e.vY = 1
+		case Subsample444:
+			e.hY, e.vY = 1, 1
+		default:
+			return fmt.Errorf("goimgtools: unknown JPEG chroma subsampling %d", o.Subsampling)
+		}
+	}
 	if ww, ok := w.(writer); ok {
 		e.w = ww
 	} else {
@@ -1191,7 +1266,7 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 		for j := range e.quant[i] {
 			var x int
 			if table == QuantTableJpegli {
-				x = jpegliQuant(quality, quantIndex(i), unzig[j], nComponent == 3)
+				x = jpegliQuant(quality, quantIndex(i), unzig[j], nComponent == 3 && e.hY == 2 && e.vY == 2)
 			} else {
 				x = int(baseQuant[table][i][unzig[j]])
 				x = (x*scale + 50) / 100
@@ -1220,7 +1295,7 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 			d := uint16(max(1, min(math.Round(o.Density), 65535)))
 			e.write([]byte{0xff, 0xe0, 0, 16, 'J', 'F', 'I', 'F', 0, 1, 2, 1, byte(d >> 8), byte(d), byte(d >> 8), byte(d), 0, 0})
 		}
-		e.writeMeta(o.Exif, o.ICC)
+		e.writeMeta(o.Exif, o.ICC, o.Xmp)
 	}
 	// Write the quantization tables.
 	e.writeDQT()
@@ -1252,9 +1327,10 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 	return e.err
 }
 
-// writeMeta writes an APP1 segment with the EXIF block and APP2 segments
-// with the ICC profile. A block too large for its segments is left out.
-func (e *encoder) writeMeta(exif, icc []byte) {
+// writeMeta writes an APP1 segment with the EXIF block, APP2 segments with
+// the ICC profile and an APP1 segment with the XMP packet. A block too
+// large for its segments is left out.
+func (e *encoder) writeMeta(exif, icc, xmp []byte) {
 	seg := func(marker byte, head string, extra, data []byte) {
 		n := 2 + len(head) + len(extra) + len(data)
 		e.write([]byte{0xff, marker, byte(n >> 8), byte(n)})
@@ -1271,5 +1347,9 @@ func (e *encoder) writeMeta(exif, icc []byte) {
 		for i := 0; i < total; i++ {
 			seg(0xe2, iccHead, []byte{byte(i + 1), byte(total)}, icc[i*part:min((i+1)*part, len(icc))])
 		}
+	}
+	const xmpHead = "http://ns.adobe.com/xap/1.0/\x00"
+	if len(xmp) > 0 && len(xmp) <= 0xffff-2-len(xmpHead) {
+		seg(0xe1, xmpHead, nil, xmp)
 	}
 }

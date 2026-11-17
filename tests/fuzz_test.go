@@ -259,7 +259,7 @@ func FuzzChain(f *testing.F) {
 			m.Extend(int(w%7), int(h%9), int(w%5), int(h%3), color.NRGBA{uint8(w), uint8(h), 9, uint8(more)})
 		}
 		if has(6) {
-			m.Trim(float64(h % 60))
+			m.Trim(float64(h%60), TrimOptions{LineArt: w&1 == 1, Margin: int(w % 5)})
 		}
 		if has(7) {
 			m.RotateBy(float64(int16(h))/7, color.Transparent)

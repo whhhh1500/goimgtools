@@ -969,10 +969,10 @@ func (d *decoder) parseChunk(atStart bool) error {
 		}
 		d.stage = dsSeentRNS
 		return d.parsetRNS(length)
-	case "iCCP", "eXIf", "pHYs":
-		// goimgtools addition: keep the colour profile, the EXIF block and
-		// the resolution (the standard library skips them). Only ahead of
-		// the pixels.
+	case "iCCP", "eXIf", "pHYs", "iTXt", "zTXt", "tEXt":
+		// goimgtools addition: keep the colour profile, the EXIF block,
+		// the resolution and the XMP packet (the standard library skips
+		// them). Only ahead of the pixels.
 		if d.stage >= dsSeenIHDR && d.stage < dsSeenIDAT && length <= pipeline.MaxMetaBytes {
 			return d.parseMeta(string(d.tmp[4:8]), length)
 		}
@@ -1075,6 +1075,46 @@ func (d *decoder) parseMeta(name string, length uint32) error {
 	if name == "eXIf" {
 		if d.meta.Exif == nil && len(buf) > 0 {
 			d.meta.Exif = buf
+		}
+		return nil
+	}
+	if name == "iTXt" || name == "zTXt" || name == "tEXt" {
+		// The XMP packet under its keyword: in iTXt (keyword, 0,
+		// compressed?, method, language, 0, translated keyword, 0, text,
+		// as Adobe writes it), zTXt (keyword, 0, method, zlib data, as
+		// libvips writes it) or tEXt (keyword, 0, text).
+		const key = "XML:com.adobe.xmp\x00"
+		if d.meta.Xmp != nil || len(buf) < len(key)+1 || string(buf[:len(key)]) != key {
+			return nil
+		}
+		rest, compressed := buf[len(key):], false
+		switch name {
+		case "iTXt":
+			if len(rest) < 2 {
+				return nil
+			}
+			compressed, rest = rest[0] != 0, rest[2:]
+			for k := 0; k < 2; k++ {
+				i := bytes.IndexByte(rest, 0)
+				if i < 0 {
+					return nil
+				}
+				rest = rest[i+1:]
+			}
+		case "zTXt":
+			compressed, rest = true, rest[1:]
+		}
+		if !compressed {
+			d.meta.Xmp = rest
+			return nil
+		}
+		zr, err := zlib.NewReader(bytes.NewReader(rest))
+		if err != nil {
+			return nil
+		}
+		defer zr.Close()
+		if x, err := io.ReadAll(io.LimitReader(zr, pipeline.MaxMetaBytes+1)); err == nil && len(x) <= pipeline.MaxMetaBytes {
+			d.meta.Xmp = x
 		}
 		return nil
 	}

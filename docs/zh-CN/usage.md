@@ -47,7 +47,7 @@ err := goimgtools.Open("in.jpg").
 | `Rotate(angle)` | 顺时针旋转，角度为 90 的倍数 |
 | `RotateBy(degrees, background)` | 顺时针旋转任意角度（负值为逆时针），画布扩大以容纳全图，四角以 `background` 填充（`nil` 为黑色，`color.Transparent` 为透明）；采用双线性插值。角度为 90 的倍数时等同于 `Rotate`，不插值 |
 | `Flip()` / `Flop()` | 上下镜像 / 左右镜像 |
-| `Trim(threshold)` | 去除四周与左上角像素同色的边（红、绿、蓝、透明任一通道之差超过 `threshold` 才视为不同；取 10 可消除 JPEG 噪点，与 sharp 相同） |
+| `Trim(threshold, TrimOptions{Background, LineArt, Margin})` | 去除四周与左上角像素（或 `Background`）同色的边（红、绿、蓝、透明任一通道之差超过 `threshold` 才视为不同；sharp 的默认值 10 可消除 JPEG 噪点）。与 sharp 的 `trim`（libvips 的 `find_trim`）一样，先对图像做 3×3 中值滤波再找边，使边上的灰尘斑点与 JPEG 瑕疵不妨碍裁剪（保留的像素不受滤波影响）；`LineArt` 直接比较原像素，适用于由单像素细线构成的线稿（中值滤波会把细线滤掉）。`Margin` 在找到的范围外保留相应像素。像素相同时裁剪范围与 sharp 完全一致 |
 | `Extend(top, right, bottom, left, background)` | 四周扩边，宽度按 CSS 的上、右、下、左顺序给出 |
 | `ExtendWith(top, right, bottom, left, how)` | 用图像本身扩边：`ExtendCopy` 重复边缘像素，`ExtendRepeat` 平铺重复图像，`ExtendMirror` 镜像（边缘像素出现两次），边框比图像宽时继续重复或镜像。与 sharp 带 `extendWith` 的 `extend` 逐像素一致。顶部或底部边框需要重复或镜像时，图像存入工作存储 |
 | `Grayscale()` | 灰度化：Rec. 601 亮度四舍五入至最近的灰阶，与 Pillow 的 `convert("L")` 逐字节一致；JPEG 直接采用文件中存储的亮度。不透明图像输出为单通道灰度文件 |
@@ -94,12 +94,12 @@ err := goimgtools.Open("in.jpg").
 
 | 方法 | 说明 |
 |---|---|
-| `JPEG(quality, JPEGOptions{Optimize, Progressive, Trellis, QuantTable})` | 质量 1–100，0 表示 80。`Optimize`、`Progressive` 在像素不变的前提下减小文件；`Trellis`、`QuantTable`（0–8，编号同 mozjpeg 的 `-quant-table`；或 `QuantTableJpegli`）会改变像素（见[压缩](compression.md)） |
+| `JPEG(quality, JPEGOptions{Optimize, Progressive, Trellis, QuantTable, ChromaSubsampling})` | 质量 1–100，0 表示 80。`Optimize`、`Progressive` 在像素不变的前提下减小文件；`Trellis`、`QuantTable`（0–8，编号同 mozjpeg 的 `-quant-table`；或 `QuantTableJpegli`）会改变像素（见[压缩](compression.md)）。`ChromaSubsampling`：`Chroma420`（默认：色度为宽高各一半，同标准库与 libjpeg）、`Chroma422`（宽度一半）或 `Chroma444`（保留全部色度：彩色文字与边缘清晰，文件约大 30%），即 sharp 的 `chromaSubsampling` |
 | `PNG(PNGOptions{CompressionLevel, Colors, NoDither})` | 压缩级别 1（最快）至 9（最小；8、9 级搜索最小文件，耗时约为 7 级的 10 倍和 20 倍）；`Colors` 将颜色减至最多 256 色（见[压缩](compression.md)） |
 | `WebP(WebPOptions{Quality, Lossless, Effort})` | 有损（质量 1–100，默认 75）或无损；`Effort` 1 最快至 9 最小，默认 5（有损时 5 已用上除透明通道外的全部手段，1 耗时约减半） |
 | `GIF(GIFOptions{Colors, NoDither, FixedPalette})` | 最多 256 色，按图像内容选取；`FixedPalette` 改用标准库的固定调色板 |
 | `BMP()` | |
-| `TIFF(TIFFOptions{Compression})` | 不压缩或 `TIFFDeflate` |
+| `TIFF(TIFFOptions{Compression, Predictor})` | 不压缩、`TIFFDeflate` 或 `TIFFLZW`（libtiff 的写法）；`Predictor` 把每个样本存为与左侧像素之差（水平差分），照片压缩效果好得多（即 sharp 的 `predictor: "horizontal"`；一张 2400 万像素照片：LZW 82 → 52MB，Deflate 67 → 45MB）。像素数据超过 1MB 的压缩图像按约 1MB 一条分条带写入 |
 | `ToFormat(name, 选项)` | 按名称选择输出格式（`"jpeg"`、`"png"`、`".tif"`……，以及已注册的格式）；选项为该格式的选项结构体，可省略 |
 | `MaxFileSize(n)` | 输出不超过 n 字节：自动选用满足该限制的最高质量（JPEG、有损 WebP，以及提供 `Quality` 的注册格式）。与 `Animated()` 同用于动画时返回包装了 `errors.ErrUnsupported` 的错误；单帧 GIF 按静态图像处理 |
 | `ToFile(path)` / `ToWriter(w)` / `ToBytes()` | 执行并写出。`ToFile` 未指定格式时按扩展名确定；仅当全程成功时才生成文件 |
@@ -118,6 +118,7 @@ err := goimgtools.Open("in.jpg").
 | 方法 | 说明 |
 |---|---|
 | `KeepExif()` | 将输入的 EXIF（相机、时间、GPS）保留至输出。默认丢弃 |
+| `KeepXmp()` | 将输入的 XMP 数据包（Adobe 的元数据：关键词、评级、版权、编辑历史）保留至 JPEG、PNG、WebP、TIFF 输出，即 sharp 的 `keepXmp`。默认丢弃 |
 | `StripICC()` | 丢弃 ICC 色彩配置。默认保留，否则广色域照片会出现偏色 |
 | `Density(dpi)` | 在输出中记录每英寸 `dpi` 个像素的分辨率（1–65535）：JPEG 的 JFIF 段、PNG 的 pHYs 块、TIFF 的分辨率标签、BMP 的文件头，以及保留的 EXIF 块中的分辨率字段（WebP 与 GIF 没有专门的位置）。默认保留输入的分辨率，缩放后也保留，与 libvips 和 sharp 相同；`Density(0)` 表示不记录 |
 | `ToSRGB()` | 依据输入的色彩配置将颜色转换至 sRGB，输出不再附带配置：在忽略色彩配置的程序中颜色同样正确，文件也略小。转换为 GIF、BMP（无法附带配置）时自动执行 |
@@ -130,7 +131,7 @@ err := goimgtools.Open("in.jpg").
 | `WithContext(ctx)` | `ctx` 取消或超时后中止处理，返回 `ctx.Err()` |
 | `Clone()` | 复制配方，用于从同一起点派生多个结果 |
 
-ICC 色彩配置支持在 JPEG、PNG、WebP、TIFF 中读写；EXIF 支持在 JPEG、PNG、WebP 中读写（TIFF 的 EXIF 位于其独立目录中，不读不写）。GIF、BMP 无法附带色彩配置，转换为这两种格式时依据输入的配置将颜色转换至 sRGB（实测：Display P3 图像不经转换时色差最大为 17.6，肉眼可见偏淡）。`Rotate()` 校正方向后，保留的 EXIF 中的方向改为「正向」。
+ICC 色彩配置支持在 JPEG、PNG、WebP、TIFF 中读写；EXIF 支持在 JPEG、PNG、WebP 中读写（TIFF 的 EXIF 位于其独立目录中，不读不写）；XMP 支持在 JPEG（不超过 64KB 的一个 APP1 段；更大数据包的扩展 XMP 不保留）、PNG（从 iTXt、zTXt 或 tEXt 读取，写为 iTXt）、WebP、TIFF 中读写。GIF、BMP 无法附带色彩配置，转换为这两种格式时依据输入的配置将颜色转换至 sRGB（实测：Display P3 图像不经转换时色差最大为 17.6，肉眼可见偏淡）。`Rotate()` 校正方向后，保留的 EXIF 中的方向改为「正向」。
 
 转换支持以三原色加色调曲线描述的配置（相机、手机、Display P3、Adobe RGB、ProPhoto 均属此类），每个值与 LittleCMS（相对比色，超出 sRGB 的颜色截断）相差不超过 1；查找表类配置（少见，多用于打印机）原样保留，不作转换。
 
@@ -259,6 +260,7 @@ goimgtools.Text("第一行\n第二行 Mixed", goimgtools.TextOptions{
 | `goimgtools stats 文件...` | `inspect.Stats(img)` | 遍历全部像素：平均色、亮度、面积占比最大的几种颜色、是否实为灰度图像、是否确有透明像素、颜色数（不超过 256 种时）。可用于选取占位色、决定使用深色或浅色文字、判断能否存储为灰度或调色板图像。另有 sharp 的 `stats()` 所报告的各项，数值一致到末几位：`Channels`（红、绿、蓝、透明各通道的最低与最高值及其首次出现的位置、总和、平均值、标准差）、`Entropy`（熵）与 `Sharpness`（锐度） |
 | `goimgtools hash 文件...` | `inspect.Hash(img)` | 64 位感知哈希：同一图像改变尺寸、格式或压缩率后，哈希值仅相差数位；不同图像约相差一半。`-similar 10` 列出彼此相近的文件，用于查找重复图像 |
 | `goimgtools exif 文件...` | `inspect.ReadExif(img)` | EXIF 中的相机、镜头、拍摄时间、曝光参数、GPS 位置等 |
+| | `inspect.ReadXmp(img)` | 文件的 XMP 数据包（XML），即 sharp 的 `metadata().xmp`；`info` 会显示文件是否含 XMP |
 | `goimgtools formats` | `Formats()`、`CodecByName()` | 支持的格式、各格式的扩展名及是否可读、可写 |
 
 `info`、`stats`、`exif` 均支持 `-json`，每个文件输出一行 JSON。

@@ -134,7 +134,7 @@ func describe(op operation) (string, []string) {
 		}
 		return "extend", []string{d(o.top), d(o.right), d(o.bottom), d(o.left), colorWord(o.background)}
 	case trimOp:
-		return "trim", []string{f(o.threshold)}
+		return "trim", o.words()
 	case rotateAnyOp:
 		return "rotate", []string{f(o.deg), colorWord(o.background)}
 	case levelsOp:
@@ -561,20 +561,41 @@ var builtInOps = map[string]OperationDef{
 		m.Flop()
 		return nil
 	}},
-	"trim": {Name: "trim", Usage: "[THRESHOLD]", Help: "Trim the edges of the colour of the top-left pixel (threshold 10 by default)",
+	"trim": {Name: "trim", Usage: "[THRESHOLD[,BACKGROUND[,MARGIN[,lineart]]]]", Help: "Trim the edges of the colour of the top-left pixel or BACKGROUND (a colour, or auto), threshold 10 by default, keeping MARGIN pixels; lineart: without the median filter that passes over noise",
 		builtIn: func(m *Image, a []string) error {
-			if err := wantArgs(a, 0, 1); err != nil {
+			if err := wantArgs(a, 0, 4); err != nil {
 				return err
 			}
 			t := 10.0
-			if len(a) == 1 {
-				v, err := argFloats(a)
+			if len(a) >= 1 {
+				v, err := argFloats(a[:1])
 				if err != nil {
 					return err
 				}
 				t = v[0]
 			}
-			m.Trim(t)
+			var o TrimOptions
+			if len(a) >= 2 && a[1] != "auto" {
+				c, err := ParseColor(a[1])
+				if err != nil {
+					return err
+				}
+				o.Background = c
+			}
+			if len(a) >= 3 {
+				v, err := argInts(a[2:3])
+				if err != nil {
+					return err
+				}
+				o.Margin = v[0]
+			}
+			if len(a) == 4 {
+				if a[3] != "lineart" {
+					return errors.New("the fourth word is lineart")
+				}
+				o.LineArt = true
+			}
+			m.Trim(t, o)
 			return nil
 		}},
 	"extend": {Name: "extend", Usage: "TOP,RIGHT,BOTTOM,LEFT[,COLOR]", Help: "Extend: add a border of COLOR, or (ExtendWith) copy, repeat or mirror for one made of the image",

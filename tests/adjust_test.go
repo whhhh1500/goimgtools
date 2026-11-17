@@ -513,14 +513,19 @@ func TestTrim(t *testing.T) {
 	if w, h, err := FromImage(plain).Trim(10).OutputSize(); err != nil || w != 30 || h != 20 {
 		t.Errorf("one colour: %dx%d, %v", w, h, err)
 	}
-	// A single different pixel in the far corner is all that is left.
+	// A single different pixel in the far corner is all that is left when
+	// the pixels are compared as they are (LineArt); the median filter
+	// takes it for noise, and nothing is cut.
 	plain.SetGray(29, 19, color.Gray{200})
-	if w, h, err := FromImage(plain).Trim(10).OutputSize(); err != nil || w != 1 || h != 1 {
+	if w, h, err := FromImage(plain).Trim(10, TrimOptions{LineArt: true}).OutputSize(); err != nil || w != 1 || h != 1 {
 		t.Errorf("corner pixel: %dx%d, %v", w, h, err)
+	}
+	if w, h, err := FromImage(plain).Trim(10).OutputSize(); err != nil || w != 30 || h != 20 {
+		t.Errorf("corner pixel, filtered: %dx%d, %v", w, h, err)
 	}
 	dot := image.NewGray(image.Rect(0, 0, 30, 20))
 	dot.SetGray(17, 4, color.Gray{200})
-	if w, h, err := FromImage(dot).Trim(10).OutputSize(); err != nil || w != 1 || h != 1 {
+	if w, h, err := FromImage(dot).Trim(10, TrimOptions{LineArt: true}).OutputSize(); err != nil || w != 1 || h != 1 {
 		t.Errorf("one pixel: %dx%d, %v", w, h, err)
 	}
 
@@ -814,5 +819,110 @@ func TestExtendWith(t *testing.T) {
 	}
 	if w, h, err := FromImage(src).ExtendWith(1, 2, 3, 4, ExtendRepeat).OutputSize(); err != nil || w != 10 || h != 7 {
 		t.Errorf("OutputSize %d x %d, %v", w, h, err)
+	}
+}
+
+// trimImages are the images of TestTrimAsSharp: a picture on a white
+// border with noise and specks in it, a drawing of thin lines, and a black
+// border whose top-left pixel is white.
+func trimImages() map[string]*image.NRGBA {
+	noisy := image.NewNRGBA(image.Rect(0, 0, 160, 120))
+	photo := photoLike(120, 80)
+	seed := uint32(7)
+	rnd := func() uint32 { seed = seed*1664525 + 1013904223; return seed >> 8 }
+	for y := 0; y < 120; y++ {
+		for x := 0; x < 160; x++ {
+			c := color.NRGBA{255, 255, 255, 255}
+			if x >= 13 && x < 133 && y >= 17 && y < 97 {
+				c = color.NRGBAModel.Convert(photo.At(x-13, y-17)).(color.NRGBA)
+			} else {
+				// Noise within 8 levels, as a JPEG leaves in a white border.
+				d := uint8(rnd() % 9)
+				c = color.NRGBA{255 - d, 255 - d/2, 255 - d, 255}
+			}
+			noisy.SetNRGBA(x, y, c)
+		}
+	}
+	for _, p := range [][2]int{{3, 5}, {150, 9}, {80, 110}, {5, 100}, {140, 60}} {
+		noisy.SetNRGBA(p[0], p[1], color.NRGBA{150, 150, 150, 255}) // specks of dust
+	}
+	lines := image.NewNRGBA(image.Rect(0, 0, 100, 80))
+	for i := range lines.Pix {
+		lines.Pix[i] = 255
+	}
+	for i := 0; i < 50; i++ {
+		lines.SetNRGBA(20+i, 15+i/2, color.NRGBA{0, 0, 0, 255})
+		lines.SetNRGBA(70, 15+i, color.NRGBA{0, 0, 0, 255})
+	}
+	framed := image.NewNRGBA(image.Rect(0, 0, 90, 70))
+	for y := 0; y < 70; y++ {
+		for x := 0; x < 90; x++ {
+			c := color.NRGBA{0, 0, 0, 255}
+			if x >= 21 && x < 61 && y >= 11 && y < 50 {
+				c = color.NRGBA{uint8(4 * x), 200, uint8(5 * y), 255}
+			}
+			framed.SetNRGBA(x, y, c)
+		}
+	}
+	framed.SetNRGBA(0, 0, color.NRGBA{255, 255, 255, 255})
+	return map[string]*image.NRGBA{"noisy": noisy, "lines": lines, "framed": framed}
+}
+
+// TestTrimAsSharp: Trim cuts what sharp 0.35's trim cuts (left, top,
+// width, height), with the median filter and without (LineArt), with a
+// background of its own and with a margin.
+func TestTrimAsSharp(t *testing.T) {
+	imgs := trimImages()
+	for _, c := range []struct {
+		name      string
+		threshold float64
+		o         TrimOptions
+		want      image.Rectangle
+	}{
+		{"noisy", 10, TrimOptions{}, image.Rect(13, 17, 13+120, 17+80)},
+		{"noisy", 10, TrimOptions{LineArt: true}, image.Rect(3, 5, 3+148, 5+106)},
+		{"noisy", 2, TrimOptions{}, image.Rect(0, 0, 160, 120)},
+		{"lines", 10, TrimOptions{}, image.Rect(69, 38, 69+1, 38+3)},
+		{"lines", 10, TrimOptions{LineArt: true}, image.Rect(20, 15, 20+51, 15+50)},
+		{"framed", 10, TrimOptions{}, image.Rect(0, 0, 90, 70)},
+		{"framed", 10, TrimOptions{Background: color.Black}, image.Rect(21, 11, 21+40, 11+39)},
+		{"noisy", 10, TrimOptions{Margin: 6}, image.Rect(7, 11, 7+132, 11+92)},
+		{"noisy", 10, TrimOptions{Margin: 100}, image.Rect(0, 0, 160, 120)},
+	} {
+		src := imgs[c.name]
+		got, err := FromImage(src).Trim(c.threshold, c.o).ToImage()
+		if err != nil {
+			t.Fatal(err)
+		}
+		b := got.Bounds()
+		if b.Dx() != c.want.Dx() || b.Dy() != c.want.Dy() {
+			t.Errorf("%s %v %+v: %dx%d, sharp %dx%d", c.name, c.threshold, c.o, b.Dx(), b.Dy(), c.want.Dx(), c.want.Dy())
+			continue
+		}
+		// The pixels are those of the box, unfiltered.
+		for y := 0; y < b.Dy(); y++ {
+			for x := 0; x < b.Dx(); x++ {
+				if p, q := color.NRGBAModel.Convert(got.At(b.Min.X+x, b.Min.Y+y)), src.NRGBAAt(c.want.Min.X+x, c.want.Min.Y+y); p != q {
+					t.Fatalf("%s %+v at %d,%d: %v, want %v", c.name, c.o, x, y, p, q)
+				}
+			}
+		}
+	}
+	// By name: the words of the step, and back.
+	var words []string
+	FromImage(imgs["framed"]).Do("trim", "10", "#000000", "2", "lineart").Around(func(s Step, in pipeline.Source, run func(pipeline.Source) (pipeline.Source, error)) (pipeline.Source, error) {
+		words = s.Args
+		return run(in)
+	}).PNG().ToBytes()
+	if fmt.Sprint(words) != "[10 #000000 2 lineart]" {
+		t.Errorf("trim words %v", words)
+	}
+	if w, h, err := FromImage(imgs["framed"]).Do("trim", "10", "#000000").OutputSize(); err != nil || w != 40 || h != 39 {
+		t.Errorf("trim with a background by name: %dx%d, %v", w, h, err)
+	}
+	for _, m := range []*Image{FromImage(imgs["lines"]).Trim(10, TrimOptions{Margin: -1}), FromImage(imgs["lines"]).Do("trim", "10", "auto", "0", "photo")} {
+		if _, err := m.PNG().ToBytes(); err == nil {
+			t.Error("no error")
+		}
 	}
 }

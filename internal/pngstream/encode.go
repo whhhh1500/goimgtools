@@ -24,6 +24,8 @@ type Options struct {
 	// set. They are the only bytes png.Encode would not write.
 	Exif []byte
 	ICC  []byte
+	// Xmp is written as an iTXt chunk under the keyword XML:com.adobe.xmp.
+	Xmp []byte
 	// Density, when above 0, is the resolution to record in a pHYs chunk,
 	// in pixels per inch (stored per metre).
 	Density float64
@@ -171,6 +173,11 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 	e.writeIHDR()
 	if o != nil {
 		e.writeMeta(o.Exif, o.ICC)
+		if len(o.Xmp) > 0 {
+			// Keyword, 0, uncompressed, method 0, no language, no
+			// translated keyword, the packet.
+			e.writeChunk(append([]byte("XML:com.adobe.xmp\x00\x00\x00\x00\x00"), o.Xmp...), "iTXt")
+		}
 		if o.Density > 0 {
 			var b [9]byte
 			ppm := density.PerMetre(o.Density)

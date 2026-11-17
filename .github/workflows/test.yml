@@ -354,3 +354,5 @@ jobs:
       - run: go test -run '^$' -fuzz '^FuzzExif$' -fuzztime 30s ./tests
       - run: go test -run '^$' -fuzz '^FuzzParse$' -fuzztime 30s ./internal/iccprof
       - run: go test -run '^$' -fuzz '^FuzzRoundTrip$' -fuzztime 30s ./internal/deflate
+      - run: go test -run '^$' -fuzz '^FuzzWriterRoundTrip$' -fuzztime 30s ./internal/tiffstream/lzw
+      - run: go test -run '^$' -fuzz '^FuzzSameAsXImage$' -fuzztime 30s ./internal/tiffstream/lzw

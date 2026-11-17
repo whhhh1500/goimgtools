@@ -54,6 +54,7 @@ goimgtools -op median:3 -op normalize -op "tint:#704214" scan.jpg out.jpg
 | `-rotate auto\|度数` | `auto` 按 EXIF 校正方向；数字表示顺时针旋转的度数。角度不是 90 的倍数时画布扩大，四角以 `-background` 填充 |
 | `-flip` / `-flop` | 上下 / 左右镜像 |
 | `-trim 差值` | 去除与左上角颜色相同的边框；差值 0–255（10 可容忍 JPEG 噪点） |
+| `-trim-background 颜色`、`-trim-margin N`、`-trim-line-art` | 要去除的边框颜色（代替左上角颜色）、在找到的范围外保留的像素数，以及直接比较原像素而不先做可滤除噪点的中值滤波（适用于细线条绘图） |
 | `-crop X,Y,W,H` | 裁剪 |
 | `-resize WxH` | 目标尺寸；可只指定一边（`1536x`、`x1024`） |
 | `-fit` | `inside`（默认）、`cover`、`contain`、`outside`、`fill` |
@@ -87,16 +88,17 @@ goimgtools -op median:3 -op normalize -op "tint:#704214" scan.jpg out.jpg
 | `-quality N` | JPEG 或有损 WebP 的质量 |
 | `-jpeg-optimize`、`-jpeg-progressive` | JPEG：优化编码表；渐进式编码（文件更小，像素不变） |
 | `-jpeg-trellis` | JPEG：网格量化（同等观感下文件更小，像素会改变；可与上述两项同时使用） |
+| `-jpeg-chroma 420\|422\|444` | JPEG：色度保留的精细程度：420（默认，横纵各一半）、422（横向一半）或 444（全部保留：彩色文字与边缘清晰，文件更大） |
 | `-jpeg-quant-table N` | JPEG：量化表 0–8，编号与 mozjpeg 的 `-quant-table` 一致（默认 0 为标准表，3 为 mozjpeg 的默认表）；9 为按 jpegli 方法生成的表，文件最小（见[压缩](compression.md)） |
 | `-png-colors N`、`-no-dither` | PNG：减至 N 色（2–256）；关闭抖动 |
 | `-max-size 大小` | 文件大小不超过此值（`200KB`、`1.5MB` 或字节数），自动降低质量（JPEG、有损 WebP）；与 `-animated` 同用时动画报错 |
 | `-skip-larger` | 结果不小于原文件（同格式）时保留原文件；适用于仅做压缩的任务 |
 | `-webp-lossless`、`-webp-effort N` | 无损 WebP；力度 1（最快）至 9（文件最小），默认 5。力度也作用于有损 WebP：5 已用上全部手段（5 以上只在透明通道上多做），1 耗时约减半 |
-| `-png-level N`、`-gif-colors N`、`-gif-fixed-palette`、`-tiff-compression none\|deflate` | 各格式专用选项 |
+| `-png-level N`、`-gif-colors N`、`-gif-fixed-palette`、`-tiff-compression none\|deflate\|lzw`、`-tiff-predictor` | 各格式专用选项 |
 | `-gif-lossy N` | GIF：有损压缩，可接受的颜色差 1–255（照片类动画 16–32，带抖动的静态图 8–16；见[压缩](compression.md)） |
 | `-animated` | 处理 GIF、WebP 或 PNG 动画（APNG）的每一帧，按输出格式写为 GIF 或 WebP 动画；`-gif-colors`、`-no-dither` 适用于 GIF，WebP 的选项适用于 WebP。输出为其他格式时报错 |
 | `-op NAME[:ARG,ARG...]` | 按名称执行操作（`goimgtools ops` 列出全部操作，包括内置操作与程序注册的操作）；可多次指定，按指定顺序在锐化之后执行 |
-| `-keep-exif`、`-strip-icc` | 元数据 |
+| `-keep-exif`、`-keep-xmp`、`-strip-icc` | 元数据 |
 | `-density DPI` | 在输出中记录每英寸 DPI 个像素的分辨率（JPEG、PNG、TIFF、BMP）；默认保留输入的分辨率 |
 | `-srgb` | 依据色彩配置将颜色转换至 sRGB，输出不含配置（转为 GIF、BMP 时自动执行） |
 | `-mem MB`、`-threads N`、`-tmp 目录` | 内存上限（默认 64）、线程数（默认 1，最多为 CPU 核数，见 [CPU 与线程](performance.md#cpu-与线程)）、临时目录 |

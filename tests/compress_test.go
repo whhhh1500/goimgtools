@@ -6,6 +6,7 @@ import (
 	"image"
 	"image/color"
 	"image/jpeg"
+	"math"
 	"path/filepath"
 	"testing"
 
@@ -430,4 +431,103 @@ func textLike(w, h int) *image.RGBA {
 		}
 	}
 	return m
+}
+
+// TestJPEGChromaSubsampling: 4:2:2 and 4:4:4 JPEGs, plain, optimized,
+// progressive and with the trellis, of odd sizes: the standard decoder
+// reads them as such, the plain, optimized and progressive files give the
+// same pixels, and fine coloured stripes are kept as the sampling allows:
+// stripes across (alternating rows) by 4:2:2 and 4:4:4, stripes down
+// (alternating columns) by 4:4:4 alone.
+func TestJPEGChromaSubsampling(t *testing.T) {
+	src := photoLike(203, 151)
+	red, blue := color.RGBA{220, 20, 30, 255}, color.RGBA{20, 40, 230, 255}
+	for y := 0; y < 151; y++ {
+		for x := 60; x < 90; x++ { // stripes down
+			if x%2 == 0 {
+				src.SetRGBA(x, y, red)
+			} else {
+				src.SetRGBA(x, y, blue)
+			}
+		}
+		for x := 120; x < 150; x++ { // stripes across
+			if y%2 == 0 {
+				src.SetRGBA(x, y, red)
+			} else {
+				src.SetRGBA(x, y, blue)
+			}
+		}
+	}
+	// The PSNR of the columns x0..x1 (rows 8 to 143).
+	psnr := func(m image.Image, x0, x1 int) float64 {
+		var se float64
+		n := 0
+		for y := 8; y < 143; y++ {
+			for x := x0; x < x1; x++ {
+				r, g, b, _ := m.At(x, y).RGBA()
+				w := src.RGBAAt(x, y)
+				for _, d := range []float64{float64(r>>8) - float64(w.R), float64(g>>8) - float64(w.G), float64(b>>8) - float64(w.B)} {
+					se += d * d
+				}
+				n += 3
+			}
+		}
+		return 10 * math.Log10(255*255*float64(n)/se)
+	}
+	for _, c := range []struct {
+		sub          ChromaSubsampling
+		ratio        image.YCbCrSubsampleRatio
+		down, across bool // whether the stripes are kept
+	}{
+		{Chroma420, image.YCbCrSubsampleRatio420, false, false},
+		{Chroma422, image.YCbCrSubsampleRatio422, false, true},
+		{Chroma444, image.YCbCrSubsampleRatio444, true, true},
+	} {
+		var plain *image.YCbCr
+		for i, o := range []JPEGOptions{{}, {Optimize: true}, {Progressive: true}, {Trellis: true}, {Progressive: true, Trellis: true}} {
+			o.ChromaSubsampling = c.sub
+			data := must(FromImage(src).JPEG(85, o).ToBytes())
+			m, err := jpeg.Decode(bytes.NewReader(data))
+			if err != nil {
+				t.Fatalf("%v %+v: %v", c.sub, o, err)
+			}
+			y, ok := m.(*image.YCbCr)
+			if !ok || y.SubsampleRatio != c.ratio {
+				t.Fatalf("%v %+v: %T, want %v", c.sub, o, m, c.ratio)
+			}
+			if p := psnr(m, 0, 56); p < 33 {
+				t.Errorf("%v %+v: %.1f dB away from the stripes", c.sub, o, p)
+			}
+			if i == 0 {
+				plain = y
+				for _, s := range []struct {
+					kept   bool
+					x0, x1 int
+				}{{c.down, 62, 88}, {c.across, 122, 148}} {
+					if p := psnr(m, s.x0, s.x1); (p > 25) != s.kept {
+						t.Errorf("%v: stripes at %d..%d at %.1f dB, kept %v", c.sub, s.x0, s.x1, p, s.kept)
+					}
+				}
+			} else if !o.Trellis {
+				// The same coefficients, coded otherwise: the same pixels
+				// (the decoder's padding below the image aside).
+				for py := 0; py < 151; py++ {
+					for px := 0; px < 203; px++ {
+						if y.YCbCrAt(px, py) != plain.YCbCrAt(px, py) {
+							t.Fatalf("%v %+v: other pixels than the plain file at %d,%d", c.sub, o, px, py)
+						}
+					}
+				}
+			}
+		}
+	}
+	// A greyscale image has one component whatever is asked.
+	g := image.NewGray(image.Rect(0, 0, 33, 17))
+	m, err := jpeg.Decode(bytes.NewReader(must(FromImage(g).JPEG(80, JPEGOptions{ChromaSubsampling: Chroma444}).ToBytes())))
+	if _, ok := m.(*image.Gray); err != nil || !ok {
+		t.Errorf("grey with Chroma444: %T, %v", m, err)
+	}
+	if _, err := FromImage(src).JPEG(80, JPEGOptions{ChromaSubsampling: 7}).ToBytes(); err == nil {
+		t.Error("ChromaSubsampling 7: no error")
+	}
 }

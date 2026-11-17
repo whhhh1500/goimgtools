@@ -383,11 +383,11 @@ func (e *encoder) writeOptimized(src pipeline.Source, first image.Image, size im
 			recode(0)
 		}
 	} else {
-		for n := int64((size.X+15)/16) * int64((size.Y+15)/16); n > 0 && rd.err == nil && e.err == nil; n-- {
-			recode(0)
-			recode(0)
-			recode(0)
-			recode(0)
+		mcus := int64((size.X+8*e.hY-1)/(8*e.hY)) * int64((size.Y+8*e.vY-1)/(8*e.vY))
+		for n := mcus; n > 0 && rd.err == nil && e.err == nil; n-- {
+			for k := 0; k < e.hY*e.vY; k++ {
+				recode(0)
+			}
 			recode(1)
 			recode(1)
 		}

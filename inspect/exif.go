@@ -454,3 +454,20 @@ func exifTime(s, zone string) (time.Time, bool) {
 	}
 	return t, true
 }
+
+// ReadXmp returns the XMP packet of the image's file (Adobe's metadata, in
+// XML: keywords, rating, rights, the history of edits), as sharp's
+// metadata().xmp, and whether it has one. It reads the file's header (and
+// in WebP the chunks after the image data), not the pixels.
+func ReadXmp(img *goimgtools.Image) ([]byte, bool, error) {
+	if img == nil {
+		return nil, false, errors.New("goimgtools/inspect: ReadXmp needs an image")
+	}
+	src, err := img.Clone().KeepXmp().Stream(nil)
+	if err != nil {
+		return nil, false, err
+	}
+	data := pipeline.MetaOf(src).Xmp
+	src.Close()
+	return data, len(data) > 0, nil
+}

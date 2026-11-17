@@ -113,6 +113,7 @@ type Image struct {
 	hooks      []Hook // see Around
 	autoOrient bool   // Rotate() was asked to follow the EXIF orientation
 	keepExif   bool
+	keepXmp    bool
 	stripICC   bool
 	density    float64 // to record in the output (0: none), when densitySet
 	densitySet bool

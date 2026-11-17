@@ -54,6 +54,7 @@ Operations run in a fixed order: rotate → flip → trim → crop → resize �
 | `-rotate auto\|degrees` | `auto` corrects the orientation from EXIF; a number specifies clockwise rotation in degrees. For angles that are not multiples of 90, the canvas is enlarged and the corners are filled with `-background` |
 | `-flip` / `-flop` | Mirror top to bottom / left to right |
 | `-trim difference` | Remove borders of the same colour as the top-left corner; difference 0–255 (10 tolerates JPEG noise) |
+| `-trim-background color`, `-trim-margin N`, `-trim-line-art` | The colour of the borders to remove (instead of the top-left corner's), pixels to keep around what is found, and comparing the pixels as they are instead of after the median filter that passes over noise (for drawings of thin lines) |
 | `-crop X,Y,W,H` | Crop |
 | `-resize WxH` | Target size; either side may be omitted (`1536x`, `x1024`) |
 | `-fit` | `inside` (default), `cover`, `contain`, `outside`, `fill` |
@@ -87,16 +88,17 @@ Operations run in a fixed order: rotate → flip → trim → crop → resize �
 | `-quality N` | Quality for JPEG or lossy WebP |
 | `-jpeg-optimize`, `-jpeg-progressive` | JPEG: optimised coding tables; progressive encoding (smaller files, pixels unchanged) |
 | `-jpeg-trellis` | JPEG: trellis quantization (smaller files at the same perceived quality; pixels change; can be combined with the two options above) |
+| `-jpeg-chroma 420\|422\|444` | JPEG: how finely colour is kept: 420 (the default, half across and down), 422 (half across) or 444 (all of it: crisp coloured text and edges, a larger file) |
 | `-jpeg-quant-table N` | JPEG: quantization tables 0–8, numbered as mozjpeg's `-quant-table` (0, the default, the standard's; 3 mozjpeg's default), or 9, made as jpegli makes them: the smallest files (see [Compression](compression.md)) |
 | `-png-colors N`, `-no-dither` | PNG: reduce to N colours (2–256); disable dithering |
 | `-max-size size` | Limit the file to this size (`200KB`, `1.5MB` or a number of bytes) by lowering the quality automatically (JPEG, lossy WebP); with `-animated`, an animation is an error |
 | `-skip-larger` | Keep the original file if the result is not smaller than it (same format); intended for compression-only jobs |
 | `-webp-lossless`, `-webp-effort N` | Lossless WebP; effort 1 (fastest) to 9 (smallest file), 5 by default. The effort also applies to lossy WebP, where 5 already does all there is (above 5, only the alpha plane gets more) and 1 takes about half the time |
-| `-png-level N`, `-gif-colors N`, `-gif-fixed-palette`, `-tiff-compression none\|deflate` | Format-specific options |
+| `-png-level N`, `-gif-colors N`, `-gif-fixed-palette`, `-tiff-compression none\|deflate\|lzw`, `-tiff-predictor` | Format-specific options |
 | `-gif-lossy N` | GIF: lossy compression, the colour difference 1–255 it may accept (16–32 for photographic animations, 8–16 for dithered stills; see [Compression](compression.md)) |
 | `-animated` | Process every frame of an animated GIF, WebP or PNG (APNG) and write an animated GIF or WebP (by the output); `-gif-colors` and `-no-dither` also apply to GIF, the WebP options to WebP. Another output format is an error |
 | `-op NAME[:ARG,ARG...]` | Run an operation by name (`goimgtools ops` lists all of them, both built-in and registered by the program); may be specified more than once, and the operations run after sharpening in the order specified |
-| `-keep-exif`, `-strip-icc` | Metadata |
+| `-keep-exif`, `-keep-xmp`, `-strip-icc` | Metadata |
 | `-density DPI` | Record a resolution of DPI pixels per inch in the output (JPEG, PNG, TIFF, BMP); by default the input's is kept |
 | `-srgb` | Convert colours to sRGB using the colour profile; the output contains no profile (applied automatically when converting to GIF or BMP) |
 | `-mem MB`, `-threads N`, `-tmp directory` | Memory limit (default 64), number of threads (default 1, at most the number of CPU cores; see [CPU and threads](performance.md#cpu-and-threads)), temporary directory |

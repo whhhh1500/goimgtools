@@ -58,6 +58,9 @@ type EncodeOptions struct {
 	// "MM") and the colour profile to put into the file; nil for none. An
 	// encoder whose format cannot hold them leaves them out.
 	Exif, ICC []byte
+	// Xmp is the XMP packet to put into the file (KeepXmp); nil for none.
+	// An encoder whose format cannot hold it leaves it out.
+	Xmp []byte
 	// Density is the resolution to record, in pixels per inch; 0 for none
 	// (an encoder whose format needs one writes its usual default). An
 	// encoder whose format cannot hold it leaves it out.
@@ -178,8 +181,9 @@ var builtin = []*formatDef{
 			if q < 1 || q > 100 {
 				return fmt.Errorf("goimgtools: JPEG quality must be 1 to 100, got %d", q)
 			}
-			return jpegstream.Encode(w, src, &jpegstream.Options{Quality: q, Exif: o.Exif, ICC: o.ICC, Density: o.Density,
-				Optimize: jo.Optimize, Progressive: jo.Progressive, Trellis: jo.Trellis, QuantTable: int(jo.QuantTable)})
+			return jpegstream.Encode(w, src, &jpegstream.Options{Quality: q, Exif: o.Exif, ICC: o.ICC, Xmp: o.Xmp, Density: o.Density,
+				Optimize: jo.Optimize, Progressive: jo.Progressive, Trellis: jo.Trellis, QuantTable: int(jo.QuantTable),
+				Subsampling: int(jo.ChromaSubsampling)})
 		},
 		quality: func(options any) (int, bool) {
 			jo, _ := optionsOf[JPEGOptions](options, "jpeg")
@@ -209,7 +213,7 @@ var builtin = []*formatDef{
 			if level == 0 {
 				level = DefaultPNGLevel
 			}
-			return pngstream.Encode(w, src, &pngstream.Options{Level: level, Exif: o.Exif, ICC: o.ICC, Density: o.Density})
+			return pngstream.Encode(w, src, &pngstream.Options{Level: level, Exif: o.Exif, ICC: o.ICC, Xmp: o.Xmp, Density: o.Density})
 		},
 		check: checks[PNGOptions]("png"),
 	},
@@ -232,11 +236,11 @@ var builtin = []*formatDef{
 			if err != nil {
 				return err
 			}
-			// The colour profile and EXIF go into the extended format;
-			// without them the file stays in the simple one.
+			// The colour profile, EXIF and XMP go into the extended
+			// format; without them the file stays in the simple one.
 			var mw *webpstream.MetaWriter
-			if len(o.ICC) > 0 || len(o.Exif) > 0 {
-				mw = webpstream.NewMetaWriter(w, pipeline.Meta{Exif: o.Exif, ICC: o.ICC})
+			if len(o.ICC) > 0 || len(o.Exif) > 0 || len(o.Xmp) > 0 {
+				mw = webpstream.NewMetaWriter(w, pipeline.Meta{Exif: o.Exif, ICC: o.ICC, Xmp: o.Xmp})
 				w = mw
 			}
 			if wo.Lossless {
@@ -322,11 +326,13 @@ var builtin = []*formatDef{
 			if err != nil {
 				return err
 			}
-			out := &tiffstream.Options{ICC: o.ICC, Density: o.Density}
+			out := &tiffstream.Options{ICC: o.ICC, Xmp: o.Xmp, Density: o.Density, Predictor: to.Predictor}
 			switch to.Compression {
 			case TIFFNone:
 			case TIFFDeflate:
 				out.Compression = tiffstream.Deflate
+			case TIFFLZW:
+				out.Compression = tiffstream.LZW
 			default:
 				return errors.New("goimgtools: unknown TIFF compression")
 			}

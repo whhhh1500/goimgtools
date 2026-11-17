@@ -107,6 +107,12 @@ func TestSameOnEveryProcessor(t *testing.T) {
 		{"jpeg jpegli tables", func() ([]byte, error) {
 			return photo.Clone().JPEG(77, JPEGOptions{QuantTable: QuantTableJpegli, Progressive: true}).ToBytes()
 		}, "2bab35f640292b20"},
+		{"jpeg 4:4:4 progressive", func() ([]byte, error) {
+			return photo.Clone().JPEG(83, JPEGOptions{Progressive: true, ChromaSubsampling: Chroma444}).ToBytes()
+		}, "e4a400f261123064"},
+		{"jpeg 4:2:2 trellis", func() ([]byte, error) {
+			return photo.Clone().JPEG(77, JPEGOptions{Optimize: true, Trellis: true, ChromaSubsampling: Chroma422}).ToBytes()
+		}, "bbbf99c1ae746ae6"},
 		{"jpeg quant table 3", func() ([]byte, error) {
 			return photo.Clone().JPEG(77, JPEGOptions{QuantTable: QuantTableImageMagick}).ToBytes()
 		}, "32485d8a9a2c7f60"},

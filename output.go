@@ -29,6 +29,11 @@ import (
 // says the image is upright.
 func (m *Image) KeepExif() *Image { m.keepExif = true; return m }
 
+// KeepXmp copies the XMP packet of the input (Adobe's metadata: keywords,
+// rating, rights, the history of edits) to the output, for JPEG, PNG, WebP
+// and TIFF, as sharp's keepXmp. By default it is dropped.
+func (m *Image) KeepXmp() *Image { m.keepXmp = true; return m }
+
 // StripICC drops the ICC colour profile of the input. By default it is
 // copied to the output, because the pixel values only mean the right
 // colours together with it. Without it the values are taken for sRGB, as
@@ -96,11 +101,18 @@ type TIFFCompression int
 const (
 	TIFFNone    TIFFCompression = iota // uncompressed, the default
 	TIFFDeflate                        // zlib
+	TIFFLZW                            // LZW, as libtiff writes it
 )
 
 // TIFFOptions are the optional settings of TIFF.
 type TIFFOptions struct {
 	Compression TIFFCompression
+	// Predictor stores each sample as its difference from the same
+	// sample of the pixel to its left (horizontal differencing), which
+	// makes photographs compress much better with TIFFDeflate and TIFFLZW
+	// (sharp's predictor "horizontal", its default). It does nothing for
+	// uncompressed and paletted images.
+	Predictor bool
 }
 
 // TIFF selects TIFF output.
@@ -232,7 +244,31 @@ type JPEGOptions struct {
 	// choices). The zero value, QuantTableStandard, is what the standard
 	// library uses; QuantTableJpegli gives the smallest files.
 	QuantTable QuantTable
+	// ChromaSubsampling is how finely colour is kept (see
+	// ChromaSubsampling): by default at half the width and height, as the
+	// standard library and libjpeg keep it; Chroma444 keeps all of it, for
+	// crisp coloured text, lines and edges (sharp's chromaSubsampling).
+	ChromaSubsampling ChromaSubsampling
 }
+
+// ChromaSubsampling is how finely a JPEG keeps colour (its Cb and Cr
+// planes) beside brightness, which it always keeps in full.
+type ChromaSubsampling int
+
+const (
+	// Chroma420 keeps colour at half the width and half the height
+	// (4:2:0): the smallest files, as the standard library and libjpeg
+	// write by default. Fine coloured detail (red text, thin coloured
+	// lines) blurs.
+	Chroma420 ChromaSubsampling = iota
+	// Chroma422 keeps colour at half the width and the full height
+	// (4:2:2), as many cameras write.
+	Chroma422
+	// Chroma444 keeps all of the colour (4:4:4): coloured edges stay
+	// sharp; the file is larger (about 30% on a photograph at the same
+	// quality setting).
+	Chroma444
+)
 
 // QuantTable is a set of JPEG quantization tables: how coarsely each DCT
 // coefficient of brightness and of colour is kept, scaled by the quality.
@@ -499,6 +535,9 @@ func (m *Image) outputMeta(meta pipeline.Meta) (out pipeline.Meta) {
 	if !m.stripICC {
 		out.ICC = meta.ICC
 	}
+	if m.keepXmp {
+		out.Xmp = meta.Xmp
+	}
 	return out
 }
 
@@ -514,7 +553,7 @@ func (m *Image) encode(w io.Writer, src pipeline.Source, format string, quality 
 	if def == nil || def.encode == nil {
 		return fmt.Errorf("goimgtools: cannot write %s (%s)", format, formatList())
 	}
-	o := EncodeOptions{Exif: meta.Exif, ICC: meta.ICC, Density: meta.Density, Options: m.optionsFor(format)}
+	o := EncodeOptions{Exif: meta.Exif, ICC: meta.ICC, Xmp: meta.Xmp, Density: meta.Density, Options: m.optionsFor(format)}
 	if def.quality != nil {
 		if q, ok := def.quality(o.Options); ok {
 			o.Quality = q

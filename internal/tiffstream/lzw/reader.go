@@ -33,7 +33,7 @@ Go's standard package library to accommodate this "off by one" in valid TIFFs.
 */
 
 import (
-	"bufio"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -59,13 +59,20 @@ const (
 // decoder is the state from which the readXxx method converts a byte
 // stream into a code stream.
 type decoder struct {
-	r        *bufio.Reader
-	bits     uint32
-	nBits    uint
-	width    uint
-	read     func(*decoder) (uint16, error) // readLSB or readMSB
-	litWidth int                            // width in bits of literal codes
-	err      error
+	// goimgtools: the input is buffered here, its bytes taken one at a
+	// time without a call each (bufio's ReadByte was most of the time).
+	r          io.Reader
+	in         []byte
+	inPos, inN int
+	inErr      error
+	bits       uint32 // LSB: the bits read and not used, the first lowest
+	bits64     uint64 // MSB: the bits read and not used, the first highest
+	nBits      uint
+	width      uint
+	msb        bool // codes most significant bit first, else least
+	valid      bool // made with valid arguments
+	litWidth   int  // width in bits of literal codes
+	err        error
 
 	// The first 1<<litWidth codes are literal codes.
 	// The next two codes mean clear and EOF.
@@ -82,6 +89,13 @@ type decoder struct {
 	// The c == hi case is a special case.
 	suffix [1 << maxWidth]uint8
 	prefix [1 << maxWidth]uint16
+	// goimgtools: length[c] is how many bytes code c expands to (1 for a
+	// literal), and top the end of the entries saved since the table was
+	// last cleared: a code below top has all its chain in this table, so
+	// its bytes go straight to their place. (A code from top to hi, which
+	// only a damaged stream has, keeps the standard library's path.)
+	length [1 << maxWidth]uint16
+	top    uint16
 
 	// output is the temporary output buffer.
 	// Literal codes are accumulated from the start of the buffer.
@@ -95,10 +109,51 @@ type decoder struct {
 	toRead []byte // bytes to return from Read
 }
 
+// Size is about how much memory a Reader holds: its tables, its output
+// and its input buffer.
+const Size = 3*(1<<maxWidth) + 2*(1<<maxWidth) + inBuf
+
+const inBuf = 32 << 10
+
+// readByte returns the next input byte, as bufio.Reader's ReadByte does:
+// an error only when no byte is left, the reader tried again on empty
+// reads up to 100 times.
+func (d *decoder) readByte() (byte, error) {
+	if d.inPos < d.inN {
+		b := d.in[d.inPos]
+		d.inPos++
+		return b, nil
+	}
+	if d.inErr != nil {
+		err := d.inErr
+		d.inErr = nil
+		return 0, err
+	}
+	for i := 0; i < 100; i++ {
+		n, err := d.r.Read(d.in)
+		if n < 0 || n > len(d.in) {
+			panic("lzw: reader returned an invalid count")
+		}
+		d.inPos, d.inN = 0, n
+		if err != nil {
+			d.inErr = err
+		}
+		if n > 0 {
+			d.inPos = 1
+			return d.in[0], nil
+		}
+		if err != nil {
+			d.inErr = nil
+			return 0, err
+		}
+	}
+	return 0, io.ErrNoProgress
+}
+
 // readLSB returns the next code for "Least Significant Bits first" data.
 func (d *decoder) readLSB() (uint16, error) {
 	for d.nBits < d.width {
-		x, err := d.r.ReadByte()
+		x, err := d.readByte()
 		if err != nil {
 			return 0, err
 		}
@@ -111,20 +166,18 @@ func (d *decoder) readLSB() (uint16, error) {
 	return code, nil
 }
 
-// readMSB returns the next code for "Most Significant Bits first" data.
-func (d *decoder) readMSB() (uint16, error) {
+// topUpMSB reads bytes one at a time until a code's bits are there, for
+// "Most Significant Bits first" data.
+func (d *decoder) topUpMSB() error {
 	for d.nBits < d.width {
-		x, err := d.r.ReadByte()
+		x, err := d.readByte()
 		if err != nil {
-			return 0, err
+			return err
 		}
-		d.bits |= uint32(x) << (24 - d.nBits)
+		d.bits64 |= uint64(x) << (56 - d.nBits)
 		d.nBits += 8
 	}
-	code := uint16(d.bits >> (32 - d.width))
-	d.bits <<= d.width
-	d.nBits -= d.width
-	return code, nil
+	return nil
 }
 
 func (d *decoder) Read(b []byte) (int, error) {
@@ -148,7 +201,31 @@ func (d *decoder) decode() {
 	// Loop over the code stream, converting codes into decompressed bytes.
 loop:
 	for {
-		code, err := d.read(d)
+		var code uint16
+		var err error
+		if d.msb {
+			// readMSB, inline: eight bytes at a time while eight are
+			// buffered (the same bits in the same order), else one by one.
+			if d.nBits < d.width {
+				if d.inN-d.inPos >= 8 {
+					v := binary.BigEndian.Uint64(d.in[d.inPos:])
+					k := (64 - d.nBits) >> 3
+					d.bits64 |= v >> d.nBits
+					d.nBits += 8 * k
+					d.bits64 &^= 1<<(64-d.nBits) - 1
+					d.inPos += int(k)
+				} else {
+					err = d.topUpMSB()
+				}
+			}
+			if err == nil {
+				code = uint16(d.bits64 >> (64 - d.width))
+				d.bits64 <<= d.width
+				d.nBits -= d.width
+			}
+		} else {
+			code, err = d.readLSB()
+		}
 		if err != nil {
 			if err == io.EOF {
 				err = io.ErrUnexpectedEOF
@@ -165,16 +242,36 @@ loop:
 				// Save what the hi code expands to.
 				d.suffix[d.hi] = uint8(code)
 				d.prefix[d.hi] = d.last
+				d.length[d.hi] = d.length[d.last] + 1
+				d.top = d.hi + 1
 			}
 		case code == d.clear:
 			d.width = 1 + uint(d.litWidth)
 			d.hi = d.eof
+			d.top = d.eof + 1
 			d.overflow = 1 << d.width
 			d.last = decoderInvalidCode
 			continue
 		case code == d.eof:
 			d.err = io.EOF
 			break loop
+		case code >= d.eof+1 && code < d.top:
+			n := int(d.length[code])
+			c, i := code, d.o+n-1
+			for c >= d.clear {
+				d.output[i] = d.suffix[c]
+				i--
+				c = d.prefix[c]
+			}
+			d.output[i] = uint8(c)
+			d.o += n
+			if d.last != decoderInvalidCode {
+				// Save what the hi code expands to.
+				d.suffix[d.hi] = uint8(c)
+				d.prefix[d.hi] = d.last
+				d.length[d.hi] = d.length[d.last] + 1
+				d.top = d.hi + 1
+			}
 		case code <= d.hi:
 			c, i := code, len(d.output)-1
 			if code == d.hi && d.last != decoderInvalidCode {
@@ -201,6 +298,8 @@ loop:
 				// Save what the hi code expands to.
 				d.suffix[d.hi] = uint8(c)
 				d.prefix[d.hi] = d.last
+				d.length[d.hi] = d.length[d.last] + 1
+				d.top = d.hi + 1
 			}
 		default:
 			d.err = errors.New("lzw: invalid code")
@@ -241,9 +340,8 @@ func NewReader(r io.Reader, order Order, litWidth int) *Reader {
 	d := new(decoder)
 	switch order {
 	case LSB:
-		d.read = (*decoder).readLSB
 	case MSB:
-		d.read = (*decoder).readMSB
+		d.msb = true
 	default:
 		d.err = errors.New("lzw: unknown order")
 		return d
@@ -252,16 +350,20 @@ func NewReader(r io.Reader, order Order, litWidth int) *Reader {
 		d.err = fmt.Errorf("lzw: litWidth %d out of range", litWidth)
 		return d
 	}
-	d.r = bufio.NewReader(r)
+	d.r, d.in, d.valid = r, make([]byte, inBuf), true
 	d.litWidth = litWidth
 	d.init()
 	return d
 }
 
 func (d *decoder) init() {
+	for i := 0; i < 1<<d.litWidth; i++ {
+		d.length[i] = 1
+	}
 	d.width = 1 + uint(d.litWidth)
 	d.clear = uint16(1) << uint(d.litWidth)
 	d.eof, d.hi = d.clear+1, d.clear+1
+	d.top = d.eof + 1
 	d.overflow = uint16(1) << d.width
 	d.last = decoderInvalidCode
 }
@@ -270,11 +372,11 @@ func (d *decoder) init() {
 // same order and litWidth would. A Reader whose NewReader arguments were
 // invalid stays invalid.
 func (d *decoder) Reset(r io.Reader) {
-	if d.r == nil {
+	if !d.valid {
 		return
 	}
-	d.r.Reset(r)
-	d.bits, d.nBits, d.err = 0, 0, nil
+	d.r, d.inPos, d.inN, d.inErr = r, 0, 0, nil
+	d.bits, d.bits64, d.nBits, d.err = 0, 0, 0, nil
 	d.o, d.toRead = 0, nil
 	d.init()
 }

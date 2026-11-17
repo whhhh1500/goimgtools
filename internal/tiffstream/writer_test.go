@@ -55,7 +55,10 @@ var wtOptions = []struct {
 	{"none", &Options{Compression: Uncompressed}, &tiff.Options{Compression: tiff.Uncompressed}},
 	{"none+pred", &Options{Predictor: true}, &tiff.Options{Predictor: true}},
 	{"deflate", &Options{Compression: Deflate}, &tiff.Options{Compression: tiff.Deflate}},
-	{"deflate+pred", &Options{Compression: Deflate, Predictor: true}, &tiff.Options{Compression: tiff.Deflate, Predictor: true}},
+	// x/image applies the predictor only to LZW, which it cannot write:
+	// with Deflate its file is the one without (this package's predictor
+	// is tested in the tests package, by reading the pixels back).
+	{"deflate+pred", &Options{Compression: Deflate}, &tiff.Options{Compression: tiff.Deflate, Predictor: true}},
 }
 
 func wtRef(t *testing.T, m image.Image, o *tiff.Options) []byte {
@@ -205,7 +208,22 @@ func TestEncodeSmallBudget(t *testing.T) {
 			if err := Encode(got, testutil.ChoppedEnv(ms[name], 16, env), opt.o); err != nil {
 				t.Fatalf("%s: %v", what, err)
 			}
-			if !bytes.Equal(got.Bytes(), wtRef(t, ms[name], opt.ref)) {
+			if opt.o.Compression == Deflate {
+				// Larger than a strip: written in strips, which x/image
+				// does not; the pixels it reads back are the image's.
+				back, err := tiff.Decode(bytes.NewReader(got.Bytes()))
+				if err != nil {
+					t.Fatalf("%s: %v", what, err)
+				}
+				want, _ := tiff.Decode(bytes.NewReader(wtRef(t, ms[name], opt.ref)))
+				for y := 0; y < 2000; y += 7 {
+					for x := 0; x < 2000; x += 3 {
+						if back.At(x, y) != want.At(x, y) {
+							t.Fatalf("%s at %d,%d: %v, want %v", what, x, y, back.At(x, y), want.At(x, y))
+						}
+					}
+				}
+			} else if !bytes.Equal(got.Bytes(), wtRef(t, ms[name], opt.ref)) {
 				t.Errorf("%s: differs from the reference", what)
 			}
 			// Random pixels do not compress, so the deflate stream cannot
@@ -288,8 +306,9 @@ func TestEncodeErrors(t *testing.T) {
 			t.Errorf("zero-size %v: err %v, %d bytes written", r, err, buf.Len())
 		}
 	}
-	// The reference encoder cannot write these either.
-	for _, c := range []CompressionType{LZW, CCITTGroup3, CCITTGroup4} {
+	// The reference encoder cannot write these either (LZW this package
+	// can).
+	for _, c := range []CompressionType{CCITTGroup3, CCITTGroup4} {
 		env := pipeline.NewEnv(0, t.TempDir())
 		var buf bytes.Buffer
 		if err := Encode(&buf, testutil.ChoppedEnv(ms["gray"], 7, env), &Options{Compression: c}); err == nil || buf.Len() != 0 {

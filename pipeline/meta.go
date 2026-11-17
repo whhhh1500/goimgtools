@@ -12,6 +12,9 @@ type Meta struct {
 	Exif []byte
 	// ICC is the embedded colour profile.
 	ICC []byte
+	// Xmp is the XMP packet (Adobe's metadata, in XML): keywords, rating,
+	// rights, the history of edits.
+	Xmp []byte
 	// Density is the resolution the file records, in pixels per inch
 	// (dots per inch), horizontally; 0 when it records none.
 	Density float64

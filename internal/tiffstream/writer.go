@@ -16,6 +16,7 @@ import (
 	"sort"
 
 	"github.com/whhhh1500/goimgtools/internal/density"
+	"github.com/whhhh1500/goimgtools/internal/tiffstream/lzw"
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
@@ -37,11 +38,11 @@ type ifdEnt struct {
 	tag      int
 	datatype int
 	data     []uint32
-	raw      []byte // the bytes of a dtUndefined entry
+	raw      []byte // the bytes of an entry given as bytes (UNDEFINED, BYTE)
 }
 
 func (e ifdEnt) putData(p []byte) {
-	if e.datatype == dtUndefined {
+	if e.raw != nil {
 		copy(p, e.raw)
 		return
 	}
@@ -89,7 +90,7 @@ func writeIFD(w io.Writer, ifdOffset int64, d []ifdEnt) error {
 			count /= 2
 		}
 		datalen := 0
-		if ent.datatype == dtUndefined {
+		if ent.raw != nil {
 			count, datalen = uint32(len(ent.raw)), len(ent.raw)
 		} else {
 			datalen = int(count * lengths[ent.datatype])
@@ -128,9 +129,10 @@ func writeIFD(w io.Writer, ifdOffset int64, d []ifdEnt) error {
 type Options struct {
 	// Compression is the type of compression used: Uncompressed or Deflate.
 	Compression CompressionType
-	// Predictor mirrors golang.org/x/image/tiff, where the differencing
-	// predictor only applies to LZW, which the encoder cannot write. It has
-	// no effect.
+	// Predictor stores each sample of a compressed image as its difference
+	// from the same sample of the pixel before (horizontal differencing,
+	// Predictor 2), which compresses photographs better. It applies to LZW
+	// and Deflate, not to paletted images.
 	Predictor bool
 	// ICC is a colour profile to embed (tag 34675), at most
 	// pipeline.MaxMetaBytes.
@@ -138,6 +140,9 @@ type Options struct {
 	// Density, when above 0, is the resolution to record, in pixels per
 	// inch; otherwise 72, as the reference writes.
 	Density float64
+	// Xmp is an XMP packet to embed (tag 700), at most
+	// pipeline.MaxMetaBytes.
+	Xmp []byte
 }
 
 var (
@@ -152,6 +157,12 @@ const (
 	// at a time, and the size of the buffer that copies the spill to it.
 	encChunk = 256 << 10
 	copyBuf  = 64 << 10
+	// stripBytes is about how many bytes of pixel data a strip of a
+	// compressed image holds: compressed images up to this size are one
+	// strip, as x/image writes them; larger ones are cut into strips of
+	// this size, each compressed on its own, as libtiff writes them (libvips
+	// refuses a strip whose compressed data exceeds 50MB).
+	stripBytes = 1 << 20
 	// maxIFD bounds the directory and its pointer area (a 768-entry color
 	// map is the bulk of it).
 	maxIFD = 2048
@@ -301,7 +312,7 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 		return errZeroSize
 	}
 	compression := uint32(cNone)
-	var icc []byte
+	var icc, xmp []byte
 	res := []uint32{72, 1}
 	if o != nil && o.Density > 0 {
 		num, den := density.Rational(o.Density)
@@ -312,8 +323,11 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 		if len(o.ICC) <= pipeline.MaxMetaBytes {
 			icc = o.ICC
 		}
+		if len(o.Xmp) <= pipeline.MaxMetaBytes {
+			xmp = o.Xmp
+		}
 	}
-	if compression != cNone && compression != cDeflate {
+	if compression != cNone && compression != cDeflate && compression != cLZW {
 		return errors.New("tiff: unsupported compression")
 	}
 	env := pipeline.EnvOf(src)
@@ -333,9 +347,19 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 	// imageLen is the length of the pixel data in bytes.
 	// The offset of the IFD is imageLen + 8 header bytes.
 	imageLen := rowLen * int64(dy)
-	if rowLen > math.MaxInt32 || (compression == cNone && imageLen+8+maxIFD+int64(len(icc)) > math.MaxUint32) {
+	if rowLen > math.MaxInt32 || (compression == cNone && imageLen+8+maxIFD+int64(len(icc)+len(xmp)) > math.MaxUint32) {
 		return errTooLarge
 	}
+
+	_, paletted := first.(*image.Paletted)
+	predict := o != nil && o.Predictor && compression != cNone && !paletted
+	// The rows of a strip: all of them, or about stripBytes of data in a
+	// large compressed image.
+	rowsPerStrip := int64(dy)
+	if compression != cNone && imageLen > stripBytes {
+		rowsPerStrip = max(1, stripBytes/rowLen)
+	}
+	var strips *stripWriter
 
 	// Rows that are not written as they are get converted a chunk at a time.
 	var conv []byte
@@ -371,7 +395,37 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 		sp = pipeline.NewSpill(env)
 		defer sp.Close()
 		sp.Expect(imageLen)
-		dst = zlib.NewWriter(sp)
+		var zw *zlib.Writer
+		var lw *lzw.Writer
+		comp := func() io.WriteCloser {
+			if compression == cLZW {
+				if lw == nil {
+					lw = lzw.NewWriter(sp)
+				} else {
+					lw.Reset(sp)
+				}
+				return lw
+			}
+			if zw == nil {
+				zw = zlib.NewWriter(sp)
+			} else {
+				zw.Reset(sp)
+			}
+			return zw
+		}
+		strips = &stripWriter{sp: sp, comp: comp, size: rowsPerStrip * rowLen}
+		dst = strips
+		if predict {
+			if err := env.Budget.Reserve(rowLen, "tiff predictor row"); err != nil {
+				return err
+			}
+			defer env.Budget.Release(rowLen)
+			bps := 1
+			if swap {
+				bps = 2
+			}
+			dst = &predictor{w: dst.(io.WriteCloser), row: make([]byte, rowLen), bps: bps, spp: bpp / bps}
+		}
 	}
 
 	var pal color.Palette
@@ -415,7 +469,7 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 			return err
 		}
 		imageLen = sp.Size()
-		if imageLen+8+maxIFD+int64(len(icc)) > math.MaxUint32 {
+		if imageLen+8+maxIFD+8*int64(len(strips.offsets))+int64(len(icc)+len(xmp)) > math.MaxUint32 {
 			return errTooLarge
 		}
 		var hdr [8]byte
@@ -492,16 +546,25 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 		}
 		return dtShort
 	}
+	// Where the strips are (after the 8 bytes of the header) and their
+	// sizes.
+	offsets, counts := []uint32{8}, []uint32{uint32(imageLen)}
+	if strips != nil {
+		offsets, counts = strips.offsets, strips.counts
+		for i := range offsets {
+			offsets[i] += 8
+		}
+	}
 	ifd := []ifdEnt{
 		{tag: tImageWidth, datatype: sizeType(dx), data: []uint32{uint32(dx)}},
 		{tag: tImageLength, datatype: sizeType(dy), data: []uint32{uint32(dy)}},
 		{tag: tBitsPerSample, datatype: dtShort, data: bitsPerSample},
 		{tag: tCompression, datatype: dtShort, data: []uint32{compression}},
 		{tag: tPhotometricInterpretation, datatype: dtShort, data: []uint32{photometricInterpretation}},
-		{tag: tStripOffsets, datatype: dtLong, data: []uint32{8}},
+		{tag: tStripOffsets, datatype: dtLong, data: offsets},
 		{tag: tSamplesPerPixel, datatype: dtShort, data: []uint32{samplesPerPixel}},
-		{tag: tRowsPerStrip, datatype: sizeType(dy), data: []uint32{uint32(dy)}},
-		{tag: tStripByteCounts, datatype: dtLong, data: []uint32{uint32(imageLen)}},
+		{tag: tRowsPerStrip, datatype: sizeType(int(rowsPerStrip)), data: []uint32{uint32(rowsPerStrip)}},
+		{tag: tStripByteCounts, datatype: dtLong, data: counts},
 		// The resolution given, else 72x72 dpi as the reference writes.
 		{tag: tXResolution, datatype: dtRational, data: res},
 		{tag: tYResolution, datatype: dtRational, data: res},
@@ -516,6 +579,118 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 	if len(icc) > 0 {
 		ifd = append(ifd, ifdEnt{tag: tICCProfile, datatype: dtUndefined, raw: icc})
 	}
+	if predict {
+		ifd = append(ifd, ifdEnt{tag: tPredictor, datatype: dtShort, data: []uint32{prHorizontal}})
+	}
+	if len(xmp) > 0 {
+		ifd = append(ifd, ifdEnt{tag: tXMP, datatype: dtByte, raw: xmp})
+	}
 
 	return writeIFD(w, imageLen+8, ifd)
+}
+
+// predictor applies horizontal differencing (Predictor 2) to the rows
+// written through it, whole rows at a time: each sample less the same
+// sample of the pixel before, as 8-bit or (little-endian) 16-bit values.
+// Close closes the compressor it writes to.
+type predictor struct {
+	w        io.WriteCloser
+	row      []byte
+	n        int // bytes of the row so far
+	bps, spp int // bytes per sample, samples per pixel
+}
+
+func (p *predictor) Write(b []byte) (int, error) {
+	total := len(b)
+	for len(b) > 0 {
+		k := copy(p.row[p.n:], b)
+		p.n += k
+		b = b[k:]
+		if p.n == len(p.row) {
+			p.difference()
+			if _, err := p.w.Write(p.row); err != nil {
+				return total - len(b), err
+			}
+			p.n = 0
+		}
+	}
+	return total, nil
+}
+
+func (p *predictor) difference() {
+	r := p.row
+	if p.bps == 1 {
+		for i := len(r) - 1; i >= p.spp; i-- {
+			r[i] -= r[i-p.spp]
+		}
+		return
+	}
+	step := 2 * p.spp
+	for i := len(r) - 2; i >= step; i -= 2 {
+		enc.PutUint16(r[i:], enc.Uint16(r[i:])-enc.Uint16(r[i-step:]))
+	}
+}
+
+func (p *predictor) Close() error {
+	if p.n != 0 {
+		return errors.New("tiff: a row was cut short")
+	}
+	return p.w.Close()
+}
+
+// stripWriter compresses the pixel data written through it strip by strip
+// into the spill, each strip a stream of its own, and notes where each
+// begins (from the start of the data) and how long it is. Close ends the
+// last strip.
+type stripWriter struct {
+	sp      *pipeline.Spill
+	comp    func() io.WriteCloser // a compressor writing to sp, started anew
+	cur     io.WriteCloser
+	size, n int64 // bytes of pixel data a strip holds, and the current one has
+	start   int64
+	offsets []uint32
+	counts  []uint32
+}
+
+func (s *stripWriter) Write(p []byte) (int, error) {
+	total := len(p)
+	for len(p) > 0 {
+		if s.cur == nil {
+			s.start, s.cur, s.n = s.sp.Size(), s.comp(), 0
+		}
+		k := int(min(int64(len(p)), s.size-s.n))
+		if _, err := s.cur.Write(p[:k]); err != nil {
+			return total - len(p), err
+		}
+		s.n += int64(k)
+		p = p[k:]
+		if s.n == s.size {
+			if err := s.end(); err != nil {
+				return total - len(p), err
+			}
+		}
+	}
+	return total, nil
+}
+
+// end finishes the current strip.
+func (s *stripWriter) end() error {
+	if err := s.cur.Close(); err != nil {
+		return err
+	}
+	s.cur = nil
+	end := s.sp.Size()
+	if end > math.MaxUint32-8 {
+		return errTooLarge
+	}
+	s.offsets = append(s.offsets, uint32(s.start))
+	s.counts = append(s.counts, uint32(end-s.start))
+	return nil
+}
+
+func (s *stripWriter) Close() error {
+	if s.cur == nil {
+		return nil
+	}
+	return s.end()
 }

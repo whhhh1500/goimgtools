@@ -16,6 +16,7 @@ import (
 const (
 	flagICC  = 1 << 5
 	flagEXIF = 1 << 3
+	flagXMP  = 1 << 2
 )
 
 // Meta is what the file carries besides the pixels.
@@ -45,6 +46,10 @@ func (s *source) readMeta(name string, r io.ReaderAt, pos int64, n uint32) {
 			// WebP has no resolution of its own: that of the EXIF block.
 			s.meta.Density = density.FromExif(buf)
 		}
+	case "XMP ":
+		if s.meta.Xmp == nil {
+			s.meta.Xmp = buf
+		}
 	}
 }
 
@@ -62,7 +67,7 @@ func (s *source) scanMeta(r io.ReaderAt, pos, end int64) {
 		if int64(n) > end-pos {
 			return
 		}
-		if name := string(hdr[:4]); name == "EXIF" || name == "ICCP" {
+		if name := string(hdr[:4]); name == "EXIF" || name == "ICCP" || name == "XMP " {
 			s.readMeta(name, r, pos, n)
 		}
 		pos += int64(n) + int64(n&1)
@@ -163,6 +168,10 @@ func (m *MetaWriter) rewrite() (bool, error) {
 	if len(m.meta.Exif) > 0 {
 		flags |= flagEXIF
 	}
+	if len(m.meta.Xmp) > 0 {
+		flags |= flagXMP
+		riff += chunkSize(m.meta.Xmp)
+	}
 	riff += 18
 	if len(m.meta.ICC) > 0 {
 		riff += chunkSize(m.meta.ICC)
@@ -188,14 +197,21 @@ func (m *MetaWriter) rewrite() (bool, error) {
 	return true, err
 }
 
-// Finish writes the EXIF chunk at the end of the file.
+// Finish writes the EXIF and XMP chunks at the end of the file.
 func (m *MetaWriter) Finish() error {
 	if !m.done {
 		return errors.New("goimgtools: webp: the encoder wrote no complete header")
 	}
-	if len(m.meta.Exif) == 0 {
+	var tail []byte
+	if len(m.meta.Exif) > 0 {
+		tail = appendChunk(tail, "EXIF", m.meta.Exif)
+	}
+	if len(m.meta.Xmp) > 0 {
+		tail = appendChunk(tail, "XMP ", m.meta.Xmp)
+	}
+	if len(tail) == 0 {
 		return nil
 	}
-	_, err := m.w.Write(appendChunk(nil, "EXIF", m.meta.Exif))
+	_, err := m.w.Write(tail)
 	return err
 }

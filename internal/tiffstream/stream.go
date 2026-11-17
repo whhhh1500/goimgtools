@@ -5,6 +5,7 @@
 package tiffstream
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"image"
@@ -53,6 +54,7 @@ type stream struct {
 	br        io.Reader
 	lz        *lzw.Reader     // LZW reader, reused from block to block
 	zr        *inflate.Reader // zlib reader, reused from block to block
+	zbuf      *bufio.Reader   // its input: a block read 64KB at a time
 	jr        *jpegRows       // the JPEG decoder of the block, if any
 	blkW      int
 	blkH      int
@@ -234,7 +236,9 @@ func open(r io.ReaderAt, env *pipeline.Env) (_ *stream, err error) {
 		// The CCITT reader keeps two rows of one byte per pixel.
 		need += 2 * int64(blockWidth)
 	case cDeflate, cDeflateOld:
-		need += inflate.Size
+		need += inflate.Size + zbufSize
+	case cLZW:
+		need += lzw.Size
 	}
 	if err := env.Budget.Reserve(need, "tiff strip buffers"); err != nil {
 		return nil, err
@@ -278,7 +282,7 @@ func (s *stream) Env() *pipeline.Env { return s.env }
 // Meta is the colour profile of the file. (EXIF, which TIFF keeps in a
 // directory of its own, is not read.)
 func (s *stream) Meta() pipeline.Meta {
-	m := pipeline.Meta{ICC: s.d.icc}
+	m := pipeline.Meta{ICC: s.d.icc, Xmp: s.d.xmp}
 	switch s.d.resUnit {
 	case 0, resPerInch: // inches when the unit is not given
 		m.Density = density.FromPerInch(s.d.xres)
@@ -461,11 +465,18 @@ func (s *stream) openBlock(i, j int) (err error) {
 		}
 		s.br = s.lz
 	case cDeflate, cDeflateOld:
+		// (Through a buffer: each read of the section is a system call,
+		// and the reader reads 4KB at a time, as compress/zlib's bufio.)
 		sr := io.NewSectionReader(d.r, offset, n)
-		if s.zr == nil {
-			s.zr, err = inflate.NewReader(sr)
+		if s.zbuf == nil {
+			s.zbuf = bufio.NewReaderSize(sr, zbufSize)
 		} else {
-			err = s.zr.Reset(sr)
+			s.zbuf.Reset(sr)
+		}
+		if s.zr == nil {
+			s.zr, err = inflate.NewReader(s.zbuf)
+		} else {
+			err = s.zr.Reset(s.zbuf)
 		}
 		if err != nil {
 			return err
@@ -566,6 +577,9 @@ func (s *stream) finishBlock() error {
 	}
 	return nil
 }
+
+// zbufSize is the buffer the input of a Deflate block is read through.
+const zbufSize = 64 << 10
 
 func (s *stream) closeBlock() {
 	s.br = nil

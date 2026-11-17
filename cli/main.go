@@ -111,7 +111,11 @@ type options struct {
 	lossless, jpegOpt, jpegProg, noDither          *bool
 	jpegTrellis                                    *bool
 	jpegQuantTable                                 *int
+	jpegChroma                                     *string
 	animated, keepExif, stripICC, toSRGB           *bool
+	trimLineArt, keepXmp, tiffPredictor            *bool
+	trimBackground                                 *string
+	trimMargin                                     *int
 	density                                        *float64
 	mem, threads, maxPixels                        *int
 	skipLarger                                     *bool
@@ -133,6 +137,9 @@ func register(fs *flag.FlagSet) *options {
 		linearLight:    fs.Bool("linear-light", false, "resize in linear light: fine light detail keeps its brightness when the image is reduced"),
 		position:       fs.String("position", "center", "the part -fit cover keeps (and where -fit contain puts the image): northwest, north, northeast, west, center, east, southwest, south, southeast; or, for cover, entropy (the part with the most detail) or attention (the part that draws the eye)"),
 		bg:             fs.String("background", "black", "`color` of the bars -fit contain adds, the border of -extend and the corners -rotate leaves at other angles: white, black, transparent, #rrggbb or #rrggbbaa"),
+		trimBackground: fs.String("trim-background", "", "the `color` of the edges -trim cuts away (by default that of the top-left pixel)"),
+		trimMargin:     fs.Int("trim-margin", 0, "keep this many `pixels` around what -trim finds"),
+		trimLineArt:    fs.Bool("trim-line-art", false, "-trim compares the pixels as they are, without the median filter that passes over noise but also removes lines one pixel thin"),
 		trim:           fs.String("trim", "", "cut away the edges that are the colour of the top-left pixel, allowing this `difference` 0-255 (10 also catches JPEG noise)"),
 		extend:         fs.String("extend", "", "add a border of `T,R,B,L` pixels in -background"),
 		extendWith:     fs.String("extend-with", "", "fill the border of -extend from the image: copy (the edge pixels), repeat (the image) or mirror (the image mirrored)"),
@@ -173,6 +180,7 @@ func register(fs *flag.FlagSet) *options {
 		jpegOpt:        fs.Bool("jpeg-optimize", false, "JPEG: build the coding tables for this image (a smaller file, the same pixels)"),
 		jpegProg:       fs.Bool("jpeg-progressive", false, "JPEG: write a progressive file (smaller still, the same pixels)"),
 		jpegTrellis:    fs.Bool("jpeg-trellis", false, "JPEG: trellis quantization as mozjpeg does it (smaller at about the same look; other pixels)"),
+		jpegChroma:     fs.String("jpeg-chroma", "420", "JPEG: how finely colour is kept: 420 (half across and down, the default), 422 (half across) or 444 (all of it: crisp coloured text and edges, a larger file)"),
 		jpegQuantTable: fs.Int("jpeg-quant-table", 0, "JPEG: quantization tables: 0-8 numbered as mozjpeg's -quant-table (0 the standard's, as the standard library; 3 mozjpeg's default), 9 made as jpegli makes them (the smallest files)"),
 		pngColors:      fs.Int("png-colors", 0, "PNG: reduce to this many colours, 2-256, chosen for the image (a much smaller, lossy file)"),
 		noDither:       fs.Bool("no-dither", false, "no dithering when colours are reduced (-png-colors, GIF output, -animated)"),
@@ -185,9 +193,11 @@ func register(fs *flag.FlagSet) *options {
 		gifColors:      fs.Int("gif-colors", 0, "largest number of colours in a GIF, 1-256 (default 256)"),
 		gifFixed:       fs.Bool("gif-fixed-palette", false, "GIF: use the standard fixed palette instead of colours chosen for the image (faster, a much worse picture)"),
 		gifLossy:       fs.Int("gif-lossy", 0, "GIF: lossy compression, the colour difference 1-255 it may accept (16-32 for photographic GIFs: 18-32% smaller); 0 keeps every pixel"),
-		tiffComp:       fs.String("tiff-compression", "none", "TIFF compression: none or deflate"),
+		tiffComp:       fs.String("tiff-compression", "none", "TIFF compression: none, deflate or lzw"),
+		tiffPredictor:  fs.Bool("tiff-predictor", false, "TIFF: store each sample as its difference from the pixel to its left (horizontal predictor): photographs compress much better with deflate or lzw"),
 		animated:       fs.Bool("animated", false, "process every frame of an animated GIF, WebP or PNG and write an animated GIF or WebP; only what changes is stored (GIF: one palette for all frames, -gif-colors, -no-dither); another output format is an error"),
 		keepExif:       fs.Bool("keep-exif", false, "copy the EXIF block (camera, date, GPS) to the output"),
+		keepXmp:        fs.Bool("keep-xmp", false, "copy the XMP packet (keywords, rating, rights) to the output (JPEG, PNG, WebP, TIFF)"),
 		stripICC:       fs.Bool("strip-icc", false, "drop the ICC colour profile instead of copying it"),
 		density:        fs.Float64("density", 0, "record a resolution of `DPI` pixels per inch in the output (JPEG, PNG, TIFF, BMP); by default the input's is kept"),
 		toSRGB:         fs.Bool("srgb", false, "convert the colours to sRGB from the image's ICC profile (Display P3, Adobe RGB...) and leave the profile out; GIF and BMP output always are"),
@@ -429,6 +439,9 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 	if *o.keepExif {
 		im.KeepExif()
 	}
+	if *o.keepXmp {
+		im.KeepXmp()
+	}
 	if *o.stripICC {
 		im.StripICC()
 	}
@@ -464,7 +477,15 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 		if err != nil || !(v >= 0 && v <= 255) {
 			return nil, fmt.Errorf("-trim: want a difference of 0 to 255, got %q", *o.trim)
 		}
-		im.Trim(v)
+		to := goimgtools.TrimOptions{LineArt: *o.trimLineArt, Margin: *o.trimMargin}
+		if *o.trimBackground != "" {
+			c, err := parseColor(*o.trimBackground)
+			if err != nil {
+				return nil, fmt.Errorf("-trim-background: %w", err)
+			}
+			to.Background = c
+		}
+		im.Trim(v, to)
 	}
 	if *o.crop != "" {
 		v, err := ints(*o.crop, 4)
@@ -675,7 +696,13 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 	}
 	switch kind {
 	case "jpeg":
-		im.JPEG(*o.quality, goimgtools.JPEGOptions{Optimize: *o.jpegOpt, Progressive: *o.jpegProg, Trellis: *o.jpegTrellis, QuantTable: goimgtools.QuantTable(*o.jpegQuantTable)})
+		chroma, ok := map[string]goimgtools.ChromaSubsampling{"420": goimgtools.Chroma420, "4:2:0": goimgtools.Chroma420,
+			"422": goimgtools.Chroma422, "4:2:2": goimgtools.Chroma422, "444": goimgtools.Chroma444, "4:4:4": goimgtools.Chroma444}[*o.jpegChroma]
+		if !ok {
+			return nil, fmt.Errorf("-jpeg-chroma: %q is not 420, 422 or 444", *o.jpegChroma)
+		}
+		im.JPEG(*o.quality, goimgtools.JPEGOptions{Optimize: *o.jpegOpt, Progressive: *o.jpegProg, Trellis: *o.jpegTrellis, QuantTable: goimgtools.QuantTable(*o.jpegQuantTable),
+			ChromaSubsampling: chroma})
 	case "png":
 		im.PNG(goimgtools.PNGOptions{CompressionLevel: *o.pngLevel, Colors: *o.pngColors, NoDither: *o.noDither})
 	case "webp":
@@ -685,11 +712,12 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 	case "bmp":
 		im.BMP()
 	case "tiff":
-		c, ok := map[string]goimgtools.TIFFCompression{"none": goimgtools.TIFFNone, "deflate": goimgtools.TIFFDeflate}[strings.ToLower(*o.tiffComp)]
+		c, ok := map[string]goimgtools.TIFFCompression{"none": goimgtools.TIFFNone, "deflate": goimgtools.TIFFDeflate,
+			"lzw": goimgtools.TIFFLZW}[strings.ToLower(*o.tiffComp)]
 		if !ok {
-			return nil, fmt.Errorf("-tiff-compression: want none or deflate, got %q", *o.tiffComp)
+			return nil, fmt.Errorf("-tiff-compression: want none, deflate or lzw, got %q", *o.tiffComp)
 		}
-		im.TIFF(goimgtools.TIFFOptions{Compression: c})
+		im.TIFF(goimgtools.TIFFOptions{Compression: c, Predictor: *o.tiffPredictor})
 	}
 	// (A name without a known extension: the library reports it.)
 	return im, nil
