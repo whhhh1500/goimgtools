@@ -75,6 +75,17 @@ Environment: Windows 10, Go 1.27.1. "Standard library approach" denotes whole-im
 - The progressive JPEGs are decoded with their scans in step (see [Memory control](#memory-control)); before that change their coefficients (72MB at 6000×4000) went to a temporary file, and the 6000×4000 row took 0.87s at 8.8MB. Of the 1.6–1.8MB more at the peak, 0.6MB is the one row of coefficients; the rest is a garbage collection that the larger heap starts, which touches more memory the more cores there are (0.5MB more in all with `GOMAXPROCS=1`).
 - With `FastShrinkOnLoad` enabled (single thread): JPEG baseline 4:2:0 0.14s, 4:4:4 0.24s, progressive 0.27s.
 
+### Against another Go library
+
+The same task in disintegration/imaging 1.6.2 (decoding with `image/jpeg`, resizing with its parallel Lanczos, encoding with `image/jpeg`) and here: a 6000×4000 baseline JPEG (4:2:0) resized to 1600 wide (Lanczos 3) and written as a JPEG of quality 85; best of three, the peak of the Go heap sampled every 2ms, `GOMAXPROCS` limiting both to the same cores (imaging uses them all for its resize).
+
+| Cores | imaging | goimgtools | goimgtools, `FastShrinkOnLoad` |
+|---|---|---|---|
+| 1 | 679ms, 81MB | 396ms, 10MB (`Threads(1)`) | 147ms, 10MB |
+| 4 | 387ms, 81MB | 201ms, 15MB (`Threads(4)`) | 105ms, 11MB |
+
+The JPEG written here is 5% smaller (120,675 bytes against 127,372, libjpeg-turbo's coding against `image/jpeg`'s), its pixels decoded as libjpeg-turbo decodes them.
+
 ### Other operations (input: JPEG baseline 4:2:0 6000×4000 in all cases; single thread)
 
 | Operation | Output file | Peak memory | Time |

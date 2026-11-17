@@ -75,6 +75,17 @@
 - 渐进式 JPEG 按扫描同步解码（见[内存控制](#内存控制)）；此前其系数（6000×4000 时为 72MB）写入临时文件，6000×4000 一行耗时 0.87s、峰值 8.8MB。峰值多出的 1.6–1.8MB 中，0.6MB 是那一行块的系数，其余是堆变大后触发的一次垃圾回收，核心越多它触及的内存越多（`GOMAXPROCS=1` 时总共只多 0.5MB）。
 - 启用 `FastShrinkOnLoad`（单线程）时：JPEG 基线 4:2:0 0.14s，4:4:4 0.24s，渐进式 0.27s。
 
+### 与其他 Go 库对比
+
+同一任务分别用 disintegration/imaging 1.6.2（`image/jpeg` 解码、其并行 Lanczos 缩放、`image/jpeg` 编码）与本库完成：6000×4000 基线 JPEG（4:2:0）缩放到 1600 宽（Lanczos 3），写成质量 85 的 JPEG；取三次最好成绩，每 2ms 采样一次 Go 堆峰值，用 `GOMAXPROCS` 把两者限制在相同核数上（imaging 的缩放会用满所有核）。
+
+| 核数 | imaging | goimgtools | goimgtools，`FastShrinkOnLoad` |
+|---|---|---|---|
+| 1 | 679ms，81MB | 396ms，10MB（`Threads(1)`） | 147ms，10MB |
+| 4 | 387ms，81MB | 201ms，15MB（`Threads(4)`） | 105ms，11MB |
+
+本库写出的 JPEG 小 5%（120,675 字节对 127,372 字节，libjpeg-turbo 的编码对 `image/jpeg`），解码像素与 libjpeg-turbo 相同。
+
 ### 其他操作（输入均为 JPEG 基线 4:2:0 6000×4000，单线程）
 
 | 操作 | 输出文件 | 峰值内存 | 耗时 |
