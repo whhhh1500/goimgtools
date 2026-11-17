@@ -569,8 +569,14 @@ var builtInOps = map[string]OperationDef{
 			m.RotateBy(v[0], bg)
 			return nil
 		}},
-	"affine": {Name: "affine", Usage: "A,B,C,D[,BACKGROUND[,IDX,IDY,ODX,ODY]]", Help: "Affine: (x, y) moves to (A·x + B·y, C·x + D·y), as sharp's affine",
+	"affine": {Name: "affine", Usage: "A,B,C,D[,BACKGROUND[,IDX,IDY,ODX,ODY]][,bilinear|nearest|bicubic]", Help: "Affine: (x, y) moves to (A·x + B·y, C·x + D·y), as sharp's affine",
 		builtIn: func(m *Image, a []string) error {
+			var interp Interpolator
+			if n := len(a); n > 4 {
+				if v, err := pick(interpolatorNames, a[n-1], ""); err == nil {
+					interp, a = v, a[:n-1]
+				}
+			}
 			if len(a) != 4 && len(a) != 5 && len(a) != 9 {
 				return errors.New("want A,B,C,D, then BACKGROUND, then IDX,IDY,ODX,ODY")
 			}
@@ -587,6 +593,7 @@ var builtInOps = map[string]OperationDef{
 			if len(v) == 8 {
 				o.InputX, o.InputY, o.OutputX, o.OutputY = v[4], v[5], v[6], v[7]
 			}
+			o.Interpolator = interp
 			m.Affine(v[0], v[1], v[2], v[3], o)
 			return nil
 		}},

@@ -35,7 +35,7 @@ Nothing exported by 0.1.0 was removed or changed in its signature (checked with 
 - Lossy WebP: segments with individual quantizers (spatial noise shaping, ported from libwebp).
 - `pipeline.Env.SetHelpers`, `Helpers`, `Parallel` and `Go`, allowing stages to distribute their work across cores.
 - TIFF output: `TIFFLZW` compression (as libtiff writes it) and `TIFFOptions.Predictor` (horizontal differencing, sharp's default): a 24-megapixel photograph as LZW 82 → 52MB, as Deflate 67 → 45MB; `-tiff-compression lzw`, `-tiff-predictor`.
-- `Affine(a, b, c, d, AffineOptions{...})`: sharp's `affine` to the byte (bilinear, with and without transparency); by name `affine A,B,C,D[,BACKGROUND[,IDX,IDY,ODX,ODY]]`.
+- `Affine(a, b, c, d, AffineOptions{...})`: sharp's `affine` to the byte (bilinear, nearest and bicubic `Interpolator`s, with and without transparency); by name `affine A,B,C,D[,BACKGROUND[,IDX,IDY,ODX,ODY]][,bilinear|nearest|bicubic]`.
 - `EnsureAlpha` (sharp's `ensureAlpha`, to the byte); by name `ensure-alpha [ALPHA]`.
 - Resize kernels `KernelMKS2013` and `KernelMKS2021` (Magic Kernel Sharp, as sharp's `mks2013` and `mks2021`); `-kernel mks2013|mks2021`.
 - `Rank` (Pillow's `RankFilter`, `MinFilter`, `MaxFilter`), `Dilate` and `Erode` (sharp's `dilate` and `erode`), all to the byte; by name `rank SIZE,RANK`, `dilate [WIDTH]`, `erode [WIDTH]`. Dilate and erode take a time that hardly grows with the width (libvips' grows with its square).

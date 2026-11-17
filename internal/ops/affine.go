@@ -24,6 +24,15 @@ import (
 //   - The source has a border of the background, a pixel above and to the
 //     left and two below and to the right; a point whose floor is outside
 //     0..width, 0..height is the background.
+//   - With bicubic interpolation (Catmull-Rom, a window of 4 pixels, one
+//     before the point) the border is two pixels above and to the left and
+//     three below and to the right, the point is a pixel further in, and
+//     the window's place is rounded to 1/64 of a pixel: the weights are
+//     libvips' table of 65, times 4096 and dropped to whole numbers without
+//     transparency (each row's sum plus 2048 shifted right by 12, then the
+//     same down the rows, kept within 0 to 255); with it in double
+//     precision, each row's sum and the result kept in single precision.
+//     Nearest takes the pixel the point is in (a border of one pixel).
 //   - Without transparency the four pixels about the point are weighted in
 //     12-bit fixed point: X and Y the fractions times 4096, dropped to
 //     whole numbers, c4 = Y·X>>12, c2 = (4096-Y)·X>>12, c3 = Y-c4,
@@ -38,7 +47,15 @@ import (
 // affineTile is the width of the tiles libvips works out a transform in.
 const affineTile = 128
 
+// Interpolations of Affine.
+const (
+	AffineBilinear = iota
+	AffineNearest
+	AffineBicubic
+)
+
 type affineMap struct {
+	interp             int
 	ia, ib, ic, id     float64 // the inverse matrix
 	idx, idy, odx, ody float64
 	left, top          int  // the output box's corner
@@ -48,9 +65,12 @@ type affineMap struct {
 }
 
 // Affine moves src by the matrix (a, b; c, d) and the offsets, as sharp's
-// affine (see affineMap); the corners left are bg. The result is RGBA
-// without transparency, NRGBA with.
-func Affine(src pipeline.Source, a, b, c, d, idx, idy, odx, ody float64, bg color.Color) (pipeline.Source, error) {
+// affine (see affineMap), interpolating as interp says; the corners left
+// are bg. The result is RGBA without transparency, NRGBA with.
+func Affine(src pipeline.Source, a, b, c, d, idx, idy, odx, ody float64, bg color.Color, interp int) (pipeline.Source, error) {
+	if interp < AffineBilinear || interp > AffineBicubic {
+		return nil, errors.New("goimgtools: unknown Affine interpolation")
+	}
 	for _, v := range []float64{a, b, c, d, idx, idy, odx, ody} {
 		if math.IsNaN(v) || math.IsInf(v, 0) {
 			return nil, errors.New("goimgtools: Affine takes finite numbers")
@@ -61,7 +81,7 @@ func Affine(src pipeline.Source, a, b, c, d, idx, idy, odx, ody float64, bg colo
 		return nil, errors.New("goimgtools: Affine matrix is singular")
 	}
 	tmp := 1 / det
-	m := &affineMap{ia: tmp * d, ib: -tmp * b, ic: -tmp * c, id: tmp * a, idx: idx - 1, idy: idy - 1, odx: odx, ody: ody,
+	m := &affineMap{interp: interp, ia: tmp * d, ib: -tmp * b, ic: -tmp * c, id: tmp * a, idx: idx - 1, idy: idy - 1, odx: odx, ody: ody,
 		scaleOnly: b == 0 && c == 0}
 	sb := src.Bounds()
 	w, h := float64(sb.Dx()), float64(sb.Dy())
@@ -108,32 +128,44 @@ func (t *rotated) renderAffine(out *image.RGBA, x0, x1 int, c *tileCache) error 
 	if m.scaleOnly {
 		tile = ow
 	}
-	// The premultiplied single-precision pixel at (x, y) of the source
-	// with its border, or the background's.
 	var nal [256]float32
 	for a := range nal {
 		nal[a] = float32(float64(a) / 255)
 	}
+	// The window offset: pixels the window reaches before the point.
+	wo := 0
+	if m.interp == AffineBicubic {
+		wo = 1
+	}
+	// The pixel at (x, y) of the source with its border, or the
+	// background's.
 	at := func(x, y int) ([4]uint8, error) {
-		p, err := t.pixel(c, x-1, y-1)
+		p, err := t.pixel(c, x-wo-1, y-wo-1)
 		if err != nil || p == nil {
 			return m.bg, err
 		}
 		return [4]uint8{p[0], p[1], p[2], p[3]}, nil
+	}
+	// pre is a channel of a pixel premultiplied in single precision.
+	pre := func(q [4]uint8, ch int) float32 {
+		if ch == 3 {
+			return float32(q[3])
+		}
+		return float32(float32(q[ch]) * nal[q[3]])
 	}
 	for oy := out.Rect.Min.Y; oy < out.Rect.Max.Y; oy++ {
 		dst := out.Pix[(oy-out.Rect.Min.Y)*out.Stride:][:4*ow]
 		oyc := float64(oy+m.top) - m.ody
 		for le := x0 / tile * tile; le < x1; le += tile {
 			oxc := float64(le+m.left) - m.odx
-			ix := float64(m.ia*oxc) + float64(m.ib*oyc) - m.idx
-			iy := float64(m.ic*oxc) + float64(m.id*oyc) - m.idy
+			ix := float64(m.ia*oxc) + float64(m.ib*oyc) - m.idx + float64(wo)
+			iy := float64(m.ic*oxc) + float64(m.id*oyc) - m.idy + float64(wo)
 			for ox := le; ox < min(le+tile, ow); ox, ix, iy = ox+1, ix+m.ia, iy+m.ic {
 				if ox < x0 || ox >= x1 {
 					continue
 				}
 				d := dst[4*ox : 4*ox+4 : 4*ox+4]
-				if fx, fy := math.Floor(ix), math.Floor(iy); !(fx >= 0 && fx <= fw && fy >= 0 && fy <= fh) {
+				if fx, fy := math.Floor(ix)-float64(wo), math.Floor(iy)-float64(wo); !(fx >= 0 && fx <= fw && fy >= 0 && fy <= fh) {
 					if m.float {
 						t.unpremultiply(d, [4]float32{float32(m.bg[0]), float32(m.bg[1]), float32(m.bg[2]), float32(m.bg[3])})
 					} else {
@@ -142,6 +174,24 @@ func (t *rotated) renderAffine(out *image.RGBA, x0, x1 int, c *tileCache) error 
 					continue
 				}
 				xi, yi := int(ix), int(iy)
+				switch m.interp {
+				case AffineNearest:
+					q, err := at(xi, yi)
+					if err != nil {
+						return err
+					}
+					if !m.float {
+						d[0], d[1], d[2], d[3] = q[0], q[1], q[2], 255
+						continue
+					}
+					t.unpremultiply(d, [4]float32{pre(q, 0), pre(q, 1), pre(q, 2), pre(q, 3)})
+					continue
+				case AffineBicubic:
+					if err := t.bicubic(d, ix, iy, xi, yi, at, pre); err != nil {
+						return err
+					}
+					continue
+				}
 				var q [4][4]uint8
 				for k := range q {
 					var err error
@@ -167,11 +217,7 @@ func (t *rotated) renderAffine(out *image.RGBA, x0, x1 int, c *tileCache) error 
 				for ch := 0; ch < 4; ch++ {
 					var s float64
 					for k := range q {
-						p := float32(q[k][ch])
-						if ch < 3 {
-							p = float32(p * nal[q[k][3]])
-						}
-						s += float64(w[k] * float64(p))
+						s += float64(w[k] * float64(pre(q[k], ch)))
 					}
 					v[ch] = float32(s)
 				}
@@ -179,6 +225,72 @@ func (t *rotated) renderAffine(out *image.RGBA, x0, x1 int, c *tileCache) error 
 			}
 		}
 	}
+	return nil
+}
+
+// catmull is libvips' table of Catmull-Rom weights at 65 places between
+// two pixels, in double precision and in 12-bit fixed point (dropped to
+// whole numbers).
+var catmull = func() (t struct {
+	f [65][4]float64
+	i [65][4]int
+}) {
+	for x := range t.f {
+		v := float64(float32(x) / 64)
+		cr1 := 1 - v
+		cr2 := float64(-0.5 * v)
+		cr3 := float64(cr1 * cr2)
+		one := float64(cr1 * cr3)
+		fou := float64(v * cr3)
+		cr4 := fou - one
+		two := cr1 - one + cr4
+		thr := v - fou - cr4
+		t.f[x] = [4]float64{one, two, thr, fou}
+		for i, c := range t.f[x] {
+			t.i[x][i] = int(float64(c * 4096))
+		}
+	}
+	return t
+}()
+
+// bicubic interpolates the 4 x 4 pixels about (ix, iy), whose whole parts
+// are xi, yi, into d, as libvips' bicubic does (see affineMap).
+func (t *rotated) bicubic(d []uint8, ix, iy float64, xi, yi int, at func(x, y int) ([4]uint8, error), pre func([4]uint8, int) float32) error {
+	tx := (int(float64(ix*64)*2)&127 + 1) >> 1
+	ty := (int(float64(iy*64)*2)&127 + 1) >> 1
+	var q [4][4][4]uint8 // rows, columns, channels
+	for j := range q {
+		for i := range q[j] {
+			var err error
+			if q[j][i], err = at(xi-1+i, yi-1+j); err != nil {
+				return err
+			}
+		}
+	}
+	if !t.aff.float {
+		cx, cy := catmull.i[tx], catmull.i[ty]
+		for ch := 0; ch < 3; ch++ {
+			var r [4]int
+			for j := range q {
+				r[j] = (cx[0]*int(q[j][0][ch]) + cx[1]*int(q[j][1][ch]) + cx[2]*int(q[j][2][ch]) + cx[3]*int(q[j][3][ch]) + 2048) >> 12
+			}
+			v := (cy[0]*r[0] + cy[1]*r[1] + cy[2]*r[2] + cy[3]*r[3] + 2048) >> 12
+			d[ch] = uint8(max(0, min(v, 255)))
+		}
+		d[3] = 255
+		return nil
+	}
+	cx, cy := catmull.f[tx], catmull.f[ty]
+	var v [4]float32
+	for ch := 0; ch < 4; ch++ {
+		var r [4]float32
+		for j := range q {
+			r[j] = float32(float64(cx[0]*float64(pre(q[j][0], ch))) + float64(cx[1]*float64(pre(q[j][1], ch))) +
+				float64(cx[2]*float64(pre(q[j][2], ch))) + float64(cx[3]*float64(pre(q[j][3], ch))))
+		}
+		v[ch] = float32(float64(cy[0]*float64(r[0])) + float64(cy[1]*float64(r[1])) + float64(cy[2]*float64(r[2])) + float64(cy[3]*float64(r[3])))
+	}
+	t.unpremultiply(d, v)
 	return nil
 }
 

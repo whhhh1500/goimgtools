@@ -397,7 +397,27 @@ type AffineOptions struct {
 	// OutputX and OutputY after it, in pixels (sharp's idx, idy, odx and
 	// ody); the canvas stays the same.
 	InputX, InputY, OutputX, OutputY float64
+	// Interpolator works out the colours between pixels: bilinear, sharp's
+	// default, or nearest or bicubic, also sharp's to the byte.
+	Interpolator Interpolator
 }
+
+// Interpolator is how Affine works out the colour at a point between
+// pixels.
+type Interpolator int
+
+const (
+	// InterpolateBilinear weighs the four pixels around the point.
+	InterpolateBilinear Interpolator = iota
+	// InterpolateNearest takes the pixel the point falls in: blocky, no
+	// new colours.
+	InterpolateNearest
+	// InterpolateBicubic weighs the sixteen pixels around the point
+	// (Catmull-Rom): sharper than bilinear, with a little ringing.
+	InterpolateBicubic
+)
+
+var interpolatorNames = map[Interpolator]string{InterpolateBilinear: "bilinear", InterpolateNearest: "nearest", InterpolateBicubic: "bicubic"}
 
 // Affine moves the pixels of the image by the matrix (a b; c d): the point
 // (x, y) goes to (a·x + b·y, c·x + d·y). It is sharp's affine with its
@@ -422,6 +442,9 @@ func (m *Image) Affine(a, b, c, d float64, opts ...AffineOptions) *Image {
 	if o.Background == nil {
 		o.Background = color.Black
 	}
+	if _, ok := interpolatorNames[o.Interpolator]; !ok {
+		return m.fail(fmt.Errorf("goimgtools: unknown Interpolator %d", o.Interpolator))
+	}
 	return m.add(affineOp{[4]float64{a, b, c, d}, o})
 }
 
@@ -436,7 +459,9 @@ func (o affineOp) apply(src pipeline.Source, _ *run) (pipeline.Source, error) {
 	if a == 1 && b == 0 && c == 0 && d == 1 && p.InputX == 0 && p.InputY == 0 && p.OutputX == 0 && p.OutputY == 0 {
 		return src, nil // libvips copies the image
 	}
-	return ops.Affine(src, a, b, c, d, p.InputX, p.InputY, p.OutputX, p.OutputY, p.Background)
+	interp := map[Interpolator]int{InterpolateBilinear: ops.AffineBilinear, InterpolateNearest: ops.AffineNearest,
+		InterpolateBicubic: ops.AffineBicubic}[p.Interpolator]
+	return ops.Affine(src, a, b, c, d, p.InputX, p.InputY, p.OutputX, p.OutputY, p.Background, interp)
 }
 
 func (o affineOp) words() []string {
@@ -444,6 +469,9 @@ func (o affineOp) words() []string {
 	w := []string{f(o.m[0]), f(o.m[1]), f(o.m[2]), f(o.m[3]), colorWord(o.o.Background)}
 	if p := o.o; p.InputX != 0 || p.InputY != 0 || p.OutputX != 0 || p.OutputY != 0 {
 		w = append(w, f(p.InputX), f(p.InputY), f(p.OutputX), f(p.OutputY))
+	}
+	if o.o.Interpolator != InterpolateBilinear {
+		w = append(w, interpolatorNames[o.o.Interpolator])
 	}
 	return w
 }
@@ -455,5 +483,5 @@ type rotateAnyOp struct {
 
 func (o rotateAnyOp) apply(src pipeline.Source, _ *run) (pipeline.Source, error) {
 	sin, cos := ops.SinCosDegrees(o.deg)
-	return ops.Affine(src, cos, -sin, sin, cos, 0, 0, 0, 0, o.background)
+	return ops.Affine(src, cos, -sin, sin, cos, 0, 0, 0, 0, o.background, ops.AffineBilinear)
 }

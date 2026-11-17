@@ -1274,6 +1274,11 @@ func TestAffine(t *testing.T) {
 	// which moves the box around the turned image by a pixel).
 	sin, cos := 0.49999999999999994, 0.8660254037844387
 	offs := AffineOptions{Background: color.NRGBA{0x20, 0x50, 0xc0, 255}, InputX: 3, InputY: -2, OutputX: 10.5, OutputY: -5.25}
+	with := func(o AffineOptions, i Interpolator) AffineOptions {
+		o.Interpolator = i
+		return o
+	}
+	nearest, bicubic := AffineOptions{Interpolator: InterpolateNearest}, AffineOptions{Interpolator: InterpolateBicubic}
 	for _, c := range []struct {
 		name string
 		m    *Image
@@ -1283,6 +1288,11 @@ func TestAffine(t *testing.T) {
 		{"affine-offs", FromBytes(rgb).Affine(0.9, 0.2, -0.2, 1.1, offs)},
 		{"affine-rgba-rot30", FromBytes(rgba).Affine(cos, -sin, sin, cos)},
 		{"affine-rgba-offs", FromBytes(rgba).Affine(0.9, 0.2, -0.2, 1.1, offs)},
+		{"affine-nearest-rot30", FromBytes(rgb).Affine(cos, -sin, sin, cos, nearest)},
+		{"affine-bicubic-rot30", FromBytes(rgb).Affine(cos, -sin, sin, cos, bicubic)},
+		{"affine-bicubic-offs", FromBytes(rgb).Affine(0.9, 0.2, -0.2, 1.1, with(offs, InterpolateBicubic))},
+		{"affine-rgba-bicubic-rot30", FromBytes(rgba).Affine(cos, -sin, sin, cos, bicubic)},
+		{"affine-rgba-nearest-offs", FromBytes(rgba).Affine(0.9, 0.2, -0.2, 1.1, with(offs, InterpolateNearest))},
 	} {
 		for _, threads := range []int{1, 4} {
 			got := decodePNG(t, must(c.m.Clone().Threads(threads).PNG().ToBytes()))
@@ -1302,8 +1312,14 @@ func TestAffine(t *testing.T) {
 	if !bytes.Equal(a, b) {
 		t.Error("by name: another image")
 	}
+	a = must(FromBytes(rgb).Affine(0.9, 0.2, -0.2, 1.1, with(offs, InterpolateBicubic)).PNG().ToBytes())
+	b = must(FromBytes(rgb).Do("affine", "0.9", "0.2", "-0.2", "1.1", "#2050c0", "3", "-2", "10.5", "-5.25", "bicubic").PNG().ToBytes())
+	if !bytes.Equal(a, b) {
+		t.Error("by name, bicubic: another image")
+	}
 	for _, m := range []*Image{FromBytes(rgb).Affine(1, 2, 2, 4), FromBytes(rgb).Affine(math.NaN(), 0, 0, 1), FromBytes(rgb).Affine(0.001, 0, 0, 1),
-		FromBytes(rgb).Do("affine", "1", "0", "0"), FromBytes(rgb).Do("affine", "1", "0", "0", "1", "pink")} {
+		FromBytes(rgb).Do("affine", "1", "0", "0"), FromBytes(rgb).Do("affine", "1", "0", "0", "1", "pink"),
+		FromBytes(rgb).Affine(1, 0.1, 0, 1, AffineOptions{Interpolator: 3})} {
 		if _, err := m.PNG().ToBytes(); err == nil {
 			t.Error("no error")
 		}

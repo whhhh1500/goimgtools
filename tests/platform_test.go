@@ -33,6 +33,8 @@ func TestSameOnEveryProcessor(t *testing.T) {
 		{"blur translucent", clear.Clone().Blur(1.2), "89ee0ebd631eb210"},
 		{"affine", photo.Clone().Affine(0.9, 0.35, -0.2, 1.1), "67598c716d7e9a1d"},
 		{"affine translucent", clear.Clone().Affine(0.8, -0.4, 0.3, 1.2, AffineOptions{Background: color.NRGBA{9, 99, 199, 128}}), "c29f9c57b9c451e0"},
+		{"affine bicubic", photo.Clone().Affine(0.9, 0.35, -0.2, 1.1, AffineOptions{Interpolator: InterpolateBicubic}), "105b41db60612f2c"},
+		{"affine bicubic translucent", clear.Clone().Affine(0.8, -0.4, 0.3, 1.2, AffineOptions{Interpolator: InterpolateBicubic}), "5c43553bc4eb0a91"},
 		{"blur kernel", photo.Clone().Blur(6, BlurOptions{Method: BlurKernel}), "bd79e44679602cf7"},
 		{"blur kernel translucent", clear.Clone().Blur(1.7, BlurOptions{Method: BlurKernel, MinAmplitude: 0.01}), "70237cb818d8b9ec"},
 		{"unsharp mask", photo.Clone().Sharpen(SharpenOptions{Sigma: 1.5, Amount: 1.7, Threshold: 2}), "39a6d26dcb229159"},

@@ -46,7 +46,7 @@ err := goimgtools.Open("in.jpg").
 | `Rotate()` | 按 EXIF 方向自动校正（无方向信息时不作处理） |
 | `Rotate(angle)` | 顺时针旋转，角度为 90 的倍数 |
 | `RotateBy(degrees, background)` | 顺时针旋转任意角度（负值为逆时针），画布为旋转后图像的外接框，四角以 `background` 填充（`nil` 为黑色，`color.Transparent` 为透明）；采用双线性插值。与 sharp 的 `rotate` 逐字节一致，含透明与不含透明的图像均如此。角度为 90 的倍数时等同于 `Rotate`，不插值 |
-| `Affine(a, b, c, d, AffineOptions{Background, InputX, InputY, OutputX, OutputY})` | 将每个点 (x, y) 移到 (a·x + b·y, c·x + d·y)：可一次完成旋转、镜像、倾斜与拉伸。画布为移动后图像的外接框；各偏移即 sharp 的 `idx`、`idy`、`odx`、`ody`。与 sharp 的 `affine`（其默认的双线性插值）逐字节一致，含透明与不含透明的图像均如此 |
+| `Affine(a, b, c, d, AffineOptions{Background, InputX, InputY, OutputX, OutputY, Interpolator})` | 将每个点 (x, y) 移到 (a·x + b·y, c·x + d·y)：可一次完成旋转、镜像、倾斜与拉伸。画布为移动后图像的外接框；各偏移即 sharp 的 `idx`、`idy`、`odx`、`ody`。使用 `InterpolateBilinear`（默认）、`InterpolateNearest`、`InterpolateBicubic` 时与 sharp 的 `affine` 逐字节一致，含透明与不含透明的图像均如此 |
 | `Flip()` / `Flop()` | 上下镜像 / 左右镜像 |
 | `Trim(threshold, TrimOptions{Background, LineArt, Margin})` | 去除四周与左上角像素（或 `Background`）同色的边（红、绿、蓝、透明任一通道之差超过 `threshold` 才视为不同；sharp 的默认值 10 可消除 JPEG 噪点）。与 sharp 的 `trim`（libvips 的 `find_trim`）一样，先对图像做 3×3 中值滤波再找边，使边上的灰尘斑点与 JPEG 瑕疵不妨碍裁剪（保留的像素不受滤波影响）；`LineArt` 直接比较原像素，适用于由单像素细线构成的线稿（中值滤波会把细线滤掉）。`Margin` 在找到的范围外保留相应像素。像素相同时裁剪范围与 sharp 完全一致 |
 | `Extend(top, right, bottom, left, background)` | 四周扩边，宽度按 CSS 的上、右、下、左顺序给出 |

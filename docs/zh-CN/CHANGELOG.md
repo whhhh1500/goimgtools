@@ -35,7 +35,7 @@
 - 有损 WebP 分段量化：各段使用独立的量化级别（移植自 libwebp 的空间噪声整形）。
 - `pipeline.Env.SetHelpers`、`Helpers`、`Parallel`、`Go`：供处理环节将工作分摊至多个核。
 - TIFF 输出：`TIFFLZW` 压缩（libtiff 的写法）与 `TIFFOptions.Predictor`（水平差分，sharp 的默认设置）：一张 2400 万像素照片 LZW 82 → 52MB、Deflate 67 → 45MB；`-tiff-compression lzw`、`-tiff-predictor`。
-- `Affine(a, b, c, d, AffineOptions{...})`：与 sharp 的 `affine` 逐字节一致（双线性，含透明与不含透明）；按名字调用 `affine A,B,C,D[,BACKGROUND[,IDX,IDY,ODX,ODY]]`。
+- `Affine(a, b, c, d, AffineOptions{...})`：与 sharp 的 `affine` 逐字节一致（`Interpolator` 可选双线性、最近邻、双三次，含透明与不含透明）；按名字调用 `affine A,B,C,D[,BACKGROUND[,IDX,IDY,ODX,ODY]][,bilinear|nearest|bicubic]`。
 - `EnsureAlpha`（与 sharp 的 `ensureAlpha` 逐字节一致）；按名字调用 `ensure-alpha [ALPHA]`。
 - 缩放核 `KernelMKS2013` 与 `KernelMKS2021`（Magic Kernel Sharp，即 sharp 的 `mks2013`、`mks2021`）；命令行 `-kernel mks2013|mks2021`。
 - `Rank`（Pillow 的 `RankFilter`、`MinFilter`、`MaxFilter`）、`Dilate` 与 `Erode`（sharp 的 `dilate`、`erode`），均逐字节一致；按名字调用 `rank SIZE,RANK`、`dilate [WIDTH]`、`erode [WIDTH]`。dilate 与 erode 的耗时几乎不随宽度增长（libvips 随宽度的平方增长）。
