@@ -204,6 +204,10 @@ func readRow(m image.Image, y int, out [][4]float64) {
 	case *image.RGBA:
 		base := (y-s.Rect.Min.Y)*s.Stride + (x0-s.Rect.Min.X)*4
 		pix := s.Pix[base : base+sw*4]
+		if useSIMD && sw > 0 {
+			rgbaRowSIMD(&out[0], &pix[0], sw)
+			return
+		}
 		for x := range out {
 			p := pix[x*4 : x*4+4 : x*4+4]
 			out[x] = [4]float64{
@@ -626,25 +630,29 @@ func (s *scaler) feed() error {
 
 	// Horizontal pass: x/image's scaleX_*.
 	row, tmp, ca := s.row, s.tmp, s.constAlpha
-	for x, h := range s.hz.sources {
-		var pr, pg, pb, pa float64
-		if ca {
-			for _, c := range s.hz.contribs[h.i:h.j] {
-				p := &row[c.coord]
-				pr += float64(p[0] * c.weight)
-				pg += float64(p[1] * c.weight)
-				pb += float64(p[2] * c.weight)
+	if useSIMD && len(tmp) > 0 && len(s.hz.contribs) > 0 {
+		hpassSIMD(&tmp[0], &row[0], 0, &s.hz.sources[0], &s.hz.contribs[0], len(tmp), ca)
+	} else {
+		for x, h := range s.hz.sources {
+			var pr, pg, pb, pa float64
+			if ca {
+				for _, c := range s.hz.contribs[h.i:h.j] {
+					p := &row[c.coord]
+					pr += float64(p[0] * c.weight)
+					pg += float64(p[1] * c.weight)
+					pb += float64(p[2] * c.weight)
+				}
+				tmp[x] = [4]float64{pr * h.invTotalWeightFFFF, pg * h.invTotalWeightFFFF, pb * h.invTotalWeightFFFF, 1}
+			} else {
+				for _, c := range s.hz.contribs[h.i:h.j] {
+					p := &row[c.coord]
+					pr += float64(p[0] * c.weight)
+					pg += float64(p[1] * c.weight)
+					pb += float64(p[2] * c.weight)
+					pa += float64(p[3] * c.weight)
+				}
+				tmp[x] = [4]float64{pr * h.invTotalWeightFFFF, pg * h.invTotalWeightFFFF, pb * h.invTotalWeightFFFF, pa * h.invTotalWeightFFFF}
 			}
-			tmp[x] = [4]float64{pr * h.invTotalWeightFFFF, pg * h.invTotalWeightFFFF, pb * h.invTotalWeightFFFF, 1}
-		} else {
-			for _, c := range s.hz.contribs[h.i:h.j] {
-				p := &row[c.coord]
-				pr += float64(p[0] * c.weight)
-				pg += float64(p[1] * c.weight)
-				pb += float64(p[2] * c.weight)
-				pa += float64(p[3] * c.weight)
-			}
-			tmp[x] = [4]float64{pr * h.invTotalWeightFFFF, pg * h.invTotalWeightFFFF, pb * h.invTotalWeightFFFF, pa * h.invTotalWeightFFFF}
 		}
 	}
 
@@ -661,6 +669,10 @@ func (s *scaler) feed() error {
 		}
 		o.k++
 		w, acc := c.weight, o.acc[:len(tmp)]
+		if useSIMD && len(tmp) > 0 {
+			vpassSIMD(&acc[0], &tmp[0], len(tmp), w)
+			continue
+		}
 		for x := range tmp {
 			p, a := &tmp[x], &acc[x]
 			a[0] += float64(p[0] * w)
@@ -718,6 +730,10 @@ func (s *scaler) feedParts(strip subImager, y int32) {
 			}
 			for _, t := range s.takers {
 				acc, tmp := t.o.g[p.x0:p.x1], s.gtmp[p.x0:p.x1]
+				if useSIMD && len(tmp) > 0 {
+					vpassGraySIMD(&acc[0], &tmp[0], len(tmp), t.w)
+					continue
+				}
 				for x, v := range tmp {
 					acc[x] += float64(v * t.w)
 				}
@@ -729,30 +745,38 @@ func (s *scaler) feedParts(strip subImager, y int32) {
 			s.lin.row(p.row)
 		}
 		ca := s.constAlpha
-		for x := p.x0; x < p.x1; x++ {
-			h := s.hz.sources[x]
-			var pr, pg, pb, pa float64
-			if ca {
-				for _, c := range s.hz.contribs[h.i:h.j] {
-					q := &p.row[int(c.coord)-p.s0]
-					pr += float64(q[0] * c.weight)
-					pg += float64(q[1] * c.weight)
-					pb += float64(q[2] * c.weight)
+		if useSIMD && p.x1 > p.x0 && len(s.hz.contribs) > 0 {
+			hpassSIMD(&s.tmp[p.x0], &p.row[0], p.s0, &s.hz.sources[p.x0], &s.hz.contribs[0], p.x1-p.x0, ca)
+		} else {
+			for x := p.x0; x < p.x1; x++ {
+				h := s.hz.sources[x]
+				var pr, pg, pb, pa float64
+				if ca {
+					for _, c := range s.hz.contribs[h.i:h.j] {
+						q := &p.row[int(c.coord)-p.s0]
+						pr += float64(q[0] * c.weight)
+						pg += float64(q[1] * c.weight)
+						pb += float64(q[2] * c.weight)
+					}
+					s.tmp[x] = [4]float64{pr * h.invTotalWeightFFFF, pg * h.invTotalWeightFFFF, pb * h.invTotalWeightFFFF, 1}
+				} else {
+					for _, c := range s.hz.contribs[h.i:h.j] {
+						q := &p.row[int(c.coord)-p.s0]
+						pr += float64(q[0] * c.weight)
+						pg += float64(q[1] * c.weight)
+						pb += float64(q[2] * c.weight)
+						pa += float64(q[3] * c.weight)
+					}
+					s.tmp[x] = [4]float64{pr * h.invTotalWeightFFFF, pg * h.invTotalWeightFFFF, pb * h.invTotalWeightFFFF, pa * h.invTotalWeightFFFF}
 				}
-				s.tmp[x] = [4]float64{pr * h.invTotalWeightFFFF, pg * h.invTotalWeightFFFF, pb * h.invTotalWeightFFFF, 1}
-			} else {
-				for _, c := range s.hz.contribs[h.i:h.j] {
-					q := &p.row[int(c.coord)-p.s0]
-					pr += float64(q[0] * c.weight)
-					pg += float64(q[1] * c.weight)
-					pb += float64(q[2] * c.weight)
-					pa += float64(q[3] * c.weight)
-				}
-				s.tmp[x] = [4]float64{pr * h.invTotalWeightFFFF, pg * h.invTotalWeightFFFF, pb * h.invTotalWeightFFFF, pa * h.invTotalWeightFFFF}
 			}
 		}
 		for _, t := range s.takers {
 			acc, tmp := t.o.acc[p.x0:p.x1], s.tmp[p.x0:p.x1]
+			if useSIMD && len(tmp) > 0 {
+				vpassSIMD(&acc[0], &tmp[0], len(tmp), t.w)
+				continue
+			}
 			for x := range tmp {
 				q, a := &tmp[x], &acc[x]
 				a[0] += float64(q[0] * t.w)
@@ -792,8 +816,12 @@ func (s *scaler) feedGray(strip image.Image, y int32) {
 		}
 		o.k++
 		w, acc := c.weight, o.g[:len(tmp)]
-		for x, p := range tmp {
-			acc[x] += float64(p * w)
+		if useSIMD && len(tmp) > 0 {
+			vpassGraySIMD(&acc[0], &tmp[0], len(tmp), w)
+		} else {
+			for x, p := range tmp {
+				acc[x] += float64(p * w)
+			}
 		}
 		o.pa += float64(1 * w)
 	}

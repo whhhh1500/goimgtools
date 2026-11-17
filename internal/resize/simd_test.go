@@ -4,7 +4,11 @@ import (
 	"bytes"
 	"image"
 	"math/rand/v2"
+	"reflect"
 	"testing"
+	"unsafe"
+
+	"golang.org/x/image/draw"
 
 	"github.com/whhhh1500/goimgtools/internal/testutil"
 	"github.com/whhhh1500/goimgtools/pipeline"
@@ -53,6 +57,58 @@ func TestVipsSIMD(t *testing.T) {
 		want, got := run(m, hs, vs, k, false), run(m, hs, vs, k, true)
 		if !bytes.Equal(got, want) {
 			t.Fatalf("%d: %s by %v, %v with %+v differs", i, names[i%len(names)], hs, vs, k)
+		}
+	}
+}
+
+// TestScaleSIMDLayout: the assembly passes read source and contrib at these
+// offsets.
+func TestScaleSIMDLayout(t *testing.T) {
+	var s source
+	var c contrib
+	if unsafe.Sizeof(s) != 24 || unsafe.Offsetof(s.j) != 4 || unsafe.Offsetof(s.invTotalWeightFFFF) != 16 ||
+		unsafe.Sizeof(c) != 16 || unsafe.Offsetof(c.weight) != 8 {
+		t.Fatal("source or contrib laid out differently")
+	}
+}
+
+// TestScaleSIMD: the default scaler with the SIMD passes gives what it
+// gives with the Go code, to the bit, for every kind of strip, shrinking
+// and enlarging, with and without helpers, in linear light too.
+func TestScaleSIMD(t *testing.T) {
+	if !useSIMD {
+		t.Skip("no SIMD")
+	}
+	defer func() { useSIMD = true }()
+	for name, m := range testutil.Images(97, 61) {
+		for _, sz := range [][2]int{{40, 25}, {150, 90}, {97, 30}, {13, 200}} {
+			for _, helpers := range []int{0, 3} {
+				for _, linear := range []bool{false, true} {
+					var outs [2]image.Image
+					for k, simd := range []bool{false, true} {
+						useSIMD = simd
+						env := pipeline.NewEnv(0, "")
+						env.SetHelpers(helpers)
+						src := testutil.ChoppedEnv(m, 7, env)
+						var sc pipeline.Source
+						var err error
+						if linear {
+							sc, err = ScaleLinear(src, sz[0], sz[1], draw.CatmullRom, float64(m.Bounds().Dx()), float64(m.Bounds().Dy()))
+						} else {
+							sc, err = Scale(src, sz[0], sz[1], draw.CatmullRom)
+						}
+						if err != nil {
+							t.Fatal(err)
+						}
+						if outs[k], err = pipeline.Collect(sc); err != nil {
+							t.Fatal(err)
+						}
+					}
+					if !reflect.DeepEqual(outs[0], outs[1]) {
+						t.Errorf("%s to %v, %d helpers, linear %v: SIMD differs", name, sz, helpers, linear)
+					}
+				}
+			}
 		}
 	}
 }
