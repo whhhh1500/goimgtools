@@ -6,6 +6,7 @@ package vp8l
 
 import (
 	"io"
+	"math/bits"
 )
 
 // reverseBits reverses the bits in a byte.
@@ -58,6 +59,11 @@ type hTree struct {
 	//   - the hTree.nodes index to start the tree traversal from, if
 	//     the next code requires more than lutSize bits.
 	lut [1 << lutSize]uint32
+
+	// table, when not nil, decodes the code instead of nodes and lut (see
+	// buildTable): rootBits bits index its root (mask selects them).
+	table          []uint32
+	rootBits, mask uint32
 }
 
 // insert inserts into the hTree a symbol whose encoding is the least
@@ -158,19 +164,29 @@ func (h *hTree) build(codeLengths []uint32) error {
 	if nSymbols == 0 {
 		return errInvalidHuffmanTree
 	}
-	h.nodes = make([]hNode, 1, 2*nSymbols-1)
-	// Handle the trivial case.
+	// Handle the trivial case: a code of no bits, whatever its length.
 	if nSymbols == 1 {
-		if len(codeLengths) <= int(lastSymbol) {
-			return errInvalidHuffmanTree
-		}
-		return h.insert(lastSymbol, 0, 0)
+		h.single(lastSymbol)
+		return nil
 	}
 	// Handle the non-trivial case.
 	codes, err := codeLengthsToCodes(codeLengths)
 	if err != nil {
 		return err
 	}
+	// A complete code gets a table; its codes cannot collide.
+	kraft, maxLen := uint32(0), uint32(0)
+	for _, cl := range codeLengths {
+		if cl > 0 {
+			kraft += 1 << (15 - cl)
+			maxLen = max(maxLen, cl)
+		}
+	}
+	if kraft == 1<<15 {
+		h.buildTable(codeLengths, codes, maxLen)
+		return nil
+	}
+	h.nodes = make([]hNode, 1, 2*nSymbols-1)
 	for symbol, cl := range codeLengths {
 		if cl > 0 {
 			if err := h.insert(uint32(symbol), codes[symbol], cl); err != nil {
@@ -183,20 +199,142 @@ func (h *hTree) build(codeLengths []uint32) error {
 
 // buildSimple builds a Huffman tree with 1 or 2 symbols.
 func (h *hTree) buildSimple(nSymbols uint32, symbols [2]uint32, alphabetSize uint32) error {
-	h.nodes = make([]hNode, 1, 2*nSymbols-1)
 	for i := uint32(0); i < nSymbols; i++ {
 		if symbols[i] >= alphabetSize {
 			return errInvalidHuffmanTree
 		}
-		if err := h.insert(symbols[i], i, nSymbols-1); err != nil {
-			return err
+	}
+	if nSymbols == 1 {
+		h.single(symbols[0])
+		return nil
+	}
+	// The codes 0 and 1, of one bit.
+	h.table = []uint32{symbols[0]<<16 | 1, symbols[1]<<16 | 1}
+	h.rootBits, h.mask = 1, 1
+	return nil
+}
+
+// single makes h the code of one symbol, of no bits.
+func (h *hTree) single(symbol uint32) {
+	h.table = []uint32{symbol << 16}
+	h.rootBits, h.mask = 0, 0
+}
+
+// tableBytes is the memory of h's table or nodes.
+func (h *hTree) tableBytes() int64 {
+	return int64(cap(h.table))*4 + int64(cap(h.nodes))*hNodeBytes
+}
+
+// Decoding tables.
+//
+// A complete code (every string of bits starts a code: the Kraft sum of
+// its lengths is one) is decoded with a table instead of the tree, as
+// libwebp decodes (src/utils/huffman_utils.c): the next rootBits bits of
+// the stream index the root table, whose entry is the symbol and its code
+// length, or, for a longer code, where a second table for the bits after
+// the root ones starts and how many bits index it. A code that is not
+// complete, which only a corrupt or unusual file has, keeps the tree, so
+// that what it decodes to, or how it fails, stays golang.org/x/image's.
+
+const (
+	// maxRootBits is the most bits a root table is indexed by.
+	maxRootBits = 8
+	// linkFlag marks a root entry that points to a second table.
+	linkFlag = 0x100
+)
+
+// buildTable fills h.table for the complete code with the given lengths
+// (at least two of them not zero) and canonical codes.
+func (h *hTree) buildTable(codeLengths, codes []uint32, maxLen uint32) {
+	rb := min(maxLen, maxRootBits)
+	h.rootBits, h.mask = rb, 1<<rb-1
+	// The bits each second table is indexed by.
+	var need [1 << maxRootBits]uint8
+	for s, l := range codeLengths {
+		if l > rb {
+			r := reverseCode(codes[s], l) & h.mask
+			need[r] = max(need[r], uint8(l-rb))
 		}
 	}
-	return nil
+	size := uint32(1) << rb
+	var base [1 << maxRootBits]uint32
+	for i := range uint32(1) << rb {
+		if need[i] != 0 {
+			base[i] = size
+			size += 1 << need[i]
+		}
+	}
+	t := make([]uint32, size)
+	for i := range uint32(1) << rb {
+		if need[i] != 0 {
+			t[i] = base[i]<<16 | linkFlag | uint32(need[i])
+		}
+	}
+	for s, l := range codeLengths {
+		if l == 0 {
+			continue
+		}
+		r := reverseCode(codes[s], l)
+		e := uint32(s)<<16 | l
+		if l <= rb {
+			for k := r; k < 1<<rb; k += 1 << l {
+				t[k] = e
+			}
+			continue
+		}
+		i := r & h.mask
+		for k := r >> rb; k < 1<<need[i]; k += 1 << (l - rb) {
+			t[base[i]+k] = e
+		}
+	}
+	h.table = t
+}
+
+// reverseCode is the code of length l, as it comes in the stream: its
+// first bit lowest.
+func reverseCode(code, l uint32) uint32 {
+	return uint32(bits.Reverse16(uint16(code))) >> (16 - l)
 }
 
 // next returns the next Huffman-encoded symbol from the bit-stream d.
 func (h *hTree) next(d *decoder) (uint32, error) {
+	t := h.table
+	if t == nil {
+		return h.walk(d)
+	}
+	if d.nBits < 15 {
+		// The input may end: the code may still be in the bits there are.
+		if err := d.refill(); err != nil && err != io.EOF {
+			return 0, err
+		}
+	}
+	e := t[uint32(d.bits)&h.mask]
+	if e&linkFlag != 0 {
+		e = t[e>>16+uint32(d.bits>>h.rootBits)&(1<<(e&0xff)-1)]
+	}
+	n := e & 0xff
+	if n > d.nBits {
+		return 0, io.ErrUnexpectedEOF
+	}
+	d.bits >>= n
+	d.nBits -= n
+	return e >> 16, nil
+}
+
+// entry is the table entry of the code that bits start with (h has a
+// table, and bits enough bits for any code).
+func (h *hTree) entry(bits uint64) uint32 {
+	t := h.table
+	e := t[uint32(bits)&h.mask]
+	if e&linkFlag != 0 {
+		e = t[e>>16+uint32(bits>>h.rootBits)&(1<<(e&0xff)-1)]
+	}
+	return e
+}
+
+// walk returns the next symbol of a code that is not complete, walking
+// its tree as golang.org/x/image/vp8l does.
+func (h *hTree) walk(d *decoder) (uint32, error) {
 	var n uint32
 	// Read enough bits so that we can use the look-up table.
 	if d.nBits < lutSize {
@@ -209,7 +347,7 @@ func (h *hTree) next(d *decoder) (uint32, error) {
 			}
 			return 0, err
 		}
-		d.bits |= uint32(c) << d.nBits
+		d.bits |= uint64(c) << d.nBits
 		d.nBits += 8
 	}
 	// Use the look-up table.
@@ -234,10 +372,10 @@ slowPath:
 				}
 				return 0, err
 			}
-			d.bits = uint32(c)
+			d.bits = uint64(c)
 			d.nBits = 8
 		}
-		n = uint32(h.nodes[n].children) + 1&d.bits
+		n = uint32(h.nodes[n].children) + 1&uint32(d.bits)
 		d.bits >>= 1
 		d.nBits--
 	}

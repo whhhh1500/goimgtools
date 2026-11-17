@@ -25,6 +25,7 @@
 package vp8l
 
 import (
+	"encoding/binary"
 	"errors"
 	"io"
 
@@ -99,9 +100,12 @@ type decoder struct {
 	ra       io.ReaderAt
 	off, end int64
 	// buf[r:w] are the bytes read but not consumed.
-	buf   []byte
-	r, w  int
-	bits  uint32
+	buf  []byte
+	r, w int
+	// bits holds nBits bits of the input not consumed yet, the first
+	// lowest. Above them may be some of the bits that follow (refill);
+	// nothing else.
+	bits  uint64
 	nBits uint32
 
 	env *pipeline.Env
@@ -136,6 +140,32 @@ func (d *decoder) readByte() (byte, error) {
 	return c, nil
 }
 
+// refill tops bits up to more than 56 bits, or to the end of the input
+// (then returning io.EOF), or until reading fails. Eight bytes at a time
+// when it can: the bits of the bytes after those it takes land above
+// nBits, where they are what the next refill ORs in again.
+func (d *decoder) refill() error {
+	for d.nBits <= 56 {
+		if d.w-d.r >= 8 {
+			k := (63 - d.nBits) >> 3
+			d.bits |= binary.LittleEndian.Uint64(d.buf[d.r:]) << d.nBits
+			d.r += int(k)
+			d.nBits += k << 3
+			return nil
+		}
+		if d.r == d.w {
+			if err := d.fill(); err != nil {
+				return err
+			}
+			continue
+		}
+		d.bits |= uint64(d.buf[d.r]) << d.nBits
+		d.r++
+		d.nBits += 8
+	}
+	return nil
+}
+
 func (d *decoder) fill() error {
 	if d.off >= d.end {
 		return io.EOF
@@ -158,18 +188,15 @@ func (d *decoder) fill() error {
 
 // read reads the next n bits from the decoder's bit-stream.
 func (d *decoder) read(n uint32) (uint32, error) {
-	for d.nBits < n {
-		c, err := d.readByte()
-		if err != nil {
+	if d.nBits < n {
+		if err := d.refill(); err != nil && d.nBits < n {
 			if err == io.EOF {
 				err = io.ErrUnexpectedEOF
 			}
 			return 0, err
 		}
-		d.bits |= uint32(c) << d.nBits
-		d.nBits += 8
 	}
-	u := d.bits & (1<<n - 1)
+	u := uint32(d.bits) & (1<<n - 1)
 	d.bits >>= n
 	d.nBits -= n
 	return u, nil
@@ -450,8 +477,8 @@ const (
 type hGroup [nHuff]hTree
 
 const (
-	// hGroupBytes is the size of an hGroup without its nodes.
-	hGroupBytes = nHuff * (24 + 4<<lutSize)
+	// hGroupBytes is the size of an hGroup without its nodes or tables.
+	hGroupBytes = nHuff * (24 + 4<<lutSize + 24 + 8)
 	// hNodeBytes is the size of an hNode.
 	hNodeBytes = 8
 )
@@ -591,7 +618,7 @@ func (s *pixels) decodeHuffmanGroups(topLevel bool, ccBits uint32) error {
 				return err
 			}
 			if hTreeDst != nil {
-				if err := s.reserve(int64(cap(hTreeDst.nodes))*hNodeBytes, "vp8l Huffman trees"); err != nil {
+				if err := s.reserve(hTreeDst.tableBytes(), "vp8l Huffman trees"); err != nil {
 					return err
 				}
 			}
@@ -766,10 +793,15 @@ func (s *pixels) run(target int64) error {
 	p, pos := s.p, s.pos
 	x, y := s.x, s.y
 	hg, lookupHG := s.hg, s.lookupHG
+	// The bits are kept here, where they can stay in registers, and handed
+	// back to d around every call that reads from it.
+	bits, nb := d.bits, d.nBits
+	var err error
 	for p < target {
 		if lookupHG {
 			if ty := y >> s.hBits; ty != s.hRowY {
 				if _, err := s.hStore.ReadAt(s.hRow, int64(ty)*int64(len(s.hRow))); err != nil {
+					d.bits, d.nBits = bits, nb
 					return err
 				}
 				s.hRowY = ty
@@ -778,24 +810,62 @@ func (s *pixels) run(target int64) error {
 			hg = &s.hGroups[uint32(s.hRow[i])<<8|uint32(s.hRow[i+1])]
 		}
 
-		green, err := hg[huffGreen].next(d)
-		if err != nil {
-			return err
+		// Two codes take at most 30 bits. An error in reading shows up
+		// where the bits are missing.
+		if nb < 32 {
+			d.bits, d.nBits = bits, nb
+			d.refill()
+			bits, nb = d.bits, d.nBits
+		}
+		var green uint32
+		if h := &hg[huffGreen]; h.table != nil && nb >= 15 {
+			e := h.entry(bits)
+			bits, nb, green = bits>>(e&0xff), nb-e&0xff, e>>16
+		} else {
+			d.bits, d.nBits = bits, nb
+			if green, err = h.next(d); err != nil {
+				return err
+			}
+			bits, nb = d.bits, d.nBits
 		}
 		switch {
 		case green < nLiteralCodes:
 			// We have a literal pixel.
-			red, err := hg[huffRed].next(d)
-			if err != nil {
-				return err
+			var red, blue, alpha uint32
+			if h := &hg[huffRed]; h.table != nil && nb >= 15 {
+				e := h.entry(bits)
+				bits, nb, red = bits>>(e&0xff), nb-e&0xff, e>>16
+			} else {
+				d.bits, d.nBits = bits, nb
+				if red, err = h.next(d); err != nil {
+					return err
+				}
+				bits, nb = d.bits, d.nBits
 			}
-			blue, err := hg[huffBlue].next(d)
-			if err != nil {
-				return err
+			if nb < 32 {
+				d.bits, d.nBits = bits, nb
+				d.refill()
+				bits, nb = d.bits, d.nBits
 			}
-			alpha, err := hg[huffAlpha].next(d)
-			if err != nil {
-				return err
+			if h := &hg[huffBlue]; h.table != nil && nb >= 15 {
+				e := h.entry(bits)
+				bits, nb, blue = bits>>(e&0xff), nb-e&0xff, e>>16
+			} else {
+				d.bits, d.nBits = bits, nb
+				if blue, err = h.next(d); err != nil {
+					return err
+				}
+				bits, nb = d.bits, d.nBits
+			}
+			if h := &hg[huffAlpha]; h.table != nil && nb >= 15 {
+				e := h.entry(bits)
+				bits, nb, alpha = bits>>(e&0xff), nb-e&0xff, e>>16
+			} else {
+				d.bits, d.nBits = bits, nb
+				if alpha, err = h.next(d); err != nil {
+					return err
+				}
+				bits, nb = d.bits, d.nBits
 			}
 			ring[pos+0] = uint8(red)
 			ring[pos+1] = uint8(green)
@@ -815,6 +885,7 @@ func (s *pixels) run(target int64) error {
 
 		case green < nLiteralCodes+nLengthCodes:
 			// We have a LZ77 backwards reference.
+			d.bits, d.nBits = bits, nb
 			length, err := d.lz77Param(green - nLiteralCodes)
 			if err != nil {
 				return err
@@ -827,6 +898,7 @@ func (s *pixels) run(target int64) error {
 			if err != nil {
 				return err
 			}
+			bits, nb = d.bits, d.nBits
 			dist := distanceMap(w, distCode)
 			// The copy must stay inside the image and its source must not
 			// start before the first pixel. A valid source is always still
@@ -879,6 +951,7 @@ func (s *pixels) run(target int64) error {
 			}
 			green -= nLiteralCodes + nLengthCodes
 			if int(green) >= len(s.ccEntries) {
+				d.bits, d.nBits = bits, nb
 				return errors.New("vp8l: invalid color cache index")
 			}
 			argb := s.ccEntries[green]
@@ -899,6 +972,7 @@ func (s *pixels) run(target int64) error {
 			lookupHG = hMask != 0 && x&hMask == 0
 		}
 	}
+	d.bits, d.nBits = bits, nb
 	s.p, s.pos = p, pos
 	s.x, s.y = x, y
 	s.hg, s.lookupHG = hg, lookupHG

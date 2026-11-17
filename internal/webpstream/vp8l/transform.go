@@ -13,6 +13,8 @@ package vp8l
 // is in memory (transform.tileRow).
 
 import (
+	"encoding/binary"
+
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
@@ -109,145 +111,160 @@ func (t *transform) inverse(row []byte, y int32) ([]byte, error) {
 // inversePredictor undoes the predictor transform for row y, which is the
 // second half of t.pp; the first half is the row above.
 func inversePredictor(t *transform, y int32) {
+	w := t.oldWidth
 	pix := t.pp
-	p, mask := 4*t.oldWidth, int32(1)<<t.bits-1
+	cur := pix[4*w : 8*w]
 	if y == 0 {
-		// The first pixel's predictor is mode 0 (opaque black).
-		pix[p+3] += 0xff
-		p += 4
-		for x := int32(1); x < t.oldWidth; x++ {
-			// The rest of the first row's predictor is mode 1 (L).
-			pix[p+0] += pix[p-4]
-			pix[p+1] += pix[p-3]
-			pix[p+2] += pix[p-2]
-			pix[p+3] += pix[p-1]
-			p += 4
-		}
+		// The first pixel's predictor is mode 0 (opaque black), the rest
+		// of the first row's mode 1 (L).
+		cur[3] += 0xff
+		predictRun(1, pix, w, 1, w)
 		return
 	}
-	top := 0
-	{
-		// The first column's predictor is mode 2 (T).
-		pix[p+0] += pix[top+0]
-		pix[p+1] += pix[top+1]
-		pix[p+2] += pix[top+2]
-		pix[p+3] += pix[top+3]
-		p, top = p+4, top+4
+	// The first column's predictor is mode 2 (T).
+	put32(cur, 0, addPixels(le32(cur, 0), le32(pix, 0)))
+	// Each tile of the row in one go, with its mode.
+	for x := int32(1); x < w; {
+		end := min((x>>t.bits+1)<<t.bits, w)
+		predictRun(t.tileRow[4*(x>>t.bits)+1]&0x0f, pix, w, x, end)
+		x = end
+	}
+}
 
-		q := 0
-		predictorMode := t.tileRow[q+1] & 0x0f
-		q += 4
-		for x := int32(1); x < t.oldWidth; x++ {
-			if x&mask == 0 {
-				predictorMode = t.tileRow[q+1] & 0x0f
-				q += 4
+// predictRun undoes the prediction of mode for the pixels x0 to x1 of the
+// row (the second row of pix, w pixels wide, under the row above).
+// Modes 14 and 15 leave the pixels as they are.
+func predictRun(mode uint8, pix []byte, w, x0, x1 int32) {
+	p, top := int(4*(w+x0)), int(4*x0)
+	n := int(x1 - x0)
+	switch mode {
+	case 0: // Opaque black.
+		for i := 0; i < n; i++ {
+			pix[p+4*i+3] += 0xff
+		}
+	case 1: // L.
+		left := le32(pix, p-4)
+		for i := 0; i < n; i, p = i+1, p+4 {
+			left = addPixels(le32(pix, p), left)
+			put32(pix, p, left)
+		}
+	case 2: // T.
+		for i := 0; i < n; i, p, top = i+1, p+4, top+4 {
+			put32(pix, p, addPixels(le32(pix, p), le32(pix, top)))
+		}
+	case 3: // TR.
+		for i := 0; i < n; i, p, top = i+1, p+4, top+4 {
+			put32(pix, p, addPixels(le32(pix, p), le32(pix, top+4)))
+		}
+	case 4: // TL.
+		for i := 0; i < n; i, p, top = i+1, p+4, top+4 {
+			put32(pix, p, addPixels(le32(pix, p), le32(pix, top-4)))
+		}
+	case 5: // Average2(Average2(L, TR), T).
+		left := le32(pix, p-4)
+		for i := 0; i < n; i, p, top = i+1, p+4, top+4 {
+			left = addPixels(le32(pix, p), average2(average2(left, le32(pix, top+4)), le32(pix, top)))
+			put32(pix, p, left)
+		}
+	case 6: // Average2(L, TL).
+		left := le32(pix, p-4)
+		for i := 0; i < n; i, p, top = i+1, p+4, top+4 {
+			left = addPixels(le32(pix, p), average2(left, le32(pix, top-4)))
+			put32(pix, p, left)
+		}
+	case 7: // Average2(L, T).
+		left := le32(pix, p-4)
+		for i := 0; i < n; i, p, top = i+1, p+4, top+4 {
+			left = addPixels(le32(pix, p), average2(left, le32(pix, top)))
+			put32(pix, p, left)
+		}
+	case 8: // Average2(TL, T).
+		for i := 0; i < n; i, p, top = i+1, p+4, top+4 {
+			put32(pix, p, addPixels(le32(pix, p), average2(le32(pix, top-4), le32(pix, top))))
+		}
+	case 9: // Average2(T, TR).
+		for i := 0; i < n; i, p, top = i+1, p+4, top+4 {
+			put32(pix, p, addPixels(le32(pix, p), average2(le32(pix, top), le32(pix, top+4))))
+		}
+	case 10: // Average2(Average2(L, TL), Average2(T, TR)).
+		left := le32(pix, p-4)
+		for i := 0; i < n; i, p, top = i+1, p+4, top+4 {
+			left = addPixels(le32(pix, p), average2(average2(left, le32(pix, top-4)), average2(le32(pix, top), le32(pix, top+4))))
+			put32(pix, p, left)
+		}
+	case 11: // Select(L, T, TL).
+		left := le32(pix, p-4)
+		for i := 0; i < n; i, p, top = i+1, p+4, top+4 {
+			tl, tp := le32(pix, top-4), le32(pix, top)
+			pred := tp
+			if sad(tl, tp) < sad(tl, left) {
+				pred = left
 			}
-			switch predictorMode {
-			case 0: // Opaque black.
-				pix[p+3] += 0xff
-
-			case 1: // L.
-				pix[p+0] += pix[p-4]
-				pix[p+1] += pix[p-3]
-				pix[p+2] += pix[p-2]
-				pix[p+3] += pix[p-1]
-
-			case 2: // T.
-				pix[p+0] += pix[top+0]
-				pix[p+1] += pix[top+1]
-				pix[p+2] += pix[top+2]
-				pix[p+3] += pix[top+3]
-
-			case 3: // TR.
-				pix[p+0] += pix[top+4]
-				pix[p+1] += pix[top+5]
-				pix[p+2] += pix[top+6]
-				pix[p+3] += pix[top+7]
-
-			case 4: // TL.
-				pix[p+0] += pix[top-4]
-				pix[p+1] += pix[top-3]
-				pix[p+2] += pix[top-2]
-				pix[p+3] += pix[top-1]
-
-			case 5: // Average2(Average2(L, TR), T).
-				pix[p+0] += avg2(avg2(pix[p-4], pix[top+4]), pix[top+0])
-				pix[p+1] += avg2(avg2(pix[p-3], pix[top+5]), pix[top+1])
-				pix[p+2] += avg2(avg2(pix[p-2], pix[top+6]), pix[top+2])
-				pix[p+3] += avg2(avg2(pix[p-1], pix[top+7]), pix[top+3])
-
-			case 6: // Average2(L, TL).
-				pix[p+0] += avg2(pix[p-4], pix[top-4])
-				pix[p+1] += avg2(pix[p-3], pix[top-3])
-				pix[p+2] += avg2(pix[p-2], pix[top-2])
-				pix[p+3] += avg2(pix[p-1], pix[top-1])
-
-			case 7: // Average2(L, T).
-				pix[p+0] += avg2(pix[p-4], pix[top+0])
-				pix[p+1] += avg2(pix[p-3], pix[top+1])
-				pix[p+2] += avg2(pix[p-2], pix[top+2])
-				pix[p+3] += avg2(pix[p-1], pix[top+3])
-
-			case 8: // Average2(TL, T).
-				pix[p+0] += avg2(pix[top-4], pix[top+0])
-				pix[p+1] += avg2(pix[top-3], pix[top+1])
-				pix[p+2] += avg2(pix[top-2], pix[top+2])
-				pix[p+3] += avg2(pix[top-1], pix[top+3])
-
-			case 9: // Average2(T, TR).
-				pix[p+0] += avg2(pix[top+0], pix[top+4])
-				pix[p+1] += avg2(pix[top+1], pix[top+5])
-				pix[p+2] += avg2(pix[top+2], pix[top+6])
-				pix[p+3] += avg2(pix[top+3], pix[top+7])
-
-			case 10: // Average2(Average2(L, TL), Average2(T, TR)).
-				pix[p+0] += avg2(avg2(pix[p-4], pix[top-4]), avg2(pix[top+0], pix[top+4]))
-				pix[p+1] += avg2(avg2(pix[p-3], pix[top-3]), avg2(pix[top+1], pix[top+5]))
-				pix[p+2] += avg2(avg2(pix[p-2], pix[top-2]), avg2(pix[top+2], pix[top+6]))
-				pix[p+3] += avg2(avg2(pix[p-1], pix[top-1]), avg2(pix[top+3], pix[top+7]))
-
-			case 11: // Select(L, T, TL).
-				l0 := int32(pix[p-4])
-				l1 := int32(pix[p-3])
-				l2 := int32(pix[p-2])
-				l3 := int32(pix[p-1])
-				c0 := int32(pix[top-4])
-				c1 := int32(pix[top-3])
-				c2 := int32(pix[top-2])
-				c3 := int32(pix[top-1])
-				t0 := int32(pix[top+0])
-				t1 := int32(pix[top+1])
-				t2 := int32(pix[top+2])
-				t3 := int32(pix[top+3])
-				l := abs(c0-t0) + abs(c1-t1) + abs(c2-t2) + abs(c3-t3)
-				t := abs(c0-l0) + abs(c1-l1) + abs(c2-l2) + abs(c3-l3)
-				if l < t {
-					pix[p+0] += uint8(l0)
-					pix[p+1] += uint8(l1)
-					pix[p+2] += uint8(l2)
-					pix[p+3] += uint8(l3)
-				} else {
-					pix[p+0] += uint8(t0)
-					pix[p+1] += uint8(t1)
-					pix[p+2] += uint8(t2)
-					pix[p+3] += uint8(t3)
-				}
-
-			case 12: // ClampAddSubtractFull(L, T, TL).
-				pix[p+0] += clampAddSubtractFull(pix[p-4], pix[top+0], pix[top-4])
-				pix[p+1] += clampAddSubtractFull(pix[p-3], pix[top+1], pix[top-3])
-				pix[p+2] += clampAddSubtractFull(pix[p-2], pix[top+2], pix[top-2])
-				pix[p+3] += clampAddSubtractFull(pix[p-1], pix[top+3], pix[top-1])
-
-			case 13: // ClampAddSubtractHalf(Average2(L, T), TL).
-				pix[p+0] += clampAddSubtractHalf(avg2(pix[p-4], pix[top+0]), pix[top-4])
-				pix[p+1] += clampAddSubtractHalf(avg2(pix[p-3], pix[top+1]), pix[top-3])
-				pix[p+2] += clampAddSubtractHalf(avg2(pix[p-2], pix[top+2]), pix[top-2])
-				pix[p+3] += clampAddSubtractHalf(avg2(pix[p-1], pix[top+3]), pix[top-1])
+			left = addPixels(le32(pix, p), pred)
+			put32(pix, p, left)
+		}
+	case 12: // ClampAddSubtractFull(L, T, TL).
+		left := le32(pix, p-4)
+		for i := 0; i < n; i, p, top = i+1, p+4, top+4 {
+			tp, tl := le32(pix, top), le32(pix, top-4)
+			// Each channel L+T-TL, kept to 0..255.
+			c0 := left&0xff + tp&0xff - tl&0xff
+			c1 := left>>8&0xff + tp>>8&0xff - tl>>8&0xff
+			c2 := left>>16&0xff + tp>>16&0xff - tl>>16&0xff
+			c3 := left>>24 + tp>>24 - tl>>24
+			if (c0|c1|c2|c3)&^0xff != 0 {
+				c0, c1, c2, c3 = clip255(c0), clip255(c1), clip255(c2), clip255(c3)
 			}
-			p, top = p+4, top+4
+			left = addPixels(le32(pix, p), c0|c1<<8|c2<<16|c3<<24)
+			put32(pix, p, left)
+		}
+	case 13: // ClampAddSubtractHalf(Average2(L, T), TL).
+		left := le32(pix, p-4)
+		for i := 0; i < n; i, p, top = i+1, p+4, top+4 {
+			left = addPixels(le32(pix, p), clampHalf(average2(left, le32(pix, top)), le32(pix, top-4)))
+			put32(pix, p, left)
 		}
 	}
+}
+
+// The pixels are handled four bytes at a time, as little-endian words,
+// each byte a channel.
+
+func le32(b []byte, i int) uint32 { return binary.LittleEndian.Uint32(b[i:]) }
+
+func put32(b []byte, i int, v uint32) { binary.LittleEndian.PutUint32(b[i:], v) }
+
+// addPixels adds each channel of b to that of a, modulo 256.
+func addPixels(a, b uint32) uint32 {
+	ag := (a & 0xff00ff00) + (b & 0xff00ff00)
+	rb := (a & 0x00ff00ff) + (b & 0x00ff00ff)
+	return ag&0xff00ff00 | rb&0x00ff00ff
+}
+
+// average2 is the mean of each channel of a and b, rounded down.
+func average2(a, b uint32) uint32 { return ((a^b)&0xfefefefe)>>1 + a&b }
+
+// sad is the sum of the absolute differences of the channels of a and b.
+func sad(a, b uint32) int32 {
+	return abs(int32(a&0xff)-int32(b&0xff)) + abs(int32(a>>8&0xff)-int32(b>>8&0xff)) +
+		abs(int32(a>>16&0xff)-int32(b>>16&0xff)) + abs(int32(a>>24)-int32(b>>24))
+}
+
+// clip255 keeps a channel worked out in uint32 to 0..255: below 0 it has
+// wrapped round to above 2^31, and its complement is below 2^24.
+func clip255(v uint32) uint32 {
+	if v < 256 {
+		return v
+	}
+	return ^v >> 24
+}
+
+// clampHalf is clampAddSubtractHalf of each channel.
+func clampHalf(a, b uint32) uint32 {
+	return uint32(clampAddSubtractHalf(uint8(a), uint8(b))) |
+		uint32(clampAddSubtractHalf(uint8(a>>8), uint8(b>>8)))<<8 |
+		uint32(clampAddSubtractHalf(uint8(a>>16), uint8(b>>16)))<<16 |
+		uint32(clampAddSubtractHalf(uint8(a>>24), uint8(b>>24)))<<24
 }
 
 // inverseCrossColor undoes the cross-color transform for one row.
@@ -335,21 +352,6 @@ func abs(x int32) int32 {
 		return -x
 	}
 	return x
-}
-
-func avg2(a, b uint8) uint8 {
-	return uint8((int32(a) + int32(b)) / 2)
-}
-
-func clampAddSubtractFull(a, b, c uint8) uint8 {
-	x := int32(a) + int32(b) - int32(c)
-	if x < 0 {
-		return 0
-	}
-	if x > 255 {
-		return 255
-	}
-	return uint8(x)
 }
 
 func clampAddSubtractHalf(a, b uint8) uint8 {
