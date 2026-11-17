@@ -163,6 +163,15 @@ func TestSmallestThroughOperations(t *testing.T) {
 		{"median", func(m *Image, w, h int) *Image { return m.Median(3) }, same},
 		{"median larger than the image", func(m *Image, w, h int) *Image { return m.Median(99) }, same},
 		{"clahe larger than the image", func(m *Image, w, h int) *Image { return m.CLAHE(CLAHEOptions{Width: 40, Height: 9}) }, same},
+		{"cover, entropy", func(m *Image, w, h int) *Image {
+			return m.Resize(max(1, w/2), max(1, h-1), ResizeOptions{Fit: FitCover, Interesting: InterestingEntropy})
+		}, func(w, h int) (int, int) { return max(1, w/2), max(1, h-1) }},
+		{"cover, attention", func(m *Image, w, h int) *Image {
+			return m.Resize(max(1, w-1), max(1, h/3), ResizeOptions{Fit: FitCover, Interesting: InterestingAttention})
+		}, func(w, h int) (int, int) { return max(1, w-1), max(1, h/3) }},
+		{"contain, southeast", func(m *Image, w, h int) *Image {
+			return m.Resize(w+3, h+2, ResizeOptions{Fit: FitContain, Position: SouthEast, WithoutEnlargement: true})
+		}, func(w, h int) (int, int) { return w + 3, h + 2 }},
 		{"convolve", func(m *Image, w, h int) *Image {
 			return m.Convolve(Convolution{Width: 5, Height: 3, Weights: []float64{1, 0, -1, 2, 0, -2, 1, 0, -1, 1, 2, 3, 4, 5, 6}, Offset: 100})
 		}, same},

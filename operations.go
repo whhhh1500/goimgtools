@@ -24,7 +24,8 @@ const (
 	// is cut off and nothing is distorted.
 	FitInside Fit = iota
 	// FitCover keeps the proportions, fills the whole box and crops what
-	// sticks out, centred (the default of sharp).
+	// sticks out: by default around the centre (the default of sharp; see
+	// ResizeOptions.Position and Interesting).
 	FitCover
 	// FitOutside keeps the proportions and makes the image as small as
 	// possible while covering the box.
@@ -78,7 +79,35 @@ type ResizeOptions struct {
 	// Filter, when set, is an interpolation filter of your own, used
 	// instead of Kernel.
 	Filter *Filter
+	// Position is the part of the image FitCover keeps, and where FitContain
+	// puts the image in its box: the centre by default (DefaultPosition),
+	// or one of the nine positions, NorthWest to SouthEast (as sharp's
+	// position).
+	Position Position
+	// Interesting, for FitCover, chooses the part of the image to keep by
+	// what it shows, instead of Position: InterestingEntropy keeps the part
+	// with the most detail, InterestingAttention the part that draws the
+	// eye, as sharp's strategy.entropy and strategy.attention (libvips'
+	// smartcrop) do. The resized image is held in memory while the part is
+	// chosen.
+	Interesting Interesting
 }
+
+// Interesting is how FitCover chooses the part of the image it keeps.
+type Interesting int
+
+const (
+	// InterestingNone keeps the part ResizeOptions.Position says.
+	InterestingNone Interesting = iota
+	// InterestingEntropy takes slices off the sides in steps, each time the
+	// one of two opposite slices that holds less detail (whose levels have
+	// the lower entropy).
+	InterestingEntropy
+	// InterestingAttention keeps the part that draws the eye: edges, skin
+	// tones and saturated reds count, scored on the image shrunk to 32 x 32
+	// and blurred over about a tenth of the crop.
+	InterestingAttention
+)
 
 // Filter is a resampling filter for Resize that this package does not have
 // (ResizeOptions.Filter): the weight a source pixel is given by its
@@ -127,6 +156,14 @@ func (p Position) grid() (col, row int, ok bool) {
 	}
 	i := int(p - NorthWest)
 	return i % 3, i / 3, true
+}
+
+// gridOr is grid, or (col, row) for DefaultPosition.
+func (p Position) gridOr(col, row int) (int, int) {
+	if c, r, ok := p.grid(); ok {
+		return c, r
+	}
+	return col, row
 }
 
 // CompositeOptions place the overlay. The overlay is anchored at Gravity,
@@ -248,6 +285,12 @@ func (m *Image) Resize(width, height int, opts ...ResizeOptions) *Image {
 	}
 	if width < 0 || height < 0 || (width == 0 && height == 0) {
 		return m.fail(errors.New("goimgtools: Resize needs a positive width or height"))
+	}
+	if o.Interesting < InterestingNone || o.Interesting > InterestingAttention {
+		return m.fail(errors.New("goimgtools: unknown ResizeOptions.Interesting"))
+	}
+	if _, _, ok := o.Position.grid(); !ok && o.Position != DefaultPosition {
+		return m.fail(errors.New("goimgtools: ResizeOptions.Position is one of the nine positions NorthWest to SouthEast"))
 	}
 	if o.Fit < FitInside || o.Fit > FitContain {
 		return m.fail(errors.New("goimgtools: unknown resize Fit"))

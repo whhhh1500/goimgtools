@@ -99,7 +99,13 @@ func describe(op operation) (string, []string) {
 		}
 		return "rotate", []string{"0"}
 	case resizeOp:
-		return "resize", []string{d(o.spec.width), d(o.spec.height), fitNames[o.spec.o.Fit], kernelNames[o.spec.o.Kernel]}
+		w := []string{d(o.spec.width), d(o.spec.height), fitNames[o.spec.o.Fit], kernelNames[o.spec.o.Kernel]}
+		if n, ok := interestingNames[o.spec.o.Interesting]; ok {
+			w = append(w, n)
+		} else if n, ok := positionNames[o.spec.o.Position]; ok {
+			w = append(w, n)
+		}
+		return "resize", w
 	case extractOp:
 		return "crop", []string{d(o.left), d(o.top), d(o.width), d(o.height)}
 	case flattenOp:
@@ -150,6 +156,9 @@ var (
 	fitNames    = map[Fit]string{FitInside: "inside", FitCover: "cover", FitOutside: "outside", FitFill: "fill", FitContain: "contain"}
 	kernelNames = map[Kernel]string{KernelCubic: "cubic", KernelNearest: "nearest", KernelLinear: "linear",
 		KernelMitchell: "mitchell", KernelLanczos2: "lanczos2", KernelLanczos3: "lanczos3"}
+	positionNames = map[Position]string{NorthWest: "northwest", North: "north", NorthEast: "northeast",
+		West: "west", Center: "center", East: "east", SouthWest: "southwest", South: "south", SouthEast: "southeast"}
+	interestingNames = map[Interesting]string{InterestingEntropy: "entropy", InterestingAttention: "attention"}
 )
 
 // colorWord writes c as ParseColor reads it.
@@ -454,10 +463,10 @@ func pick[T comparable](names map[T]string, word, what string) (T, error) {
 
 // builtInOps are the methods of Image that take arguments in words.
 var builtInOps = map[string]OperationDef{
-	"resize": {Name: "resize", Usage: "WIDTH,HEIGHT[,FIT[,KERNEL]]",
-		Help: "Resize: 0 for a side keeps the proportions; FIT inside, cover, contain, outside, fill; KERNEL cubic, nearest, linear, mitchell, lanczos2, lanczos3",
+	"resize": {Name: "resize", Usage: "WIDTH,HEIGHT[,FIT[,KERNEL[,POSITION]]]",
+		Help: "Resize: 0 for a side keeps the proportions; FIT inside, cover, contain, outside, fill; KERNEL cubic, nearest, linear, mitchell, lanczos2, lanczos3; POSITION (what cover keeps, where contain puts the image) northwest ... center ... southeast, or entropy or attention for cover",
 		builtIn: func(m *Image, a []string) error {
-			if err := wantArgs(a, 2, 4); err != nil {
+			if err := wantArgs(a, 2, 5); err != nil {
 				return err
 			}
 			v, err := argInts(a[:2])
@@ -473,6 +482,13 @@ var builtInOps = map[string]OperationDef{
 			if len(a) > 3 {
 				if o.Kernel, err = pick(kernelNames, a[3], "kernel"); err != nil {
 					return err
+				}
+			}
+			if len(a) > 4 {
+				if o.Interesting, err = pick(interestingNames, a[4], "position"); err != nil {
+					if o.Position, err = pick(positionNames, a[4], "position"); err != nil {
+						return err
+					}
 				}
 			}
 			m.Resize(v[0], v[1], o)

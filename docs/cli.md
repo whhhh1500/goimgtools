@@ -57,6 +57,7 @@ Operations run in a fixed order: rotate → flip → trim → crop → resize �
 | `-crop X,Y,W,H` | Crop |
 | `-resize WxH` | Target size; either side may be omitted (`1536x`, `x1024`) |
 | `-fit` | `inside` (default), `cover`, `contain`, `outside`, `fill` |
+| `-position` | The part `-fit cover` keeps and where `-fit contain` places the image: `center` (default), `northwest` … `southeast`; for `cover` also `entropy` (the most detail) or `attention` (what draws the eye) |
 | `-background color` | Colour of the padding for `-fit contain`, of the `-extend` borders, and of the corners after `-rotate` by an oblique angle: `white`, `black`, `transparent`, `#rrggbb`, `#rrggbbaa` |
 | `-kernel` | `nearest`, `linear`, `cubic` (default), `mitchell`, `lanczos2`, `lanczos3` |
 | `-no-enlarge` | Do not enlarge the image |

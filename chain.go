@@ -162,13 +162,22 @@ func (z resizeOp) resize(src pipeline.Source, turn ops.Orientation, pre preShrun
 	switch {
 	case o.Fit == FitCover && width > 0 && height > 0 && (dw > width || dh > height):
 		cw, ch := min(dw, width), min(dh, height)
-		return ops.Crop(out, (dw-cw)/2, (dh-ch)/2, cw, ch)
+		switch o.Interesting {
+		case InterestingEntropy:
+			return ops.SmartCrop(out, cw, ch, ops.InterestingEntropy)
+		case InterestingAttention:
+			return ops.SmartCrop(out, cw, ch, ops.InterestingAttention)
+		}
+		// As sharp: the middle rounded up.
+		gx, gy := o.Position.gridOr(1, 1)
+		return ops.Crop(out, (dw-cw+gx%2)*gx/2, (dh-ch+gy%2)*gy/2, cw, ch)
 	case o.Fit == FitContain && width > 0 && height > 0 && (dw < width || dh < height):
 		var bg color.Color = color.Black
 		if o.Background != nil {
 			bg = o.Background
 		}
-		left, top := (width-dw)/2, (height-dh)/2
+		gx, gy := o.Position.gridOr(1, 1)
+		left, top := (width-dw)*gx/2, (height-dh)*gy/2
 		return ops.Extend(out, left, top, width-dw-left, height-dh-top, bg)
 	}
 	return out, nil

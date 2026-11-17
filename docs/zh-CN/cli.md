@@ -57,6 +57,7 @@ goimgtools -op median:3 -op normalize -op "tint:#704214" scan.jpg out.jpg
 | `-crop X,Y,W,H` | 裁剪 |
 | `-resize WxH` | 目标尺寸；可只指定一边（`1536x`、`x1024`） |
 | `-fit` | `inside`（默认）、`cover`、`contain`、`outside`、`fill` |
+| `-position` | `-fit cover` 保留的部分与 `-fit contain` 放置图像的位置：`center`（默认）、`northwest` … `southeast`；`cover` 还可用 `entropy`（细节最多处）或 `attention`（最引人注意处） |
 | `-background 颜色` | `-fit contain` 的填充、`-extend` 的边框以及 `-rotate` 斜向旋转后四角的颜色：`white`、`black`、`transparent`、`#rrggbb`、`#rrggbbaa` |
 | `-kernel` | `nearest`、`linear`、`cubic`（默认）、`mitchell`、`lanczos2`、`lanczos3` |
 | `-no-enlarge` | 不放大图像 |

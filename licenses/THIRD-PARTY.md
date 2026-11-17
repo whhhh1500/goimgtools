@@ -289,7 +289,10 @@ method it follows: a window's histogram moved a column at a time, counts
 cut at the slope and what is cut spread over the levels, the image
 mirrored past its edges. It was written afresh in Go (the cut counts are
 kept in blocks, and what is cut off follows from them); no code of libvips
-is included. The blend modes of `Composite` (`internal/ops/blend.go`) and
+is included. The smart crops of `Resize` (`internal/ops/smartcrop.go`)
+follow libvips' smartcrop (`libvips/conversion/smartcrop.c`): its entropy
+slicing, and its attention scores (whose skin tone vector comes from
+smartcrop.js by Jonas Wagner, MIT licence), written afresh in Go. The blend modes of `Composite` (`internal/ops/blend.go`) and
 `Normalize`'s percentiles (`internal/ops/levels.go`) reproduce libvips'
 arithmetic as observed through sharp and the vips command, without its
 code.

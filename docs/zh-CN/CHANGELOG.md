@@ -34,11 +34,13 @@
 - `CompositeOptions.WidthRatio` / `HeightRatio`：按底图的比例确定水印尺寸；`-watermark-width N%`。
 - 有损 WebP 分段量化：各段使用独立的量化级别（移植自 libwebp 的空间噪声整形）。
 - `pipeline.Env.SetHelpers`、`Helpers`、`Parallel`、`Go`：供处理环节将工作分摊至多个核。
+- `ResizeOptions.Position`（`FitCover` 保留的部分、`FitContain` 放置图像的位置）与 `ResizeOptions.Interesting`（类型 `Interesting`：`InterestingEntropy`、`InterestingAttention`，即 sharp 的智能裁剪策略）/ `-position`。`Do("resize")` 以第五个参数接受它们。
 - `CompositeOptions.Blend`（类型 `BlendMode`）/ `-watermark-blend`：sharp 合成的各种混合模式（正片叠底、滤色、叠加、变暗、变亮、颜色减淡与加深、强光与柔光、差值、排除），与 sharp 的结果相差不超过 1。
 - 仿照 sharp 的色阶与滤镜：`Negate`、`Linear`、`Gamma`、`Threshold`、`Tint`、`Normalize`（`NormalizeOptions`）、`CLAHE`（`CLAHEOptions`）、`Median`、`Convolve`（`Convolution`），也可按名称调用（`Do`、`-op`）：negate、linear、gamma、threshold、tint、normalize、clahe、median、convolve。`Negate`、`Linear`、`Threshold`、`CLAHE`、`Median`、`Convolve` 与 sharp 的结果逐字节一致，`Normalize` 相差不超过 1，`Tint` 不超过 2；`Median` 也与 Pillow 的 `MedianFilter` 逐字节一致。
 
 ### 变更
 
+- `FitCover` 居中裁剪的位置与 sharp 相同：图像比框多出奇数个像素时，多出的那一个从左侧（上方）而非右侧（下方）裁去。
 - JPEG 解码快 45%，像素不变：熵编码数据一次读 64 位，经 11 位查表把多数系数的值连同其码一起解出，系数边解边反量化，逆 DCT 跳过全零的行（6000×4000 的基线照片单核 98ms，原为 188ms）。启用 `FastShrinkOnLoad` 时由系数直接解出原尺寸 1/2、1/4 或 1/8 的图（同 libjpeg），不再完整解码后求平均，其余缩放直接在 Y、Cb、Cr 平面上以定点进行，不再转成 RGBA：把这张照片缩到 400×400 以内用时 82ms，原为 231ms（libvips 的 `vipsthumbnail`：97ms）；缩到 1536×1536 以内 157ms，原为 320ms（148ms；2 线程 108ms，对方 172ms）。
 - 从文件或内存读取的渐进式 JPEG 按扫描同步解码，逐行块进行，不再保存整幅图的系数（6000×4000 时 72MB，默认上限下写入临时文件），细化扫描只访问非零系数：6000×4000 的照片解码用时约为原来的三分之一（单核 0.24s，原为 0.70s），不用临时文件，内存多 0.5MB。启用 `FastShrinkOnLoad` 缩小 8 倍时每块即其像素的平均值，只解码 DC 系数的扫描：这张照片缩到 400×400 以内用时 50ms，原为 745ms（libvips 的 `vipsthumbnail`：228ms）。损坏的扫描留下未完的块结束游程时，游程随该扫描结束（同 libjpeg）；标准库会把它带入下一个扫描。
 - JPEG 编码快一倍多，写出的字节与之前相同（即标准库 `jpeg.Encode` 的输出）：熵编码数据 64 位一组收集、32 位一组写出，一个块的位始终保存在寄存器中；只访问非零系数，每次查找四个；量化不再分支；RGBA、NRGBA 像素的颜色转换内联完成；4:2:0 子采样的 YCbCr 图像（解码得到的 JPEG 大多如此）直接取用其色度，不再先铺到每个像素再平均回去（4:4:4 则直接从平面求平均）。单核重新编码 6000×4000 的 JPEG：0.23s，原为 0.54s（libvips：0.12s；2 线程 0.13s，与其 0.13s 相当，4 线程 0.10s）。

@@ -74,6 +74,8 @@ err := goimgtools.Open("in.jpg").
 
 - `Fit`: `FitInside` (default; scales proportionally to fit within the box, without cropping or distortion), `FitCover` (fills the box, then crops the excess around the centre; sharp's default), `FitContain` (scales proportionally to fit within the box, then pads with `Background` to exactly w×h; black by default), `FitOutside`, `FitFill` (stretches).
 - `WithoutEnlargement`: disables enlargement.
+- `Position`: the part `FitCover` keeps, and where `FitContain` places the image: the centre by default, or one of the nine positions `NorthWest` … `SouthEast` (sharp's `position`; a centred crop rounds as sharp's does).
+- `Interesting`: for `FitCover`, chooses the part to keep by what the image shows, as sharp's `strategy.entropy` / `strategy.attention` (libvips' smartcrop): `InterestingEntropy` keeps the part with the most detail (on the same pixels, the same crop as libvips), `InterestingAttention` the part that draws the eye (edges, skin tones and saturated reds, scored on the image shrunk to 32×32 as libvips shrinks it). The resized image is held in memory while the part is chosen.
 - `Kernel`: `KernelCubic` (default, Catmull-Rom), `KernelNearest`, `KernelLinear`, `KernelMitchell`, `KernelLanczos2`, `KernelLanczos3`.
 - `Filter`: a custom resize filter (`&goimgtools.Filter{Support, At}`); if set, it replaces `Kernel`.
 - `FastShrinkOnLoad`: performs an initial shrink of JPEGs during decoding (see [Shrinking JPEGs while decoding](performance.md#shrinking-jpegs-while-decoding-optional)).

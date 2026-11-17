@@ -74,6 +74,8 @@ err := goimgtools.Open("in.jpg").
 
 - `Fit`：`FitInside`（默认，等比缩放至框内，不裁剪、不变形）、`FitCover`（填满框后居中裁去多余部分，即 sharp 的默认方式）、`FitContain`（等比缩放至框内，再以 `Background` 补边至恰为 w×h，默认黑色）、`FitOutside`、`FitFill`（拉伸）。
 - `WithoutEnlargement`：禁止放大。
+- `Position`：`FitCover` 保留的部分，以及 `FitContain` 放置图像的位置：默认居中，也可为 `NorthWest` … `SouthEast` 九个方位之一（sharp 的 `position`；居中裁剪的取整方式与 sharp 相同）。
+- `Interesting`：用于 `FitCover`，按画面内容选择保留的部分，即 sharp 的 `strategy.entropy` / `strategy.attention`（libvips 的 smartcrop）：`InterestingEntropy` 保留细节最多的部分（像素相同时与 libvips 的裁剪完全一致），`InterestingAttention` 保留最引人注意的部分（边缘、肤色与饱和的红色，在按 libvips 方式缩小到 32×32 的图像上评分）。选择期间缩放后的图像保存在内存中。
 - `Kernel`：`KernelCubic`（默认，Catmull-Rom）、`KernelNearest`、`KernelLinear`、`KernelMitchell`、`KernelLanczos2`、`KernelLanczos3`。
 - `Filter`：自定义缩放滤镜（`&goimgtools.Filter{Support, At}`），设置后取代 `Kernel`。
 - `FastShrinkOnLoad`：JPEG 解码时先行缩小（见 [JPEG 解码时缩小](performance.md#jpeg-解码时缩小可选)）。

@@ -91,6 +91,7 @@ func Run(args []string, stdout, stderr io.Writer) error { return run(args, stdou
 // what to do to an image and how to write it.
 type options struct {
 	resize, rotate, fit, bg, kernel, crop, flatten *string
+	position                                       *string
 	flip, flop, noEnlarge, fast                    *bool
 	watermark, wmText, gravity, offset, wmGap      *string
 	wmRatio, wmAnchor, wmPivot                     *string
@@ -128,6 +129,7 @@ func register(fs *flag.FlagSet) *options {
 		flip:           fs.Bool("flip", false, "mirror top to bottom"),
 		flop:           fs.Bool("flop", false, "mirror left to right"),
 		fit:            fs.String("fit", "inside", "how -resize WxH fits: inside (shrink in proportion), cover (fill and crop), contain (shrink in proportion, pad with -background), outside, fill (stretch)"),
+		position:       fs.String("position", "center", "the part -fit cover keeps (and where -fit contain puts the image): northwest, north, northeast, west, center, east, southwest, south, southeast; or, for cover, entropy (the part with the most detail) or attention (the part that draws the eye)"),
 		bg:             fs.String("background", "black", "`color` of the bars -fit contain adds, the border of -extend and the corners -rotate leaves at other angles: white, black, transparent, #rrggbb or #rrggbbaa"),
 		trim:           fs.String("trim", "", "cut away the edges that are the colour of the top-left pixel, allowing this `difference` 0-255 (10 also catches JPEG noise)"),
 		extend:         fs.String("extend", "", "add a border of `T,R,B,L` pixels in -background"),
@@ -483,8 +485,25 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 		if !ok {
 			return nil, fmt.Errorf("-kernel: unknown filter %q", *o.kernel)
 		}
-		im.Resize(w, h, goimgtools.ResizeOptions{Fit: f, WithoutEnlargement: *o.noEnlarge, FastShrinkOnLoad: *o.fast,
-			Background: bg, Kernel: k})
+		ro := goimgtools.ResizeOptions{Fit: f, WithoutEnlargement: *o.noEnlarge, FastShrinkOnLoad: *o.fast,
+			Background: bg, Kernel: k}
+		switch p := strings.ToLower(*o.position); p {
+		case "entropy":
+			ro.Interesting = goimgtools.InterestingEntropy
+		case "attention":
+			ro.Interesting = goimgtools.InterestingAttention
+		default:
+			pos, ok := map[string]goimgtools.Position{
+				"northwest": goimgtools.NorthWest, "north": goimgtools.North, "northeast": goimgtools.NorthEast,
+				"west": goimgtools.West, "center": goimgtools.Center, "centre": goimgtools.Center, "east": goimgtools.East,
+				"southwest": goimgtools.SouthWest, "south": goimgtools.South, "southeast": goimgtools.SouthEast,
+			}[p]
+			if !ok {
+				return nil, fmt.Errorf("-position: unknown position %q", *o.position)
+			}
+			ro.Position = pos
+		}
+		im.Resize(w, h, ro)
 	}
 	if *o.extend != "" {
 		v, err := ints(*o.extend, 4)

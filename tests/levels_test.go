@@ -272,3 +272,122 @@ func TestBlendModes(t *testing.T) {
 		t.Error("an unknown blend mode: no error")
 	}
 }
+
+// TestCoverPositionAndSmartCrop: FitCover keeps the part Position names
+// (the middle rounded up, as sharp), FitContain puts the image there, and
+// the smart crops find what stands out: the detailed side for entropy, a
+// patch of skin tone and colour for attention.
+func TestCoverPositionAndSmartCrop(t *testing.T) {
+	// 300x100: a flat grey field with a noisy patch at x 220..280.
+	m := image.NewNRGBA(image.Rect(0, 0, 300, 100))
+	for y := 0; y < 100; y++ {
+		for x := 0; x < 300; x++ {
+			c := color.NRGBA{128, 128, 128, 255}
+			if x >= 220 && x < 280 {
+				v := uint8((x*7919 + y*104729) % 251)
+				c = color.NRGBA{v, v ^ 0x55, v * 3, 255}
+			}
+			m.SetNRGBA(x, y, c)
+		}
+	}
+	// g: every column different (for finding where a crop starts).
+	g := image.NewNRGBA(m.Rect)
+	for y := 0; y < 100; y++ {
+		for x := 0; x < 300; x++ {
+			g.SetNRGBA(x, y, color.NRGBA{uint8(x), uint8(x / 256 * 100), uint8(y), 255})
+		}
+	}
+	pick := func(o ResizeOptions) image.Image {
+		t.Helper()
+		o.Fit = FitCover
+		out, err := FromImage(g).Resize(100, 100, o).PNG().ToBytes()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return decodePNG(t, out)
+	}
+	// Where a crop of 100 starts: the column of m its column 0 shows.
+	start := func(got image.Image) int {
+		for x0 := 0; x0 <= 200; x0++ {
+			same := true
+			for y := 0; y < 100 && same; y += 7 {
+				for x := 0; x < 100 && same; x += 3 {
+					same = color.NRGBAModel.Convert(got.At(x, y)) == g.NRGBAAt(x0+x, y)
+				}
+			}
+			if same {
+				return x0
+			}
+		}
+		return -1
+	}
+	for _, c := range []struct {
+		o    ResizeOptions
+		want int
+	}{
+		{ResizeOptions{}, 100},
+		{ResizeOptions{Position: West}, 0},
+		{ResizeOptions{Position: SouthEast}, 200},
+		{ResizeOptions{Position: North}, 100},
+	} {
+		if got := start(pick(c.o)); got != c.want {
+			t.Errorf("%+v: crop from %d, want %d", c.o, got, c.want)
+		}
+	}
+	// Entropy: the crop holds the noisy patch.
+	e := decodePNG(t, must(FromImage(m).Resize(100, 100, ResizeOptions{Fit: FitCover, Interesting: InterestingEntropy}).PNG().ToBytes()))
+	noisy := 0
+	for x := 0; x < 100; x++ {
+		if p := color.NRGBAModel.Convert(e.At(x, 50)).(color.NRGBA); p != (color.NRGBA{128, 128, 128, 255}) {
+			noisy++
+		}
+	}
+	if noisy < 55 {
+		t.Errorf("entropy crop holds %d columns of the patch of 60", noisy)
+	}
+	// Attention: a skin-toned patch on the left of a dull picture.
+	a := image.NewNRGBA(image.Rect(0, 0, 400, 100))
+	for y := 0; y < 100; y++ {
+		for x := 0; x < 400; x++ {
+			c := color.NRGBA{60, 70, 80, 255}
+			if x >= 40 && x < 90 && y >= 30 && y < 70 {
+				c = color.NRGBA{224, 172, 140, 255}
+			}
+			a.SetNRGBA(x, y, c)
+		}
+	}
+	out := decodePNG(t, must(FromImage(a).Resize(100, 100, ResizeOptions{Fit: FitCover, Interesting: InterestingAttention}).PNG().ToBytes()))
+	skin := 0
+	for y := 0; y < 100; y++ {
+		for x := 0; x < 100; x++ {
+			if p := color.NRGBAModel.Convert(out.At(x, y)).(color.NRGBA); p.R > 200 {
+				skin++
+			}
+		}
+	}
+	if skin < 1500 {
+		t.Errorf("attention crop shows %d skin pixels of 2000", skin)
+	}
+	// FitContain puts the image at Position.
+	got := decodePNG(t, must(FromImage(m).Resize(400, 200, ResizeOptions{Fit: FitContain, Position: SouthEast, Background: color.White}).PNG().ToBytes()))
+	if p := color.NRGBAModel.Convert(got.At(399, 199)).(color.NRGBA); p == (color.NRGBA{255, 255, 255, 255}) {
+		t.Error("FitContain SouthEast: the bottom-right corner is background")
+	}
+	if p := color.NRGBAModel.Convert(got.At(0, 0)).(color.NRGBA); p != (color.NRGBA{255, 255, 255, 255}) {
+		t.Errorf("FitContain SouthEast: the top-left corner is %v, not background", p)
+	}
+	// By name, and the words of the step.
+	var words []string
+	FromImage(m).Do("resize", "100", "100", "cover", "cubic", "entropy").Around(func(s Step, in pipeline.Source, run func(pipeline.Source) (pipeline.Source, error)) (pipeline.Source, error) {
+		words = s.Args
+		return run(in)
+	}).PNG().ToBytes()
+	if len(words) != 5 || words[4] != "entropy" {
+		t.Errorf("resize words %v", words)
+	}
+	for _, o := range []ResizeOptions{{Fit: FitCover, Position: CustomPosition}, {Fit: FitCover, Interesting: 3}, {Fit: FitCover, Interesting: -1}} {
+		if _, err := FromImage(m).Resize(100, 100, o).PNG().ToBytes(); err == nil {
+			t.Errorf("%+v: no error", o)
+		}
+	}
+}

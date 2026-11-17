@@ -226,7 +226,7 @@ func FuzzChain(f *testing.F) {
 		}
 		if bit(5) {
 			m.Resize(int(w%400), int(h%400), ResizeOptions{Fit: Fit(pick(6, 5)), Kernel: Kernel(pick(9, 6)),
-				FastShrinkOnLoad: bit(12), WithoutEnlargement: bit(13)})
+				FastShrinkOnLoad: bit(12), WithoutEnlargement: bit(13), Position: Position(more % 10), Interesting: Interesting(w % 3)})
 		}
 		if bit(14) {
 			m.Extract(int(w%7), int(h%5), 1+int(w%50), 1+int(h%50))
