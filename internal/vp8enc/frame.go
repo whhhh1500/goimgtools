@@ -142,10 +142,12 @@ type encoder struct {
 	mbh  int
 	dbg  *debug
 
-	effort     int
-	sharp      bool // convert colours with sharp YUV (sharp.go)
-	trellis    bool // quantize 4x4 blocks by trellis (trellis.go)
-	autoFilter bool // choose the filter levels by measuring (autofilter.go)
+	effort  int
+	sharp   bool // convert colours with sharp YUV (sharp.go)
+	trellis bool // quantize 4x4 blocks by trellis (trellis.go)
+	// trellisFinal: the trellis only for the 4x4 mode chosen (effort 3).
+	trellisFinal bool
+	autoFilter   bool // choose the filter levels by measuring (autofilter.go)
 
 	fixed int64 // budget reserved for the buffers below
 
@@ -239,6 +241,11 @@ func (e *encoder) init(quality int, rr *pipeline.RowReader, src pipeline.Source)
 	wantAlpha := hasAlphaChannel(first) && !pipeline.IsOpaque(src)
 	e.sharp = e.effort >= 3 && useSharp(first) && (e.dbg == nil || !e.dbg.noSharp)
 	e.trellis = e.effort >= 3
+	// Effort 3 chooses the 4x4 modes by plain quantization and codes the
+	// one chosen with the trellis (libwebp's method 5); 4 and up weigh
+	// every mode tried with the trellis: 15% faster at 3, files about 1%
+	// larger at the same look.
+	e.trellisFinal = e.effort == 3
 	e.autoFilter = e.effort >= 5 && (e.dbg == nil || !e.dbg.noFilter && !e.dbg.noAutoFilter)
 
 	w16 := e.mbw * 16

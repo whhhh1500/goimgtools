@@ -186,8 +186,8 @@ func luminancePSNR(m image.Image, rgb []uint8) float64 {
 
 // TestEffort checks the effort levels of lossy output: every level gives
 // a file both decoders read, level 5 already does all there is (so 9 is
-// the same file), the low levels leave out the slow steps, and levels out
-// of range are refused.
+// the same file), the low levels leave out the slow steps (3 the trellis
+// in the choice of 4x4 modes), and levels out of range are refused.
 func TestEffort(t *testing.T) {
 	m := sharpTestImage(96, 70)
 	files := map[int][]byte{}
@@ -205,11 +205,11 @@ func TestEffort(t *testing.T) {
 	if !bytes.Equal(files[5], files[9]) {
 		t.Error("effort 9 differs from effort 5")
 	}
-	if bytes.Equal(files[1], files[3]) || bytes.Equal(files[3], files[5]) {
-		t.Error("effort 1, 3 and 5 give the same file")
+	if bytes.Equal(files[1], files[3]) || bytes.Equal(files[3], files[4]) || bytes.Equal(files[3], files[5]) {
+		t.Error("effort 1, 3, 4 and 5 do not give four files")
 	}
-	if !bytes.Equal(files[1], files[2]) || !bytes.Equal(files[3], files[4]) {
-		t.Error("effort 1 and 2, or 3 and 4, differ")
+	if !bytes.Equal(files[1], files[2]) {
+		t.Error("effort 1 and 2 differ")
 	}
 	// The default is 5.
 	var def bytes.Buffer

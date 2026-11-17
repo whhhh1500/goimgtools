@@ -84,8 +84,10 @@
 - JPEG 改为按 libjpeg-turbo 的方式解码，因此与 Pillow、sharp 逐字节一致（精确整数反 DCT、下采样色度的 fancy 上采样、YCbCr 转 RGB 查表），不再与 `image/jpeg` 相同：下采样色彩的边缘更平滑（一张 4:2:2 照片与原图的差距少 0.36 dB），所有与 Pillow、sharp 结果一致的操作在 JPEG 输入上也一致。彩色 JPEG 的行带改为 RGBA 而非 YCbCr，直接写成 JPEG 或有损 WebP 时除外。
 - TIFF 解码：LZW 快 1.5 倍（6000×4000 的 RGBA 图像 0.45 秒，原为 0.68 秒；libtiff 0.31 秒），对任何输入的输出与错误都与 `x/image` 相同（经模糊测试核对）；Deflate 块按 64KB 读取（0.26 秒，原为 0.30 秒；libtiff 0.27 秒）。
 - `FitCover` 居中裁剪的位置与 sharp 相同：图像比框多出奇数个像素时，多出的那一个从左侧（上方）而非右侧（下方）裁去。
+- JPEG 编码：量化结果由 SIMD 内核直接按之字形顺序写出，非零系数掩码用 AVX2 求出：6000×4000 质量 85 单核 100→87ms，优化霍夫曼表 168→151ms。
 - PNG 编码：每行的五种过滤（以及 libpng 启发式据以选择的各项求和）用 AVX2 或 NEON 计算，过滤结果与选择不变：6000×4000 的照片转 PNG（7 级）单核 1.43s，原为 1.73s。
 - arm64 使用 NEON（需 Go 1.27 及以上；`purego` 构建标签可关闭）：所有 AVX2 内核（JPEG 解码与编码、有损 WebP 解码、环路滤波强度搜索、`ResizeLibvips` 的缩小）都有 NEON 版本，每个字节与 Go 代码相同。
+- 有损 WebP 力度 3 在挑选 4×4 预测模式时不用网格量化，只对选中的模式使用（同 libwebp method 5）：比力度 4（此前两者相同）快 15%，同等 SSIMULACRA2 与 butteraugli 下文件约大 1%（14 张图）。
 - 有损 WebP 编码使用 AVX2（amd64；`purego` 构建标签可关闭）：搜索环路滤波强度时，用解码器的 AVX2 环路滤波处理每个宏块，并以 AVX2 计算各窗口的 SSIM 求和，每个数与 Go 代码相同，文件不变：6000×4000 的照片以质量 80 单核 6.5s，原为 8.3s。
 - 缩放使用 AVX2（amd64；`purego` 构建标签可关闭）：`ResizeLibvips` 的纵向与横向缩小，以及 JPEG 解码时缩小所用 libjpeg 的 4×4 逆 DCT，以汇编执行，每个字节与 Go 代码相同（因而与 sharp 相同）；无透明图像的 NRGBA 条带编码为 JPEG 时与 RGBA 走同一转换。6000×4000 的 JPEG 缩到 1536×1536 以内（Lanczos 3、`FastShrinkOnLoad`）并写成 JPEG：单核 109ms，原为 196ms（sharp：92ms）。
 - JPEG 编码使用 AVX2（amd64；`purego` 构建标签可关闭）：RGB 到 YCbCr 转换、色度下采样、正向 DCT 与量化以汇编执行，每个字节与 Go 代码相同；优化霍夫曼表的第一遍改为暂存符号（每个一字节），不再写出用标准表编码、第二遍还需解码的扫描数据。6000×4000 的照片以质量 85 写出：单核 100ms，原为 213ms（libjpeg-turbo 经 Pillow：66ms）；优化霍夫曼表 168ms，原为 388ms（167ms）。

@@ -398,11 +398,7 @@ type qblock [blockSize]int16
 // table q into zz.
 func (e *encoder) quantize(b *block, q quantIndex, zz *qblock) {
 	if useSIMD && e.deadZone == nil {
-		var nat [blockSize]int16
-		fdctQuantSIMD(b, &e.natHalf[q], &e.natRecip[q], &nat)
-		for zig := range zz {
-			zz[zig] = nat[unzig[zig]&(blockSize-1)]
-		}
+		fdctQuantSIMD(b, &e.natHalf[q], &e.natRecip[q], (*[blockSize]int16)(zz))
 		return
 	}
 	fdct(b)
@@ -494,7 +490,7 @@ func (e *encoder) writeQuantized(zz *qblock, q quantIndex, prevDC int32) int32 {
 // not 0 (the sum does not carry out of the lane), and multiplying the top
 // bits, moved to bits 0, 16, 32 and 48, by 2^48+2^33+2^18+2^3 gathers them
 // in bits 48 to 51, with no other product landing there or carrying.
-func nonzeros(zz *qblock) uint64 {
+func nonzerosGo(zz *qblock) uint64 {
 	const low, top = 0x7fff7fff7fff7fff, 0x8000800080008000
 	var nz uint64
 	for i := 0; i < blockSize; i += 4 {

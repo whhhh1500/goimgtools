@@ -32,7 +32,7 @@ func yccH2V1SIMD(dst, y, cb, cr *byte, chunks int)
 func yccRowSIMD(dst, y, cb, cr *byte, chunks int)
 
 // fdctQuantSIMD is fdct of b and the division of quantizeCoefs (without a
-// dead zone) with AVX2, the coefficients in natural order; b is not
+// dead zone) with AVX2, the coefficients in zig-zag order; b is not
 // changed.
 //
 //go:noescape
@@ -54,3 +54,17 @@ func scaleSIMD(dst *block, src *[4]block)
 //
 //go:noescape
 func idct4SIMD(b *block, dst *byte, stride int)
+
+// nonzerosSIMD is nonzeros with AVX2.
+//
+//go:noescape
+func nonzerosSIMD(zz *qblock) uint64
+
+// nonzeros returns the mask of the nonzero values of zz: bit k is set when
+// zz[k] != 0.
+func nonzeros(zz *qblock) uint64 {
+	if useSIMD {
+		return nonzerosSIMD(zz)
+	}
+	return nonzerosGo(zz)
+}

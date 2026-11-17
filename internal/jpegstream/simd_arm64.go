@@ -31,3 +31,7 @@ func rgbaBlockSIMD(pix *byte, stride int, y, cb, cr *block)
 
 //go:noescape
 func scaleSIMD(dst *block, src *[4]block)
+
+// nonzeros returns the mask of the nonzero values of zz: bit k is set when
+// zz[k] != 0.
+func nonzeros(zz *qblock) uint64 { return nonzerosGo(zz) }

@@ -21,3 +21,7 @@ func rgbaBlockSIMD(pix *byte, stride int, y, cb, cr *block) { panic("unreachable
 func scaleSIMD(dst *block, src *[4]block) { panic("unreachable") }
 
 func idct4SIMD(b *block, dst *byte, stride int) { panic("unreachable") }
+
+// nonzeros returns the mask of the nonzero values of zz: bit k is set when
+// zz[k] != 0.
+func nonzeros(zz *qblock) uint64 { return nonzerosGo(zz) }

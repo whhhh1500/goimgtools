@@ -391,7 +391,7 @@ func (c *mbCoder) searchI4(up *mbCtx, limit int64) bool {
 			p := c.pred4[m][:]
 			fdct(src, 16, p, 4, &coef)
 			var last int
-			if c.e.trellis {
+			if c.e.trellis && !c.e.trellisFinal {
 				last = c.trellis(&coef, 0, ctx, planeY1SansY2, &sg.qY1, sg.lamT, &lv, &deq)
 			} else {
 				last = sg.qY1.quantize(&coef, 0, &lv, &deq)
@@ -413,6 +413,28 @@ func (c *mbCoder) searchI4(up *mbCtx, limit int64) bool {
 				} else {
 					copy(bestRec[:], p)
 				}
+			}
+		}
+		if c.e.trellis && c.e.trellisFinal {
+			// The mode chosen by plain quantization (effort 3), coded
+			// again with the trellis.
+			m := c4.modes[n]
+			p := c.pred4[m][:]
+			fdct(src, 16, p, 4, &coef)
+			last := c.trellis(&coef, 0, ctx, planeY1SansY2, &sg.qY1, sg.lamT, &lv, &deq)
+			rate := int(mc[m]) + c.costs.blockCost(planeY1SansY2, 0, ctx, last, &lv)
+			out := p
+			if last >= 0 {
+				idctAdd(&deq, p, 4, rec[:], 4)
+				out = rec[:]
+			}
+			best = int64(sse4(src, 16, out, 4))<<16 + int64(rate)*sg.lamY
+			c4.lv[n] = lv
+			c4.last[n] = int8(last)
+			if last >= 0 {
+				bestRec = rec
+			} else {
+				copy(bestRec[:], p)
 			}
 		}
 		total += best
