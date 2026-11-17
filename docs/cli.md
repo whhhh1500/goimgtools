@@ -97,7 +97,7 @@ Operations run in a fixed order: rotate → flip → trim → crop → resize �
 | `-jpeg-chroma 420\|422\|444` | JPEG: how finely colour is kept: 420 (the default, half across and down), 422 (half across) or 444 (all of it: crisp coloured text and edges, a larger file) |
 | `-jpeg-quant-table N` | JPEG: quantization tables 0–8, numbered as mozjpeg's `-quant-table` (0, the default, the standard's; 3 mozjpeg's default), or 9, made as jpegli makes them: the smallest files (see [Compression](compression.md)) |
 | `-png-colors N`, `-no-dither` | PNG: reduce to N colours (2–256); disable dithering |
-| `-max-size size` | Limit the file to this size (`200KB`, `1.5MB` or a number of bytes) by lowering the quality automatically (JPEG, lossy WebP); with `-animated`, an animation is an error |
+| `-max-size size` | Limit the file to this size (`200KB`, `1.5MB` or a number of bytes) by lowering the quality automatically (JPEG, lossy WebP) or the number of colours (PNG, first without loss; GIF); with `-animated`, an animation is an error |
 | `-skip-larger` | Keep the original file if the result is not smaller than it (same format); intended for compression-only jobs |
 | `-webp-lossless`, `-webp-effort N` | Lossless WebP; effort 1 (fastest) to 9 (smallest file), 5 by default. The effort also applies to lossy WebP, where 5 already does all there is (above 5, only the alpha plane gets more) and 1 takes about half the time |
 | `-png-level N`, `-gif-colors N`, `-gif-fixed-palette`, `-tiff-compression none\|deflate\|lzw`, `-tiff-predictor` | Format-specific options |

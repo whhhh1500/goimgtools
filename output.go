@@ -206,14 +206,17 @@ func (m *Image) GIF(opts ...GIFOptions) *Image {
 }
 
 // ErrFileSize is returned (wrapped) when MaxFileSize asks for a file smaller
-// than the lowest quality can make.
+// than the lowest quality (or two colours) can make.
 var ErrFileSize = errors.New("goimgtools: cannot reach the requested file size")
 
 // MaxFileSize makes the output at most n bytes by lowering the quality: the
 // highest quality that fits is used, never more than the one asked for with
 // JPEG or WebP (or their default). It applies to JPEG and lossy WebP
-// output. When even quality 1 is too large the result is an ErrFileSize;
-// shrink the image (Resize) to get further.
+// output, and to PNG and GIF, whose quality is their number of colours: a
+// PNG is first tried without loss, then with the most colours (at most
+// PNGOptions.Colors or GIFOptions.Colors when set) that fit, as Colors
+// reduces them. When even quality 1 (two colours) is too large the result
+// is an ErrFileSize; shrink the image (Resize) to get further.
 //
 // It does not apply to an animation that Animated keeps, which is then an
 // error wrapping errors.ErrUnsupported (a GIF of one frame is written as a
@@ -559,6 +562,11 @@ func (m *Image) outputMeta(meta pipeline.Meta) (out pipeline.Meta) {
 // encode writes src in the given format. quality, when positive, replaces
 // the quality asked for.
 func (m *Image) encode(w io.Writer, src pipeline.Source, format string, quality int, meta pipeline.Meta) error {
+	return m.encodeWith(w, src, format, m.optionsFor(format), quality, meta)
+}
+
+// encodeWith is encode with the format's options given.
+func (m *Image) encodeWith(w io.Writer, src pipeline.Source, format string, options any, quality int, meta pipeline.Meta) error {
 	if m.ctx != nil {
 		// Also here: an encoder can work for a long time on pixels that
 		// were read long ago (a second pass, another try at a file size).
@@ -568,7 +576,7 @@ func (m *Image) encode(w io.Writer, src pipeline.Source, format string, quality 
 	if def == nil || def.encode == nil {
 		return fmt.Errorf("goimgtools: cannot write %s (%s)", format, formatList())
 	}
-	o := EncodeOptions{Exif: meta.Exif, ICC: meta.ICC, Xmp: meta.Xmp, Density: meta.Density, Options: m.optionsFor(format)}
+	o := EncodeOptions{Exif: meta.Exif, ICC: meta.ICC, Xmp: meta.Xmp, Density: meta.Density, Options: options}
 	if def.quality != nil {
 		if q, ok := def.quality(o.Options); ok {
 			o.Quality = q
@@ -609,21 +617,59 @@ func (m *Image) optionsFor(format string) any {
 }
 
 // writeWithin encodes src at the highest quality whose file is at most
-// m.maxBytes.
+// m.maxBytes: for PNG and GIF the most colours (a PNG first without loss).
 func (m *Image) writeWithin(w io.Writer, src pipeline.Source, format string, meta pipeline.Meta) error {
 	def := formatNamed(format)
 	if def == nil || def.encode == nil {
 		return fmt.Errorf("goimgtools: cannot write %s (%s)", format, formatList())
 	}
-	if def.quality == nil {
-		return fmt.Errorf("goimgtools: MaxFileSize applies to JPEG and lossy WebP output, not %s", format)
-	}
-	top, ok := def.quality(m.optionsFor(format))
-	if !ok {
-		return fmt.Errorf("goimgtools: MaxFileSize applies to JPEG and lossy WebP output, not lossless %s", format)
-	}
-	if top < 1 || top > 100 {
-		return errors.New("goimgtools: quality must be 1 to 100")
+	// encodeAt encodes at step k of the knob: the quality, or the number
+	// of colours (0: a PNG's own, without loss); bottom is its lowest.
+	var encodeAt func(w io.Writer, src pipeline.Source, k int) error
+	var top, bottom int
+	what := "quality"
+	switch format {
+	case "png", "gif":
+		what, bottom, top = "colours", 2, 256
+		options := m.optionsFor(format)
+		var colors int
+		if format == "png" {
+			po, _ := options.(PNGOptions)
+			colors = po.Colors
+		} else {
+			g, _ := options.(GIFOptions)
+			colors = g.Colors
+		}
+		if colors >= bottom && colors < top {
+			top = colors
+		}
+		encodeAt = func(w io.Writer, src pipeline.Source, k int) error {
+			o := options
+			if format == "png" {
+				po, _ := options.(PNGOptions)
+				po.Colors = k
+				o = po
+			} else {
+				g, _ := options.(GIFOptions)
+				g.Colors = k
+				o = g
+			}
+			return m.encodeWith(w, src, format, o, 0, meta)
+		}
+	default:
+		if def.quality == nil {
+			return fmt.Errorf("goimgtools: MaxFileSize applies to JPEG, lossy WebP, PNG and GIF output, not %s", format)
+		}
+		var ok bool
+		top, ok = def.quality(m.optionsFor(format))
+		if !ok {
+			return fmt.Errorf("goimgtools: MaxFileSize applies to JPEG, lossy WebP, PNG and GIF output, not lossless %s", format)
+		}
+		if top < 1 || top > 100 {
+			return errors.New("goimgtools: quality must be 1 to 100")
+		}
+		bottom = 1
+		encodeAt = func(w io.Writer, src pipeline.Source, q int) error { return m.encode(w, src, format, q, meta) }
 	}
 	rec, err := pipeline.Record(src)
 	if err != nil {
@@ -637,7 +683,7 @@ func (m *Image) writeWithin(w io.Writer, src pipeline.Source, format string, met
 			best.Close()
 		}
 	}()
-	// try encodes at quality q and reports whether the file fits; a file
+	// try encodes at step q and reports whether the file fits; a file
 	// that fits replaces the best one so far.
 	try := func(q int) (bool, int64, error) {
 		in, err := rec.Source()
@@ -645,7 +691,7 @@ func (m *Image) writeWithin(w io.Writer, src pipeline.Source, format string, met
 			return false, 0, err
 		}
 		out := pipeline.NewSpill(env)
-		err = m.encode(out, in, format, q, meta)
+		err = encodeAt(out, in, q)
 		in.Close()
 		if err != nil {
 			out.Close()
@@ -662,9 +708,20 @@ func (m *Image) writeWithin(w io.Writer, src pipeline.Source, format string, met
 		best = out
 		return true, size, nil
 	}
-	fits, size, err := try(top)
-	if err != nil {
-		return err
+	fits, size, err := false, int64(0), error(nil)
+	if format == "png" {
+		// Without loss, unless colours were asked for.
+		if po, _ := m.optionsFor(format).(PNGOptions); po.Colors == 0 {
+			if fits, size, err = try(0); err != nil {
+				return err
+			}
+		}
+	}
+	if !fits {
+		fits, size, err = try(top)
+		if err != nil {
+			return err
+		}
 	}
 	if !fits {
 		// File size grows with quality: find the highest quality below top
@@ -685,18 +742,20 @@ func (m *Image) writeWithin(w io.Writer, src pipeline.Source, format string, met
 			return nil
 		}
 		// A first guess: as if size went with quality. When that is still
-		// too large, quality 1 settles whether the limit can be met at all
-		// and gives the search its lower end.
-		if err := probe(max(1, min(top-1, int(float64(top)*float64(m.maxBytes)/float64(size))))); err != nil {
-			return err
+		// too large, the lowest step settles whether the limit can be met at
+		// all and gives the search its lower end.
+		if hi > bottom {
+			if err := probe(max(bottom, min(top-1, int(float64(top)*float64(m.maxBytes)/float64(size))))); err != nil {
+				return err
+			}
 		}
-		if lo == 0 && hi > 1 {
-			if err := probe(1); err != nil {
+		if lo == 0 && hi > bottom {
+			if err := probe(bottom); err != nil {
 				return err
 			}
 		}
 		if lo == 0 {
-			return fmt.Errorf("%w: quality 1 gives %d bytes, the limit is %d", ErrFileSize, hiSize, m.maxBytes)
+			return fmt.Errorf("%w: %s %d gives %d bytes, the limit is %d", ErrFileSize, what, bottom, hiSize, m.maxBytes)
 		}
 		// Then read the next quality off a straight line between the two
 		// ends (in the logarithm of the size, which is close to straight).

@@ -115,7 +115,7 @@ err := goimgtools.Open("in.jpg").
 | `BMP()` | |
 | `TIFF(TIFFOptions{Compression, Predictor})` | 不压缩、`TIFFDeflate` 或 `TIFFLZW`（libtiff 的写法）；`Predictor` 把每个样本存为与左侧像素之差（水平差分），照片压缩效果好得多（即 sharp 的 `predictor: "horizontal"`；一张 2400 万像素照片：LZW 82 → 52MB，Deflate 67 → 45MB）。像素数据超过 1MB 的压缩图像按约 1MB 一条分条带写入 |
 | `ToFormat(name, 选项)` | 按名称选择输出格式（`"jpeg"`、`"png"`、`".tif"`……，以及已注册的格式）；选项为该格式的选项结构体，可省略 |
-| `MaxFileSize(n)` | 输出不超过 n 字节：自动选用满足该限制的最高质量（JPEG、有损 WebP，以及提供 `Quality` 的注册格式）。与 `Animated()` 同用于动画时返回包装了 `errors.ErrUnsupported` 的错误；单帧 GIF 按静态图像处理 |
+| `MaxFileSize(n)` | 输出不超过 n 字节：自动选用满足该限制的最高质量（JPEG、有损 WebP，以及提供 `Quality` 的注册格式）；PNG 与 GIF 选用能满足的最多颜色数（PNG 先试无损）。与 `Animated()` 同用于动画时返回包装了 `errors.ErrUnsupported` 的错误；单帧 GIF 按静态图像处理 |
 | `ToFile(path)` / `ToWriter(w)` / `ToBytes()` | 执行并写出。`ToFile` 未指定格式时按扩展名确定；仅当全程成功时才生成文件 |
 | `Metadata()` | 仅读取文件头，描述**输入**：格式、存储的宽高、颜色类型（灰度 / 调色板 / RGB / YCbCr / CMYK）与位深、是否含透明、EXIF 方向、是否含 ICC / EXIF，以及分辨率（`Density`，每英寸像素数：有 EXIF 分辨率时取 EXIF 的，否则取格式自身的；25.4 及以下视为未记录，因为 libvips 在不知道分辨率时写入该值，与 sharp 相同）。不受链上操作影响 |
 | `Frames()` | 输入的帧数、单次播放时长、循环次数（仅 GIF 可多于一帧）。须读取整个文件，但不解码像素 |
@@ -168,7 +168,7 @@ large := base.Clone().Resize(1600, 0)
 | `ErrFormat` | 输入不是可读取的图像：其他类型的文件、不支持的格式或变体、数据损坏或截断 | 上传的文件有误 |
 | `ErrPixelLimit` | 输入像素数超过 `LimitInputPixels`（动画按所有帧合计），或链上某一步骤的结果超过 `LimitOutputPixels` | 图像过大，或请求的尺寸过大 |
 | `ErrMemoryLimit` | 无法在内存上限内完成处理 | 调高 `MemoryLimit` 或拒绝请求 |
-| `ErrFileSize` | 即使采用最低质量也无法达到 `MaxFileSize` 的目标 | 先缩小尺寸 |
+| `ErrFileSize` | 即使采用最低质量（PNG、GIF 为两种颜色）也无法达到 `MaxFileSize` 的目标 | 先缩小尺寸 |
 | `context.Canceled` / `DeadlineExceeded` | `WithContext` 的上下文已结束 | 请求已取消 |
 | `*PanicError`（使用 `errors.As`） | 处理该输入时库或扩展代码中的缺陷（panic），附带原因与调用栈 | 记录并上报；本次请求失败，程序继续运行 |
 | 其他 | 读取输入失败、磁盘已满、参数错误等，保留原始错误 | 系统故障或调用方错误 |

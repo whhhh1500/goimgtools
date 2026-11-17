@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"errors"
 	"image"
+	"image/color"
+	"image/gif"
+	"image/png"
 	"io"
 	"path/filepath"
 	"sync/atomic"
@@ -168,9 +171,48 @@ func TestMaxFileSize(t *testing.T) {
 	if m, err := decodeJPEG(bytes.NewReader(capped)); err != nil || m.Bounds().Size() != image.Pt(613, 457) {
 		t.Errorf("capped file: %v", err)
 	}
+	// PNG and GIF: the most colours that fit (a PNG first without loss).
+	lossless := must(FromBytes(inPNG).PNG().ToBytes())
+	if got, err := FromBytes(inPNG).PNG().MaxFileSize(int64(len(lossless))).ToBytes(); err != nil || !bytes.Equal(got, lossless) {
+		t.Errorf("PNG that fits without loss: changed (%v)", err)
+	}
+	colorsOf := func(b []byte) int {
+		cfg, err := png.DecodeConfig(bytes.NewReader(b))
+		if err != nil {
+			cfg, err = gif.DecodeConfig(bytes.NewReader(b))
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		pal, _ := cfg.ColorModel.(color.Palette)
+		return len(pal)
+	}
+	for _, c := range []struct {
+		name  string
+		out   func(m *Image, colors int) *Image
+		limit int64
+	}{
+		{"PNG", func(m *Image, n int) *Image { return m.PNG(PNGOptions{Colors: n}) }, 90000},
+		{"GIF", func(m *Image, n int) *Image { return m.GIF(GIFOptions{Colors: n}) }, 30000},
+	} {
+		got, err := c.out(FromBytes(inPNG), 0).MaxFileSize(c.limit).ToBytes()
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		n := colorsOf(got)
+		if int64(len(got)) > c.limit || n < 2 || n >= 256 {
+			t.Errorf("%s: %d bytes for a limit of %d, %d colours", c.name, len(got), c.limit, n)
+		}
+		if more := must(c.out(FromBytes(inPNG), min(n+1, 256)).ToBytes()); int64(len(more)) <= c.limit {
+			t.Errorf("%s: %d colours chosen, %d fit too (%d bytes)", c.name, n, n+1, len(more))
+		}
+		if _, err := c.out(FromBytes(inPNG), 0).MaxFileSize(100).ToBytes(); !errors.Is(err, ErrFileSize) {
+			t.Errorf("%s: limit below 2 colours: %v", c.name, err)
+		}
+	}
 	// Formats without a quality, and a bad limit.
-	if _, err := FromBytes(inPNG).PNG().MaxFileSize(1000).ToBytes(); err == nil {
-		t.Error("MaxFileSize accepted for PNG")
+	if _, err := FromBytes(inPNG).BMP().MaxFileSize(1000).ToBytes(); err == nil {
+		t.Error("MaxFileSize accepted for BMP")
 	}
 	if _, err := FromBytes(inPNG).WebP(WebPOptions{Lossless: true}).MaxFileSize(1000).ToBytes(); err == nil {
 		t.Error("MaxFileSize accepted for lossless WebP")

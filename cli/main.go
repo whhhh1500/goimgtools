@@ -194,7 +194,7 @@ func register(fs *flag.FlagSet) *options {
 		pngLevel:       fs.Int("png-level", 0, fmt.Sprintf("PNG compression 1 (fastest) to 9 (smallest); default %d", goimgtools.DefaultPNGLevel)),
 		format:         fs.String("format", "", "output format: "+formatNames()+" (default: from the output file name)"),
 		skipLarger:     fs.Bool("skip-larger", false, "when the result is not smaller than the input file (same format), keep the input file as it is; for runs that only compress"),
-		maxSize:        fs.String("max-size", "", "make the file at most this `size` by lowering the quality (JPEG, lossy WebP): 200KB, 1.5MB, or a number of bytes"),
+		maxSize:        fs.String("max-size", "", "make the file at most this `size` by lowering the quality (JPEG, lossy WebP) or the number of colours (PNG, GIF): 200KB, 1.5MB, or a number of bytes"),
 		lossless:       fs.Bool("webp-lossless", false, "WebP: write without loss"),
 		webpEffort:     fs.Int("webp-effort", 0, "WebP: effort 1 (fastest) to 9 (smallest file); default 5 (for lossy, all there is but for transparency)"),
 		gifColors:      fs.Int("gif-colors", 0, "largest number of colours in a GIF, 1-256 (default 256)"),
