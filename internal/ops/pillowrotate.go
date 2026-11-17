@@ -1,13 +1,15 @@
 package ops
 
-// Pillow's affine transform (src/libImaging/Geometry.c, Pillow 12.1.1,
-// MIT-CMU licence, see licenses/LICENSE-PILLOW), behind its Image.rotate:
-// each output pixel takes the source at the matrix times its centre,
+// Pillow's transforms (src/libImaging/Geometry.c, Pillow 12.1.1, MIT-CMU
+// licence, see licenses/LICENSE-PILLOW), behind its Image.transform and
+// Image.rotate: each output pixel takes the source at the point its centre
+// maps to (by a matrix, a perspective or a quadrilateral warp),
 //
-//   - nearest: the pixel that point falls in, worked out in 16.16 fixed
-//     point when the whole image stays within ±32768 (affine_fixed), in
-//     double precision added up along the row otherwise, or, for a matrix
-//     that only scales, from a table of columns (ImagingScaleAffine);
+//   - nearest: the pixel that point falls in; for a matrix, worked out in
+//     16.16 fixed point when the whole image stays within ±32768
+//     (affine_fixed), in double precision added up along the row
+//     otherwise, or, for a matrix that only scales, from a table of
+//     columns (ImagingScaleAffine);
 //   - bilinear and bicubic (a = -1): the pixels around it, the edges
 //     repeated, each channel in double precision, the result dropped to a
 //     whole number (and kept within 0 to 255 for bicubic);
@@ -32,8 +34,20 @@ const (
 	PillowBicubic
 )
 
+// Pillow's transforms (of TransformPillow): affine (the matrix a[0:6]),
+// perspective (a[0:8]: x' = (a0 x + a1 y + a2) / (a6 x + a7 y + 1), y' =
+// (a3 x + a4 y + a5) / (a6 x + a7 y + 1)) and quad (x' = a0 + a1 x + a2 y +
+// a3 x y, y' = a4 + a5 x + a6 y + a7 x y), each from an output pixel's
+// centre to a source point.
+const (
+	PillowAffine = iota
+	PillowPerspective
+	PillowQuad
+)
+
 type pillowMap struct {
-	a      [6]float64
+	kind   int
+	a      [8]float64
 	filter int
 	bands  int // 3 without transparency (alpha stays 255), 4 with
 	premul bool
@@ -57,6 +71,15 @@ type pillowMap struct {
 // PillowBilinear or PillowBicubic) and fill for what lies outside (nil:
 // zero, transparent black with transparency and black without).
 func AffinePillow(src pipeline.Source, a [6]float64, ow, oh, filter int, fill color.Color) (pipeline.Source, error) {
+	var a8 [8]float64
+	copy(a8[:], a[:])
+	return TransformPillow(src, PillowAffine, a8, ow, oh, filter, fill)
+}
+
+// TransformPillow is Pillow's Image.transform (ImagingTransform) with the
+// transform kind (PillowAffine, PillowPerspective or PillowQuad) of the
+// coefficients a; see AffinePillow.
+func TransformPillow(src pipeline.Source, kind int, a [8]float64, ow, oh, filter int, fill color.Color) (pipeline.Source, error) {
 	for _, v := range a {
 		if math.IsNaN(v) || math.IsInf(v, 0) {
 			return nil, errors.New("goimgtools: the transform takes finite numbers")
@@ -69,7 +92,7 @@ func AffinePillow(src pipeline.Source, a [6]float64, ow, oh, filter int, fill co
 		filter = PillowNearest // as Pillow does for P images
 	}
 	opaque := pipeline.IsOpaque(src)
-	m := &pillowMap{a: a, filter: filter, bands: 4}
+	m := &pillowMap{kind: kind, a: a, filter: filter, bands: 4}
 	if opaque {
 		m.bands = 3
 	}
@@ -81,7 +104,7 @@ func AffinePillow(src pipeline.Source, a [6]float64, ow, oh, filter int, fill co
 	if opaque {
 		m.fill[3] = 255
 	}
-	if filter == PillowNearest {
+	if kind == PillowAffine && filter == PillowNearest {
 		switch {
 		case a[1] == 0 && a[3] == 0:
 			m.scale = true
@@ -119,12 +142,28 @@ func AffinePillow(src pipeline.Source, a [6]float64, ow, oh, filter int, fill co
 			xo += a[0]
 		}
 		m.nextRowY = a[5] + float64(a[4]*0.5)
-	} else if !m.fixed && filter == PillowNearest {
+	} else if kind == PillowAffine && !m.fixed && filter == PillowNearest {
 		m.nextRowStart = a[2] + float64(a[1]*0.5) + float64(a[0]*0.5)
 		m.nextRowY = a[5] + float64(a[4]*0.5) + float64(a[3]*0.5)
 	}
 	env := pipeline.EnvOf(src)
+	// How far the source point moves for each output column, for the size
+	// of the tile caches: the most it does at the ends of the top, middle
+	// and bottom rows.
 	span := math.Abs(a[0]) + math.Abs(a[3])
+	if kind != PillowAffine {
+		span = 0
+		for _, y := range []int{0, oh / 2, oh - 1} {
+			for _, x := range []int{0, max(0, ow-2)} {
+				x0, y0 := m.at(x, y)
+				x1, y1 := m.at(x+1, y)
+				if d := math.Abs(x1-x0) + math.Abs(y1-y0); d > span {
+					span = d
+				}
+			}
+		}
+		span = min(span, 1<<20)
+	}
 	return &rotated{
 		src: pipeline.Map(src, func(*image.NRGBA) error { return nil }), env: env,
 		rect:     image.Rect(0, 0, ow, oh),
@@ -135,10 +174,31 @@ func AffinePillow(src pipeline.Source, a [6]float64, ow, oh, filter int, fill co
 	}, nil
 }
 
+// at is the source point of the centre of output pixel (x, y), as Pillow's
+// affine_transform, perspective_transform and quad_transform work it out.
+func (m *pillowMap) at(x, y int) (float64, float64) {
+	a := &m.a
+	px, py := float64(x)+0.5, float64(y)+0.5
+	switch m.kind {
+	case PillowPerspective:
+		d := float64(a[6]*px) + float64(a[7]*py) + 1
+		return (float64(a[0]*px) + float64(a[1]*py) + a[2]) / d, (float64(a[3]*px) + float64(a[4]*py) + a[5]) / d
+	case PillowQuad:
+		return a[0] + float64(a[1]*px) + float64(a[2]*py) + float64(float64(a[3]*px)*py),
+			a[4] + float64(a[5]*px) + float64(a[6]*py) + float64(float64(a[7]*px)*py)
+	}
+	return float64(a[0]*px) + float64(a[1]*py) + a[2], float64(a[3]*px) + float64(a[4]*py) + a[5]
+}
+
 // coord is Pillow's COORD: -1 for a point left of (or above) the image,
-// else its whole part.
+// else its whole part. A point Pillow's int cannot hold (or NaN, which a
+// perspective's division by 0 gives) is -1 too, outside the image, as it
+// comes out on x86.
 func coord(v float64) int {
-	if v < 0 {
+	if !(v >= 0) {
+		return -1
+	}
+	if v >= 1<<31 {
 		return -1
 	}
 	return int(v)
@@ -155,7 +215,7 @@ func pfloor(v float64) int {
 // startRows works out the running starts of rows y0 to y1 of the float
 // nearest paths, which Pillow adds up row after row.
 func (m *pillowMap) startRows(y0, y1 int) {
-	if m.fixed || m.filter != PillowNearest {
+	if m.kind != PillowAffine || m.fixed || m.filter != PillowNearest {
 		return
 	}
 	m.rowX, m.rowY = m.rowX[:0], m.rowY[:0]
@@ -215,7 +275,7 @@ func (t *rotated) renderPillow(out *image.RGBA, x0, x1 int, c *tileCache) error 
 	for y := r.Min.Y; y < r.Max.Y; y++ {
 		row := out.Pix[(y-r.Min.Y)*out.Stride:]
 		var xx, yy float64
-		if m.filter == PillowNearest && !m.fixed {
+		if m.kind == PillowAffine && m.filter == PillowNearest && !m.fixed {
 			xx, yy = m.rowX[y-r.Min.Y], m.rowY[y-r.Min.Y]
 			if !m.scale {
 				// Added up from the first column, as Pillow does.
@@ -230,6 +290,17 @@ func (t *rotated) renderPillow(out *image.RGBA, x0, x1 int, c *tileCache) error 
 			var v [4]uint8
 			ok := false
 			switch {
+			case m.kind != PillowAffine && m.filter == PillowNearest:
+				// ImagingGenericTransform's nearest_filter.
+				xin, yin := m.at(x, y)
+				xi, yi := coord(xin), coord(yin)
+				if xi >= 0 && xi < t.sw && yi >= 0 && yi < t.sh {
+					p, err := t.pixel(c, xi, yi)
+					if err != nil {
+						return err
+					}
+					v, ok = [4]uint8{p[0], p[1], p[2], p[3]}, true
+				}
 			case m.filter == PillowNearest && m.fixed:
 				fx := m.f2 + int64(y)*m.f1 + int64(x)*m.f0
 				fy := m.f5 + int64(y)*m.f4 + int64(x)*m.f3
@@ -262,9 +333,7 @@ func (t *rotated) renderPillow(out *image.RGBA, x0, x1 int, c *tileCache) error 
 				xx += m.a[0]
 				yy += m.a[3]
 			default:
-				px, py := float64(x)+0.5, float64(y)+0.5
-				xin := float64(m.a[0]*px) + float64(m.a[1]*py) + m.a[2]
-				yin := float64(m.a[3]*px) + float64(m.a[4]*py) + m.a[5]
+				xin, yin := m.at(x, y)
 				var err error
 				if m.filter == PillowBilinear {
 					v, ok, err = t.pillowBilinear(xin, yin, sample)
@@ -290,8 +359,14 @@ func (t *rotated) renderPillow(out *image.RGBA, x0, x1 int, c *tileCache) error 
 	return nil
 }
 
+// inside reports whether a source point is within the image, as the
+// filters of Pillow check it (NaN is not).
+func (t *rotated) inside(xin, yin float64) bool {
+	return xin >= 0 && xin < float64(t.sw) && yin >= 0 && yin < float64(t.sh)
+}
+
 func (t *rotated) pillowBilinear(xin, yin float64, at func(x, y int) ([4]uint8, error)) ([4]uint8, bool, error) {
-	if xin < 0 || xin >= float64(t.sw) || yin < 0 || yin >= float64(t.sh) {
+	if !t.inside(xin, yin) {
 		return [4]uint8{}, false, nil
 	}
 	xin -= 0.5
@@ -330,7 +405,7 @@ func (t *rotated) pillowBilinear(xin, yin float64, at func(x, y int) ([4]uint8, 
 }
 
 func (t *rotated) pillowBicubic(xin, yin float64, at func(x, y int) ([4]uint8, error)) ([4]uint8, bool, error) {
-	if xin < 0 || xin >= float64(t.sw) || yin < 0 || yin >= float64(t.sh) {
+	if !t.inside(xin, yin) {
 		return [4]uint8{}, false, nil
 	}
 	xin -= 0.5

@@ -167,13 +167,15 @@ the comment of `bruteFilter`). No code of oxipng is included.
 
 ## Pillow
 
-`internal/ops/blur.go` contains Go ports of two routines of Pillow 12.1.1,
-so that the results are Pillow's to the byte:
+`internal/ops` contains Go ports of routines of Pillow 12.1.1, so that the
+results are Pillow's to the byte:
 
 | Here | Ported from |
 |---|---|
-| `boxRadius`, `newBox`, `hbox`, `vbox`: the Gaussian blur as three box blurs of a fractional radius, in Pillow's fixed-point arithmetic | `src/libImaging/BoxBlur.c` |
-| `Sharpen` with a sigma: the unsharp mask on top of that blur | `src/libImaging/UnsharpMask.c` (by Kevin Cazabon, donated to PIL in 2009) |
+| `blur.go`: `boxRadius`, `newBox`, `hbox`, `vbox`: the Gaussian blur (and `BoxBlur`) as box blurs of a fractional radius, in Pillow's fixed-point arithmetic | `src/libImaging/BoxBlur.c` |
+| `blur.go`: `Sharpen` with a sigma: the unsharp mask on top of that blur | `src/libImaging/UnsharpMask.c` (by Kevin Cazabon, donated to PIL in 2009) |
+| `pillowrotate.go`: `TransformPillow`, `AffinePillow`: the affine, perspective and quad transforms behind `Image.transform` and `Image.rotate`, their nearest, bilinear and bicubic filters | `src/libImaging/Geometry.c` |
+| `pillowfilter.go`: `PillowKernel`: the 3 x 3 and 5 x 5 kernels of `ImageFilter` | `src/libImaging/Filter.c` |
 
 The PIL is copyright Secret Labs AB and Fredrik Lundh and contributors,
 Pillow copyright Jeffrey A. Clark and contributors, under the MIT-CMU

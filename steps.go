@@ -179,6 +179,8 @@ func describe(op operation) (string, []string) {
 		return "rotate", w
 	case affineOp:
 		return "affine", o.words()
+	case transformOp:
+		return "transform", o.words()
 	case levelsOp:
 		return o.name, o.words()
 	case tintOp:
@@ -657,6 +659,47 @@ var builtInOps = map[string]OperationDef{
 			}
 			o.Interpolator = interp
 			m.Affine(v[0], v[1], v[2], v[3], o)
+			return nil
+		}},
+	"transform": {Name: "transform", Usage: "WIDTH,HEIGHT,affine|extent|perspective|quad,NUMBERS...[,nearest|bilinear|bicubic][,BACKGROUND]",
+		Help: "Transform: Pillow's Image.transform to WIDTH x HEIGHT, with 6, 4, 8 or 8 numbers (TransformAffine, TransformExtent, TransformPerspective, TransformQuad)",
+		builtIn: func(m *Image, a []string) error {
+			if len(a) < 3 {
+				return errors.New("want WIDTH,HEIGHT, the kind of transform and its numbers")
+			}
+			size, err := argInts(a[:2])
+			if err != nil {
+				return err
+			}
+			kind, err := pick(transformNames, a[2], "transform")
+			if err != nil {
+				return err
+			}
+			n := transformArgs[kind]
+			if len(a) < 3+n || len(a) > 5+n {
+				return fmt.Errorf("%s takes %d numbers, then an interpolator and a background", a[2], n)
+			}
+			v, err := argFloats(a[3 : 3+n])
+			if err != nil {
+				return err
+			}
+			t := Transformation{kind: kind}
+			copy(t.data[:], v)
+			var o TransformOptions
+			seen := map[string]bool{}
+			for _, w := range a[3+n:] {
+				what := "background"
+				if i, err := pick(interpolatorNames, w, ""); err == nil {
+					what, o.Interpolator = "interpolator", i
+				} else if o.Background, err = ParseColor(w); err != nil {
+					return err
+				}
+				if seen[what] {
+					return fmt.Errorf("%s given twice", what)
+				}
+				seen[what] = true
+			}
+			m.Transform(size[0], size[1], t, o)
 			return nil
 		}},
 	"flip": {Name: "flip", Help: "Flip: upside down", builtIn: func(m *Image, a []string) error {
