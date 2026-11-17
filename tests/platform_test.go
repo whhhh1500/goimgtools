@@ -65,6 +65,8 @@ func TestSameOnEveryProcessor(t *testing.T) {
 		{"alpha channel", clear.Clone().ExtractChannel(ChannelAlpha), "e880988a7dc509ad"},
 		{"resize libvips", photo.Clone().Resize(97, 0, ResizeOptions{Kernel: KernelLanczos3, Method: ResizeLibvips}), "0021404ad205d433"},
 		{"resize libvips translucent", clear.Clone().Resize(400, 50, ResizeOptions{Fit: FitFill, Kernel: KernelMKS2021, Method: ResizeLibvips}), "75485f3a5472db7f"},
+		{"enhance", photo.Clone().Enhance(EnhanceSharpness, 1.6).Enhance(EnhanceColor, 1.3).Enhance(EnhanceContrast, 0.8), "22429f5f874bed97"},
+		{"autocontrast", photo.Clone().AutoContrast(AutoContrastOptions{CutoffLow: 1.5, CutoffHigh: 2.5}), "1a0f7d7e646a9784"},
 		{"resize pillow", photo.Clone().Resize(97, 0, ResizeOptions{Kernel: KernelLanczos3, Method: ResizePillow}), "a507ca964967b586"},
 		{"resize pillow translucent", clear.Clone().Resize(400, 50, ResizeOptions{Fit: FitFill, Kernel: KernelHamming, Method: ResizePillow}), "e37043c622b45c1a"},
 		{"resize libvips contain", clear.Clone().Resize(60, 60, ResizeOptions{Fit: FitContain, Kernel: KernelCubic,

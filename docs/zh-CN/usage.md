@@ -59,6 +59,10 @@ err := goimgtools.Open("in.jpg").
 | `Threshold(level, ThresholdOptions{PerChannel})` | 黑白二值：灰度（按线性光计算，与 sharp 相同）不小于 `level` 的像素变白，其余变黑。不含透明的图像与 sharp 的 `threshold` 逐字节一致，并输出为单通道文件。`PerChannel` 让红、绿、蓝各自取 0 或 255（即 sharp 的 `threshold(level, {greyscale: false})`，逐字节一致） |
 | `Tint(color)` | 着色：按每个像素的亮度赋予该颜色，越接近黑白越淡（sharp 的 `tint`，与其相差不超过 1）：`Tint(color.RGBA{112, 66, 20, 255})` 为褐色调 |
 | `Normalize(NormalizeOptions{Lower, Upper})` | 拉伸明度（L*a*b* 中的 L*），使最暗的 `Lower`% 变黑、最亮的 `100-Upper`% 变白（默认 1 与 99），保持色相与饱和度；即 sharp 的 `normalise`，相差不超过 1（百分位与其完全相同）。需先读完整幅图像并保存在工作区 |
+| `Enhance(e, factor)` | Pillow 的 `ImageEnhance`，逐字节一致（torchvision 的 `ColorJitter` 与 `adjust_*` 对图像正是用它）：按 `factor` 调整 `EnhanceColor`（饱和度）、`EnhanceContrast`、`EnhanceBrightness` 或 `EnhanceSharpness`，可为任意数，1 不变：每个色阶从退化图像（灰色；平均明度的灰；黑色；经 Pillow `SMOOTH` 平滑的图像）向原图走 `factor` 倍的距离。`EnhanceContrast` 需先读完整幅图像以求平均明度 |
+| `AutoContrast(AutoContrastOptions{CutoffLow, CutoffHigh, Ignore, PreserveTone})` | 把红、绿、蓝各自拉伸到最暗为黑、最亮为白，两端各去掉 `CutoffLow`、`CutoffHigh` 百分比的像素，不计 `Ignore` 中的色阶；`PreserveTone` 按明度拉伸、三个通道共用一张表，颜色不偏。即 Pillow 的 `ImageOps.autocontrast`，逐字节一致。需先读完整幅图像 |
+| `Equalize()` | 均衡各通道的色阶，使其出现次数大致相同：Pillow 的 `ImageOps.equalize`，逐字节一致。需先读完整幅图像 |
+| `Posterize(bits)` / `Solarize(threshold)` | 保留每个色阶最高的 `bits` 位（1–8）/ 把不小于 `threshold`（0–256；Pillow 默认 128）的色阶反转：Pillow 的 `ImageOps.posterize` 与 `solarize`，逐字节一致 |
 | `CLAHE(CLAHEOptions{Width, Height, MaxSlope})` | 局部对比度增强（限制对比度的自适应直方图均衡），提亮暗部、压低亮部以显出细节：每个色阶变为其在像素周围 `Width` × `Height` 窗口中的排位，窗口中每个色阶最多计 `MaxSlope` 个像素（默认 3）。不含透明的图像与 sharp 的 `clahe` 逐字节一致；24 MP、64×64 窗口单核 18s，4 核 7s（sharp：7.6s、8.7s） |
 | `Median(size)` | 中值滤波：每个像素的每个通道取其周围 size × size 方块（奇数，3–99）的中值，去除噪点而保留边缘。与 Pillow 的 `MedianFilter` 及 sharp 的 `median` 逐字节一致 |
 | `Rank(size, rank)` | 排序滤波：每个像素的每个通道取 size × size 方块（奇数，1–99）中第 rank 小的值（从 0 起）。rank 为 0 即 Pillow 的 `MinFilter`（暗部扩张），size×size−1 即其 `MaxFilter`（亮部扩张）；与 Pillow 的 `RankFilter` 逐字节一致 |

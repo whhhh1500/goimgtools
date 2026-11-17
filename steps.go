@@ -181,6 +181,8 @@ func describe(op operation) (string, []string) {
 		return "recomb", o.words()
 	case channelOp:
 		return o.name, o.words()
+	case pillowOp:
+		return o.name, o.words()
 	case namedOp:
 		return o.name, o.args
 	case customOp:

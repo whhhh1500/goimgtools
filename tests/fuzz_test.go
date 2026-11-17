@@ -333,6 +333,24 @@ func FuzzChain(f *testing.F) {
 			n := 1 + 2*int(w%4)
 			m.Rank(n, int(h)%(n*n))
 		}
+		// Pillow's ImageOps and ImageEnhance, from another mix of the bits.
+		extra2 := uint32(w)*2654435761 ^ uint32(h)<<11 ^ flags>>3 ^ uint32(more)<<17
+		if extra2&7 == 7 {
+			m.Posterize(1 + int(h%8))
+		}
+		if extra2>>3&7 == 7 {
+			m.Solarize(int(w % 257))
+		}
+		if extra2>>6&7 == 7 {
+			m.Equalize()
+		}
+		if extra2>>9&7 == 7 {
+			m.AutoContrast(AutoContrastOptions{CutoffLow: float64(w % 50), CutoffHigh: float64(h % 50), PreserveTone: more&1 == 1,
+				Ignore: []int{int(w % 256)}})
+		}
+		if extra2>>12&7 == 7 {
+			m.Enhance(Enhancement(h%4), float64(int16(w))/1000)
+		}
 		if bit(22) {
 			m.KeepExif()
 		}

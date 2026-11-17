@@ -70,6 +70,10 @@ func TestSameWithHelpers(t *testing.T) {
 		"resize libvips up and down": func(m *Image) *Image {
 			return m.Resize(1100, 70, ResizeOptions{Fit: FitFill, Kernel: KernelMitchell, Method: ResizeLibvips})
 		},
+		"enhance sharpness": func(m *Image) *Image { return m.Enhance(EnhanceSharpness, 1.8) },
+		"enhance contrast":  func(m *Image) *Image { return m.Enhance(EnhanceContrast, 0.6) },
+		"equalize":          func(m *Image) *Image { return m.Equalize() },
+		"autocontrast":      func(m *Image) *Image { return m.AutoContrast(AutoContrastOptions{CutoffLow: 2, CutoffHigh: 3}) },
 		"resize pillow down": func(m *Image) *Image {
 			return m.Resize(97, 0, ResizeOptions{Kernel: KernelLanczos3, Method: ResizePillow})
 		},
