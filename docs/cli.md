@@ -65,7 +65,7 @@ Operations run in a fixed order: rotate → flip → trim → crop → resize �
 | `-reducing-gap` | With `-resize-method pillow`: Pillow's `reducing_gap` (2 with `-no-enlarge -fast-shrink` is Pillow's `thumbnail`) |
 | `-resize-method` | `draw` (default), `libvips` (sharp's resize, to the byte; sharp's default kernel is `lanczos3`) or `pillow` (Pillow's resize, to the byte) |
 | `-no-enlarge` | Do not enlarge the image |
-| `-fast-shrink` | When a JPEG is reduced to less than half its size, shrink it first during decoding (with `-resize-method libvips`: sharp's `fastShrinkOnLoad`, which scales a WebP while decoding it too) |
+| `-fast-shrink` | When a JPEG is reduced to less than half its size, or a lossy WebP without alpha to a third, shrink it first during decoding (with `-resize-method libvips`: sharp's `fastShrinkOnLoad`, every WebP) |
 | `-extend T,R,B,L` | Add borders on all four sides (in pixels) in the `-background` colour |
 | `-extend-with copy\|repeat\|mirror` | Make the `-extend` borders of the image itself: its edge pixels repeated, the image repeated, or the image mirrored |
 | `-grayscale` | Convert to grayscale |

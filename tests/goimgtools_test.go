@@ -314,3 +314,64 @@ func TestFastShrinkOnLoad(t *testing.T) {
 	p := pngBytes(t, smooth(640, 480))
 	same("png input", FromBytes(p).Resize(100, 100, fast), FromBytes(p).Resize(100, 100, slow))
 }
+
+// TestFastShrinkOnLoadWebP: a lossy WebP without alpha reduced to a third
+// or less is decoded at twice the size of the result (libwebp's scaling):
+// the same size, pixels close to those without the option. A lossless one,
+// one with alpha and a smaller reduction are left alone.
+func TestFastShrinkOnLoadWebP(t *testing.T) {
+	smooth := func(w, h int, alpha bool) *image.NRGBA {
+		m := image.NewNRGBA(image.Rect(0, 0, w, h))
+		for y := 0; y < h; y++ {
+			for x := 0; x < w; x++ {
+				a := uint8(255)
+				if alpha {
+					a = uint8(x * 255 / w)
+				}
+				m.SetNRGBA(x, y, color.NRGBA{uint8(x * 255 / w), uint8(y * 255 / h), uint8((x + y) * 255 / (w + h)), a})
+			}
+		}
+		return m
+	}
+	fast := ResizeOptions{Fit: FitInside, FastShrinkOnLoad: true}
+	slow := ResizeOptions{Fit: FitInside}
+	for _, size := range [][2]int{{640, 480}, {641, 479}, {1001, 333}, {97, 1203}} {
+		in := must(FromImage(smooth(size[0], size[1], false)).WebP(WebPOptions{Quality: 90}).ToBytes())
+		for _, box := range []int{200, 150, 61, 20} {
+			ma := decodePNG(t, must(FromBytes(in).Resize(box, box, fast).PNG().ToBytes()))
+			mb := decodePNG(t, must(FromBytes(in).Resize(box, box, slow).PNG().ToBytes()))
+			if ma.Bounds() != mb.Bounds() {
+				t.Fatalf("%v box %d: size %v with the option, %v without", size, box, ma.Bounds(), mb.Bounds())
+			}
+			var sum, n int
+			r := ma.Bounds()
+			for y := r.Min.Y; y < r.Max.Y; y++ {
+				for x := r.Min.X; x < r.Max.X; x++ {
+					r1, g1, b1, _ := ma.At(x, y).RGBA()
+					r2, g2, b2, _ := mb.At(x, y).RGBA()
+					for _, d := range []int{int(r1>>8) - int(r2>>8), int(g1>>8) - int(g2>>8), int(b1>>8) - int(b2>>8)} {
+						sum += max(d, -d)
+						n++
+					}
+				}
+			}
+			if sum == 0 {
+				t.Errorf("%v box %d: the option changed nothing", size, box)
+			}
+			if mean := float64(sum) / float64(n); mean > 1.5 {
+				t.Errorf("%v box %d: mean difference %.2f levels", size, box, mean)
+			}
+		}
+	}
+	same := func(what string, in []byte, box int) {
+		t.Helper()
+		a := must(FromBytes(in).Resize(box, box, fast).PNG().ToBytes())
+		b := must(FromBytes(in).Resize(box, box, slow).PNG().ToBytes())
+		if !bytes.Equal(a, b) {
+			t.Errorf("%s: the option changed the output", what)
+		}
+	}
+	same("lossless", must(FromImage(smooth(640, 480, false)).WebP(WebPOptions{Lossless: true}).ToBytes()), 100)
+	same("alpha", must(FromImage(smooth(640, 480, true)).WebP(WebPOptions{Quality: 90}).ToBytes()), 100)
+	same("small reduction", must(FromImage(smooth(640, 480, false)).WebP(WebPOptions{Quality: 90}).ToBytes()), 300)
+}

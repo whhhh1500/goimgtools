@@ -134,8 +134,12 @@ func (r *rescaler) importExpand(src []byte) {
 }
 
 func (r *rescaler) importShrink(src []byte) {
-	if r.ch == 1 {
+	switch r.ch {
+	case 1:
 		r.importShrink1(src)
+		return
+	case 4:
+		r.importShrink4(src)
 		return
 	}
 	stride, xMax := r.ch, r.dstW*r.ch
@@ -182,6 +186,32 @@ func (r *rescaler) importShrink1(src []byte) {
 		f := base * uint32(-accum)
 		frow[xOut] = sum*uint32(xSub) - f
 		sum = multFix(f, r.fxScale)
+	}
+}
+
+// importShrink4 is importShrink for four channels (a lossless image), the
+// channels side by side: each goes through the same steps.
+func (r *rescaler) importShrink4(src []byte) {
+	src = src[:4*r.srcW]
+	frow := r.frow[:4*r.dstW]
+	xAdd, xSub, fx := r.xAdd, r.xSub, r.fxScale
+	var s0, s1, s2, s3 uint32
+	accum, xIn := 0, 0
+	for xOut := 0; xOut+3 < len(frow); xOut += 4 {
+		var b0, b1, b2, b3 uint32
+		accum += xAdd
+		for accum > 0 {
+			accum -= xSub
+			px := src[xIn : xIn+4]
+			b0, b1, b2, b3 = uint32(px[0]), uint32(px[1]), uint32(px[2]), uint32(px[3])
+			s0, s1, s2, s3 = s0+b0, s1+b1, s2+b2, s3+b3
+			xIn += 4
+		}
+		k, m := uint32(-accum), uint32(xSub)
+		f0, f1, f2, f3 := b0*k, b1*k, b2*k, b3*k
+		out := frow[xOut : xOut+4]
+		out[0], out[1], out[2], out[3] = s0*m-f0, s1*m-f1, s2*m-f2, s3*m-f3
+		s0, s1, s2, s3 = multFix(f0, fx), multFix(f1, fx), multFix(f2, fx), multFix(f3, fx)
 	}
 }
 

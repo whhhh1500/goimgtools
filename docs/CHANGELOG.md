@@ -59,6 +59,7 @@ Nothing exported by 0.1.0 was removed or changed in its signature (checked with 
 
 ### Changed
 
+- `FastShrinkOnLoad` applies to a lossy WebP without alpha too: reduced to a third or less, it is decoded at twice the size of the result, as libwebp scales while decoding, and the kernel does the rest (a 6000×4000 one to fit 400×400 in 0.39s instead of 0.74s, 48–51dB from the result without the option).
 - `FastShrinkOnLoad` reduces the blocks with libjpeg's reduced inverse DCTs (`jidctred.c`) instead of averages worked out afresh, at the same speed: the planes of a 4:4:4 or grey JPEG are those of libjpeg's scaled decoding (Pillow's `draft`), and the result as close to a resize of the full image (46.7–50.5dB).
 - JPEG files are decoded as libjpeg-turbo decodes them, and so Pillow and sharp, to the byte (its accurate integer inverse DCT, its fancy upsampling of subsampled chroma, its YCbCr to RGB tables), instead of as `image/jpeg` does: subsampled colour edges are smoother (a 4:2:2 photograph 0.36 dB closer to the original), and every operation that gives Pillow's or sharp's pixels does so on JPEG input too. Colour JPEG strips are RGBA rather than YCbCr, but where a JPEG goes straight into a JPEG or lossy WebP file.
 - TIFF decoding: LZW 1.5 times faster (a 6000×4000 RGBA image in 0.45s instead of 0.68s; libtiff 0.31s), with the same bytes and errors as `x/image` on any input (fuzzed), and Deflate blocks read 64KB at a time (0.26s instead of 0.30s; libtiff 0.27s).

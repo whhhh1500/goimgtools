@@ -206,12 +206,23 @@ func (m *Image) buildFrom(env *pipeline.Env, top bool, f *input, format string, 
 		}
 	}
 	if format == "webp" {
-		// sharp has libwebp scale a WebP as it decodes it, with
-		// fastShrinkOnLoad (see vipsWebPScale).
-		if z, turn, ok := firstResize(m.chain, r); ok && z.spec.o.Method == ResizeLibvips && z.spec.o.FastShrinkOnLoad && (len(m.hooks) == 0 || turn == ops.Upright && len(m.chain) > 0 && isResize(m.chain[0])) && autoTurns(m.chain[:firstResizeAt(m.chain, r)]) {
-			if w, h := vipsWebPScale(src, z.spec, turn); w > 0 {
-				if j, ok := src.(interface{ ScaleOnLoad(w, h int) bool }); ok {
+		// With FastShrinkOnLoad libwebp scales a WebP as it decodes it.
+		if z, turn, ok := firstResize(m.chain, r); ok && z.spec.o.FastShrinkOnLoad && (len(m.hooks) == 0 || turn == ops.Upright && len(m.chain) > 0 && isResize(m.chain[0])) {
+			j, can := src.(interface{ ScaleOnLoad(w, h int) bool })
+			switch {
+			case !can:
+			case z.spec.o.Method == ResizeLibvips && autoTurns(m.chain[:firstResizeAt(m.chain, r)]):
+				// As sharp (see vipsWebPScale).
+				if w, h := vipsWebPScale(src, z.spec, turn); w > 0 {
 					j.ScaleOnLoad(w, h)
+				}
+			case z.spec.o.Method == ResizeDraw && !z.spec.o.LinearLight && pipeline.IsOpaque(src):
+				// Only a lossy WebP without alpha: libwebp scales the
+				// colours of one with alpha without weighing them by it,
+				// and decoding a lossless one takes most of the time.
+				orig := src.Bounds().Size()
+				if w, h := webpScale(src, z.spec, turn); w > 0 && j.ScaleOnLoad(w, h) {
+					pre = preShrunk{orig: orig, whole: true}
 				}
 			}
 		}

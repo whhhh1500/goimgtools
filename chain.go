@@ -58,6 +58,9 @@ func (r *run) fits(w, h int) error {
 type preShrunk struct {
 	orig image.Point
 	k    int
+	// whole: the decoder has scaled the whole image to the size of the
+	// source instead (a WebP, as libwebp scales it), k being 0.
+	whole bool
 	// planes: the strips are Gray (gray) or YCbCr of ratio, which the
 	// resize can scale plane by plane (resize.ScalePlanes).
 	planes bool
@@ -233,9 +236,12 @@ func (z resizeOp) resize(src pipeline.Source, turn ops.Orientation, pre preShrun
 	b := src.Bounds()
 	sw, sh := b.Dx(), b.Dy()
 	ew, eh := float64(sw), float64(sh) // the part of src the result spans
-	if pre.k > 1 {
+	switch {
+	case pre.k > 1:
 		sw, sh = pre.orig.X, pre.orig.Y
 		ew, eh = float64(sw)/float64(pre.k), float64(sh)/float64(pre.k)
+	case pre.whole:
+		sw, sh = pre.orig.X, pre.orig.Y
 	}
 	dw, dh := z.spec.target(turn.Size(sw, sh))
 	iw, ih := turn.Size(dw, dh) // the target, before the turn
@@ -245,7 +251,7 @@ func (z resizeOp) resize(src pipeline.Source, turn ops.Orientation, pre preShrun
 		return nil, err
 	}
 	out := src
-	if iw != b.Dx() || ih != b.Dy() || pre.k > 1 {
+	if iw != b.Dx() || ih != b.Dy() || pre.k > 1 || pre.whole {
 		var err error
 		switch {
 		case z.spec.o.LinearLight:
@@ -757,6 +763,20 @@ func vipsWebPScale(src pipeline.Source, z resizeSpec, turn ops.Orientation) (int
 		return 0, 0
 	}
 	return int(w), int(h)
+}
+
+// webpScale is the size a lossy WebP is decoded at, as libwebp scales it
+// while decoding it, for the resize z (with ResizeDraw and FastShrinkOnLoad)
+// after turn: twice the size of the result, which leaves the kernel a
+// reduction of 2, when that is at most a third of the image each way; 0, 0
+// otherwise.
+func webpScale(src pipeline.Source, z resizeSpec, turn ops.Orientation) (int, int) {
+	b := src.Bounds()
+	dw, dh := turn.Size(z.target(turn.Size(b.Dx(), b.Dy())))
+	if dw < 1 || dh < 1 || b.Dx() < 3*dw || b.Dy() < 3*dh {
+		return 0, 0
+	}
+	return 2 * dw, 2 * dh
 }
 
 // shrinkFactor picks the largest of 8, 4 and 2 that still leaves the resize

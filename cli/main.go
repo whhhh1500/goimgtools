@@ -156,7 +156,7 @@ func register(fs *flag.FlagSet) *options {
 		sharpen:        fs.String("sharpen", "", "sharpen: mild (a quick 3x3 sharpen, good after shrinking), an unsharp mask `SIGMA[,AMOUNT[,THRESHOLD]]` as Pillow's (amount 1.5, threshold 0 by default), or SIGMA,lightness[,FLAT,JAGGED,JAGGED_FROM,MAX_BRIGHTEN,MAX_DARKEN] as sharp's (the lightness alone; 1,2,2,10,20 by default)"),
 		kernel:         fs.String("kernel", "cubic", "resize filter: nearest, linear, cubic, mitchell, lanczos2, lanczos3, mks2013, mks2021, box, hamming"),
 		noEnlarge:      fs.Bool("no-enlarge", false, "never make the image larger than it is"),
-		fast:           fs.Bool("fast-shrink", false, "let a JPEG reduced to half size or less be shrunk while it is decoded (with -resize-method libvips, sharp's fastShrinkOnLoad, a WebP too): faster, pixels differ slightly"),
+		fast:           fs.Bool("fast-shrink", false, "let a JPEG reduced to half size or less, or a lossy WebP without alpha to a third, be shrunk while it is decoded (with -resize-method libvips, sharp's fastShrinkOnLoad, every WebP): faster, pixels differ slightly"),
 		crop:           fs.String("crop", "", "keep the region `X,Y,W,H` (pixels, before resizing)"),
 		flatten:        fs.String("flatten", "", "replace transparency with a background `color`: white, black or #rrggbb"),
 		watermark:      fs.String("watermark", "", "image `file` to draw on top"),

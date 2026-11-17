@@ -59,6 +59,7 @@
 
 ### 变更
 
+- `FastShrinkOnLoad` 也用于无 alpha 的有损 WebP：缩小至三分之一以下时，按 libwebp 解码时的缩放方式以结果两倍的尺寸解码，其余由缩放核完成（6000×4000 的缩到 400×400 以内 0.39s，原为 0.74s；与不用此选项的结果相比 48–51dB）。
 - `FastShrinkOnLoad` 改用 libjpeg 的缩小反 DCT（`jidctred.c`）缩小各块，不再用自行推导的平均，速度不变：4:4:4 与灰度 JPEG 的平面与 libjpeg 的缩放解码（Pillow 的 `draft`）相同，与完整解码后缩放的结果一样接近（46.7–50.5dB）。
 - JPEG 改为按 libjpeg-turbo 的方式解码，因此与 Pillow、sharp 逐字节一致（精确整数反 DCT、下采样色度的 fancy 上采样、YCbCr 转 RGB 查表），不再与 `image/jpeg` 相同：下采样色彩的边缘更平滑（一张 4:2:2 照片与原图的差距少 0.36 dB），所有与 Pillow、sharp 结果一致的操作在 JPEG 输入上也一致。彩色 JPEG 的行带改为 RGBA 而非 YCbCr，直接写成 JPEG 或有损 WebP 时除外。
 - TIFF 解码：LZW 快 1.5 倍（6000×4000 的 RGBA 图像 0.45 秒，原为 0.68 秒；libtiff 0.31 秒），对任何输入的输出与错误都与 `x/image` 相同（经模糊测试核对）；Deflate 块按 64KB 读取（0.26 秒，原为 0.30 秒；libtiff 0.27 秒）。
