@@ -54,9 +54,9 @@ func yccRow(dst, y, cb, cr []byte) {
 	dst = dst[:4*len(y)]
 	cb, cr = cb[:len(y)], cr[:len(y)]
 	from := 0
-	if useAVX2 && len(y) >= 16 {
+	if useSIMD && len(y) >= 16 {
 		k := len(y) / 16
-		yccRowAVX2(&dst[0], &y[0], &cb[0], &cr[0], k)
+		yccRowSIMD(&dst[0], &y[0], &cb[0], &cr[0], k)
 		from = 16 * k
 	}
 	for x := from; x < len(y); x++ {
@@ -82,13 +82,13 @@ func yccH2V2(dst, y, cbN, cbF, crN, crF []byte) {
 	w, n := len(y), len(cbN)
 	dst = dst[:4*w]
 	cbF, crN, crF = cbF[:n], crN[:n], crF[:n]
-	if useAVX2 && n >= 18 {
+	if useSIMD && n >= 18 {
 		// The chroma samples from 1 to 16k, whose neighbours are inside,
 		// with AVX2; the ends in Go.
 		k := (n - 2) / 16
 		_ = dst[4*(2+32*k)-1]
 		_ = y[2+32*k-1]
-		yccH2V2AVX2(&dst[8], &y[2], &cbN[1], &cbF[1], &crN[1], &crF[1], k)
+		yccH2V2SIMD(&dst[8], &y[2], &cbN[1], &cbF[1], &crN[1], &crF[1], k)
 		yccH2V2Go(dst, y, cbN, cbF, crN, crF, 0, 1)
 		yccH2V2Go(dst, y, cbN, cbF, crN, crF, 1+16*k, n)
 		return
@@ -124,12 +124,12 @@ func yccH2V1(dst, y, cb, cr []byte) {
 	w, n := len(y), len(cb)
 	dst = dst[:4*w]
 	cr = cr[:n]
-	if useAVX2 && n >= 18 {
+	if useSIMD && n >= 18 {
 		// As yccH2V2.
 		k := (n - 2) / 16
 		_ = dst[4*(2+32*k)-1]
 		_ = y[2+32*k-1]
-		yccH2V1AVX2(&dst[8], &y[2], &cb[1], &cr[1], k)
+		yccH2V1SIMD(&dst[8], &y[2], &cb[1], &cr[1], k)
 		yccH2V1Go(dst, y, cb, cr, 0, 1)
 		yccH2V1Go(dst, y, cb, cr, 1+16*k, n)
 		return

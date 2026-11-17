@@ -84,10 +84,10 @@ DATA enc_bias<>+24(SB)/4, $1
 DATA enc_bias<>+28(SB)/4, $2
 GLOBL enc_bias<>(SB), RODATA|NOPTR, $32
 
-// func rgbaBlockAVX2(pix *byte, stride int, y, cb, cr *block)
+// func rgbaBlockSIMD(pix *byte, stride int, y, cb, cr *block)
 //
 // The 8x8 pixels (RGBA) at pix, rows stride apart, to Y, Cb and Cr.
-TEXT ·rgbaBlockAVX2(SB), NOSPLIT, $0-40
+TEXT ·rgbaBlockSIMD(SB), NOSPLIT, $0-40
 	MOVQ pix+0(FP), SI
 	MOVQ stride+8(FP), DX
 	MOVQ y+16(FP), DI
@@ -134,11 +134,11 @@ row:
 	VZEROUPPER
 	RET
 
-// func scaleAVX2(dst *block, src *[4]block)
+// func scaleSIMD(dst *block, src *[4]block)
 //
 // scale: each 8x8 block of src to a 4x4 quarter of dst, squares of 4
 // averaged, the rounding 1 and 2 alternating across.
-TEXT ·scaleAVX2(SB), NOSPLIT, $0-16
+TEXT ·scaleSIMD(SB), NOSPLIT, $0-16
 	MOVQ dst+0(FP), DI
 	MOVQ src+8(FP), SI
 	VMOVDQU enc_bias<>(SB), Y15

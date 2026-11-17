@@ -6,13 +6,13 @@ import (
 	"testing"
 )
 
-// TestFilterAVX2: the AVX2 loop filter changes the pixels around an edge
+// TestFilterSIMD: the AVX2 loop filter changes the pixels around an edge
 // as filter246 does, across rows and across columns, six and four pixels
 // wide, for every level, interior level and variance threshold the
 // decoder computes (and random ones), on smooth, noisy and flat pixels.
-func TestFilterAVX2(t *testing.T) {
-	if !useAVX2 {
-		t.Skip("no AVX2")
+func TestFilterSIMD(t *testing.T) {
+	if !useSIMD {
+		t.Skip("no SIMD")
 	}
 	rng := rand.New(rand.NewPCG(7, 8))
 	const stride = 40

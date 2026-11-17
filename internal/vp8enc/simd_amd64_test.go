@@ -9,12 +9,12 @@ import (
 	"github.com/whhhh1500/goimgtools/internal/webpstream/vp8"
 )
 
-// TestFilterInnerAVX2: the decoder's AVX2 filter of inner edges filters a
+// TestFilterInnerSIMD: the decoder's AVX2 filter of inner edges filters a
 // reconstructed macroblock as loop24 does, at every level, and reports a
 // change as it does.
-func TestFilterInnerAVX2(t *testing.T) {
-	if !vp8.AVX2 {
-		t.Skip("no AVX2")
+func TestFilterInnerSIMD(t *testing.T) {
+	if !vp8.SIMD {
+		t.Skip("no SIMD")
 	}
 	rng := rand.New(rand.NewPCG(17, 18))
 	for i := range 20000 {
@@ -26,9 +26,9 @@ func TestFilterInnerAVX2(t *testing.T) {
 		}
 		level := 1 + rng.IntN(lfLevels-1)
 		want, got := b, b
-		vp8.AVX2 = false
+		vp8.SIMD = false
 		wc := filterInner(&want, level)
-		vp8.AVX2 = true
+		vp8.SIMD = true
 		gc := filterInner(&got, level)
 		if got != want || gc != wc {
 			t.Fatalf("case %d, level %d: changed %v, want %v; blocks differ: %v", i, level, gc, wc, got != want)
@@ -36,11 +36,11 @@ func TestFilterInnerAVX2(t *testing.T) {
 	}
 }
 
-// TestSSIMSumsAVX2: the AVX2 window sums of each plane are those of
+// TestSSIMSumsSIMD: the AVX2 window sums of each plane are those of
 // winSums, for flat, smooth and noisy samples and the extremes.
-func TestSSIMSumsAVX2(t *testing.T) {
-	if !useAVX2 {
-		t.Skip("no AVX2")
+func TestSSIMSumsSIMD(t *testing.T) {
+	if !useSIMD {
+		t.Skip("no SIMD")
 	}
 	rng := rand.New(rand.NewPCG(19, 20))
 	var m mbFilter

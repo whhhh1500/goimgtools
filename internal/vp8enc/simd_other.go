@@ -2,6 +2,6 @@
 
 package vp8enc
 
-const useAVX2 = false
+const useSIMD = false
 
-func ssimSumsAVX2(a, b *byte, y, yy, xy *[100]uint32) { panic("unreachable") }
+func ssimSumsSIMD(a, b *byte, y, yy, xy *[100]uint32) { panic("unreachable") }

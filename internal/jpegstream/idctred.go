@@ -38,8 +38,8 @@ func descale(v int32, n uint) int32 { return (v + 1<<(n-1)) >> n }
 // whose rows are stride apart.
 func idct4Store(b *block, dst []byte, stride int) {
 	_ = dst[3*stride+3]
-	if useAVX2 {
-		idct4AVX2(b, &dst[0], stride)
+	if useSIMD {
+		idct4SIMD(b, &dst[0], stride)
 		return
 	}
 	idct4Go(b, dst, stride)

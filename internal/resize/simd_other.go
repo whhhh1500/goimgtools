@@ -2,10 +2,10 @@
 
 package resize
 
-var useAVX2 = false
+var useSIMD = false
 
-func reduceVAVX2(dst *byte, rows **byte, pairs *uint32, npairs, chunks int) { panic("unreachable") }
+func reduceVSIMD(dst *byte, rows **byte, pairs *uint32, npairs, chunks int) { panic("unreachable") }
 
-func reduceHAVX2(dst, row *byte, cols, pidx *int32, pairs *uint32, npairs, count int) {
+func reduceHSIMD(dst, row *byte, cols, pidx *int32, pairs *uint32, npairs, count int) {
 	panic("unreachable")
 }

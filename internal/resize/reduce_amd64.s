@@ -15,12 +15,12 @@ DATA red_shuf<>+0(SB)/8, $0x0703060205010400
 DATA red_shuf<>+8(SB)/8, $0x0f0b0e0a0d090c08
 GLOBL red_shuf<>(SB), RODATA|NOPTR, $16
 
-// func reduceVAVX2(dst *byte, rows **byte, pairs *uint32, npairs, chunks int)
+// func reduceVSIMD(dst *byte, rows **byte, pairs *uint32, npairs, chunks int)
 //
 // chunks times 16 bytes of dst: the sum over the rows (two to a pair, a
 // weight each in the halves of its pair) of the weight times the byte at
 // the same place, plus 2048, shifted right by 12.
-TEXT ·reduceVAVX2(SB), NOSPLIT, $0-40
+TEXT ·reduceVSIMD(SB), NOSPLIT, $0-40
 	MOVQ dst+0(FP), DI
 	MOVQ rows+8(FP), SI
 	MOVQ pairs+16(FP), DX
@@ -61,12 +61,12 @@ tap:
 	VZEROUPPER
 	RET
 
-// func reduceHAVX2(dst, row *byte, cols, pidx *int32, pairs *uint32, npairs, count int)
+// func reduceHSIMD(dst, row *byte, cols, pidx *int32, pairs *uint32, npairs, count int)
 //
 // count pixels (RGBA) of dst: pixel x the sum over the pixels of row from
 // cols[x] on (two to a pair of weights from pairs[pidx[x]] on) of each
 // weight times each channel, plus 2048, shifted right by 12.
-TEXT ·reduceHAVX2(SB), NOSPLIT, $0-56
+TEXT ·reduceHSIMD(SB), NOSPLIT, $0-56
 	MOVQ dst+0(FP), DI
 	MOVQ row+8(FP), SI
 	MOVQ cols+16(FP), R14

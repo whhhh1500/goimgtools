@@ -113,8 +113,8 @@ func (d *Decoder) simpleFilter(mby, slot int, params []filterParam) {
 // for macroblock row mby, which is in macroblock row slot of the band buffer.
 // It also changes the bottom rows of the macroblock row above (slot-1).
 func (d *Decoder) normalFilter(mby, slot int, params []filterParam) {
-	if useAVX2 {
-		d.normalFilterAVX2(mby, slot, params)
+	if useSIMD {
+		d.normalFilterSIMD(mby, slot, params)
 		return
 	}
 	{
@@ -280,10 +280,10 @@ func clamp255(x int) uint8 {
 	return uint8(x)
 }
 
-// normalFilterAVX2 is normalFilter with AVX2: each call of filter246 by one
+// normalFilterSIMD is normalFilter with AVX2: each call of filter246 by one
 // of the assembly functions, in the same order (those of the two chroma
 // planes together), every byte the same.
-func (d *Decoder) normalFilterAVX2(mby, slot int, params []filterParam) {
+func (d *Decoder) normalFilterSIMD(mby, slot int, params []filterParam) {
 	y, ys := d.img.Y, d.img.YStride
 	cb, cr, cs := d.img.Cb, d.img.Cr, d.img.CStride
 	// across checks the pixels of an edge between columns at i, rows from

@@ -8,8 +8,8 @@
 
 #include "textflag.h"
 
-// func ssimSumsAVX2(a, b *byte, y, yy, xy *[100]uint32)
-TEXT ·ssimSumsAVX2(SB), 0, $1984-40
+// func ssimSumsSIMD(a, b *byte, y, yy, xy *[100]uint32)
+TEXT ·ssimSumsSIMD(SB), 0, $1984-40
 	MOVQ a+0(FP), SI
 	MOVQ b+8(FP), DI
 	VPXOR Y15, Y15, Y15

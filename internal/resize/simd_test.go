@@ -10,20 +10,20 @@ import (
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
-// TestVipsAVX2: libvips' reduce with AVX2 gives what the Go code gives,
+// TestVipsSIMD: libvips' reduce with AVX2 gives what the Go code gives,
 // for every kernel, down and across, by ratios from barely below 1 to 20
 // (box shrinks before), with transparency and without, widths below a
 // chunk and odd ones.
-func TestVipsAVX2(t *testing.T) {
-	if !useAVX2 {
-		t.Skip("no AVX2")
+func TestVipsSIMD(t *testing.T) {
+	if !useSIMD {
+		t.Skip("no SIMD")
 	}
 	rng := rand.New(rand.NewPCG(13, 14))
 	imgs := testutil.Images(203, 151)
 	run := func(m image.Image, hs, vs float64, k VipsKernel, simd bool) []byte {
 		t.Helper()
-		useAVX2 = simd
-		defer func() { useAVX2 = true }()
+		useSIMD = simd
+		defer func() { useSIMD = true }()
 		src, err := Vips(testutil.Chopped(m, 7), hs, vs, k)
 		if err != nil {
 			t.Fatal(err)

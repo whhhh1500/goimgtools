@@ -153,8 +153,8 @@ DATA red4_shuf<>+14(SB)/1, $11
 DATA red4_shuf<>+15(SB)/1, $15
 GLOBL red4_shuf<>(SB), RODATA|NOPTR, $16
 
-// func idct4AVX2(b *block, dst *byte, stride int)
-TEXT ·idct4AVX2(SB), NOSPLIT, $0-24
+// func idct4SIMD(b *block, dst *byte, stride int)
+TEXT ·idct4SIMD(SB), NOSPLIT, $0-24
 	MOVQ b+0(FP), AX
 	MOVQ dst+8(FP), DI
 	MOVQ stride+16(FP), SI

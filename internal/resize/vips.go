@@ -354,7 +354,7 @@ func planAxis(in int, shrink float64, k VipsKernel) (*vipsAxis, error) {
 	if a.masks, err = k.masks(a.n, a.residual); err != nil {
 		return nil, err
 	}
-	if useAVX2 {
+	if useSIMD {
 		a.packPairs()
 	}
 	return a, nil
@@ -771,7 +771,7 @@ func (s *vipsResize) reduceRow(j int, dst []uint8, sc *vipsScratch) {
 				rows[len(k)] = rows[len(k)-1] // with a weight of 0
 			}
 			from = len(acc) / 16 * 16
-			reduceVAVX2(&sc.row[0], &rows[0], &v.pairs[t*v.np], v.np, from/16)
+			reduceVSIMD(&sc.row[0], &rows[0], &v.pairs[t*v.np], v.np, from/16)
 		}
 		// Four taps a pass over the row (the sums are whole numbers: in
 		// any order the same).
@@ -833,7 +833,7 @@ func (s *vipsResize) reduceRow(j int, dst []uint8, sc *vipsScratch) {
 	if h.pairs != nil && s.hxb > s.hxa {
 		_ = row[4*h.mid-1]
 		_ = dst[4*s.hxb-1]
-		reduceHAVX2(&dst[4*s.hxa], &row[0], &s.hcol[s.hxa], &s.hpair[s.hxa], &h.pairs[0], h.np, s.hxb-s.hxa)
+		reduceHSIMD(&dst[4*s.hxa], &row[0], &s.hcol[s.hxa], &s.hpair[s.hxa], &h.pairs[0], h.np, s.hxb-s.hxa)
 		xa, xb = s.hxa, s.hxb
 	}
 	for x := 0; x < p.w1; x++ {

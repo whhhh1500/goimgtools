@@ -7,13 +7,13 @@ import (
 	"testing"
 )
 
-// TestIslowAVX2: the AVX2 inverse DCT gives what islowGo gives, byte for
+// TestIslowSIMD: the AVX2 inverse DCT gives what islowGo gives, byte for
 // byte, for blocks of every kind: a DC alone, a few coefficients, half the
 // columns or rows, all of them; values of real files, and any int32 at all
 // (whose products and shifts wrap the same way).
-func TestIslowAVX2(t *testing.T) {
-	if !useAVX2 {
-		t.Skip("no AVX2")
+func TestIslowSIMD(t *testing.T) {
+	if !useSIMD {
+		t.Skip("no SIMD")
 	}
 	rng := rand.New(rand.NewPCG(1, 2))
 	for i := range 200000 {
@@ -58,7 +58,7 @@ func TestIslowAVX2(t *testing.T) {
 			}
 			wb, gb := b, b
 			islowGo(&wb, want, stride)
-			islowAVX2(&gb, &got[0], stride)
+			islowSIMD(&gb, &got[0], stride)
 			if !bytes.Equal(got, want) {
 				t.Fatalf("block %d %v, stride %d:\n got %v\nwant %v", i, b, stride, got, want)
 			}
@@ -80,9 +80,9 @@ func BenchmarkIslow(b *testing.B) {
 		f    func(*block)
 	}{
 		{"go", func(k *block) { islowGo(k, dst, 8) }},
-		{"avx2", func(k *block) { islowAVX2(k, &dst[0], 8) }},
+		{"avx2", func(k *block) { islowSIMD(k, &dst[0], 8) }},
 	} {
-		if c.name == "avx2" && !useAVX2 {
+		if c.name == "avx2" && !useSIMD {
 			continue
 		}
 		b.Run(c.name, func(b *testing.B) {
@@ -103,7 +103,7 @@ func BenchmarkIslowNoCopy(b *testing.B) {
 	dst := make([]byte, 64)
 	b.Run("avx2", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			islowAVX2(&k, &dst[0], 8)
+			islowSIMD(&k, &dst[0], 8)
 		}
 	})
 	b.Run("go", func(b *testing.B) {
@@ -123,13 +123,13 @@ func sameRow(t *testing.T, what string, w int, got, want []byte) {
 	}
 }
 
-// TestYccH2V2AVX2: rows of every width from 1 to 300 and random samples
+// TestYccH2V2SIMD: rows of every width from 1 to 300 and random samples
 // (all values, and runs of 0 and 255 that the sums take past the ends of
 // the range) convert as the Go code converts them: chroma halved both
 // ways, across, and at full size.
-func TestYccH2V2AVX2(t *testing.T) {
-	if !useAVX2 {
-		t.Skip("no AVX2")
+func TestYccH2V2SIMD(t *testing.T) {
+	if !useSIMD {
+		t.Skip("no SIMD")
 	}
 	rng := rand.New(rand.NewPCG(3, 4))
 	fill := func(b []byte) {
@@ -191,12 +191,12 @@ func BenchmarkYccH2V2(b *testing.B) {
 	})
 }
 
-// TestFdctQuantAVX2: blocks of samples (flat, smooth, noisy, extreme) and
+// TestFdctQuantSIMD: blocks of samples (flat, smooth, noisy, extreme) and
 // quantization tables of every value transform and quantize with AVX2 as
 // fdct and quantizeCoefs do.
-func TestFdctQuantAVX2(t *testing.T) {
-	if !useAVX2 {
-		t.Skip("no AVX2")
+func TestFdctQuantSIMD(t *testing.T) {
+	if !useSIMD {
+		t.Skip("no SIMD")
 	}
 	rng := rand.New(rand.NewPCG(9, 10))
 	for i := range 50000 {
@@ -239,11 +239,11 @@ func TestFdctQuantAVX2(t *testing.T) {
 	}
 }
 
-// TestRGBAToYCbCrAVX2: whole blocks of pixels convert with AVX2 as ycc
+// TestRGBAToYCbCrSIMD: whole blocks of pixels convert with AVX2 as ycc
 // converts them, and 4 blocks of chroma shrink as scale shrinks them.
-func TestRGBAToYCbCrAVX2(t *testing.T) {
-	if !useAVX2 {
-		t.Skip("no AVX2")
+func TestRGBAToYCbCrSIMD(t *testing.T) {
+	if !useSIMD {
+		t.Skip("no SIMD")
 	}
 	rng := rand.New(rand.NewPCG(11, 12))
 	m := image.NewRGBA(image.Rect(3, 5, 3+37, 5+29))
@@ -289,11 +289,11 @@ func TestRGBAToYCbCrAVX2(t *testing.T) {
 	}
 }
 
-// TestIdct4AVX2: the reduced inverse DCT (to 4x4) with AVX2 gives what
-// idct4Go gives, for the blocks of TestIslowAVX2's kinds.
-func TestIdct4AVX2(t *testing.T) {
-	if !useAVX2 {
-		t.Skip("no AVX2")
+// TestIdct4SIMD: the reduced inverse DCT (to 4x4) with AVX2 gives what
+// idct4Go gives, for the blocks of TestIslowSIMD's kinds.
+func TestIdct4SIMD(t *testing.T) {
+	if !useSIMD {
+		t.Skip("no SIMD")
 	}
 	rng := rand.New(rand.NewPCG(15, 16))
 	for i := range 200000 {
@@ -328,7 +328,7 @@ func TestIdct4AVX2(t *testing.T) {
 			}
 			wb, gb := b, b
 			idct4Go(&wb, want, stride)
-			idct4AVX2(&gb, &got[0], stride)
+			idct4SIMD(&gb, &got[0], stride)
 			if !bytes.Equal(got, want) {
 				t.Fatalf("block %d %v, stride %d:\n got %v\nwant %v", i, b, stride, got, want)
 			}

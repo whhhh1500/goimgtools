@@ -154,12 +154,12 @@ DATA fdct_c128<>+24(SB)/4, $128
 DATA fdct_c128<>+28(SB)/4, $128
 GLOBL fdct_c128<>(SB), RODATA|NOPTR, $32
 
-// func fdctQuantAVX2(b *block, half *[64]int32, recip *[64]uint32, out *[64]int16)
+// func fdctQuantSIMD(b *block, half *[64]int32, recip *[64]uint32, out *[64]int16)
 //
 // The coefficients of the samples of b, divided as divBy divides them (half
 // the divisor added to the magnitude, times the reciprocal, the top 32
 // bits), into out in natural order. b is not changed.
-TEXT ·fdctQuantAVX2(SB), NOSPLIT, $0-32
+TEXT ·fdctQuantSIMD(SB), NOSPLIT, $0-32
 	MOVQ b+0(FP), AX
 	MOVQ half+8(FP), BX
 	MOVQ recip+16(FP), CX

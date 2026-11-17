@@ -198,10 +198,10 @@ DATA yuv_k17685<>+28(SB)/2, $17685
 DATA yuv_k17685<>+30(SB)/2, $17685
 GLOBL yuv_k17685<>(SB), RODATA|NOPTR, $32
 
-// func yuvRowAVX2(dst, y, nu, fu, nv, fv *byte, chunks int)
+// func yuvRowAsm(dst, y, nu, fu, nv, fv *byte, chunks int)
 //
 // chunks times: 17 chroma samples of each row (16 apart) to 32 pixels.
-TEXT ·yuvRowAVX2(SB), NOSPLIT, $0-56
+TEXT ·yuvRowAsm(SB), NOSPLIT, $0-56
 	MOVQ dst+0(FP), DI
 	MOVQ y+8(FP), SI
 	MOVQ nu+16(FP), R8

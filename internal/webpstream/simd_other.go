@@ -2,6 +2,6 @@
 
 package webpstream
 
-const useAVX2 = false
+const useSIMD = false
 
-func yuvRowAVX2(dst, y, nu, fu, nv, fv *byte, chunks int) { panic("unreachable") }
+func yuvRowAsm(dst, y, nu, fu, nv, fv *byte, chunks int) { panic("unreachable") }

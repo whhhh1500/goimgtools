@@ -5,11 +5,11 @@ import (
 	"testing"
 )
 
-// TestYuvRowAVX2: rows of every width from 1 to 300, random samples (runs
+// TestYuvRowSIMD: rows of every width from 1 to 300, random samples (runs
 // of 0 and 255 among them), convert with AVX2 as the Go code converts them.
-func TestYuvRowAVX2(t *testing.T) {
-	if !useAVX2 {
-		t.Skip("no AVX2")
+func TestYuvRowSIMD(t *testing.T) {
+	if !useSIMD {
+		t.Skip("no SIMD")
 	}
 	rng := rand.New(rand.NewPCG(5, 6))
 	fill := func(b []byte) {

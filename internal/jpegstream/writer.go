@@ -211,7 +211,7 @@ type encoder struct {
 	// without a division.
 	recip [nQuantIndex][blockSize]uint64
 	// natHalf and natRecip are half of 8 * quant and recip, in natural
-	// order, for fdctQuantAVX2.
+	// order, for fdctQuantSIMD.
 	natHalf  [nQuantIndex][blockSize]int32
 	natRecip [nQuantIndex][blockSize]uint32
 	// deadZone, when set, is how far from zero (in 1/100000 of a step) an
@@ -397,9 +397,9 @@ type qblock [blockSize]int16
 // quantize transforms b (in place, unless with AVX2) and quantizes it with
 // table q into zz.
 func (e *encoder) quantize(b *block, q quantIndex, zz *qblock) {
-	if useAVX2 && e.deadZone == nil {
+	if useSIMD && e.deadZone == nil {
 		var nat [blockSize]int16
-		fdctQuantAVX2(b, &e.natHalf[q], &e.natRecip[q], &nat)
+		fdctQuantSIMD(b, &e.natHalf[q], &e.natRecip[q], &nat)
 		for zig := range zz {
 			zz[zig] = nat[unzig[zig]&(blockSize-1)]
 		}
@@ -557,10 +557,10 @@ func pixCols(b image.Rectangle, x, bpp int) (col [8]int) {
 // rgbaToYCbCr is a specialized version of toYCbCr for image.RGBA images.
 func rgbaToYCbCr(m *image.RGBA, p image.Point, yBlock, cbBlock, crBlock *block) {
 	b := m.Bounds()
-	if useAVX2 && image.Rect(p.X, p.Y, p.X+8, p.Y+8).In(b) {
+	if useSIMD && image.Rect(p.X, p.Y, p.X+8, p.Y+8).In(b) {
 		o := m.PixOffset(p.X, p.Y)
 		_ = m.Pix[o+7*m.Stride+31]
-		rgbaBlockAVX2(&m.Pix[o], m.Stride, yBlock, cbBlock, crBlock)
+		rgbaBlockSIMD(&m.Pix[o], m.Stride, yBlock, cbBlock, crBlock)
 		return
 	}
 	col := pixCols(b, p.X, 4)
@@ -756,8 +756,8 @@ func chroma420(m *image.YCbCr, plane []byte, p image.Point, dst *block) {
 // dst block, averaging squares of 4, the rounding bias alternating 1 and 2
 // across as libjpeg's h2v2 downsampling does.
 func scale(dst *block, src *[4]block) {
-	if useAVX2 {
-		scaleAVX2(dst, src)
+	if useSIMD {
+		scaleSIMD(dst, src)
 		return
 	}
 	for i := 0; i < 4; i++ {

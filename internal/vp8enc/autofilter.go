@@ -71,14 +71,14 @@ type mbFilter struct {
 // plane p (a and b n x n, n that of the plane), with AVX2.
 func (m *mbFilter) sums(p int, a, b []uint8, y, yy, xy *[100]uint32) {
 	if p == 0 {
-		ssimSumsAVX2(&a[0], &b[0], y, yy, xy)
+		ssimSumsSIMD(&a[0], &b[0], y, yy, xy)
 		return
 	}
 	for r := 0; r < 8; r++ {
 		copy(m.padA[16*(r+3)+3:16*(r+3)+11], a[8*r:8*r+8])
 		copy(m.padB[16*(r+3)+3:16*(r+3)+11], b[8*r:8*r+8])
 	}
-	ssimSumsAVX2(&m.padA[0], &m.padB[0], &m.py, &m.pyy, &m.pxy)
+	ssimSumsSIMD(&m.padA[0], &m.padB[0], &m.py, &m.pyy, &m.pxy)
 	// The windows at chroma centres 1..6 are those at 4..9 of the frame.
 	for cy := 0; cy < 6; cy++ {
 		copy(y[6*cy:6*cy+6], m.py[10*(cy+1)+1:])
@@ -120,7 +120,7 @@ func (m *mbFilter) measure(src *[384]uint8, sg *segment, seg int, st *filterStat
 	for p, pl := range mbPlanes {
 		s := &m.src[p]
 		v := src[pl.off : pl.off+pl.n*pl.n]
-		if useAVX2 {
+		if useSIMD {
 			m.sums(p, v, v, &s.x, &s.xx, &m.xy)
 			continue
 		}
@@ -173,7 +173,7 @@ func (m *mbFilter) ssim(src, rec *[384]uint8) float64 {
 		a := src[pl.off : pl.off+pl.n*pl.n]
 		b := rec[pl.off : pl.off+pl.n*pl.n]
 		n2 := len(a)
-		if useAVX2 {
+		if useSIMD {
 			m.sums(p, a, b, &m.y, &m.yy, &m.xy)
 		} else {
 			for i, y := range b {
@@ -327,7 +327,7 @@ func filterInner(b *[384]uint8, level int) bool {
 	} else if level >= 15 {
 		hev = 1
 	}
-	if vp8.AVX2 {
+	if vp8.SIMD {
 		// The decoder's filter of inner edges: its threshold on
 		// 2|p0-q0| + |p1-q1|/2 is that on 4|p0-q0| + |p1-q1| here.
 		before := *b

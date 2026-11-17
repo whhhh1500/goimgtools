@@ -274,14 +274,14 @@ func upsample(n, f, dst []uint8) {
 func yuvRowSIMD(dst, lum, nu, fu, nv, fv []uint8) bool {
 	w := len(lum)
 	last := (w - 1) >> 1 // the last pair: pixels 2*last-1 and 2*last
-	if !useAVX2 || last < 16 {
+	if !useSIMD || last < 16 {
 		return false
 	}
 	k := last / 16
 	n := len(nu)
 	_, _, _, _ = nu[16*k], fu[:n][16*k], nv[:n][16*k], fv[:n][16*k]
 	_, _ = dst[4*(32*k+1)-1], lum[32*k]
-	yuvRowAVX2(&dst[4], &lum[1], &nu[0], &fu[0], &nv[0], &fv[0], k)
+	yuvRowAsm(&dst[4], &lum[1], &nu[0], &fu[0], &nv[0], &fv[0], k)
 	yuvPixel(dst, lum, nu, fu, nv, fv, 0)
 	for x := 32*k + 1; x < w; x++ {
 		yuvPixel(dst, lum, nu, fu, nv, fv, x)

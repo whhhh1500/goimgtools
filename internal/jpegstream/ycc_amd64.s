@@ -168,11 +168,11 @@ DATA ycc_half<>+24(SB)/4, $32768
 DATA ycc_half<>+28(SB)/4, $32768
 GLOBL ycc_half<>(SB), RODATA|NOPTR, $32
 
-// func yccH2V2AVX2(dst, y, cbN, cbF, crN, crF *byte, chunks int)
+// func yccH2V2SIMD(dst, y, cbN, cbF, crN, crF *byte, chunks int)
 //
 // chunks times: 16 chroma samples (and the one before and after each) to
 // 32 RGBA pixels.
-TEXT ·yccH2V2AVX2(SB), NOSPLIT, $0-56
+TEXT ·yccH2V2SIMD(SB), NOSPLIT, $0-56
 	MOVQ dst+0(FP), DI
 	MOVQ y+8(FP), SI
 	MOVQ cbN+16(FP), R8
@@ -347,11 +347,11 @@ done:
 	VZEROUPPER
 	RET
 
-// func yccH2V1AVX2(dst, y, cb, cr *byte, chunks int)
+// func yccH2V1SIMD(dst, y, cb, cr *byte, chunks int)
 //
 // yccH2V1: chunks times 16 chroma samples (and the one before and after
 // each) to 32 RGBA pixels.
-TEXT ·yccH2V1AVX2(SB), NOSPLIT, $0-40
+TEXT ·yccH2V1SIMD(SB), NOSPLIT, $0-40
 	MOVQ dst+0(FP), DI
 	MOVQ y+8(FP), SI
 	MOVQ cb+16(FP), R8
@@ -498,10 +498,10 @@ done1:
 	VZEROUPPER
 	RET
 
-// func yccRowAVX2(dst, y, cb, cr *byte, chunks int)
+// func yccRowSIMD(dst, y, cb, cr *byte, chunks int)
 //
 // yccRow: chunks times 16 pixels.
-TEXT ·yccRowAVX2(SB), NOSPLIT, $0-40
+TEXT ·yccRowSIMD(SB), NOSPLIT, $0-40
 	MOVQ dst+0(FP), DI
 	MOVQ y+8(FP), SI
 	MOVQ cb+16(FP), R8

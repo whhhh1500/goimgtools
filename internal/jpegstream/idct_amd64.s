@@ -163,8 +163,8 @@ DATA idct_perm<>+24(SB)/4, $3
 DATA idct_perm<>+28(SB)/4, $7
 GLOBL idct_perm<>(SB), RODATA|NOPTR, $32
 
-// func islowAVX2(b *block, dst *byte, stride int)
-TEXT ·islowAVX2(SB), NOSPLIT, $0-24
+// func islowSIMD(b *block, dst *byte, stride int)
+TEXT ·islowSIMD(SB), NOSPLIT, $0-24
 	MOVQ b+0(FP), AX
 	MOVQ dst+8(FP), DI
 	MOVQ stride+16(FP), SI
