@@ -145,7 +145,7 @@ err := goimgtools.Open("in.jpg").
 | `WithContext(ctx)` | `ctx` 取消或超时后中止处理，返回 `ctx.Err()` |
 | `Clone()` | 复制配方，用于从同一起点派生多个结果 |
 
-ICC 色彩配置支持在 JPEG、PNG、WebP、TIFF 中读写；EXIF 支持在 JPEG、PNG、WebP 中读写（TIFF 的 EXIF 位于其独立目录中，不读不写）；XMP 支持在 JPEG（不超过 64KB 的一个 APP1 段；更大数据包的扩展 XMP 不保留）、PNG（从 iTXt、zTXt 或 tEXt 读取，写为 iTXt）、WebP、TIFF 中读写。GIF、BMP 无法附带色彩配置，转换为这两种格式时依据输入的配置将颜色转换至 sRGB（实测：Display P3 图像不经转换时色差最大为 17.6，肉眼可见偏淡）。`Rotate()` 校正方向后，保留的 EXIF 中的方向改为「正向」。
+ICC 色彩配置支持在 JPEG、PNG、WebP、TIFF 中读写；EXIF 支持在 JPEG、PNG、WebP、TIFF 中读写（TIFF 把它放在第一个目录及其标签指向的 EXIF、GPS 目录中：描述图像的标签从那里读出，含方向，也写到那里）；XMP 支持在 JPEG（不超过 64KB 的一个 APP1 段；更大数据包的扩展 XMP 不保留）、PNG（从 iTXt、zTXt 或 tEXt 读取，写为 iTXt）、WebP、TIFF 中读写。GIF、BMP 无法附带色彩配置，转换为这两种格式时依据输入的配置将颜色转换至 sRGB（实测：Display P3 图像不经转换时色差最大为 17.6，肉眼可见偏淡）。`Rotate()` 校正方向后，保留的 EXIF 中的方向改为「正向」。
 
 转换支持以三原色加色调曲线描述的配置（相机、手机、Display P3、Adobe RGB、ProPhoto 均属此类），每个值与 LittleCMS（相对比色，超出 sRGB 的颜色截断）相差不超过 1；查找表类配置（少见，多用于打印机）原样保留，不作转换。
 
@@ -320,7 +320,7 @@ if e, ok, _ := inspect.ReadExif(goimgtools.Open("photo.jpg")); ok {
 说明：
 
 - 感知哈希反映整幅画面的明暗分布，因此图像经裁剪、旋转或镜像后即无法识别；不具明暗分布的图像（纯色、从一侧到另一侧的平滑渐变）对其而言无从区分。
-- EXIF 可从 JPEG、PNG、WebP 中读取。库写出文件时默认丢弃 EXIF（包括位置信息），如需保留，须显式调用 `KeepExif()`。
+- EXIF 可从 JPEG、PNG、WebP、TIFF 中读取。库写出文件时默认丢弃 EXIF（包括位置信息），如需保留，须显式调用 `KeepExif()`。
 - 上述工具均按行读取图像，内存有上限；`stats` 仅保留约 100KB 的颜色表，与图像尺寸无关。
 
 `Compare` 比较的是两个配方处理后的像素，因此可直接比较两种处理方式，无需先写出文件，例如同一图像采用两种缩放算法：`inspect.Compare(a.Resize(800, 0), b.Resize(800, 0, goimgtools.ResizeOptions{Kernel: goimgtools.KernelLinear}))`。输出格式（`JPEG()`、`WebP()` 等）不参与比较；如需比较编码造成的损失，应先调用 `ToBytes()`，再以 `FromBytes` 读回后比较。

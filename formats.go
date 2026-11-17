@@ -326,7 +326,7 @@ var builtin = []*formatDef{
 			if err != nil {
 				return err
 			}
-			out := &tiffstream.Options{ICC: o.ICC, Xmp: o.Xmp, Density: o.Density, Predictor: to.Predictor}
+			out := &tiffstream.Options{ICC: o.ICC, Xmp: o.Xmp, Exif: o.Exif, Density: o.Density, Predictor: to.Predictor}
 			switch to.Compression {
 			case TIFFNone:
 			case TIFFDeflate:

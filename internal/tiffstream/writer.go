@@ -38,7 +38,8 @@ type ifdEnt struct {
 	tag      int
 	datatype int
 	data     []uint32
-	raw      []byte // the bytes of an entry given as bytes (UNDEFINED, BYTE)
+	raw      []byte   // the bytes of the values, given as they are (in enc's order)
+	sub      []ifdEnt // the directory the entry points to (a LONG offset)
 }
 
 func (e ifdEnt) putData(p []byte) {
@@ -68,61 +69,59 @@ func (d byTag) Less(i, j int) bool { return d[i].tag < d[j].tag }
 func (d byTag) Swap(i, j int)      { d[i], d[j] = d[j], d[i] }
 
 func writeIFD(w io.Writer, ifdOffset int64, d []ifdEnt) error {
-	var buf [ifdLen]byte
-	// Make space for "pointer area" containing IFD entry data
-	// longer than 4 bytes.
-	parea := make([]byte, 1024)
-	pstart := ifdOffset + int64(ifdLen*len(d)) + 6
-	var o int // Current offset in parea.
+	_, err := w.Write(layoutIFD(d, ifdOffset))
+	return err
+}
 
-	// The IFD has to be written with the tags in ascending order.
+// layoutIFD lays out the directory d at offset base in the file: the
+// entries, the values longer than 4 bytes after them, then the directories
+// entries point to (sub), word-aligned.
+func layoutIFD(d []ifdEnt, base int64) []byte {
 	sort.Sort(byTag(d))
-
-	// Write the number of entries in this IFD.
-	if err := binary.Write(w, enc, uint16(len(d))); err != nil {
-		return err
-	}
-	for _, ent := range d {
-		enc.PutUint16(buf[0:2], uint16(ent.tag))
-		enc.PutUint16(buf[2:4], uint16(ent.datatype))
+	out := make([]byte, 2+ifdLen*len(d)+4) // the next directory: none
+	enc.PutUint16(out, uint16(len(d)))
+	// A value shorter than 4 bytes leaves the rest of its field as the
+	// entry before left it, as the reference writes it.
+	var field [4]byte
+	for i, ent := range d {
+		e := out[2+ifdLen*i:]
+		enc.PutUint16(e[0:2], uint16(ent.tag))
+		enc.PutUint16(e[2:4], uint16(ent.datatype))
+		size := uint32(typeSizes[ent.datatype])
 		count := uint32(len(ent.data))
 		if ent.datatype == dtRational {
 			count /= 2
 		}
-		datalen := 0
+		datalen := int(count * size)
 		if ent.raw != nil {
-			count, datalen = uint32(len(ent.raw)), len(ent.raw)
-		} else {
-			datalen = int(count * lengths[ent.datatype])
+			count, datalen = uint32(len(ent.raw))/size, len(ent.raw)
 		}
-		enc.PutUint32(buf[4:8], count)
+		if ent.sub != nil {
+			count, datalen = 1, 4
+		}
+		enc.PutUint32(e[4:8], count)
 		if datalen <= 4 {
-			ent.putData(buf[8:12])
-		} else {
-			if (o + datalen) > len(parea) {
-				newlen := len(parea) + 1024
-				for (o + datalen) > newlen {
-					newlen += 1024
-				}
-				newarea := make([]byte, newlen)
-				copy(newarea, parea)
-				parea = newarea
-			}
-			ent.putData(parea[o : o+datalen])
-			enc.PutUint32(buf[8:12], uint32(pstart+int64(o)))
-			o += datalen
+			ent.putData(field[:])
+			copy(e[8:12], field[:])
+			continue
 		}
-		if _, err := w.Write(buf[:]); err != nil {
-			return err
+		// (Values are not word-aligned, as the reference writes them.)
+		enc.PutUint32(field[:], uint32(base+int64(len(out))))
+		copy(out[2+ifdLen*i+8:], field[:])
+		out = append(out, make([]byte, datalen)...)
+		ent.putData(out[len(out)-datalen:])
+	}
+	for i, ent := range d {
+		if ent.sub == nil {
+			continue
 		}
+		if len(out)%2 == 1 {
+			out = append(out, 0)
+		}
+		enc.PutUint32(out[2+ifdLen*i+8:], uint32(base+int64(len(out))))
+		out = append(out, layoutIFD(ent.sub, base+int64(len(out)))...)
 	}
-	// The IFD ends with the offset of the next IFD in the file,
-	// or zero if it is the last one (page 14).
-	if err := binary.Write(w, enc, uint32(0)); err != nil {
-		return err
-	}
-	_, err := w.Write(parea[:o])
-	return err
+	return out
 }
 
 // Options are the encoding parameters.
@@ -143,6 +142,10 @@ type Options struct {
 	// Xmp is an XMP packet to embed (tag 700), at most
 	// pipeline.MaxMetaBytes.
 	Xmp []byte
+	// Exif is an EXIF block (in TIFF form) whose first directory's tags
+	// that describe the picture go into the file's (exif.go), with the
+	// directories they point to.
+	Exif []byte
 }
 
 var (
@@ -313,6 +316,7 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 	}
 	compression := uint32(cNone)
 	var icc, xmp []byte
+	var exif []ifdEnt
 	res := []uint32{72, 1}
 	if o != nil && o.Density > 0 {
 		num, den := density.Rational(o.Density)
@@ -326,6 +330,7 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 		if len(o.Xmp) <= pipeline.MaxMetaBytes {
 			xmp = o.Xmp
 		}
+		exif = exifEntries(o.Exif)
 	}
 	if compression != cNone && compression != cDeflate && compression != cLZW {
 		return errors.New("tiff: unsupported compression")
@@ -585,6 +590,7 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 	if len(xmp) > 0 {
 		ifd = append(ifd, ifdEnt{tag: tXMP, datatype: dtByte, raw: xmp})
 	}
+	ifd = append(ifd, exif...)
 
 	return writeIFD(w, imageLen+8, ifd)
 }

@@ -918,6 +918,11 @@ func (s *stream) finish() error {
 		return FormatError("too much pixel data")
 	}
 	if err := d.verifyChecksum(); err != nil { // as parseIDAT does
+		if err == io.EOF {
+			// The file ends where the IDAT chunk's CRC should be: the
+			// last strip must not pass for the end of the image.
+			err = io.ErrUnexpectedEOF
+		}
 		return err
 	}
 	for d.stage != dsSeenIEND {

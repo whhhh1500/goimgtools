@@ -279,10 +279,10 @@ func (s *stream) newImage(imgRect image.Rectangle) (img image.Image) {
 
 func (s *stream) Env() *pipeline.Env { return s.env }
 
-// Meta is the colour profile of the file. (EXIF, which TIFF keeps in a
-// directory of its own, is not read.)
+// Meta is the colour profile, the XMP packet and the EXIF block of the file
+// (made of its first directory, exif.go), and its resolution.
 func (s *stream) Meta() pipeline.Meta {
-	m := pipeline.Meta{ICC: s.d.icc, Xmp: s.d.xmp}
+	m := pipeline.Meta{ICC: s.d.icc, Xmp: s.d.xmp, Exif: s.d.exif}
 	switch s.d.resUnit {
 	case 0, resPerInch: // inches when the unit is not given
 		m.Density = density.FromPerInch(s.d.xres)

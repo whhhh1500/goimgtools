@@ -105,6 +105,7 @@ type decoder struct {
 	icc       []byte  // the colour profile, if the file has one
 	xres      float64 // the resolution across, in resUnit
 	xmp       []byte  // the XMP packet, if the file has one
+	exif      []byte  // the EXIF block made of the first directory (exif.go)
 	// jpegTables are the tables JPEG-compressed blocks share.
 	jpegTables []byte
 	resUnit    uint
@@ -618,6 +619,7 @@ func newDecoder(r io.ReaderAt) (*decoder, error) {
 		}
 		prevTag = tag
 	}
+	d.exif = readExif(d.r, d.byteOrder, p)
 
 	if d.config.Width, err = d.firstIntVal(tImageWidth); err != nil {
 		return nil, err

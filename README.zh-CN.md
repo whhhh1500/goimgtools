@@ -98,7 +98,6 @@ goimgtools batch -resize 1920x1920 -no-enlarge -quality 80 -format jpeg in_dir o
 ## 限制
 
 - 不支持 AVIF 与 HEIC。
-- 不读写 TIFF 中的 EXIF（ICC 色彩配置可读写）。
 - 图像已不是灰度（例如叠加了彩色内容）时，其灰度配置按原样写出。
 - JPEG 解码中的熵解码为顺序过程（自 `Threads(5)` 起反 DCT 与色彩换算交给其他核心）；多线程下它是 JPEG 解码最慢的环节。
 - 未内置颜色曲线；逐像素的调整可用 `Pixels` 以数行代码实现（参见[扩展](docs/zh-CN/extending.md)中的灰度示例），依赖邻域像素的滤镜可实现为 `Pipe` 环节或 `Convolve` 卷积核。

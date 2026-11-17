@@ -98,7 +98,6 @@ Staged data is kept in memory up to 1/8 of the memory limit (8MB by default); be
 ## Limitations
 
 - AVIF and HEIC are not supported.
-- EXIF in TIFF files is neither read nor written (ICC profiles are).
 - A grey profile on an image that is no longer grey (after a coloured overlay, say) is written unchanged.
 - Entropy decoding in JPEG is sequential (from `Threads(5)` the inverse DCT and the conversion of colour go to the other cores); with many threads it is the slowest stage of decoding a JPEG.
 - Colour curves are not built in; a per-pixel adjustment takes a few lines with `Pixels` (see the grayscale example in [Extending](docs/extending.md)), and a filter that needs neighbouring pixels can be a `Pipe` stage or a `Convolve` kernel.

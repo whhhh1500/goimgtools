@@ -110,7 +110,7 @@ func (e Exif) String() string {
 // the image has none. Only the header of the file is read.
 //
 // Whether a format's EXIF is read at all is the library's matter: at
-// present JPEG and PNG. What a block says about position is as private as
+// present JPEG, PNG, WebP and TIFF (whose first directory holds it). What a block says about position is as private as
 // the place it names; the library drops the block from what it writes
 // unless KeepExif asks for it.
 func ReadExif(img *goimgtools.Image) (Exif, bool, error) {

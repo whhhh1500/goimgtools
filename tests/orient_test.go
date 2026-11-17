@@ -325,11 +325,14 @@ func TestMetadataKept(t *testing.T) {
 			return b
 		}
 		if out == "tiff" {
-			// TIFF keeps its EXIF in a directory of its own, which is not
-			// written: the profile only.
+			// TIFF keeps its EXIF in its first directory: written with
+			// KeepExif, with the profile.
 			a := enc(FromBytes(jp).KeepExif())
-			if _, prof, ex, _, gotICC := read(a); !prof || ex || !bytes.Equal(gotICC, icc) {
+			if _, prof, ex, _, gotICC := read(a); !prof || !ex || !bytes.Equal(gotICC, icc) {
 				t.Errorf("tiff: profile %v (intact %v), exif %v", prof, bytes.Equal(gotICC, icc), ex)
+			}
+			if _, _, ex, _, _ := read(enc(FromBytes(jp))); ex {
+				t.Error("tiff without KeepExif: EXIF written")
 			}
 			if _, prof, _, _, _ := read(enc(FromBytes(jp).StripICC())); prof {
 				t.Error("tiff StripICC: profile kept")

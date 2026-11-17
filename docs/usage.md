@@ -145,7 +145,7 @@ When no output format is specified and no extension is available, the output for
 | `WithContext(ctx)` | Stops processing when `ctx` is cancelled or times out, and returns `ctx.Err()` |
 | `Clone()` | Copies the recipe, so that several results can be derived from the same starting point |
 
-ICC colour profiles are read and written in JPEG, PNG, WebP and TIFF; EXIF is read and written in JPEG, PNG and WebP (TIFF stores EXIF in a separate directory, which is neither read nor written); XMP in JPEG (an APP1 segment of up to 64KB; the extended XMP of larger packets is not kept), PNG (read from iTXt, zTXt or tEXt, written as iTXt), WebP and TIFF. GIF and BMP cannot carry a colour profile, so when converting to these formats, colours are converted to sRGB using the input's profile (measured: without conversion, a Display P3 image shows a colour difference of up to 17.6 and appears visibly washed out). After `Rotate()` corrects the orientation, the orientation in the preserved EXIF is set to "upright".
+ICC colour profiles are read and written in JPEG, PNG, WebP and TIFF; EXIF is read and written in JPEG, PNG, WebP and TIFF (a TIFF holds it in its first directory, with the EXIF and GPS directories its tags point to: what describes the picture is read from there, the orientation included, and written there); XMP in JPEG (an APP1 segment of up to 64KB; the extended XMP of larger packets is not kept), PNG (read from iTXt, zTXt or tEXt, written as iTXt), WebP and TIFF. GIF and BMP cannot carry a colour profile, so when converting to these formats, colours are converted to sRGB using the input's profile (measured: without conversion, a Display P3 image shows a colour difference of up to 17.6 and appears visibly washed out). After `Rotate()` corrects the orientation, the orientation in the preserved EXIF is set to "upright".
 
 Conversion supports profiles described by three primaries and tone curves (cameras, phones, Display P3, Adobe RGB and ProPhoto all belong to this category); every value is within 1 of LittleCMS (relative colorimetric, colours outside sRGB clipped). Lookup-table profiles (uncommon, mostly used for printers) are preserved unchanged and not converted.
 
@@ -320,7 +320,7 @@ Measured (single thread): `info` and `exif` read only the file header and take a
 Notes:
 
 - The hash reflects the light-and-dark layout of the whole picture, so it does not recognise an image after cropping, rotation or mirroring; images without such a layout (solid colours, smooth gradients from one side to the other) are indistinguishable to it.
-- EXIF is read from JPEG, PNG and WebP. When writing files, the library discards EXIF (including location) by default; to preserve it, call `KeepExif()` explicitly.
+- EXIF is read from JPEG, PNG, WebP and TIFF. When writing files, the library discards EXIF (including location) by default; to preserve it, call `KeepExif()` explicitly.
 - All these tools read images row by row within bounded memory; `stats` retains only a colour table of about 100KB, regardless of image size.
 
 `Compare` compares the pixels of the two recipes after processing, so two processing approaches can be compared directly without first writing files; for example, the same image resized with two algorithms: `inspect.Compare(a.Resize(800, 0), b.Resize(800, 0, goimgtools.ResizeOptions{Kernel: goimgtools.KernelLinear}))`. The output format (`JPEG()`, `WebP()` and so on) is not part of the comparison; to measure the loss caused by encoding, call `ToBytes()` first, then read the result back with `FromBytes` and compare.
