@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"encoding/binary"
 	"fmt"
 	"image"
 	"image/color"
@@ -252,15 +253,32 @@ func (c *rechunk) Next() (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Fast path: the source strip already is exactly this band.
-	if fb := first.Bounds(); fb.Min.Y == y0 && fb.Max.Y == y1 {
+	// Fast paths: the source strip already is exactly this band, or holds
+	// all of its rows (an image in memory, a tall strip): the band is the
+	// strip or a view of it, valid as long as the strip is, which is until
+	// this Next is called again.
+	fb := first.Bounds()
+	band := first
+	if fb.Min.Y != y0 || fb.Max.Y != y1 {
+		band = nil
+		if fb.Min.Y <= y0 && fb.Max.Y >= y1 {
+			if _, ok := asPix(first); ok {
+				if si, ok := first.(interface {
+					SubImage(image.Rectangle) image.Image
+				}); ok {
+					band = si.SubImage(image.Rect(b.Min.X, y0, b.Max.X, y1))
+				}
+			}
+		}
+	}
+	if band != nil {
 		c.y = y1
 		if y1 == b.Max.Y {
 			if err := c.rows.Drain(); err != nil {
 				return nil, err
 			}
 		}
-		return first, nil
+		return band, nil
 	}
 	rect := image.Rect(b.Min.X, y0, b.Max.X, y1)
 	if c.band == nil || c.band.Bounds().Dy() < y1-y0 || !sameType(c.band, first) {
@@ -273,7 +291,7 @@ func (c *rechunk) Next() (image.Image, error) {
 		c.reserved = need
 		c.band = NewBand(first, full)
 	}
-	band := subBand(c.band, rect)
+	band = subBand(c.band, rect)
 	for y := y0; y < y1; {
 		s, err := c.rows.Row(y)
 		if err != nil {
@@ -423,11 +441,50 @@ func (s *imageSource) Bounds() image.Rectangle { return s.m.Bounds() }
 func (s *imageSource) Opaque() bool {
 	if s.opaque == 0 {
 		s.opaque = 2
-		if o, ok := s.m.(interface{ Opaque() bool }); ok && o.Opaque() {
+		var opaque bool
+		switch m := s.m.(type) {
+		case *image.RGBA:
+			opaque = alphaFull(m.Pix, m.Stride, m.Rect)
+		case *image.NRGBA:
+			opaque = alphaFull(m.Pix, m.Stride, m.Rect)
+		default:
+			o, ok := s.m.(interface{ Opaque() bool })
+			opaque = ok && o.Opaque()
+		}
+		if opaque {
 			s.opaque = 1
 		}
 	}
 	return s.opaque == 1
+}
+
+// alphaFull is (*image.RGBA).Opaque for the 8-bit four-channel pixels of r
+// in pix: whether every alpha byte is 0xff. It takes 32 bytes at a time,
+// the alpha bytes of eight pixels ANDed together, 0xff only when all are.
+func alphaFull(pix []byte, stride int, r image.Rectangle) bool {
+	if r.Empty() {
+		return true
+	}
+	const mask = 0xff000000ff000000
+	w := 4 * r.Dx()
+	for y, i := 0, 0; y < r.Dy(); y, i = y+1, i+stride {
+		row := pix[i : i+w]
+		x := 0
+		for ; x+32 <= len(row); x += 32 {
+			q := row[x : x+32 : x+32]
+			a := binary.LittleEndian.Uint64(q) & binary.LittleEndian.Uint64(q[8:]) &
+				binary.LittleEndian.Uint64(q[16:]) & binary.LittleEndian.Uint64(q[24:])
+			if a&mask != mask {
+				return false
+			}
+		}
+		for ; x < len(row); x += 4 {
+			if row[x+3] != 0xff {
+				return false
+			}
+		}
+	}
+	return true
 }
 func (s *imageSource) ColorModel() color.Model { return s.m.ColorModel() }
 func (s *imageSource) Env() *Env               { return s.env }
@@ -442,6 +499,12 @@ func (s *imageSource) Next() (image.Image, error) {
 		return nil, io.EOF
 	}
 	n := StripRows(int64(b.Dx())*8, b.Dy())
+	if n < 16 && int64(b.Dx())*8*16 <= 1<<20 {
+		// Views of the image cost nothing here: 16 rows, so that the
+		// bands of the JPEG and WebP encoders (8 or 16 rows) lie in one
+		// strip and are handed on as views, not copied (see Rechunk).
+		n = min(16, b.Dy())
+	}
 	r := image.Rect(b.Min.X, s.y, b.Max.X, min(s.y+n, b.Max.Y))
 	s.y = r.Max.Y
 	if si, ok := s.m.(interface {

@@ -1119,7 +1119,9 @@ func (e *encoder) bands(src pipeline.Source, first image.Image, do func(c *bandC
 	var lut [256][3]uint8 // the palette of a paletted strip
 	_, gray := first.(*image.Gray)
 	// NRGBA strips of an image without transparency are RGBA as they are.
-	opaque := pipeline.IsOpaque(src)
+	// Whether it has any is asked only of NRGBA strips: for an image in
+	// memory, the answer takes a pass over the pixels.
+	opaque := -1
 	for m := first; ; {
 		bounds := m.Bounds()
 		c := &bandConv{m: m, bounds: bounds, lut: &lut}
@@ -1141,7 +1143,13 @@ func (e *encoder) bands(src pipeline.Source, first image.Image, do func(c *bandC
 				bounds.Min.X >= 0 && bounds.Min.Y >= 0 && bounds.Min.X%2 == 0 && bounds.Min.Y%2 == 0
 			c.direct444 = c.ycbcr != nil && c.ycbcr.SubsampleRatio == image.YCbCrSubsampleRatio444
 			c.nrgba, _ = m.(*image.NRGBA)
-			if c.nrgba != nil && opaque {
+			if c.nrgba != nil && opaque < 0 {
+				opaque = 0
+				if pipeline.IsOpaque(src) {
+					opaque = 1
+				}
+			}
+			if c.nrgba != nil && opaque == 1 {
 				c.rgba, c.nrgba = &image.RGBA{Pix: c.nrgba.Pix, Stride: c.nrgba.Stride, Rect: c.nrgba.Rect}, nil
 			}
 			c.pal, _ = m.(*image.Paletted)
