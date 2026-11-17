@@ -320,14 +320,30 @@ func (m *Image) Trim(threshold float64, opts ...TrimOptions) *Image {
 // and cosine rounded as libvips' are. The canvas is the box around the
 // turned image (each side rounded to the nearest pixel); the corners are
 // the background colour, nil for black, color.Transparent for none. The
-// pixels are interpolated bilinearly. A multiple of 90 degrees is a plain
-// quarter or half turn instead, exact, as Rotate does it (and sharp).
+// pixels are interpolated bilinearly (see RotateOptions). A multiple of 90
+// degrees is a plain quarter or half turn instead, exact, as Rotate does it
+// (and sharp).
+//
+// With RotateOptions.Method RotatePillow it is Pillow's Image.rotate (of
+// -degrees, Pillow turning anticlockwise), to the byte: see RotatePillow.
 //
 // The whole image is kept in working storage first (a temporary file beyond
 // its share of the limit), as for a quarter turn.
-func (m *Image) RotateBy(degrees float64, background color.Color) *Image {
+func (m *Image) RotateBy(degrees float64, background color.Color, opts ...RotateOptions) *Image {
+	m.atMostOne("RotateBy", len(opts))
 	if math.IsNaN(degrees) || math.IsInf(degrees, 0) {
 		return m.fail(errors.New("goimgtools: RotateBy takes a finite angle"))
+	}
+	o := first(opts)
+	if _, ok := interpolatorNames[o.Interpolator]; !ok {
+		return m.fail(fmt.Errorf("goimgtools: unknown Interpolator %d", o.Interpolator))
+	}
+	switch o.Method {
+	case RotateLibvips:
+	case RotatePillow:
+		return m.add(rotatePillowOp{degrees, background, o})
+	default:
+		return m.fail(fmt.Errorf("goimgtools: unknown RotateMethod %d", o.Method))
 	}
 	turn := math.Mod(degrees, 360)
 	if turn < 0 {
@@ -344,8 +360,42 @@ func (m *Image) RotateBy(degrees float64, background color.Color) *Image {
 	if background == nil {
 		background = color.Black
 	}
-	return m.add(rotateAnyOp{degrees, background})
+	return m.add(rotateAnyOp{degrees, background, o.Interpolator})
 }
+
+// RotateOptions are the optional settings of RotateBy.
+type RotateOptions struct {
+	// Method is whose rotation it is: RotateLibvips, sharp's (the
+	// default), or RotatePillow, Pillow's.
+	Method RotateMethod
+	// Interpolator works out the colours between pixels: bilinear (the
+	// default), nearest or bicubic, each that of the Method. (Pillow's own
+	// default is nearest.)
+	Interpolator Interpolator
+	// Expand, with RotatePillow, makes the canvas hold the whole turned
+	// image, as Pillow's expand; without it the canvas keeps the size of
+	// the image and the corners are cut off. RotateLibvips always holds
+	// the whole image.
+	Expand bool
+}
+
+// RotateMethod is whose rotation RotateBy does.
+type RotateMethod int
+
+const (
+	// RotateLibvips is sharp's rotate (libvips' rotate), to the byte.
+	RotateLibvips RotateMethod = iota
+	// RotatePillow is Pillow's Image.rotate, to the byte: the turn about
+	// the centre, the source of each pixel worked out in double precision
+	// from the sine and cosine rounded to 15 decimals as Pillow rounds
+	// them; nearest in 16.16 fixed point, bilinear and bicubic (Pillow's,
+	// a = -1) dropping the fraction, an image with transparency worked
+	// out with its colours multiplied by alpha for those two. The corners
+	// are the background colour, nil for none (black without
+	// transparency). A half turn, and a quarter turn of a square image or
+	// with Expand, is a plain turn, as Pillow does it.
+	RotatePillow
+)
 
 // ---- the operations ----
 
@@ -569,9 +619,79 @@ func (o affineOp) words() []string {
 type rotateAnyOp struct {
 	deg        float64
 	background color.Color
+	interp     Interpolator
 }
 
 func (o rotateAnyOp) apply(src pipeline.Source, _ *run) (pipeline.Source, error) {
 	sin, cos := ops.SinCosDegrees(o.deg)
-	return ops.Affine(src, cos, -sin, sin, cos, 0, 0, 0, 0, o.background, ops.AffineBilinear)
+	interp := map[Interpolator]int{InterpolateBilinear: ops.AffineBilinear, InterpolateNearest: ops.AffineNearest, InterpolateBicubic: ops.AffineBicubic}[o.interp]
+	return ops.Affine(src, cos, -sin, sin, cos, 0, 0, 0, 0, o.background, interp)
+}
+
+type rotatePillowOp struct {
+	deg        float64
+	background color.Color
+	o          RotateOptions
+}
+
+func (o rotatePillowOp) apply(src pipeline.Source, _ *run) (pipeline.Source, error) {
+	b := src.Bounds()
+	w, h := b.Dx(), b.Dy()
+	// Pillow turns anticlockwise; its angle modulo 360, as Python's %.
+	angle := math.Mod(-o.deg, 360)
+	if angle < 0 {
+		angle += 360
+	}
+	switch {
+	case angle == 0:
+		return src, nil
+	case angle == 180:
+		return ops.Orient(src, ops.Rotate180), nil
+	case (angle == 90 || angle == 270) && (o.o.Expand || w == h):
+		if angle == 90 {
+			return ops.Orient(src, ops.Rotate270), nil
+		}
+		return ops.Orient(src, ops.Rotate90), nil
+	}
+	a, ow, oh := pillowRotation(angle, w, h, o.o.Expand)
+	filter := map[Interpolator]int{InterpolateBilinear: ops.PillowBilinear, InterpolateNearest: ops.PillowNearest, InterpolateBicubic: ops.PillowBicubic}[o.o.Interpolator]
+	return ops.AffinePillow(src, a, ow, oh, filter, o.background)
+}
+
+// pillowRotation is the matrix (from the centres of output pixels to
+// source points) and the size of Image.rotate(angle, expand=expand) of a
+// w x h image, worked out as Pillow's Python does.
+func pillowRotation(angle float64, w, h int, expand bool) (a [6]float64, ow, oh int) {
+	round15 := func(v float64) float64 {
+		r, _ := strconv.ParseFloat(strconv.FormatFloat(v, 'f', 15, 64), 64)
+		return r
+	}
+	pi := math.Pi
+	rad := -(angle * (pi / 180))
+	a = [6]float64{round15(math.Cos(rad)), round15(math.Sin(rad)), 0, round15(-math.Sin(rad)), round15(math.Cos(rad)), 0}
+	tr := func(x, y float64) (float64, float64) {
+		ax, by := float64(a[0]*x), float64(a[1]*y)
+		dx, ey := float64(a[3]*x), float64(a[4]*y)
+		u, v := float64(ax+by), float64(dx+ey)
+		return float64(u + a[2]), float64(v + a[5])
+	}
+	// (Divisions by 2 become multiplications by 0.5; the conversions
+	// keep them from being fused with the additions.)
+	cx, cy := float64(float64(w)/2), float64(float64(h)/2)
+	a[2], a[5] = tr(-cx, -cy)
+	a[2] += cx
+	a[5] += cy
+	ow, oh = w, h
+	if expand {
+		minX, maxX, minY, maxY := math.Inf(1), math.Inf(-1), math.Inf(1), math.Inf(-1)
+		for _, p := range [4][2]float64{{0, 0}, {float64(w), 0}, {float64(w), float64(h)}, {0, float64(h)}} {
+			x, y := tr(p[0], p[1])
+			minX, maxX, minY, maxY = min(minX, x), max(maxX, x), min(minY, y), max(maxY, y)
+		}
+		nw := int(math.Ceil(maxX)) - int(math.Floor(minX))
+		nh := int(math.Ceil(maxY)) - int(math.Floor(minY))
+		a[2], a[5] = tr(float64(-float64(nw-w)/2), float64(-float64(nh-h)/2))
+		ow, oh = nw, nh
+	}
+	return a, ow, oh
 }

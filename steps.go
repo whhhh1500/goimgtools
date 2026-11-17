@@ -160,7 +160,23 @@ func describe(op operation) (string, []string) {
 	case trimOp:
 		return "trim", o.words()
 	case rotateAnyOp:
-		return "rotate", []string{f(o.deg), colorWord(o.background)}
+		w := []string{f(o.deg), colorWord(o.background)}
+		if o.interp != InterpolateBilinear {
+			w = append(w, interpolatorNames[o.interp])
+		}
+		return "rotate", w
+	case rotatePillowOp:
+		w := []string{f(o.deg), "transparent", "pillow"}
+		if o.background != nil {
+			w[1] = colorWord(o.background)
+		}
+		if o.o.Interpolator != InterpolateBilinear {
+			w = append(w, interpolatorNames[o.o.Interpolator])
+		}
+		if o.o.Expand {
+			w = append(w, "expand")
+		}
+		return "rotate", w
 	case affineOp:
 		return "affine", o.words()
 	case levelsOp:
@@ -574,9 +590,10 @@ var builtInOps = map[string]OperationDef{
 			m.Extract(v[0], v[1], v[2], v[3])
 			return nil
 		}},
-	"rotate": {Name: "rotate", Usage: "auto|DEGREES[,BACKGROUND]", Help: "Rotate (auto: by the EXIF orientation) or RotateBy, clockwise",
+	"rotate": {Name: "rotate", Usage: "auto|DEGREES[,BACKGROUND][,pillow][,nearest|bilinear|bicubic][,expand]",
+		Help: "Rotate (auto: by the EXIF orientation) or RotateBy, clockwise; pillow: as Pillow's rotate, expand: the canvas holds the whole image",
 		builtIn: func(m *Image, a []string) error {
-			if err := wantArgs(a, 1, 2); err != nil {
+			if err := wantArgs(a, 1, 5); err != nil {
 				return err
 			}
 			if strings.EqualFold(a[0], "auto") && len(a) == 1 {
@@ -588,12 +605,30 @@ var builtInOps = map[string]OperationDef{
 				return err
 			}
 			var bg color.Color
-			if len(a) == 2 {
-				if bg, err = ParseColor(a[1]); err != nil {
-					return err
+			var o RotateOptions
+			seen := map[string]bool{}
+			for _, w := range a[1:] {
+				kind := w
+				switch {
+				case w == "pillow":
+					o.Method = RotatePillow
+				case w == "expand":
+					o.Expand = true
+				case w == "nearest" || w == "bilinear" || w == "bicubic":
+					kind = "interpolator"
+					o.Interpolator, _ = pick(interpolatorNames, w, "interpolator")
+				default:
+					kind = "background"
+					if bg, err = ParseColor(w); err != nil {
+						return err
+					}
 				}
+				if seen[kind] {
+					return fmt.Errorf("%s given twice", kind)
+				}
+				seen[kind] = true
 			}
-			m.RotateBy(v[0], bg)
+			m.RotateBy(v[0], bg, o)
 			return nil
 		}},
 	"affine": {Name: "affine", Usage: "A,B,C,D[,BACKGROUND[,IDX,IDY,ODX,ODY]][,bilinear|nearest|bicubic]", Help: "Affine: (x, y) moves to (A·x + B·y, C·x + D·y), as sharp's affine",

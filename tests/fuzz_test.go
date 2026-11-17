@@ -263,7 +263,7 @@ func FuzzChain(f *testing.F) {
 			m.Trim(float64(h%60), TrimOptions{LineArt: w&1 == 1, Margin: int(w % 5)})
 		}
 		if has(7) {
-			m.RotateBy(float64(int16(h))/7, color.Transparent)
+			m.RotateBy(float64(int16(h))/7, color.Transparent, RotateOptions{Method: RotateMethod(more & 1), Interpolator: Interpolator(w % 3), Expand: h&2 != 0})
 		}
 		// The level and window operations, each a quarter of the time, from
 		// bits the operations above use too.

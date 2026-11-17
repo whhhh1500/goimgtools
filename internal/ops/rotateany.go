@@ -30,6 +30,8 @@ type rotated struct {
 	// for each output column.
 	aff  *affineMap
 	span float64
+	// pil, instead of aff: Pillow's transform (see pillowMap).
+	pil *pillowMap
 
 	sc             *pipeline.Scratch
 	sw, sh         int // source size
@@ -75,7 +77,7 @@ func (t *rotated) columns(p int) (int, int) {
 func (t *rotated) Env() *pipeline.Env      { return t.env }
 func (t *rotated) Bounds() image.Rectangle { return t.rect }
 func (t *rotated) ColorModel() color.Model {
-	if t.aff != nil && t.aff.float {
+	if t.pil != nil || t.aff != nil && t.aff.float {
 		return color.NRGBAModel
 	}
 	return color.RGBAModel
@@ -142,7 +144,7 @@ func (t *rotated) load() error {
 		r := s.Bounds()
 		var pix []uint8
 		var stride int
-		if n, ok := s.(*image.NRGBA); ok && t.aff != nil {
+		if n, ok := s.(*image.NRGBA); ok && (t.aff != nil || t.pil != nil) {
 			pix, stride = n.Pix[n.PixOffset(b.Min.X, r.Min.Y):], n.Stride
 		} else {
 			dst, err := conv.get(r)
@@ -256,9 +258,16 @@ func (t *rotated) Next() (image.Image, error) {
 	}
 	var failed error
 	var mu sync.Mutex
+	if t.pil != nil {
+		t.pil.startRows(t.y, y1)
+	}
 	t.env.Parallel(len(t.caches), func(p int) {
 		x0, x1 := t.columns(p)
-		if err := t.renderAffine(out, x0, x1, t.caches[p]); err != nil {
+		render := t.renderAffine
+		if t.pil != nil {
+			render = t.renderPillow
+		}
+		if err := render(out, x0, x1, t.caches[p]); err != nil {
 			mu.Lock()
 			if failed == nil {
 				failed = err
@@ -270,7 +279,7 @@ func (t *rotated) Next() (image.Image, error) {
 		return nil, failed
 	}
 	t.y = y1
-	if t.aff != nil && t.aff.float {
+	if t.pil != nil || t.aff != nil && t.aff.float {
 		return &image.NRGBA{Pix: out.Pix, Stride: out.Stride, Rect: out.Rect}, nil
 	}
 	return out, nil
