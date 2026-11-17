@@ -271,9 +271,7 @@ func (d *Decoder) parseResiduals4(r *partition, plane int, context uint8, quant 
 				goto eof
 			}
 		}
-		if bit, value, nb, rng = bitOf(value, nb, rng, uniformProb); bit {
-			c = -c
-		}
+		c, value, nb, rng = signedOf(value, nb, rng, c)
 		d.coeff[coeffBase+int(z)] = int16(c)
 		if n == 16 {
 			break

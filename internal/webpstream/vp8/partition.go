@@ -130,6 +130,19 @@ func bitOf(value uint64, nb int, rangeM1 uint32, prob uint8) (bool, uint64, int,
 	return bit, value, nb - shift, rng<<shift - 1
 }
 
+// signedOf is libwebp's VP8GetSigned: the next bit, of probability one
+// half, as the sign of v, without a branch (the sign of a coefficient is as
+// likely to be either). It takes one bit off the range, which comes to the
+// same as bitOf with probability 128 except when rangeM1 is 254, which it
+// is only before the first bit of a partition.
+func signedOf(value uint64, nb int, rangeM1 uint32, v int32) (int32, uint64, int, uint32) {
+	pos := uint(nb) & 63
+	split := rangeM1 >> 1
+	mask := int32(split-uint32(value>>pos)) >> 31 // -1 for a 1
+	value -= uint64((split+1)&uint32(mask)) << pos
+	return (v ^ mask) - mask, value, nb - 1, (rangeM1 + uint32(mask)) | 1
+}
+
 // readBit returns the next bit, as libwebp's VP8GetBit does.
 func (p *partition) readBit(prob uint8) bool {
 	rng := p.rangeM1
