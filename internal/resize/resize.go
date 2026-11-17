@@ -339,11 +339,16 @@ type scaler struct {
 	// A greyscale source is scaled as one channel and stays greyscale:
 	// the values are the ones the red, green and blue of the four-channel
 	// path would all get, at a quarter of the memory and the work.
-	gray       bool
-	grow       []float64
-	gtmp       []float64
-	gfree      [][]float64
-	gband      *image.Gray
+	gray  bool
+	grow  []float64
+	gtmp  []float64
+	gfree [][]float64
+	gband *image.Gray
+	// deep: a source of 16-bit samples gives 16-bit strips (RGBA64,
+	// Gray16), the values x/image's Scale gives such a destination.
+	deep       bool
+	band64     *image.RGBA64
+	gband16    *image.Gray16
 	n          int
 	reserved   int64
 	constAlpha bool
@@ -401,11 +406,16 @@ func ScaleExtent(src pipeline.Source, dw, dh int, q *draw.Kernel, ew, eh float64
 		return nil, errors.New("goimgtools: resize dimensions too large")
 	}
 	s := &scaler{src: src, env: pipeline.EnvOf(src), sb: sb, dw: dw, dh: dh}
-	s.gray = src.ColorModel() == color.GrayModel
+	model := src.ColorModel()
+	s.gray = model == color.GrayModel || model == color.Gray16Model
+	s.deep = model == color.RGBA64Model || model == color.NRGBA64Model || model == color.Gray16Model
 	// Bytes per pixel: of a strip, and of a row of sums.
 	bpp, fpp := int64(4), int64(32)
 	if s.gray {
 		bpp, fpp = 1, 8
+	}
+	if s.deep {
+		bpp *= 2
 	}
 	s.n = pipeline.StripRows(int64(dw)*bpp, dh)
 
@@ -462,11 +472,19 @@ func ScaleExtent(src pipeline.Source, dw, dh int, q *draw.Kernel, ew, eh float64
 	if s.gray {
 		s.grow = make([]float64, sb.Dx())
 		s.gtmp = make([]float64, dw)
-		s.gband = image.NewGray(image.Rect(0, 0, dw, s.n))
+		if s.deep {
+			s.gband16 = image.NewGray16(image.Rect(0, 0, dw, s.n))
+		} else {
+			s.gband = image.NewGray(image.Rect(0, 0, dw, s.n))
+		}
 	} else {
 		s.row = make([][4]float64, sb.Dx())
 		s.tmp = make([][4]float64, dw)
-		s.band = image.NewRGBA(image.Rect(0, 0, dw, s.n))
+		if s.deep {
+			s.band64 = image.NewRGBA64(image.Rect(0, 0, dw, s.n))
+		} else {
+			s.band = image.NewRGBA(image.Rect(0, 0, dw, s.n))
+		}
 	}
 	if err := s.share(fpp); err != nil {
 		s.env.Budget.Release(s.reserved)
@@ -517,8 +535,13 @@ func (s *scaler) share(fpp int64) error {
 func (s *scaler) Env() *pipeline.Env      { return s.env }
 func (s *scaler) Bounds() image.Rectangle { return image.Rect(0, 0, s.dw, s.dh) }
 func (s *scaler) ColorModel() color.Model {
-	if s.gray {
+	switch {
+	case s.gray && s.deep:
+		return color.Gray16Model
+	case s.gray:
 		return color.GrayModel
+	case s.deep:
+		return color.RGBA64Model
 	}
 	return color.RGBAModel
 }
@@ -790,6 +813,11 @@ func (s *scaler) emit(dst []uint8) {
 				dst[x] = s.lin.encode[ftou(pr*inv)]
 				continue
 			}
+			if s.deep {
+				v := ftou(pr * inv)
+				dst[2*x], dst[2*x+1] = uint8(v>>8), uint8(v)
+				continue
+			}
 			dst[x] = uint8(ftou(pr*inv) >> 8)
 		}
 		s.gfree = append(s.gfree, o.g)
@@ -809,6 +837,14 @@ func (s *scaler) emit(dst []uint8) {
 		}
 		if pb > pa {
 			pb = pa
+		}
+		if s.deep {
+			d := dst[x*8 : x*8+8 : x*8+8]
+			for c, v := range [4]float64{pr, pg, pb, pa} {
+				u := ftou(v * inv)
+				d[2*c], d[2*c+1] = uint8(u>>8), uint8(u)
+			}
+			continue
 		}
 		d := dst[x*4 : x*4+4 : x*4+4]
 		if s.lin != nil {
@@ -849,16 +885,26 @@ func (s *scaler) Next() (image.Image, error) {
 	var strip image.Image
 	var pix []uint8
 	stride := s.dw * 4
-	if s.gray {
+	switch {
+	case s.gray && s.deep:
+		g := pipeline.Relabel(s.gband16, rect).(*image.Gray16)
+		strip, pix, stride = g, g.Pix, g.Stride
+	case s.gray:
 		g := pipeline.Relabel(s.gband, rect).(*image.Gray)
 		strip, pix, stride = g, g.Pix, g.Stride
-	} else {
+	case s.deep:
+		c := pipeline.Relabel(s.band64, rect).(*image.RGBA64)
+		strip, pix, stride = c, c.Pix, c.Stride
+	default:
 		c := pipeline.Relabel(s.band, rect).(*image.RGBA)
 		strip, pix, stride = c, c.Pix, c.Stride
 	}
 	rowBytes := s.dw * 4
 	if s.gray {
 		rowBytes = s.dw
+	}
+	if s.deep {
+		rowBytes *= 2
 	}
 	for s.dLo < y1 {
 		// The first open row is complete once all its contributions are in.

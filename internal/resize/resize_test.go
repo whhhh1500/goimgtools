@@ -36,7 +36,9 @@ func TestMatchesXImage(t *testing.T) {
 					t.Errorf("%s/%s/%v: pixels differ from x/image", name, kn, sz)
 				}
 				// A greyscale image stays one; nothing else becomes one.
-				if _, isGray := got.(*image.Gray); isGray != (name == "gray") {
+				_, gray8 := got.(*image.Gray)
+				_, gray16 := got.(*image.Gray16)
+				if (gray8 || gray16) != (name == "gray" || name == "gray16") {
 					t.Errorf("%s/%s/%v: scaled to %T", name, kn, sz, got)
 				}
 			}
@@ -46,12 +48,26 @@ func TestMatchesXImage(t *testing.T) {
 
 // rgbaPix returns the pixels of a scaled image as RGBA bytes. A greyscale
 // result stands for its value in red, green and blue, fully opaque: what
-// x/image writes for a greyscale source.
+// x/image writes for a greyscale source. Of 16-bit samples (from a 16-bit
+// source) the high byte is what x/image writes to an RGBA image.
 func rgbaPix(t *testing.T, m image.Image) []uint8 {
 	t.Helper()
 	switch p := m.(type) {
 	case *image.RGBA:
 		return p.Pix
+	case *image.RGBA64:
+		out := make([]uint8, 0, len(p.Pix)/2)
+		for i := 0; i < len(p.Pix); i += 2 {
+			out = append(out, p.Pix[i])
+		}
+		return out
+	case *image.Gray16:
+		out := make([]uint8, 0, len(p.Pix)*2)
+		for i := 0; i < len(p.Pix); i += 2 {
+			v := p.Pix[i]
+			out = append(out, v, v, v, 255)
+		}
+		return out
 	case *image.Gray:
 		out := make([]uint8, 0, len(p.Pix)*4)
 		for _, v := range p.Pix {

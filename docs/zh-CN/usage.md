@@ -41,7 +41,7 @@ err := goimgtools.Open("in.jpg").
 
 | 方法 | 说明 |
 |---|---|
-| `Resize(w, h, ResizeOptions{...})` | 缩放。`w` 或 `h` 为 0 时按比例计算 |
+| `Resize(w, h, ResizeOptions{...})` | 缩放。`w` 或 `h` 为 0 时按比例计算。默认方法下，16 位采样的图像（PNG、TIFF）缩放后仍为 16 位，数值与 `x/image` 的 `Scale` 写入 16 位目标图相同（`LinearLight` 以及 Pillow、libvips 两种方法按 8 位处理，不在此列） |
 | `Extract(left, top, w, h)` | 裁剪 |
 | `Rotate()` | 按 EXIF 方向自动校正（无方向信息时不作处理） |
 | `Rotate(angle)` | 顺时针旋转，角度为 90 的倍数 |

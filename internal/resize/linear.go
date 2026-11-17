@@ -1,6 +1,7 @@
 package resize
 
 import (
+	"image"
 	"math"
 	"sync"
 
@@ -16,7 +17,18 @@ func ScaleLinear(src pipeline.Source, dw, dh int, q *draw.Kernel, ew, eh float64
 	if err != nil {
 		return nil, err
 	}
-	s.(*scaler).lin = linTables()
+	sc := s.(*scaler)
+	sc.lin = linTables()
+	if sc.deep {
+		// Its table encodes to 8 bits.
+		sc.deep = false
+		sc.band64, sc.gband16 = nil, nil
+		if sc.gray {
+			sc.gband = image.NewGray(image.Rect(0, 0, dw, sc.n))
+		} else {
+			sc.band = image.NewRGBA(image.Rect(0, 0, dw, sc.n))
+		}
+	}
 	return s, nil
 }
 

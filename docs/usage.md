@@ -41,7 +41,7 @@ err := goimgtools.Open("in.jpg").
 
 | Method | Description |
 |---|---|
-| `Resize(w, h, ResizeOptions{...})` | Resizes. A `w` or `h` of 0 is calculated proportionally |
+| `Resize(w, h, ResizeOptions{...})` | Resizes. A `w` or `h` of 0 is calculated proportionally. With the default method an image of 16-bit samples (PNG, TIFF) stays 16-bit, the values `x/image`'s `Scale` gives a 16-bit destination (not with `LinearLight`, nor the Pillow and libvips methods, which work in 8 bits) |
 | `Extract(left, top, w, h)` | Crops |
 | `Rotate()` | Corrects the orientation automatically from EXIF (no effect when no orientation information is present) |
 | `Rotate(angle)` | Rotates clockwise by a multiple of 90 |

@@ -43,6 +43,19 @@ func scaled(m image.Image, w, h int) *image.RGBA {
 	return dst
 }
 
+// scaledAsResize is m resized as Resize does it by default: x/image's
+// CatmullRom, into 16-bit samples for a source of 16-bit samples (which
+// Resize keeps).
+func scaledAsResize(m image.Image, w, h int) image.Image {
+	switch m.ColorModel() {
+	case color.RGBA64Model, color.NRGBA64Model, color.Gray16Model:
+		dst := image.NewRGBA64(image.Rect(0, 0, w, h))
+		draw.CatmullRom.Scale(dst, dst.Bounds(), m, m.Bounds(), draw.Src, nil)
+		return dst
+	}
+	return scaled(m, w, h)
+}
+
 // TestChain runs shrink + white background + watermark + JPEG and requires
 // the same bytes as the same steps done with the standard library on whole
 // images.
@@ -64,7 +77,7 @@ func TestChain(t *testing.T) {
 		// Reference. 613x457 -> 200x149; logo 90x40 -> 45x20.
 		dec, _ := png.Decode(bytes.NewReader(in))
 		logoDec, _ := png.Decode(bytes.NewReader(logoPNG))
-		small := scaled(dec, 200, 149)
+		small := scaledAsResize(dec, 200, 149)
 		ref := image.NewRGBA(small.Bounds())
 		stddraw.Draw(ref, ref.Bounds(), image.NewUniform(color.White), image.Point{}, stddraw.Src)
 		stddraw.Draw(ref, ref.Bounds(), small, image.Point{}, stddraw.Over)
