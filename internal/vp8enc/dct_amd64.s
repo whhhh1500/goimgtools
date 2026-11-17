@@ -165,6 +165,22 @@ DATA id4<>+0(SB)/8, $0x0000000400000004
 DATA id4<>+8(SB)/8, $0x0000000400000004
 GLOBL id4<>(SB), RODATA|NOPTR, $16
 
+// 16-bit constants of the narrow inverse transform: 35468 as an int16
+// (35468 - 65536) and 20091, so that mulhi(x, k) + x is (x*35468)>>16 and
+// (x*85627)>>16 exactly.
+DATA idM21<>+0(SB)/8, $0x8a8c8a8c8a8c8a8c
+DATA idM21<>+8(SB)/8, $0x4e7b4e7b4e7b4e7b
+GLOBL idM21<>(SB), RODATA|NOPTR, $16
+DATA idM12<>+0(SB)/8, $0x4e7b4e7b4e7b4e7b
+DATA idM12<>+8(SB)/8, $0x8a8c8a8c8a8c8a8c
+GLOBL idM12<>(SB), RODATA|NOPTR, $16
+DATA id2048<>+0(SB)/8, $0x0800080008000800
+DATA id2048<>+8(SB)/8, $0x0800080008000800
+GLOBL id2048<>(SB), RODATA|NOPTR, $16
+DATA id4w<>+0(SB)/8, $0x0004000400040004
+DATA id4w<>+8(SB)/8, $0x0004000400040004
+GLOBL id4w<>(SB), RODATA|NOPTR, $16
+
 // func idctAddSIMD(coef *[16]int16, ref *byte, rStride int, dst *byte, dStride int)
 TEXT ·idctAddSIMD(SB), NOSPLIT, $0-40
 	MOVQ coef+0(FP), SI
@@ -172,6 +188,83 @@ TEXT ·idctAddSIMD(SB), NOSPLIT, $0-40
 	MOVQ rStride+16(FP), BX
 	MOVQ dst+24(FP), R8
 	MOVQ dStride+32(FP), R9
+	// Coefficients of at most 2048 (what the encoder's blocks have but
+	// in corner cases) go through 16-bit lanes, which cannot overflow then
+	// (the sums of pass 1 stay within 7882, those of pass 2 within 30335),
+	// with mulhi(x, k) + x for the products; others through the 32-bit
+	// lanes further on, which wrap where the Go code wraps.
+	VMOVDQU (SI), X0
+	VMOVDQU 16(SI), X1
+	VPABSW X0, X2
+	VPABSW X1, X3
+	VPMAXUW X3, X2, X2
+	VPSUBUSW id2048<>(SB), X2, X2
+	VPTEST X2, X2
+	JNZ wide
+	// Pass 1: rows 0 | 1 and 2 | 3, the lanes the columns i.
+	VPADDW X1, X0, X2      // a
+	VPSUBW X1, X0, X3      // b
+	VPUNPCKHQDQ X1, X0, X4 // c4 | c12
+	VPMULHW idM21<>(SB), X4, X5
+	VPMULHW idM12<>(SB), X4, X6
+	VPADDW X4, X5, X5      // (c4*c2)>>16 | (c12*c1)>>16
+	VPADDW X4, X6, X6      // (c4*c1)>>16 | (c12*c2)>>16
+	VPSHUFD $0x4e, X5, X7
+	VPSUBW X7, X5, X5      // c
+	VPSHUFD $0x4e, X6, X7
+	VPADDW X7, X6, X6      // d
+	VPADDW X6, X2, X8
+	VPADDW X5, X3, X9
+	VPSUBW X5, X3, X10
+	VPSUBW X6, X2, X11
+	VPUNPCKLWD X9, X8, X8
+	VPUNPCKLWD X11, X10, X10
+	VPUNPCKLDQ X10, X8, X0 // m[0][j] | m[1][j]
+	VPUNPCKHDQ X10, X8, X1 // m[2][j] | m[3][j]
+	// Pass 2.
+	VPADDW X1, X0, X2
+	VPSUBW X1, X0, X3
+	VPADDW id4w<>(SB), X2, X2 // a
+	VPADDW id4w<>(SB), X3, X3 // b
+	VPUNPCKHQDQ X1, X0, X4
+	VPMULHW idM21<>(SB), X4, X5
+	VPMULHW idM12<>(SB), X4, X6
+	VPADDW X4, X5, X5
+	VPADDW X4, X6, X6
+	VPSHUFD $0x4e, X5, X7
+	VPSUBW X7, X5, X5 // c
+	VPSHUFD $0x4e, X6, X7
+	VPADDW X7, X6, X6 // d
+	VPADDW X6, X2, X8
+	VPADDW X5, X3, X9
+	VPSUBW X5, X3, X10
+	VPSUBW X6, X2, X11
+	VPSRAW $3, X8, X8
+	VPSRAW $3, X9, X9
+	VPSRAW $3, X10, X10
+	VPSRAW $3, X11, X11
+	VPUNPCKLWD X9, X8, X8
+	VPUNPCKLWD X11, X10, X10
+	VPUNPCKLDQ X10, X8, X0 // rows 0 | 1
+	VPUNPCKHDQ X10, X8, X1 // rows 2 | 3
+	VMOVD (DI), X4
+	VPINSRD $1, (DI)(BX*1), X4, X4
+	LEAQ (DI)(BX*2), DI
+	VPINSRD $2, (DI), X4, X4
+	VPINSRD $3, (DI)(BX*1), X4, X4
+	VPMOVZXBW X4, X5
+	VPSRLDQ $8, X4, X4
+	VPMOVZXBW X4, X4
+	VPADDW X5, X0, X0
+	VPADDW X4, X1, X1
+	VPACKUSWB X1, X0, X0
+	VMOVD X0, (R8)
+	VPEXTRD $1, X0, (R8)(R9*1)
+	LEAQ (R8)(R9*2), R8
+	VPEXTRD $2, X0, (R8)
+	VPEXTRD $3, X0, (R8)(R9*1)
+	RET
+wide:
 	VMOVDQU idK21<>(SB), Y14
 	VMOVDQU idK12<>(SB), Y15
 	// Pass 1: rows of coefficients, lanes the columns i.

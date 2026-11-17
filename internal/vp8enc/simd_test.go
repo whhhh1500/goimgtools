@@ -203,3 +203,33 @@ func TestQuantizeSIMD(t *testing.T) {
 		}
 	}
 }
+
+// TestIdctAddSIMDBounds: at the bound of the 16-bit lanes (coefficients
+// of 2048 in every pattern of signs, and next to it) the inverse transform
+// is still that of the Go code.
+func TestIdctAddSIMDBounds(t *testing.T) {
+	if !useSIMD {
+		t.Skip("no SIMD")
+	}
+	var ref [16]uint8
+	for i := range ref {
+		ref[i] = uint8(i * 17)
+	}
+	for _, mag := range []int16{2048, 2047, 2049, 1500} {
+		for signs := 0; signs < 1<<16; signs++ {
+			var coef [16]int16
+			for k := range coef {
+				coef[k] = mag
+				if signs>>k&1 != 0 {
+					coef[k] = -mag
+				}
+			}
+			var want, got [16]uint8
+			idctAddGo(&coef, ref[:], 4, want[:], 4)
+			idctAdd(&coef, ref[:], 4, got[:], 4)
+			if got != want {
+				t.Fatalf("%v: %v, want %v", coef, got, want)
+			}
+		}
+	}
+}
