@@ -36,6 +36,8 @@ Measurements (6000×4000; output byte-for-byte identical at every thread count):
 | 1080p enlarged to 4K | 0.24s | 0.13s | 0.13s | 0.11s |
 | 1080p enlarged to 8K | 0.84s | 0.44s | 0.36s | 0.29s |
 
+**SIMD on amd64**: on processors with AVX2 (unless built with the `purego` tag) the JPEG decoder's inverse DCT and its conversion of colour, with the upsampling of the chroma (halved both ways or across, or at full size), run as assembly after libjpeg-turbo's SIMD code, on the arithmetic of the Go code, lane by lane: every byte is the same on every processor (the tests compare them on 200,000 blocks, corrupt ones included, and every row width up to 300). A 6000×4000 JPEG (quality 90) decodes on one core in 99ms (4:2:0), 109ms (4:2:2) and 126ms (4:4:4); libjpeg-turbo with its SIMD, through Pillow 12.1.1, takes 101, 110 and 121ms, the Go code alone 208, 226 and 250ms.
+
 **PNG block compression**: as in pigz, the filtered data is divided into 256KB blocks; each block is compressed independently, using the preceding 32KB as its dictionary, and terminated with a sync flush, and the blocks are concatenated into a single zlib stream. The block division does not depend on the thread count, and therefore neither does the output file. Without helper threads, data is compressed as it arrives and written out directly, with no additional memory. With Go 1.27 or later, data of more than one block is compressed by one compressor reset for each block with that block's dictionary (`klauspost/compress`'s flate, which writes the bytes Go 1.27's `compress/flate` writes; the standard library's can only be made anew, 0.9MB of garbage for every block). When the data fits in a single block (RGB of about 90,000 pixels), the output is byte-for-byte identical to `compress/zlib`; larger images produce slightly larger files because each block restarts its search for repeated data (measured at +0.005% on 24 MP).
 
 **PNG and TIFF decompression**: PNG image data and Deflate-compressed TIFF strips and tiles are decompressed by `internal/inflate`, which follows libdeflate's decompressor: the input is taken into a 64-bit bit buffer eight bytes at a time without a branch, a table look-up gives a code's symbol, its extra bits and their base together, the entry of the next code is looked up before the buffer is refilled (as the refill leaves the bits below as they are), and matches are copied eight bytes at a time. It runs at about twice the speed of `klauspost/compress` and 2.4 times that of `compress/flate` (450–500MB/s of output for photographs, on one core). It reads the file as `compress/zlib` does through its `bufio.Reader` (4096 bytes at a time, only once a byte is needed), so that the checks image/png makes after the data see the same, and holds about 115KB.
@@ -81,8 +83,8 @@ The same task in disintegration/imaging 1.6.2 (decoding with `image/jpeg`, resiz
 
 | Cores | imaging | goimgtools | goimgtools, `FastShrinkOnLoad` |
 |---|---|---|---|
-| 1 | 679ms, 81MB | 396ms, 10MB (`Threads(1)`) | 147ms, 10MB |
-| 4 | 387ms, 81MB | 201ms, 15MB (`Threads(4)`) | 105ms, 11MB |
+| 1 | 682ms, 81MB | 283ms, 10MB (`Threads(1)`) | 146ms, 10MB |
+| 4 | 385ms, 81MB | 140ms, 15MB (`Threads(4)`) | 106ms, 11MB |
 
 The JPEG written here is 5% smaller (120,675 bytes against 127,372, libjpeg-turbo's coding against `image/jpeg`'s), its pixels decoded as libjpeg-turbo decodes them.
 

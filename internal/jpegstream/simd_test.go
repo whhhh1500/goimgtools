@@ -1,0 +1,191 @@
+package jpegstream
+
+import (
+	"bytes"
+	"math/rand/v2"
+	"testing"
+)
+
+// TestIslowAVX2: the AVX2 inverse DCT gives what islowGo gives, byte for
+// byte, for blocks of every kind: a DC alone, a few coefficients, half the
+// columns or rows, all of them; values of real files, and any int32 at all
+// (whose products and shifts wrap the same way).
+func TestIslowAVX2(t *testing.T) {
+	if !useAVX2 {
+		t.Skip("no AVX2")
+	}
+	rng := rand.New(rand.NewPCG(1, 2))
+	for i := range 200000 {
+		var b block
+		switch i % 6 {
+		case 0: // DC alone
+			b[0] = rng.Int32N(16384) - 8192
+		case 1: // a few coefficients
+			for range 1 + rng.IntN(6) {
+				b[rng.IntN(64)] = rng.Int32N(2048) - 1024
+			}
+		case 2: // the top left quarter
+			for r := range 4 {
+				for c := range 4 {
+					b[8*r+c] = rng.Int32N(4096) - 2048
+				}
+			}
+		case 3: // a column or a row alone
+			k := rng.IntN(8)
+			for j := range 8 {
+				if rng.IntN(2) == 0 {
+					b[8*j+k] = rng.Int32N(4096) - 2048
+				} else {
+					b[8*k+j] = rng.Int32N(4096) - 2048
+				}
+			}
+		case 4: // every coefficient
+			for j := range b {
+				b[j] = rng.Int32N(8192) - 4096
+			}
+		case 5: // anything, wrapping
+			for j := range b {
+				if rng.IntN(3) == 0 {
+					b[j] = int32(rng.Uint32())
+				}
+			}
+		}
+		for _, stride := range []int{8, 13} {
+			want, got := make([]byte, 8*stride), make([]byte, 8*stride)
+			for j := range want {
+				want[j], got[j] = byte(j), byte(j)
+			}
+			wb, gb := b, b
+			islowGo(&wb, want, stride)
+			islowAVX2(&gb, &got[0], stride)
+			if !bytes.Equal(got, want) {
+				t.Fatalf("block %d %v, stride %d:\n got %v\nwant %v", i, b, stride, got, want)
+			}
+		}
+	}
+}
+
+func BenchmarkIslow(b *testing.B) {
+	rng := rand.New(rand.NewPCG(1, 2))
+	blocks := make([]block, 256)
+	for i := range blocks {
+		for range 1 + rng.IntN(10) {
+			blocks[i][rng.IntN(20)] = rng.Int32N(512) - 256
+		}
+	}
+	dst := make([]byte, 64)
+	for _, c := range []struct {
+		name string
+		f    func(*block)
+	}{
+		{"go", func(k *block) { islowGo(k, dst, 8) }},
+		{"avx2", func(k *block) { islowAVX2(k, &dst[0], 8) }},
+	} {
+		if c.name == "avx2" && !useAVX2 {
+			continue
+		}
+		b.Run(c.name, func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				k := blocks[i&255]
+				c.f(&k)
+			}
+		})
+	}
+}
+
+func BenchmarkIslowNoCopy(b *testing.B) {
+	rng := rand.New(rand.NewPCG(1, 2))
+	var k block
+	for range 8 {
+		k[rng.IntN(20)] = rng.Int32N(512) - 256
+	}
+	dst := make([]byte, 64)
+	b.Run("avx2", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			islowAVX2(&k, &dst[0], 8)
+		}
+	})
+	b.Run("go", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			kk := k
+			islowGo(&kk, dst, 8)
+		}
+	})
+}
+
+func sameRow(t *testing.T, what string, w int, got, want []byte) {
+	t.Helper()
+	for i := range got {
+		if got[i] != want[i] {
+			t.Fatalf("%s, width %d: byte %d (pixel %d) is %d, want %d", what, w, i, i/4, got[i], want[i])
+		}
+	}
+}
+
+// TestYccH2V2AVX2: rows of every width from 1 to 300 and random samples
+// (all values, and runs of 0 and 255 that the sums take past the ends of
+// the range) convert as the Go code converts them: chroma halved both
+// ways, across, and at full size.
+func TestYccH2V2AVX2(t *testing.T) {
+	if !useAVX2 {
+		t.Skip("no AVX2")
+	}
+	rng := rand.New(rand.NewPCG(3, 4))
+	fill := func(b []byte) {
+		for i := range b {
+			switch rng.IntN(4) {
+			case 0:
+				b[i] = 0
+			case 1:
+				b[i] = 255
+			default:
+				b[i] = byte(rng.IntN(256))
+			}
+		}
+	}
+	for w := 1; w <= 300; w++ {
+		n := (w + 1) / 2
+		for range 20 {
+			y, cbN, cbF, crN, crF := make([]byte, w), make([]byte, n), make([]byte, n), make([]byte, n), make([]byte, n)
+			for _, b := range [][]byte{y, cbN, cbF, crN, crF} {
+				fill(b)
+			}
+			want, got := make([]byte, 4*w), make([]byte, 4*w)
+			yccH2V2Go(want, y, cbN, cbF, crN, crF, 0, n)
+			yccH2V2(got, y, cbN, cbF, crN, crF)
+			sameRow(t, "h2v2", w, got, want)
+			yccH2V1Go(want, y, cbN, crN, 0, n)
+			yccH2V1(got, y, cbN, crN)
+			sameRow(t, "h2v1", w, got, want)
+			// Full chroma: cbN and cbF, crN and crF together, w samples.
+			cb, cr := append(cbN[:n:n], cbF...)[:w], append(crN[:n:n], crF...)[:w]
+			for x := range y {
+				yccPair((*[4]byte)(want[4*x:]), int32(y[x]), cb[x], cr[x])
+			}
+			yccRow(got, y, cb, cr)
+			sameRow(t, "full", w, got, want)
+		}
+	}
+}
+
+func BenchmarkYccH2V2(b *testing.B) {
+	const w = 6000
+	y, c := make([]byte, w), make([]byte, w/2)
+	for i := range y {
+		y[i] = byte(i * 7)
+	}
+	for i := range c {
+		c[i] = byte(i * 13)
+	}
+	dst := make([]byte, 4*w)
+	b.Run("go", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			yccH2V2Go(dst, y, c, c, c, c, 0, w/2)
+		}
+	})
+	b.Run("dispatch", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			yccH2V2(dst, y, c, c, c, c)
+		}
+	})
+}

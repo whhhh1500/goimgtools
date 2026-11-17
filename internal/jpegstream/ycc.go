@@ -53,8 +53,14 @@ var rangeLimit = func() (t [1024]uint8) {
 func yccRow(dst, y, cb, cr []byte) {
 	dst = dst[:4*len(y)]
 	cb, cr = cb[:len(y)], cr[:len(y)]
-	for x, l := range y {
-		yccPair((*[4]byte)(dst[4*x:]), int32(l), cb[x], cr[x])
+	from := 0
+	if useAVX2 && len(y) >= 16 {
+		k := len(y) / 16
+		yccRowAVX2(&dst[0], &y[0], &cb[0], &cr[0], k)
+		from = 16 * k
+	}
+	for x := from; x < len(y); x++ {
+		yccPair((*[4]byte)(dst[4*x:]), int32(y[x]), cb[x], cr[x])
 	}
 }
 
@@ -76,9 +82,29 @@ func yccH2V2(dst, y, cbN, cbF, crN, crF []byte) {
 	w, n := len(y), len(cbN)
 	dst = dst[:4*w]
 	cbF, crN, crF = cbF[:n], crN[:n], crF[:n]
-	thisB, thisR := int32(cbN[0])*3+int32(cbF[0]), int32(crN[0])*3+int32(crF[0])
-	lastB, lastR := thisB, thisR
-	for i := 0; i < n; i++ {
+	if useAVX2 && n >= 18 {
+		// The chroma samples from 1 to 16k, whose neighbours are inside,
+		// with AVX2; the ends in Go.
+		k := (n - 2) / 16
+		_ = dst[4*(2+32*k)-1]
+		_ = y[2+32*k-1]
+		yccH2V2AVX2(&dst[8], &y[2], &cbN[1], &cbF[1], &crN[1], &crF[1], k)
+		yccH2V2Go(dst, y, cbN, cbF, crN, crF, 0, 1)
+		yccH2V2Go(dst, y, cbN, cbF, crN, crF, 1+16*k, n)
+		return
+	}
+	yccH2V2Go(dst, y, cbN, cbF, crN, crF, 0, n)
+}
+
+// yccH2V2Go is yccH2V2 in Go, of the chroma samples from from to to-1.
+func yccH2V2Go(dst, y, cbN, cbF, crN, crF []byte, from, to int) {
+	w, n := len(y), len(cbN)
+	dst = dst[:4*w]
+	cbF, crN, crF = cbF[:n], crN[:n], crF[:n]
+	p := max(from-1, 0)
+	lastB, lastR := int32(cbN[p])*3+int32(cbF[p]), int32(crN[p])*3+int32(crF[p])
+	thisB, thisR := int32(cbN[from])*3+int32(cbF[from]), int32(crN[from])*3+int32(crF[from])
+	for i := from; i < to; i++ {
 		nextB, nextR := thisB, thisR
 		if i+1 < n {
 			nextB, nextR = int32(cbN[i+1])*3+int32(cbF[i+1]), int32(crN[i+1])*3+int32(crF[i+1])
@@ -98,9 +124,28 @@ func yccH2V1(dst, y, cb, cr []byte) {
 	w, n := len(y), len(cb)
 	dst = dst[:4*w]
 	cr = cr[:n]
-	thisB, thisR := int32(cb[0]), int32(cr[0])
-	lastB, lastR := thisB, thisR
-	for i := 0; i < n; i++ {
+	if useAVX2 && n >= 18 {
+		// As yccH2V2.
+		k := (n - 2) / 16
+		_ = dst[4*(2+32*k)-1]
+		_ = y[2+32*k-1]
+		yccH2V1AVX2(&dst[8], &y[2], &cb[1], &cr[1], k)
+		yccH2V1Go(dst, y, cb, cr, 0, 1)
+		yccH2V1Go(dst, y, cb, cr, 1+16*k, n)
+		return
+	}
+	yccH2V1Go(dst, y, cb, cr, 0, n)
+}
+
+// yccH2V1Go is yccH2V1 in Go, of the chroma samples from from to to-1.
+func yccH2V1Go(dst, y, cb, cr []byte, from, to int) {
+	w, n := len(y), len(cb)
+	dst = dst[:4*w]
+	cr = cr[:n]
+	p := max(from-1, 0)
+	lastB, lastR := int32(cb[p]), int32(cr[p])
+	thisB, thisR := int32(cb[from]), int32(cr[from])
+	for i := from; i < to; i++ {
 		nextB, nextR := thisB, thisR
 		if i+1 < n {
 			nextB, nextR = int32(cb[i+1]), int32(cr[i+1])

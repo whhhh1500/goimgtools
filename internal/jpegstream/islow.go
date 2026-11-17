@@ -16,6 +16,16 @@ package jpegstream
 // zero, as in most blocks, the terms they would add are left out: the sums
 // are the same.
 func islowStore(b *block, dst []byte, stride int) {
+	if useAVX2 {
+		_ = dst[7*stride+7]
+		islowAVX2(b, &dst[0], stride)
+		return
+	}
+	islowGo(b, dst, stride)
+}
+
+// islowGo is islowStore in Go.
+func islowGo(b *block, dst []byte, stride int) {
 	const (
 		constBits = 13
 		pass1Bits = 2
