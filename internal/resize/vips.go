@@ -689,7 +689,7 @@ func (s *vipsResize) makeShrunk(j int) error {
 				box[x] += uint32(c)
 			}
 		}
-		amend, mult := uint32(v.box/2), uint32((1<<32)/(256*v.box))
+		amend, mult := uint32(v.box/2), uint32(uint64(1<<32)/uint64(256*v.box))
 		box := s.box[:len(dst)]
 		for x, c := range box {
 			dst[x] = uint8(((c + amend) * mult) >> 24)
@@ -743,7 +743,7 @@ func (s *vipsResize) reduceRow(j int, dst []uint8, sc *vipsScratch) {
 		return
 	}
 	if h.box > 1 {
-		amend, mult := uint32(h.box/2), uint32((1<<32)/(256*h.box))
+		amend, mult := uint32(h.box/2), uint32(uint64(1<<32)/uint64(256*h.box))
 		w0 := p.w0
 		for x := range h.mid {
 			var sum [4]uint32

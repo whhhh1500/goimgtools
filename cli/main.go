@@ -92,6 +92,7 @@ func Run(args []string, stdout, stderr io.Writer) error { return run(args, stdou
 type options struct {
 	resize, rotate, fit, bg, kernel, crop, flatten *string
 	position, resizeMethod                         *string
+	reducingGap                                    *float64
 	flip, flop, noEnlarge, fast, linearLight       *bool
 	watermark, wmText, gravity, offset, wmGap      *string
 	wmRatio, wmAnchor, wmPivot                     *string
@@ -136,6 +137,7 @@ func register(fs *flag.FlagSet) *options {
 		flop:           fs.Bool("flop", false, "mirror left to right"),
 		fit:            fs.String("fit", "inside", "how -resize WxH fits: inside (shrink in proportion), cover (fill and crop), contain (shrink in proportion, pad with -background), outside, fill (stretch)"),
 		linearLight:    fs.Bool("linear-light", false, "resize in linear light: fine light detail keeps its brightness when the image is reduced"),
+		reducingGap:    fs.Float64("reducing-gap", 0, "with -resize-method pillow, Pillow's reducing_gap: reduce by whole factors first, leaving at least this much (2 as Pillow's thumbnail, which with -fast-shrink also drafts a JPEG for twice the box); 0 for none"),
 		resizeMethod:   fs.String("resize-method", "draw", "how -resize works out the pixels: draw (golang.org/x/image/draw's arithmetic), libvips (sharp's resize, to the byte; sharp's default -kernel is lanczos3) or pillow (Pillow's resize, to the byte; its default is cubic)"),
 		position:       fs.String("position", "center", "the part -fit cover keeps (and where -fit contain puts the image): northwest, north, northeast, west, center, east, southwest, south, southeast; or, for cover, entropy (the part with the most detail) or attention (the part that draws the eye)"),
 		bg:             fs.String("background", "black", "`color` of the bars -fit contain adds, the border of -extend and the corners -rotate leaves at other angles: white, black, transparent, #rrggbb or #rrggbbaa"),
@@ -526,7 +528,7 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 			return nil, fmt.Errorf("-resize-method: want draw, libvips or pillow, got %q", *o.resizeMethod)
 		}
 		ro := goimgtools.ResizeOptions{Fit: f, WithoutEnlargement: *o.noEnlarge, FastShrinkOnLoad: *o.fast,
-			Background: bg, Kernel: k, LinearLight: *o.linearLight, Method: method}
+			Background: bg, Kernel: k, LinearLight: *o.linearLight, Method: method, ReducingGap: *o.reducingGap}
 		switch p := strings.ToLower(*o.position); p {
 		case "entropy":
 			ro.Interesting = goimgtools.InterestingEntropy

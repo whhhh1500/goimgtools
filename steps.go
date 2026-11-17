@@ -114,6 +114,9 @@ func describe(op operation) (string, []string) {
 		if lib {
 			w = append(w, methodNames[o.spec.o.Method])
 		}
+		if g := o.spec.o.ReducingGap; g != 0 {
+			w = append(w, f(g))
+		}
 		return "resize", w
 	case extractOp:
 		return "crop", []string{d(o.left), d(o.top), d(o.width), d(o.height)}
@@ -509,10 +512,10 @@ func pick[T comparable](names map[T]string, word, what string) (T, error) {
 
 // builtInOps are the methods of Image that take arguments in words.
 var builtInOps = map[string]OperationDef{
-	"resize": {Name: "resize", Usage: "WIDTH,HEIGHT[,FIT[,KERNEL[,POSITION[,LIGHT[,METHOD]]]]]",
-		Help: "Resize: 0 for a side keeps the proportions; FIT inside, cover, contain, outside, fill; KERNEL cubic, nearest, linear, mitchell, lanczos2, lanczos3, mks2013, mks2021, box, hamming; POSITION (what cover keeps, where contain puts the image) northwest ... center ... southeast, or entropy or attention for cover; LIGHT srgb (the levels as they are) or linear (in linear light); METHOD draw (the default), libvips (sharp's resize, to the byte) or pillow (Pillow's, to the byte)",
+	"resize": {Name: "resize", Usage: "WIDTH,HEIGHT[,FIT[,KERNEL[,POSITION[,LIGHT[,METHOD[,GAP]]]]]]",
+		Help: "Resize: 0 for a side keeps the proportions; FIT inside, cover, contain, outside, fill; KERNEL cubic, nearest, linear, mitchell, lanczos2, lanczos3, mks2013, mks2021, box, hamming; POSITION (what cover keeps, where contain puts the image) northwest ... center ... southeast, or entropy or attention for cover; LIGHT srgb (the levels as they are) or linear (in linear light); METHOD draw (the default), libvips (sharp's resize, to the byte) or pillow (Pillow's, to the byte); GAP Pillow's reducing_gap (with pillow; 2 as its thumbnail)",
 		builtIn: func(m *Image, a []string) error {
-			if err := wantArgs(a, 2, 7); err != nil {
+			if err := wantArgs(a, 2, 8); err != nil {
 				return err
 			}
 			v, err := argInts(a[:2])
@@ -546,6 +549,13 @@ var builtInOps = map[string]OperationDef{
 				if o.Method, err = pick(methodNames, a[6], "method"); err != nil {
 					return err
 				}
+			}
+			if len(a) > 7 {
+				g, err := argFloats(a[7:8])
+				if err != nil {
+					return err
+				}
+				o.ReducingGap = g[0]
 			}
 			m.Resize(v[0], v[1], o)
 			return nil

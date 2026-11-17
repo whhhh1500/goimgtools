@@ -27,8 +27,16 @@ import (
 //     t = c·a + 128) and divided again after (255·c / alpha, whole numbers,
 //     at most 255; as they are where alpha is 0 or 255); not for nearest.
 //
+// With o.Gap (Pillow's reducing_gap) an image without transparency is first
+// reduced by whole factors (Pillow's Image.reduce: the average of each box
+// of pixels, a box the edge cuts the average of what it holds, the sum
+// plus half the count times 2^32/(256·count) in single precision shifted
+// right by 24), from the part of it the filter reaches (_get_safe_box),
+// leaving at least o.Gap to the resize; o.Box is the part of the source
+// resized (Pillow's box), in source pixels, which need not be whole.
+//
 // The result is NRGBA, or Gray for a Gray source.
-func Pillow(src pipeline.Source, w, h int, f PillowFilter) (pipeline.Source, error) {
+func Pillow(src pipeline.Source, w, h int, f PillowFilter, o PillowOptions) (pipeline.Source, error) {
 	b := src.Bounds()
 	sw, sh := b.Dx(), b.Dy()
 	if w < 1 || h < 1 || w > 1<<26 || h > 1<<26 || sw < 1 || sh < 1 {
@@ -37,7 +45,14 @@ func Pillow(src pipeline.Source, w, h int, f PillowFilter) (pipeline.Source, err
 	if !f.Nearest && (f.At == nil || !(f.Support > 0) || math.IsInf(f.Support, 0)) {
 		return nil, errors.New("goimgtools: a resize Filter needs an At function and a positive Support")
 	}
-	if w == sw && h == sh {
+	box := o.Box
+	if box == ([4]float64{}) {
+		box = [4]float64{0, 0, float64(sw), float64(sh)}
+	}
+	if !(box[0] >= 0 && box[1] >= 0 && box[2] <= float64(sw) && box[3] <= float64(sh) && box[2] > box[0] && box[3] > box[1]) {
+		return nil, errors.New("goimgtools: the box resized is not within the image")
+	}
+	if w == sw && h == sh && box == [4]float64{0, 0, float64(sw), float64(sh)} {
 		return src, nil
 	}
 	opaque := pipeline.IsOpaque(src)
@@ -58,13 +73,55 @@ func Pillow(src pipeline.Source, w, h int, f PillowFilter) (pipeline.Source, err
 		}
 		return nil
 	})
-	p := &pillowResize{src: in, env: pipeline.EnvOf(src), sw: sw, sh: sh, w: w, h: h, f: f, opaque: opaque, pre: pre,
+	p := &pillowResize{src: in, env: pipeline.EnvOf(src), sw: sw, sh: sh, inW: sw, inH: sh, w: w, h: h, f: f, opaque: opaque, pre: pre,
 		gray: src.ColorModel() == color.GrayModel}
+	// Pillow reduces first only an image without transparency (the RGBa
+	// one is resized without reducing_gap).
+	if o.Gap > 0 && !f.Nearest && opaque {
+		fx := max(1, int(float64(float64((box[2]-box[0])/float64(w))/o.Gap)))
+		fy := max(1, int(float64(float64((box[3]-box[1])/float64(h))/o.Gap)))
+		if fx > 1 || fy > 1 {
+			// _get_safe_box: the part the filter reaches, in whole pixels.
+			support := f.Support - 0.5
+			sx := float64(support * float64((box[2]-box[0])/float64(w)))
+			sy := float64(support * float64((box[3]-box[1])/float64(h)))
+			rb := [4]int{max(0, int(box[0]-sx)), max(0, int(box[1]-sy)), min(sw, int(math.Ceil(box[2]+sx))), min(sh, int(math.Ceil(box[3]+sy)))}
+			p.red = &pillowReduce{fx: fx, fy: fy, rb: rb}
+			p.inW, p.inH = (rb[2]-rb[0]+fx-1)/fx, (rb[3]-rb[1]+fy-1)/fy
+			box = [4]float64{(box[0] - float64(rb[0])) / float64(fx), (box[1] - float64(rb[1])) / float64(fy),
+				(box[2] - float64(rb[0])) / float64(fx), (box[3] - float64(rb[1])) / float64(fy)}
+		}
+	}
+	// Pillow takes the box in single precision.
+	for i, v := range box {
+		p.box[i] = float32(v)
+	}
 	if err := p.setup(); err != nil {
 		in.Close()
 		return nil, err
 	}
 	return p, nil
+}
+
+// PillowOptions are the settings of Pillow beyond the size and filter.
+type PillowOptions struct {
+	Box [4]float64 // left, top, right, bottom; all 0 for the whole image
+	Gap float64    // reducing_gap, 0 for none
+}
+
+// pillowReduce is Image.reduce by fx × fy of the box rb (left, top, right,
+// bottom) of the source.
+type pillowReduce struct {
+	fx, fy int
+	rb     [4]int
+	sums   []uint32
+	row    []uint8
+}
+
+// reduceMult is Pillow's division_UINT32(n, 8): 2^32/(256·n) in single
+// precision, the fraction dropped.
+func reduceMult(n int) uint32 {
+	return uint32(float32(float32(1<<32) / float32(uint32(256*n))))
 }
 
 // PillowFilter is a filter of Pillow's resize: At reaching Support either
@@ -147,15 +204,15 @@ type pillowAxis struct {
 	k     []int32 // ksize per output
 }
 
-func pillowCoeffs(in, out int, f PillowFilter) pillowAxis {
-	scale := float64(float32(in)) / float64(out)
+func pillowCoeffs(in int, in0, in1 float32, out int, f PillowFilter) pillowAxis {
+	scale := float64(in1-in0) / float64(out)
 	filterscale := max(scale, 1)
 	support := float64(f.Support * filterscale)
 	ksize := int(math.Ceil(support))*2 + 1
 	a := pillowAxis{ksize: ksize, first: make([]int32, out), count: make([]int32, out), k: make([]int32, out*ksize)}
 	pre := make([]float64, ksize)
 	for xx := range out {
-		center := float64(float64(float64(xx)+0.5) * scale)
+		center := float64(in0) + float64(float64(float64(xx)+0.5)*scale)
 		ss := 1 / filterscale
 		xmin := int(center - support + 0.5)
 		if xmin < 0 {
@@ -196,26 +253,30 @@ type pillowResize struct {
 	src         pipeline.Source // NRGBA, premultiplied when pre
 	env         *pipeline.Env
 	sw, sh      int
+	inW, inH    int           // the image the resize reads: the source, or reduced
+	red         *pillowReduce // the reduction first, or nil
+	box         [4]float32
+	rawStrip    *image.NRGBA
+	rawSy       int
+	rawNext     int
 	w, h        int
 	f           PillowFilter
 	opaque, pre bool
 	gray        bool
 	reserved    int64
 
-	hz, vt   pillowAxis
-	needH    bool
-	needV    bool
-	yFirst   int // the first source row the second pass reads
-	nx, ny   []int32
-	strip    *image.NRGBA
-	sy, next int
-	rows     [][]uint8 // rows across, row j (from yFirst) at j % len
-	have     int       // of them made
-	out      image.NRGBA
-	gout     image.Gray
-	orow     [][]uint8
-	n, y     int
-	err      error
+	hz, vt pillowAxis
+	needH  bool
+	needV  bool
+	yFirst int // the first source row the second pass reads
+	nx, ny []int32
+	rows   [][]uint8 // rows across, row j (from yFirst) at j % len
+	have   int       // of them made
+	out    image.NRGBA
+	gout   image.Gray
+	orow   [][]uint8
+	n, y   int
+	err    error
 }
 
 func (p *pillowResize) Env() *pipeline.Env      { return p.env }
@@ -244,17 +305,17 @@ func (p *pillowResize) setup() error {
 	var need int64
 	if p.f.Nearest {
 		// Pillow's affine scaling: the place added to pixel after pixel.
-		a0, a4 := float64(float32(p.sw))/float64(p.w), float64(float32(p.sh))/float64(p.h)
+		a0, a4 := float64(p.box[2]-p.box[0])/float64(p.w), float64(p.box[3]-p.box[1])/float64(p.h)
 		p.nx, p.ny = make([]int32, p.w), make([]int32, p.h)
 		// Outside the source (-1): left as 0, as Pillow fills.
-		for i, xo := 0, 0+float64(a0*0.5); i < p.w; i, xo = i+1, xo+a0 {
+		for i, xo := 0, float64(p.box[0])+float64(a0*0.5); i < p.w; i, xo = i+1, xo+a0 {
 			if c := coord(xo); c < p.sw {
 				p.nx[i] = int32(c)
 			} else {
 				p.nx[i] = -1
 			}
 		}
-		for i, yo := 0, 0+float64(a4*0.5); i < p.h; i, yo = i+1, yo+a4 {
+		for i, yo := 0, float64(p.box[1])+float64(a4*0.5); i < p.h; i, yo = i+1, yo+a4 {
 			if c := coord(yo); c < p.sh {
 				p.ny[i] = int32(c)
 			} else {
@@ -268,12 +329,15 @@ func (p *pillowResize) setup() error {
 		p.reserved = need
 		p.rows = [][]uint8{make([]uint8, 4*p.sw)}
 	} else {
-		p.needH, p.needV = p.w != p.sw, p.h != p.sh
-		p.hz, p.vt = pillowCoeffs(p.sw, p.w, p.f), pillowCoeffs(p.sh, p.h, p.f)
+		// As Pillow: across unless the size and the box are the image's,
+		// and so down.
+		p.needH = p.w != p.inW || p.box[0] != 0 || p.box[2] != float32(p.w)
+		p.needV = p.h != p.inH || p.box[1] != 0 || p.box[3] != float32(p.h)
+		p.hz, p.vt = pillowCoeffs(p.inW, p.box[0], p.box[2], p.w, p.f), pillowCoeffs(p.inH, p.box[1], p.box[3], p.h, p.f)
 		p.yFirst = int(p.vt.first[0])
 		// The rows across a strip of output rows reads.
-		span := int(math.Ceil(float64(p.n)*float64(p.sh)/float64(p.h))) + p.vt.ksize + 2
-		span = min(span, p.sh)
+		span := int(math.Ceil(float64(p.n)*float64(p.inH)/float64(p.h))) + p.vt.ksize + 2
+		span = min(span, p.inH)
 		need = int64(span)*int64(p.w)*4 + int64(len(p.hz.k)+len(p.vt.k))*4 + int64(p.w+p.h)*8 + int64(p.n)*int64(p.w)*4
 		if err := p.env.Budget.Reserve(need, "resize rows"); err != nil {
 			return err
@@ -283,6 +347,14 @@ func (p *pillowResize) setup() error {
 		for i := range p.rows {
 			p.rows[i] = make([]uint8, 4*p.w)
 		}
+	}
+	if r := p.red; r != nil {
+		need += int64(p.inW) * 4 * 5
+		if err := p.env.Budget.Reserve(int64(p.inW)*4*5, "resize rows"); err != nil {
+			return err
+		}
+		p.reserved += int64(p.inW) * 4 * 5
+		r.sums, r.row = make([]uint32, 4*p.inW), make([]uint8, 4*p.inW)
 	}
 	if p.gray {
 		p.gout = image.Gray{Pix: make([]uint8, p.n*p.w), Stride: p.w}
@@ -304,9 +376,9 @@ func coord(v float64) int {
 	return int(v)
 }
 
-// sourceRow returns source row y (at or after the last one asked for).
-func (p *pillowResize) sourceRow(y int) ([]uint8, error) {
-	for p.strip == nil || y >= p.sy+p.strip.Rect.Dy() {
+// rawRow returns row y of the source (at or after the last one asked for).
+func (p *pillowResize) rawRow(y int) ([]uint8, error) {
+	for p.rawStrip == nil || y >= p.rawSy+p.rawStrip.Rect.Dy() {
 		m, err := p.src.Next()
 		if err != nil {
 			if err == io.EOF {
@@ -314,10 +386,49 @@ func (p *pillowResize) sourceRow(y int) ([]uint8, error) {
 			}
 			return nil, err
 		}
-		p.strip, p.sy = m.(*image.NRGBA), p.next
-		p.next += p.strip.Rect.Dy()
+		p.rawStrip, p.rawSy = m.(*image.NRGBA), p.rawNext
+		p.rawNext += p.rawStrip.Rect.Dy()
 	}
-	return p.strip.Pix[(y-p.sy)*p.strip.Stride:][:4*p.sw], nil
+	return p.rawStrip.Pix[(y-p.rawSy)*p.rawStrip.Stride:][:4*p.sw], nil
+}
+
+// sourceRow returns row y of the image the resize reads (at or after the
+// last one asked for): the source's, or Image.reduce's of it.
+func (p *pillowResize) sourceRow(y int) ([]uint8, error) {
+	r := p.red
+	if r == nil {
+		return p.rawRow(y)
+	}
+	y0 := r.rb[1] + y*r.fy
+	y1 := min(y0+r.fy, r.rb[3])
+	clear(r.sums)
+	for sy := y0; sy < y1; sy++ {
+		src, err := p.rawRow(sy)
+		if err != nil {
+			return nil, err
+		}
+		for x := 0; x < p.inW; x++ {
+			c0, c1 := r.rb[0]+x*r.fx, min(r.rb[0]+(x+1)*r.fx, r.rb[2])
+			s := r.sums[4*x : 4*x+4 : 4*x+4]
+			for c := c0; c < c1; c++ {
+				q := src[4*c : 4*c+4 : 4*c+4]
+				s[0] += uint32(q[0])
+				s[1] += uint32(q[1])
+				s[2] += uint32(q[2])
+				s[3] += uint32(q[3])
+			}
+		}
+	}
+	rows := y1 - y0
+	for x := 0; x < p.inW; x++ {
+		n := rows * (min(r.rb[0]+(x+1)*r.fx, r.rb[2]) - (r.rb[0] + x*r.fx))
+		amend, mult := uint32(n/2), reduceMult(n)
+		s, d := r.sums[4*x:4*x+4:4*x+4], r.row[4*x:4*x+4:4*x+4]
+		for c := range d {
+			d[c] = uint8(((s[c] + amend) * mult) >> 24)
+		}
+	}
+	return r.row, nil
 }
 
 // across makes the rows across up to row j (counted from yFirst).
@@ -329,7 +440,7 @@ func (p *pillowResize) across(j int) error {
 		}
 		dst := p.rows[p.have%len(p.rows)]
 		if !p.needH {
-			copy(dst, src)
+			copy(dst, src[:len(dst)])
 			continue
 		}
 		hz := &p.hz

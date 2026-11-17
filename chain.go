@@ -90,6 +90,9 @@ type resizeSpec struct {
 
 // target returns the size a sw × sh image is resized to.
 func (r resizeSpec) target(sw, sh int) (dw, dh int) {
+	if r.o.Method == ResizePillow && r.o.Fit == FitInside {
+		return r.thumbSize(sw, sh)
+	}
 	fsw, fsh := float64(sw), float64(sh)
 	fx, fy := float64(r.width)/fsw, float64(r.height)/fsh
 	switch {
@@ -112,6 +115,39 @@ func (r resizeSpec) target(sw, sh int) (dw, dh int) {
 		}
 	}
 	return max(1, int(math.Round(fsw*fx))), max(1, int(math.Round(fsh*fy)))
+}
+
+// thumbSize is FitInside with ResizePillow: the size Pillow's
+// Image.thumbnail gives a sw × sh image for the box (each side whole,
+// floor or ceiling, whichever keeps the aspect ratio closer); a side of 0
+// follows the other. With WithoutEnlargement a box the image fits in leaves
+// it as it is, as thumbnail.
+func (r resizeSpec) thumbSize(sw, sh int) (int, int) {
+	x, y := r.width, r.height
+	if r.o.WithoutEnlargement && (x == 0 || x >= sw) && (y == 0 || y >= sh) {
+		return sw, sh
+	}
+	aspect := float64(sw) / float64(sh)
+	// round_aspect: of floor and ceiling the one key prefers, the floor on
+	// a tie; at least 1.
+	round := func(v float64, key func(n float64) float64) int {
+		f, c := math.Floor(v), math.Ceil(v)
+		if key(c) < key(f) {
+			f = c
+		}
+		return max(int(f), 1)
+	}
+	if x != 0 && (y == 0 || float64(x)/float64(y) < aspect) {
+		y = round(float64(x)/aspect, func(n float64) float64 {
+			if n == 0 {
+				return 0
+			}
+			return math.Abs(aspect - float64(x)/n)
+		})
+	} else {
+		x = round(float64(y)*aspect, func(n float64) float64 { return math.Abs(aspect - n/float64(y)) })
+	}
+	return x, y
 }
 
 // resizeOp is Resize.
@@ -223,7 +259,13 @@ func (z resizeOp) resizePillow(src pipeline.Source, turn ops.Orientation, pre pr
 	if err := r.fits(dw, dh); err != nil {
 		return nil, err
 	}
-	out, err := resize.Pillow(src, iw, ih, z.pillow)
+	o := resize.PillowOptions{Gap: z.spec.o.ReducingGap}
+	if pre.k > 1 && o.Gap > 0 {
+		// Image.thumbnail resizes the part of the reduced image draft
+		// says the image is: its size over the factor.
+		o.Box = [4]float64{0, 0, float64(pre.orig.X) / float64(pre.k), float64(pre.orig.Y) / float64(pre.k)}
+	}
+	out, err := resize.Pillow(src, iw, ih, z.pillow, o)
 	if err != nil {
 		return nil, err
 	}
@@ -247,6 +289,17 @@ func pillowDraft(src pipeline.Source, z resizeSpec, turn ops.Orientation) int {
 	}
 	b := src.Bounds()
 	w, h := turn.Size(z.target(turn.Size(b.Dx(), b.Dy())))
+	if g := z.o.ReducingGap; g > 0 {
+		// Image.thumbnail asks for the box times the gap.
+		bw, bh := turn.Size(z.width, z.height)
+		if bw == 0 {
+			bw = w
+		}
+		if bh == 0 {
+			bh = h
+		}
+		w, h = max(1, int(float64(bw)*g)), max(1, int(float64(bh)*g))
+	}
 	scale := min(b.Dx()/w, b.Dy()/h)
 	for _, k := range []int{8, 4, 2} {
 		if scale >= k {

@@ -114,8 +114,17 @@ type ResizeOptions struct {
 	// available with ResizeLibvips.
 	LinearLight bool
 	// Method is the way the pixels are worked out: ResizeDraw, the
-	// default, or ResizeLibvips, sharp's resize to the byte.
+	// default, ResizeLibvips (sharp's resize) or ResizePillow (Pillow's),
+	// to the byte.
 	Method ResizeMethod
+	// ReducingGap, with ResizePillow, is Pillow's reducing_gap: an image
+	// (without transparency, as in Pillow) reduced by more than that many
+	// times is first reduced by whole factors, averaging boxes of pixels
+	// (Image.reduce), leaving at least that much to the resize, which is
+	// faster and from 2 on about as good; with FastShrinkOnLoad a JPEG is
+	// then decoded reduced for the box times the gap, as Image.thumbnail
+	// does, which uses 2. 0, the default, is none; otherwise at least 1.
+	ReducingGap float64
 }
 
 // ResizeMethod is the way Resize works out the pixels.
@@ -138,7 +147,9 @@ const (
 	// with an angle, Flip, Flop) are done before it, and the EXIF turn
 	// (Rotate without one) after it.
 	ResizeLibvips
-	// ResizePillow is Pillow's Image.resize, to the byte: across and then
+	// ResizePillow is Pillow's Image.resize, to the byte (with ReducingGap,
+	// Image.thumbnail's: FitInside then also sizes as thumbnail does, by
+	// the nearest aspect ratio): across and then
 	// down, each output pixel weighing the source within the kernel's
 	// reach (scaled when reducing) in double precision, the weights in
 	// 22-bit fixed point, each pass rounded to 8 bits; an image with
@@ -357,6 +368,9 @@ func (m *Image) Resize(width, height int, opts ...ResizeOptions) *Image {
 	kernel, err := resizeKernel(o)
 	if err != nil {
 		return m.fail(err)
+	}
+	if o.ReducingGap != 0 && (o.Method != ResizePillow || !(o.ReducingGap >= 1) || math.IsInf(o.ReducingGap, 0)) {
+		return m.fail(errors.New("goimgtools: ReducingGap is at least 1, with ResizePillow"))
 	}
 	z := resizeOp{spec: resizeSpec{width, height, o}, kernel: kernel}
 	switch o.Method {
