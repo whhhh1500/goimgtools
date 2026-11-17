@@ -82,6 +82,17 @@ func (m *Image) manageColour(src pipeline.Source, icc []byte, format string) (pi
 	if len(icc) == 0 {
 		return src, icc
 	}
+	if model := src.ColorModel(); model != color.GrayModel && model != color.Gray16Model && len(icc) >= 20 && string(icc[16:20]) == "GRAY" {
+		// A grey profile on what is no longer grey (after a coloured
+		// overlay, say), which pixels of colour cannot carry: each channel
+		// is taken through its curve as a grey would be, to sRGB.
+		if p, err := iccprof.Parse(icc); err == nil && p.Channels() == 1 {
+			if t := p.ToSRGB(); !t.Identity() {
+				src = ops.ToSRGB(src, t)
+			}
+			return src, nil
+		}
+	}
 	if def := formatNamed(format); !m.toSRGB && (def == nil || !def.noProfile) {
 		return src, icc
 	}

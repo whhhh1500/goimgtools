@@ -3,11 +3,13 @@ package tests
 import (
 	"bytes"
 	"image"
+	"image/color"
 	"image/draw"
 	"os"
 	"testing"
 
 	. "github.com/whhhh1500/goimgtools"
+	"github.com/whhhh1500/goimgtools/internal/iccprof"
 )
 
 // TestICCLookupTables: a CMYK JPEG with a profile of lookup tables (lut16
@@ -76,6 +78,30 @@ func TestICCLookupTables(t *testing.T) {
 		if worst > 1 {
 			t.Errorf("grey: up to %d levels from LittleCMS", worst)
 		}
+	}
+	// A grey image made coloured (Tint) cannot keep its grey profile: each
+	// channel goes through the profile's curve to sRGB, the output without
+	// a profile; one that stays grey keeps it.
+	icc := must(os.ReadFile("testdata/icc/gray-dotgain.icc"))
+	p, err := iccprof.Parse(icc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := p.ToSRGB()
+	raw := nrgbaOf(decodePNG(t, must(FromBytes(gray).StripICC().Tint(color.RGBA{112, 66, 20, 255}).PNG().ToBytes())))
+	tinted := must(FromBytes(gray).Tint(color.RGBA{112, 66, 20, 255}).PNG().ToBytes())
+	if info, err := FromBytes(tinted).Metadata(); err != nil || info.HasProfile {
+		t.Errorf("tinted: %+v, %v", info, err)
+	}
+	got := nrgbaOf(decodePNG(t, tinted))
+	for i := 0; i < len(raw.Pix); i += 4 {
+		r, g, b := tr.Convert(raw.Pix[i], raw.Pix[i+1], raw.Pix[i+2])
+		if [3]uint8{r, g, b} != [3]uint8(got.Pix[i:i+3]) {
+			t.Fatalf("tinted pixel %d: %v, want %v", i/4, got.Pix[i:i+3], [3]uint8{r, g, b})
+		}
+	}
+	if info, err := FromBytes(must(FromBytes(gray).Resize(20, 0).JPEG(90).ToBytes())).Metadata(); err != nil || !info.HasProfile {
+		t.Errorf("still grey: %+v, %v", info, err)
 	}
 	// StripICC drops the profile from the output, not from the conversion.
 	in := must(os.ReadFile("testdata/icc/cmyk-lut16.jpg"))
