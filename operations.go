@@ -62,6 +62,12 @@ const (
 	// KernelMKS2021 keeps finer detail and is the slower.
 	KernelMKS2013
 	KernelMKS2021
+	// KernelBox is Pillow's BOX: the plain average of the covered pixels
+	// when shrinking, the nearest pixel when enlarging.
+	KernelBox
+	// KernelHamming is Pillow's HAMMING: a sinc in a Hamming window, a
+	// little sharper than KernelLinear and as fast.
+	KernelHamming
 )
 
 // ResizeOptions are the optional settings of Resize.
@@ -132,6 +138,18 @@ const (
 	// with an angle, Flip, Flop) are done before it, and the EXIF turn
 	// (Rotate without one) after it.
 	ResizeLibvips
+	// ResizePillow is Pillow's Image.resize, to the byte: across and then
+	// down, each output pixel weighing the source within the kernel's
+	// reach (scaled when reducing) in double precision, the weights in
+	// 22-bit fixed point, each pass rounded to 8 bits; an image with
+	// transparency resized with its colours multiplied by alpha (Pillow's
+	// RGBa). KernelCubic (the default) is Pillow's BICUBIC, KernelLanczos3
+	// LANCZOS, KernelLinear BILINEAR, KernelBox BOX, KernelHamming HAMMING
+	// and KernelNearest NEAREST. Turns are done before it. With
+	// FastShrinkOnLoad a JPEG is decoded reduced as Pillow's draft does
+	// for the size asked (libjpeg's scaled decoding, by the largest of 8,
+	// 4 and 2 that fits), as im.draft(mode, size) before im.resize(size).
+	ResizePillow
 )
 
 // Interesting is how FitCover chooses the part of the image it keeps.
@@ -348,16 +366,49 @@ func (m *Image) Resize(width, height int, opts ...ResizeOptions) *Image {
 			return m.fail(errors.New("goimgtools: LinearLight is not available with ResizeLibvips"))
 		}
 		z.vips = vipsKernel(o)
+	case ResizePillow:
+		if o.LinearLight {
+			return m.fail(errors.New("goimgtools: LinearLight is not available with ResizePillow"))
+		}
+		z.pillow = pillowFilter(o, kernel)
 	default:
 		return m.fail(errors.New("goimgtools: unknown ResizeOptions.Method"))
 	}
 	return m.add(z)
 }
 
+// pillowFilter is the filter of ResizePillow: Pillow's own, or kernel (the
+// draw kernel of o) at any distance.
+func pillowFilter(o ResizeOptions, kernel *draw.Kernel) resize.PillowFilter {
+	if o.Filter == nil {
+		switch o.Kernel {
+		case KernelNearest:
+			return resize.PillowNearest
+		case KernelBox:
+			return resize.PillowBox
+		case KernelLinear:
+			return resize.PillowBilinear
+		case KernelHamming:
+			return resize.PillowHamming
+		case KernelCubic:
+			return resize.PillowBicubic
+		case KernelLanczos3:
+			return resize.PillowLanczos
+		}
+	}
+	return resize.PillowFilter{At: resize.Within(kernel.At, kernel.Support), Support: kernel.Support}
+}
+
 // vipsKernel is the kernel of ResizeLibvips (resizeKernel has checked it).
 func vipsKernel(o ResizeOptions) resize.VipsKernel {
 	if f := o.Filter; f != nil {
 		return resize.VipsKernel{Kind: resize.VipsCustom, At: f.At, Support: f.Support}
+	}
+	switch o.Kernel {
+	case KernelBox:
+		return resize.VipsKernel{Kind: resize.VipsCustom, At: resize.Box.At, Support: 0.5}
+	case KernelHamming:
+		return resize.VipsKernel{Kind: resize.VipsCustom, At: resize.Hamming.At, Support: 1}
 	}
 	return resize.VipsKernel{Kind: map[Kernel]int{
 		KernelCubic: resize.VipsCubic, KernelNearest: resize.VipsNearest, KernelLinear: resize.VipsLinear,
@@ -390,6 +441,10 @@ func resizeKernel(o ResizeOptions) (*draw.Kernel, error) {
 		return resize.MKS2013, nil
 	case KernelMKS2021:
 		return resize.MKS2021, nil
+	case KernelBox:
+		return resize.Box, nil
+	case KernelHamming:
+		return resize.Hamming, nil
 	}
 	return nil, errors.New("goimgtools: unknown resize kernel")
 }

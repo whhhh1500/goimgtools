@@ -70,6 +70,15 @@ func TestSameWithHelpers(t *testing.T) {
 		"resize libvips up and down": func(m *Image) *Image {
 			return m.Resize(1100, 70, ResizeOptions{Fit: FitFill, Kernel: KernelMitchell, Method: ResizeLibvips})
 		},
+		"resize pillow down": func(m *Image) *Image {
+			return m.Resize(97, 0, ResizeOptions{Kernel: KernelLanczos3, Method: ResizePillow})
+		},
+		"resize pillow up and down": func(m *Image) *Image {
+			return m.Resize(1100, 70, ResizeOptions{Fit: FitFill, Kernel: KernelHamming, Method: ResizePillow})
+		},
+		"resize pillow nearest": func(m *Image) *Image {
+			return m.Resize(31, 0, ResizeOptions{Kernel: KernelNearest, Method: ResizePillow})
+		},
 		"resize libvips nearest": func(m *Image) *Image {
 			return m.Resize(31, 0, ResizeOptions{Kernel: KernelNearest, Method: ResizeLibvips})
 		},

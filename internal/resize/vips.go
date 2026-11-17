@@ -115,7 +115,9 @@ const (
 
 // VipsKernel is the kernel of Vips: Kind, and for VipsCustom the filter At,
 // reaching Support either side (its window is that of the whole number of
-// pixels at or above Support, as MKS2013's 2.5 is reckoned as 3).
+// pixels at or above Support, as MKS2013's 2.5 is reckoned as 3); At is
+// called with distances from 0 up to Support, as golang.org/x/image/draw
+// calls a kernel.
 type VipsKernel struct {
 	Kind    int
 	At      func(float64) float64
@@ -209,9 +211,21 @@ func (k VipsKernel) at(x float64) float64 {
 		}
 		return 577.0/576.0 - float64(float64(float64(239.0*x)*x)/144.0)
 	case VipsCustom:
-		return k.At(x)
+		return Within(k.At, k.Support)(x)
 	}
 	return 0
+}
+
+// Within is the filter at of support for any distance: at(|x|) below
+// support, 0 beyond.
+func Within(at func(float64) float64, support float64) func(float64) float64 {
+	return func(x float64) float64 {
+		x = math.Abs(x)
+		if x >= support {
+			return 0
+		}
+		return at(x)
+	}
 }
 
 // points is the size of the window for a reduction by shrink.

@@ -118,7 +118,8 @@ func (r resizeSpec) target(sw, sh int) (dw, dh int) {
 type resizeOp struct {
 	spec   resizeSpec
 	kernel *draw.Kernel
-	vips   resize.VipsKernel // for ResizeLibvips
+	vips   resize.VipsKernel   // for ResizeLibvips
+	pillow resize.PillowFilter // for ResizePillow
 }
 
 func (z resizeOp) apply(src pipeline.Source, r *run) (pipeline.Source, error) {
@@ -130,8 +131,11 @@ func (z resizeOp) apply(src pipeline.Source, r *run) (pipeline.Source, error) {
 // has already reduced: the size aimed for is then the one the full image
 // would have given.
 func (z resizeOp) resize(src pipeline.Source, turn ops.Orientation, pre preShrunk, r *run) (pipeline.Source, error) {
-	if z.spec.o.Method == ResizeLibvips {
+	switch z.spec.o.Method {
+	case ResizeLibvips:
 		return z.resizeVips(src, turn, pre, r)
+	case ResizePillow:
+		return z.resizePillow(src, turn, pre, r)
 	}
 	b := src.Bounds()
 	sw, sh := b.Dx(), b.Dy()
@@ -202,6 +206,54 @@ func (z resizeOp) resizeVips(src pipeline.Source, turn ops.Orientation, pre preS
 		}
 	}
 	return z.fitBox(ops.Orient(out, turn), dw, dh)
+}
+
+// resizePillow is resize with ResizePillow: Pillow's resize of src to the
+// size the box asks of the image (of the image before the decoder reduced
+// it, pre, as Pillow's draft keeps the size asked for), then turned by turn
+// (no turn: turns are done first for it).
+func (z resizeOp) resizePillow(src pipeline.Source, turn ops.Orientation, pre preShrunk, r *run) (pipeline.Source, error) {
+	b := src.Bounds()
+	sw, sh := b.Dx(), b.Dy()
+	if pre.k > 1 {
+		sw, sh = pre.orig.X, pre.orig.Y
+	}
+	dw, dh := z.spec.target(turn.Size(sw, sh))
+	iw, ih := turn.Size(dw, dh)
+	if err := r.fits(dw, dh); err != nil {
+		return nil, err
+	}
+	out, err := resize.Pillow(src, iw, ih, z.pillow)
+	if err != nil {
+		return nil, err
+	}
+	return z.fitBox(ops.Orient(out, turn), dw, dh)
+}
+
+// pillowDraft is the factor Pillow's draft(mode, size) reduces a JPEG by for
+// the resize z after turn: of 8, 4 and 2 the largest at most the whole
+// part of the smaller of the factors the two sides are reduced by; 1 for
+// none, or when the decoder cannot reduce the image.
+func pillowDraft(src pipeline.Source, z resizeSpec, turn ops.Orientation) int {
+	j, ok := src.(interface {
+		Subsampling() (image.YCbCrSubsampleRatio, bool, bool)
+	})
+	if !ok {
+		return 1
+	}
+	ratio, gray, ok := j.Subsampling()
+	if !ok || (!gray && !resize.ShrinkRatio(ratio)) {
+		return 1
+	}
+	b := src.Bounds()
+	w, h := turn.Size(z.target(turn.Size(b.Dx(), b.Dy())))
+	scale := min(b.Dx()/w, b.Dy()/h)
+	for _, k := range []int{8, 4, 2} {
+		if scale >= k {
+			return k
+		}
+	}
+	return 1
 }
 
 // shrinks are the factors sharp reduces a sw × sh image by for a box of
@@ -463,9 +515,12 @@ func applyOps(list []operation, src pipeline.Source, r *run, pre preShrunk) (_ p
 			if i == 0 {
 				p = pre
 			}
-			if z.spec.o.Method == ResizeLibvips && !autoTurns(list[i:end]) {
+			if z.spec.o.Method == ResizePillow || z.spec.o.Method == ResizeLibvips && !autoTurns(list[i:end]) {
 				// As sharp: turns asked for before the resize are done
-				// before it.
+				// before it; with Pillow every turn.
+				if p.k > 1 {
+					p.orig.X, p.orig.Y = turn.Size(p.orig.X, p.orig.Y)
+				}
 				src, turn = ops.Orient(src, turn), ops.Upright
 			}
 			next, err = z.resize(src, turn, p, r)

@@ -136,7 +136,7 @@ func register(fs *flag.FlagSet) *options {
 		flop:           fs.Bool("flop", false, "mirror left to right"),
 		fit:            fs.String("fit", "inside", "how -resize WxH fits: inside (shrink in proportion), cover (fill and crop), contain (shrink in proportion, pad with -background), outside, fill (stretch)"),
 		linearLight:    fs.Bool("linear-light", false, "resize in linear light: fine light detail keeps its brightness when the image is reduced"),
-		resizeMethod:   fs.String("resize-method", "draw", "how -resize works out the pixels: draw (golang.org/x/image/draw's arithmetic) or libvips (sharp's resize, to the byte; sharp's default -kernel is lanczos3)"),
+		resizeMethod:   fs.String("resize-method", "draw", "how -resize works out the pixels: draw (golang.org/x/image/draw's arithmetic), libvips (sharp's resize, to the byte; sharp's default -kernel is lanczos3) or pillow (Pillow's resize, to the byte; its default is cubic)"),
 		position:       fs.String("position", "center", "the part -fit cover keeps (and where -fit contain puts the image): northwest, north, northeast, west, center, east, southwest, south, southeast; or, for cover, entropy (the part with the most detail) or attention (the part that draws the eye)"),
 		bg:             fs.String("background", "black", "`color` of the bars -fit contain adds, the border of -extend and the corners -rotate leaves at other angles: white, black, transparent, #rrggbb or #rrggbbaa"),
 		trimBackground: fs.String("trim-background", "", "the `color` of the edges -trim cuts away (by default that of the top-left pixel)"),
@@ -152,7 +152,7 @@ func register(fs *flag.FlagSet) *options {
 		blurMethod:     fs.String("blur-method", "boxes", "how -blur works out its Gaussian: boxes (as Pillow) or kernel (as sharp)"),
 		blurMinAmp:     fs.Float64("blur-min-amplitude", 0, "cut the Gaussian of -blur-method kernel off below this `fraction` of its peak, 0.001 to 1 (0.2 by default, as sharp)"),
 		sharpen:        fs.String("sharpen", "", "sharpen: mild (a quick 3x3 sharpen, good after shrinking), an unsharp mask `SIGMA[,AMOUNT[,THRESHOLD]]` as Pillow's (amount 1.5, threshold 0 by default), or SIGMA,lightness[,FLAT,JAGGED,JAGGED_FROM,MAX_BRIGHTEN,MAX_DARKEN] as sharp's (the lightness alone; 1,2,2,10,20 by default)"),
-		kernel:         fs.String("kernel", "cubic", "resize filter: nearest, linear, cubic, mitchell, lanczos2, lanczos3, mks2013, mks2021"),
+		kernel:         fs.String("kernel", "cubic", "resize filter: nearest, linear, cubic, mitchell, lanczos2, lanczos3, mks2013, mks2021, box, hamming"),
 		noEnlarge:      fs.Bool("no-enlarge", false, "never make the image larger than it is"),
 		fast:           fs.Bool("fast-shrink", false, "let a JPEG reduced to half size or less be shrunk while it is decoded: faster, pixels differ slightly"),
 		crop:           fs.String("crop", "", "keep the region `X,Y,W,H` (pixels, before resizing)"),
@@ -515,13 +515,15 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 			"nearest": goimgtools.KernelNearest, "linear": goimgtools.KernelLinear, "cubic": goimgtools.KernelCubic,
 			"mitchell": goimgtools.KernelMitchell, "lanczos2": goimgtools.KernelLanczos2, "lanczos3": goimgtools.KernelLanczos3,
 			"mks2013": goimgtools.KernelMKS2013, "mks2021": goimgtools.KernelMKS2021,
+			"box": goimgtools.KernelBox, "hamming": goimgtools.KernelHamming,
 		}[strings.ToLower(*o.kernel)]
 		if !ok {
 			return nil, fmt.Errorf("-kernel: unknown filter %q", *o.kernel)
 		}
-		method, ok := map[string]goimgtools.ResizeMethod{"draw": goimgtools.ResizeDraw, "libvips": goimgtools.ResizeLibvips}[strings.ToLower(*o.resizeMethod)]
+		method, ok := map[string]goimgtools.ResizeMethod{"draw": goimgtools.ResizeDraw, "libvips": goimgtools.ResizeLibvips,
+			"pillow": goimgtools.ResizePillow}[strings.ToLower(*o.resizeMethod)]
 		if !ok {
-			return nil, fmt.Errorf("-resize-method: want draw or libvips, got %q", *o.resizeMethod)
+			return nil, fmt.Errorf("-resize-method: want draw, libvips or pillow, got %q", *o.resizeMethod)
 		}
 		ro := goimgtools.ResizeOptions{Fit: f, WithoutEnlargement: *o.noEnlarge, FastShrinkOnLoad: *o.fast,
 			Background: bg, Kernel: k, LinearLight: *o.linearLight, Method: method}

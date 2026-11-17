@@ -100,7 +100,7 @@ func describe(op operation) (string, []string) {
 		return "rotate", []string{"0"}
 	case resizeOp:
 		w := []string{d(o.spec.width), d(o.spec.height), fitNames[o.spec.o.Fit], kernelNames[o.spec.o.Kernel]}
-		lib := o.spec.o.Method == ResizeLibvips
+		lib := o.spec.o.Method != ResizeDraw
 		if n, ok := interestingNames[o.spec.o.Interesting]; ok {
 			w = append(w, n)
 		} else if n, ok := positionNames[o.spec.o.Position]; ok {
@@ -196,12 +196,12 @@ var (
 	fitNames    = map[Fit]string{FitInside: "inside", FitCover: "cover", FitOutside: "outside", FitFill: "fill", FitContain: "contain"}
 	kernelNames = map[Kernel]string{KernelCubic: "cubic", KernelNearest: "nearest", KernelLinear: "linear",
 		KernelMitchell: "mitchell", KernelLanczos2: "lanczos2", KernelLanczos3: "lanczos3", KernelMKS2013: "mks2013",
-		KernelMKS2021: "mks2021"}
+		KernelMKS2021: "mks2021", KernelBox: "box", KernelHamming: "hamming"}
 	positionNames = map[Position]string{NorthWest: "northwest", North: "north", NorthEast: "northeast",
 		West: "west", Center: "center", East: "east", SouthWest: "southwest", South: "south", SouthEast: "southeast"}
 	interestingNames = map[Interesting]string{InterestingEntropy: "entropy", InterestingAttention: "attention"}
 	lightNames       = map[bool]string{false: "srgb", true: "linear"}
-	methodNames      = map[ResizeMethod]string{ResizeDraw: "draw", ResizeLibvips: "libvips"}
+	methodNames      = map[ResizeMethod]string{ResizeDraw: "draw", ResizeLibvips: "libvips", ResizePillow: "pillow"}
 	extensionNames   = map[Extension]string{ExtendCopy: "copy", ExtendRepeat: "repeat", ExtendMirror: "mirror"}
 )
 
@@ -508,7 +508,7 @@ func pick[T comparable](names map[T]string, word, what string) (T, error) {
 // builtInOps are the methods of Image that take arguments in words.
 var builtInOps = map[string]OperationDef{
 	"resize": {Name: "resize", Usage: "WIDTH,HEIGHT[,FIT[,KERNEL[,POSITION[,LIGHT[,METHOD]]]]]",
-		Help: "Resize: 0 for a side keeps the proportions; FIT inside, cover, contain, outside, fill; KERNEL cubic, nearest, linear, mitchell, lanczos2, lanczos3, mks2013, mks2021; POSITION (what cover keeps, where contain puts the image) northwest ... center ... southeast, or entropy or attention for cover; LIGHT srgb (the levels as they are) or linear (in linear light); METHOD draw (the default) or libvips (sharp's resize, to the byte)",
+		Help: "Resize: 0 for a side keeps the proportions; FIT inside, cover, contain, outside, fill; KERNEL cubic, nearest, linear, mitchell, lanczos2, lanczos3, mks2013, mks2021, box, hamming; POSITION (what cover keeps, where contain puts the image) northwest ... center ... southeast, or entropy or attention for cover; LIGHT srgb (the levels as they are) or linear (in linear light); METHOD draw (the default), libvips (sharp's resize, to the byte) or pillow (Pillow's, to the byte)",
 		builtIn: func(m *Image, a []string) error {
 			if err := wantArgs(a, 2, 7); err != nil {
 				return err

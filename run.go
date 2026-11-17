@@ -152,6 +152,8 @@ func (m *Image) buildFrom(env *pipeline.Env, top bool, f *input, format string, 
 		if z, turn, ok := firstResize(m.chain, r); ok && (z.spec.o.FastShrinkOnLoad || z.spec.o.Method == ResizeLibvips) && (len(m.hooks) == 0 || turn == ops.Upright && len(m.chain) > 0 && isResize(m.chain[0])) {
 			var k int
 			switch {
+			case z.spec.o.Method == ResizePillow:
+				k = pillowDraft(src, z.spec, turn)
 			case z.spec.o.Method != ResizeLibvips:
 				k = shrinkFactor(src, z.spec, turn)
 			case autoTurns(m.chain[:firstResizeAt(m.chain, r)]):
@@ -164,15 +166,16 @@ func (m *Image) buildFrom(env *pipeline.Env, top bool, f *input, format string, 
 				// The decoder reduces the blocks as it decodes them;
 				// failing that, the decoded pixels are averaged.
 				shrunk := false
-				if z.spec.o.Method == ResizeLibvips {
-					// libvips' decoder is libjpeg: its scaled decoding.
+				if z.spec.o.Method == ResizeLibvips || z.spec.o.Method == ResizePillow {
+					// libvips' decoder, and Pillow's, is libjpeg: its
+					// scaled decoding.
 					j, ok := src.(interface{ ShrinkOnLoadLibjpeg(k int) bool })
 					shrunk = ok && j.ShrinkOnLoadLibjpeg(k)
 				} else if j, ok := src.(interface{ ShrinkOnLoad(k int) bool }); ok {
 					shrunk = j.ShrinkOnLoad(k)
 				}
 				if shrunk {
-					if z.spec.o.Method != ResizeLibvips {
+					if z.spec.o.Method == ResizeDraw {
 						// The resize scales the planes as they are
 						// decoded.
 						if j, ok := src.(interface{ KeepYCbCr() }); ok {

@@ -31,12 +31,27 @@ func TestResizeLibvipsOptions(t *testing.T) {
 	if len(steps) != 1 || len(steps[0].Args) != 7 || steps[0].Args[6] != "libvips" || !bytes.Equal(a, c) {
 		t.Errorf("steps: %+v", steps)
 	}
-	for _, o := range []ResizeOptions{{Method: 2}, {Method: -1}, {Method: ResizeLibvips, LinearLight: true}} {
+	p := must(FromBytes(rgb).Resize(60, 41, ResizeOptions{Fit: FitFill, Kernel: KernelHamming, Method: ResizePillow}).PNG().ToBytes())
+	if q := must(FromBytes(rgb).Do("resize", "60", "41", "fill", "hamming", "center", "srgb", "pillow").PNG().ToBytes()); !bytes.Equal(p, q) {
+		t.Error("pillow by name: another image")
+	}
+	// Box and Hamming with every method.
+	for _, k := range []Kernel{KernelBox, KernelHamming} {
+		for _, m := range []ResizeMethod{ResizeDraw, ResizeLibvips, ResizePillow} {
+			for _, sz := range [][2]int{{40, 30}, {400, 300}} {
+				g := decodePNG(t, must(FromBytes(rgb).Resize(sz[0], sz[1], ResizeOptions{Fit: FitFill, Kernel: k, Method: m}).PNG().ToBytes()))
+				if b := g.Bounds(); b.Dx() != sz[0] || b.Dy() != sz[1] {
+					t.Errorf("kernel %d method %d: %v", k, m, b)
+				}
+			}
+		}
+	}
+	for _, o := range []ResizeOptions{{Method: 3}, {Method: -1}, {Method: ResizeLibvips, LinearLight: true}, {Method: ResizePillow, LinearLight: true}, {Kernel: 10}} {
 		if _, err := FromBytes(rgb).Resize(60, 41, o).PNG().ToBytes(); err == nil {
 			t.Errorf("Resize(%+v) accepted", o)
 		}
 	}
-	if _, err := FromBytes(rgb).Do("resize", "60", "41", "fill", "cubic", "center", "srgb", "pillow").PNG().ToBytes(); err == nil {
+	if _, err := FromBytes(rgb).Do("resize", "60", "41", "fill", "cubic", "center", "srgb", "magick").PNG().ToBytes(); err == nil {
 		t.Error("an unknown method word accepted")
 	}
 	// A filter of one's own, and the extremes: no panic, the sizes asked.
@@ -45,13 +60,18 @@ func TestResizeLibvipsOptions(t *testing.T) {
 		w, h int
 		o    ResizeOptions
 	}{
+		{40, 30, ResizeOptions{Fit: FitFill, Filter: own, Method: ResizePillow}},
+		{400, 300, ResizeOptions{Fit: FitFill, Filter: own, Method: ResizePillow}},
+		{1, 1, ResizeOptions{Fit: FitFill, Kernel: KernelMKS2021, Method: ResizePillow}},
 		{40, 30, ResizeOptions{Fit: FitFill, Filter: own}},
 		{400, 300, ResizeOptions{Fit: FitFill, Filter: own}},
 		{1, 1, ResizeOptions{Fit: FitFill, Kernel: KernelMKS2021}},
 		{1, 500, ResizeOptions{Fit: FitFill, Kernel: KernelLanczos3}},
 		{3000, 1, ResizeOptions{Fit: FitFill, Kernel: KernelNearest}},
 	} {
-		c.o.Method = ResizeLibvips
+		if c.o.Method == ResizeDraw {
+			c.o.Method = ResizeLibvips
+		}
 		m := decodePNG(t, must(FromBytes(rgb).Resize(c.w, c.h, c.o).PNG().ToBytes()))
 		if b := m.Bounds(); b.Dx() != c.w || b.Dy() != c.h {
 			t.Errorf("%dx%d: %v", c.w, c.h, b)

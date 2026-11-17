@@ -27,6 +27,14 @@ var (
 		return (float64((-b-6*c)*t*t*t) + float64((6*b+30*c)*t*t) + float64((-12*b-48*c)*t) + (8*b + 24*c)) / 6
 	}}
 
+	// Box is Pillow's BOX: the plain average of the covered pixels when
+	// shrinking (as Nearest), the nearest pixel when enlarging.
+	Box = Nearest
+
+	// Hamming is Pillow's HAMMING: a sinc in a Hamming window one pixel
+	// wide.
+	Hamming = &draw.Kernel{Support: 1, At: pillowHamming}
+
 	Lanczos2 = lanczos(2)
 	Lanczos3 = lanczos(3)
 
