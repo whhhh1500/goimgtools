@@ -58,6 +58,12 @@ func must[T any](v T, err error) T {
 // one turned upright by irot whose EXIF orientation is then 1, so that
 // Rotate leaves it. The files are from gen2brain/h265 and gen2brain/heic
 // (MIT licence).
+//
+// fused holds the sums h265's colour conversion in pure Go gives (-tags
+// noasm, or a processor it has no SIMD for) where Go fuses a multiplication
+// and an addition (arm64 and the like): its rounding then differs.
+var fused = map[string]string{"e84abe406c7ac4d8": "f100b10bf46c1b0d"}
+
 func TestDecode(t *testing.T) {
 	for _, c := range []struct {
 		name  string
@@ -66,7 +72,7 @@ func TestDecode(t *testing.T) {
 		sum   string
 	}{
 		{"alpha.heic", 64, 64, true, "4fb8ae5b77c562aa"},
-		{"basic.heic", 320, 240, false, "e84abe406c7ac4d8"},
+		{"basic.heic", 320, 240, false, "e84abe406c7ac4d8"}, // (f100b10bf46c1b0d: see fused)
 		{"chroma444.heic", 320, 240, false, "295efa275cc41885"},
 		{"grid_alpha.heic", 1100, 700, true, "5a0c0e3f7f3f03cd"},
 		{"test_exif.heic", 480, 640, false, "bfec4c500d7df317"},
@@ -81,7 +87,7 @@ func TestDecode(t *testing.T) {
 		}
 		for _, threads := range []int{1, 4} {
 			m := toPNG(t, goimgtools.FromBytes(in).Threads(threads))
-			if got := fmt.Sprintf("%x", sha256.Sum256(m.Pix))[:16]; got != c.sum || m.Rect.Dx() != c.w || m.Rect.Dy() != c.h {
+			if got := fmt.Sprintf("%x", sha256.Sum256(m.Pix))[:16]; got != c.sum && got != fused[c.sum] || m.Rect.Dx() != c.w || m.Rect.Dy() != c.h {
 				t.Errorf("%s, %d threads: %v %s, want %dx%d %s", c.name, threads, m.Rect.Size(), got, c.w, c.h, c.sum)
 			}
 		}

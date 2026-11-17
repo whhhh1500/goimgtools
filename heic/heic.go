@@ -21,7 +21,10 @@
 // bytes each, 8 for more than 8 bits) are counted in the memory limit. The
 // decoder takes as many goroutines as the image's Threads (a grid's tiles
 // and the rows of a picture are decoded at once); its output does not
-// depend on them.
+// depend on them. It does depend, by a level here and there, on whether
+// h265 converts the colours with SIMD (amd64, arm64 and riscv64 with RVV)
+// or in Go (-tags noasm, other processors): Go fuses multiplications and
+// additions on some processors, and its rounding then differs.
 package heic
 
 import (
