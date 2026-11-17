@@ -60,6 +60,88 @@ func TestFilterSIMD(t *testing.T) {
 	}
 }
 
+// TestLoopFilter8: each function of lf_amd64.s changes the pixels as the
+// calls of filter246 it stands for do, in their order (the three inner
+// edges one after another, each from the pixels the last left), for every
+// level the decoder computes (up to 193 at a macroblock edge) and random
+// interior levels and variance thresholds, on smooth, noisy and flat
+// pixels.
+func TestLoopFilter8(t *testing.T) {
+	if !lf8 || !useSIMD {
+		t.Skip("no 8-bit loop filter")
+	}
+	rng := rand.New(rand.NewPCG(13, 14))
+	const stride = 40
+	fill := func() []byte {
+		pix := make([]byte, 28*stride)
+		base := rng.IntN(256)
+		spread := []int{2, 8, 30, 256}[rng.IntN(4)]
+		for j := range pix {
+			v := base + rng.IntN(spread) - spread/2
+			if rng.IntN(20) == 0 {
+				v = rng.IntN(256)
+			}
+			pix[j] = byte(min(255, max(0, v)))
+		}
+		return pix
+	}
+	type luma func(p *byte, stride, thresh, ithresh, hev int)
+	type chroma func(u, v *byte, stride, thresh, ithresh, hev int)
+	for i := range 100000 {
+		l, il, hl := rng.IntN(194), 1+rng.IntN(63), rng.IntN(4)
+		at := 6*stride + 6
+		y, u, v := fill(), fill(), fill()
+		check := func(name string, got, want []byte) {
+			if !bytes.Equal(got, want) {
+				for j := range got {
+					if got[j] != want[j] {
+						t.Fatalf("case %d %s (levels %d %d %d): byte %d (row %d, col %d) is %d, want %d",
+							i, name, l, il, hl, j, j/stride, j%stride, got[j], want[j])
+					}
+				}
+			}
+		}
+		for _, c := range []struct {
+			name  string
+			f     luma
+			edges []int
+			step  [2]int // iStep, jStep
+			four  bool
+		}{
+			{"lfRows16", lfRows16, []int{0}, [2]int{1, stride}, false},
+			{"lfCols16", lfCols16, []int{0}, [2]int{stride, 1}, false},
+			{"lfRows16i", lfRows16i, []int{4 * stride, 8 * stride, 12 * stride}, [2]int{1, stride}, true},
+			{"lfCols16i", lfCols16i, []int{4, 8, 12}, [2]int{stride, 1}, true},
+		} {
+			want, got := bytes.Clone(y), bytes.Clone(y)
+			for _, e := range c.edges {
+				filter246(want, 16, l, il, hl, at+e, c.step[0], c.step[1], c.four)
+			}
+			c.f(&got[at], stride, l, il, hl)
+			check(c.name, got, want)
+		}
+		for _, c := range []struct {
+			name string
+			f    chroma
+			edge int
+			step [2]int
+			four bool
+		}{
+			{"lfRows8", lfRows8, 0, [2]int{1, stride}, false},
+			{"lfCols8", lfCols8, 0, [2]int{stride, 1}, false},
+			{"lfRows8i", lfRows8i, 4 * stride, [2]int{1, stride}, true},
+			{"lfCols8i", lfCols8i, 4, [2]int{stride, 1}, true},
+		} {
+			wu, wv, gu, gv := bytes.Clone(u), bytes.Clone(v), bytes.Clone(u), bytes.Clone(v)
+			filter246(wu, 8, l, il, hl, at+c.edge, c.step[0], c.step[1], c.four)
+			filter246(wv, 8, l, il, hl, at+c.edge, c.step[0], c.step[1], c.four)
+			c.f(&gu[at], &gv[at], stride, l, il, hl)
+			check(c.name+" u", gu, wu)
+			check(c.name+" v", gv, wv)
+		}
+	}
+}
+
 // TestIDCTSIMD: the SIMD inverse transform adds to the prediction what
 // inverseDCT4 adds, for coefficients a stream can hold (any 16-bit value)
 // and those of the narrow lanes' bound.

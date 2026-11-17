@@ -198,6 +198,9 @@ patent grant by Google. Both texts, as libwebp 1.6.0 distributes them
 compute libwebp's upsampling, conversion of colour and loop filter (as the Go
 code of those packages computes them) after the approach of its SSE2 code
 (`src/dsp/upsampling_sse2.c`, `yuv_sse2.h`, `dec_sse2.c`);
+`internal/webpstream/vp8/lf_amd64.s` is the decoder's loop filter as
+`dec_sse2.c` has it (`VFilter16`, `HFilter16`, `VFilter16i`, `HFilter16i` and
+the 8-pixel ones, with their helpers), translated to assembly;
 `internal/vp8enc/ssim_amd64.s` the window sums of its SSIM (`ssim_sse2.c`);
 `internal/vp8enc/dct_amd64.s` the encoder's 4x4 forward transform after its
 `FTransform_SSE2` (`enc_sse2.c`), with the quantization, squared error and

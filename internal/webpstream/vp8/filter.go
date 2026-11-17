@@ -299,6 +299,41 @@ func (d *Decoder) normalFilterSIMD(mby, slot int, params []filterParam) {
 		l, il, hl := int(f.level), int(f.ilevel), int(f.hlevel)
 		yi := (slot*ys + mbx) * 16
 		ci := (slot*cs + mbx) * 8
+		if lf8 {
+			// libwebp's order: the edge left, the inner edges between
+			// columns, the edge above, those between rows.
+			if mbx > 0 {
+				across(y, yi, ys, 16)
+				lfCols16(&y[yi], ys, l+4, il, hl)
+				across(cb, ci, cs, 8)
+				across(cr, ci, cs, 8)
+				lfCols8(&cb[ci], &cr[ci], cs, l+4, il, hl)
+			}
+			if f.inner {
+				across(y, yi+4, ys, 16)
+				across(y, yi+12, ys, 16)
+				lfCols16i(&y[yi], ys, l, il, hl)
+				across(cb, ci+4, cs, 8)
+				across(cr, ci+4, cs, 8)
+				lfCols8i(&cb[ci], &cr[ci], cs, l, il, hl)
+			}
+			if mby > 0 {
+				down(y, yi, ys, 16)
+				lfRows16(&y[yi], ys, l+4, il, hl)
+				down(cb, ci, cs, 8)
+				down(cr, ci, cs, 8)
+				lfRows8(&cb[ci], &cr[ci], cs, l+4, il, hl)
+			}
+			if f.inner {
+				down(y, yi+4*ys, ys, 16)
+				down(y, yi+12*ys, ys, 16)
+				lfRows16i(&y[yi], ys, l, il, hl)
+				down(cb, ci+4*cs, cs, 8)
+				down(cr, ci+4*cs, cs, 8)
+				lfRows8i(&cb[ci], &cr[ci], cs, l, il, hl)
+			}
+			continue
+		}
 		if mbx > 0 {
 			across(y, yi, ys, 16)
 			filterV6(&y[yi], &y[yi+8*ys], ys, l+4, il, hl)

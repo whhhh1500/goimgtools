@@ -55,3 +55,15 @@ func dcAddAsm(dst *byte, stride, dc int)
 
 //go:noescape
 func dcAdd8Asm(dst *byte, stride, d0, d1, d2, d3 int)
+
+// lf8 is false: arm64 keeps the NEON filter of filter_arm64.s.
+const lf8 = false
+
+func lfRows16(p *byte, stride, thresh, ithresh, hev int)    { panic("unreachable") }
+func lfCols16(p *byte, stride, thresh, ithresh, hev int)    { panic("unreachable") }
+func lfRows16i(p *byte, stride, thresh, ithresh, hev int)   { panic("unreachable") }
+func lfCols16i(p *byte, stride, thresh, ithresh, hev int)   { panic("unreachable") }
+func lfRows8(u, v *byte, stride, thresh, ithresh, hev int)  { panic("unreachable") }
+func lfCols8(u, v *byte, stride, thresh, ithresh, hev int)  { panic("unreachable") }
+func lfRows8i(u, v *byte, stride, thresh, ithresh, hev int) { panic("unreachable") }
+func lfCols8i(u, v *byte, stride, thresh, ithresh, hev int) { panic("unreachable") }
