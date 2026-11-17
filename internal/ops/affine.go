@@ -139,13 +139,54 @@ func (t *rotated) renderAffine(out *image.RGBA, x0, x1 int, c *tileCache) error 
 		wo = 1
 	}
 	// The pixel at (x, y) of the source with its border, or the
-	// background's.
+	// background's (t.pixel, with the tile last read kept at hand: the
+	// samples of neighbouring output pixels mostly come from it).
+	lastTi := -1
+	var lastTile []uint8
 	at := func(x, y int) ([4]uint8, error) {
-		p, err := t.pixel(c, x-wo-1, y-wo-1)
-		if err != nil || p == nil {
-			return m.bg, err
+		sx, sy := x-wo-1, y-wo-1
+		if sx < 0 || sy < 0 || sx >= t.sw || sy >= t.sh {
+			return m.bg, nil
 		}
+		if ti := (sy/tileSide)*t.tilesX + sx/tileSide; ti != lastTi {
+			tl, err := c.tile(t.sc, ti)
+			if err != nil {
+				return m.bg, err
+			}
+			lastTi, lastTile = ti, tl
+		}
+		o := ((sy%tileSide)*tileSide + sx%tileSide) * 4
+		p := lastTile[o : o+4 : o+4]
 		return [4]uint8{p[0], p[1], p[2], p[3]}, nil
+	}
+	// window sets q to the 4 x 4 pixels from (x, y) on (at's coordinates),
+	// read together when they are in one tile.
+	window := func(x, y int, q *[4][4][4]uint8) error {
+		if sx, sy := x-wo-1, y-wo-1; sx >= 0 && sy >= 0 && sx+3 < t.sw && sy+3 < t.sh &&
+			sx%tileSide <= tileSide-4 && sy%tileSide <= tileSide-4 {
+			if ti := (sy/tileSide)*t.tilesX + sx/tileSide; ti != lastTi {
+				tl, err := c.tile(t.sc, ti)
+				if err != nil {
+					return err
+				}
+				lastTi, lastTile = ti, tl
+			}
+			o := ((sy%tileSide)*tileSide + sx%tileSide) * 4
+			for j := range q {
+				p := lastTile[o+4*tileSide*j : o+4*tileSide*j+16]
+				q[j] = [4][4]uint8{[4]uint8(p[0:4]), [4]uint8(p[4:8]), [4]uint8(p[8:12]), [4]uint8(p[12:16])}
+			}
+			return nil
+		}
+		for j := range q {
+			for i := range q[j] {
+				var err error
+				if q[j][i], err = at(x+i, y+j); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
 	}
 	// pre is a channel of a pixel premultiplied in single precision.
 	pre := func(q [4]uint8, ch int) float32 {
@@ -188,16 +229,32 @@ func (t *rotated) renderAffine(out *image.RGBA, x0, x1 int, c *tileCache) error 
 					t.unpremultiply(d, [4]float32{pre(q, 0), pre(q, 1), pre(q, 2), pre(q, 3)})
 					continue
 				case AffineBicubic:
-					if err := t.bicubic(d, ix, iy, xi, yi, at, pre); err != nil {
+					if err := t.bicubic(d, ix, iy, xi, yi, window, pre); err != nil {
 						return err
 					}
 					continue
 				}
 				var q [4][4]uint8
-				for k := range q {
-					var err error
-					if q[k], err = at(xi+k%2, yi+k/2); err != nil {
-						return err
+				if sx, sy := xi-wo-1, yi-wo-1; sx >= 0 && sy >= 0 && sx+1 < t.sw && sy+1 < t.sh &&
+					(sx+1)%tileSide != 0 && (sy+1)%tileSide != 0 {
+					// The four in one tile: read together.
+					if ti := (sy/tileSide)*t.tilesX + sx/tileSide; ti != lastTi {
+						tl, err := c.tile(t.sc, ti)
+						if err != nil {
+							return err
+						}
+						lastTi, lastTile = ti, tl
+					}
+					o := ((sy%tileSide)*tileSide + sx%tileSide) * 4
+					p := lastTile[o : o+4*tileSide+8]
+					q[0], q[1] = [4]uint8(p[0:4]), [4]uint8(p[4:8])
+					q[2], q[3] = [4]uint8(p[4*tileSide:4*tileSide+4]), [4]uint8(p[4*tileSide+4:4*tileSide+8])
+				} else {
+					for k := range q {
+						var err error
+						if q[k], err = at(xi+k%2, yi+k/2); err != nil {
+							return err
+						}
 					}
 				}
 				if !m.float {
@@ -231,17 +288,12 @@ func (t *rotated) renderAffine(out *image.RGBA, x0, x1 int, c *tileCache) error 
 
 // bicubic interpolates the 4 x 4 pixels about (ix, iy), whose whole parts
 // are xi, yi, into d, as libvips' bicubic does (see affineMap).
-func (t *rotated) bicubic(d []uint8, ix, iy float64, xi, yi int, at func(x, y int) ([4]uint8, error), pre func([4]uint8, int) float32) error {
+func (t *rotated) bicubic(d []uint8, ix, iy float64, xi, yi int, window func(x, y int, q *[4][4][4]uint8) error, pre func([4]uint8, int) float32) error {
 	tx := (int(float64(ix*64)*2)&127 + 1) >> 1
 	ty := (int(float64(iy*64)*2)&127 + 1) >> 1
 	var q [4][4][4]uint8 // rows, columns, channels
-	for j := range q {
-		for i := range q[j] {
-			var err error
-			if q[j][i], err = at(xi-1+i, yi-1+j); err != nil {
-				return err
-			}
-		}
+	if err := window(xi-1, yi-1, &q); err != nil {
+		return err
 	}
 	if !t.aff.float {
 		cx, cy := resize.Catmull.I[tx], resize.Catmull.I[ty]

@@ -328,6 +328,21 @@ func Rank(src pipeline.Source, size, rank int) (pipeline.Source, error) {
 // 255 as it went in.
 func median3Row(win [][]uint8, dst []uint8, w int) {
 	r0, r1, r2 := win[0][:4*w], win[1][:4*w], win[2][:4*w]
+	if useSIMD && w >= 10 {
+		// Pixels 1 to n with SIMD (their columns before and after are in
+		// the row), the first and the rest after.
+		n := (w - 2) &^ 7
+		_ = dst[4*w-1]
+		median3SIMD(&dst[4], &r0[0], &r1[0], &r2[0], n)
+		median3Range(r0, r1, r2, dst, w, 0, 1)
+		median3Range(r0, r1, r2, dst, w, n+1, w)
+		return
+	}
+	median3Range(r0, r1, r2, dst, w, 0, w)
+}
+
+// median3Range is median3Row for pixels x0 to x1-1.
+func median3Range(r0, r1, r2, dst []uint8, w, x0, x1 int) {
 	// The sorted column at x: smallest, middle and largest of each channel,
 	// a byte each.
 	col := func(x int) (lo, mid, hi uint32) {
@@ -347,9 +362,9 @@ func median3Row(win [][]uint8, dst []uint8, w int) {
 		}
 		return
 	}
-	pl, pm, ph := col(0)
-	cl, cm, ch := pl, pm, ph
-	for x := 0; x < w; x++ {
+	pl, pm, ph := col(max(x0-1, 0))
+	cl, cm, ch := col(x0)
+	for x := x0; x < x1; x++ {
 		nl, nm, nh := cl, cm, ch
 		if x+1 < w {
 			nl, nm, nh = col(x + 1)

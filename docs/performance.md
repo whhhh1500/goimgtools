@@ -118,19 +118,18 @@ Times for this library include decoding and encoding. The Pillow column gives th
 
 | Operation | 1 thread | 3 threads | 6 threads | Peak memory (1 / 6 threads) | Pillow, this step only |
 |---|---|---|---|---|---|
-| No operation | 0.55s | 0.45s | 0.29s | 6.9 / 12.7MB | — |
-| `Grayscale()` | 0.41s | 0.31s | 0.23s | 6.9 / 12.6MB | 0.02s |
-| `Modulate(1.1, 1.3, 20)` | 1.08s | 0.56s | 0.54s | 7.3 / 14.2MB | — |
-| `Blur(2)` | 0.98s | 0.56s | 0.30s | 10.2 / 17.9MB | 0.38s |
-| `Blur(40)` | 0.88s | 0.57s | 0.25s | 16.4 / 24.4MB | 0.38s |
-| `Sharpen()` (light) | 0.82s | 0.48s | 0.35s | 8.3 / 16.1MB | 0.24s (Pillow's `SHARPEN`, also 3×3) |
-| `Sharpen(SharpenOptions{Sigma: 2})` | 1.18s | 0.60s | 0.36s | 10.9 / 19.9MB | 0.48s |
-| `Trim(10)` | 0.67s | 0.57s | 0.40s | 7.6 / 13.3MB | — |
-| `Extend(50, 50, 50, 50, white)` | 0.64s | 0.49s | 0.30s | 7.9 / 15.4MB | 0.02s |
-| `RotateBy(30, white)`, output 7197×6465 | 1.25s | 0.73s | 0.68s | 12.6 / 19.7MB | 0.57s |
+| No operation | 0.20s | 0.12s | 0.12s | 6.9 / 12.7MB | — |
+| `Grayscale()` | 0.24s | 0.14s | 0.13s | 6.9 / 12.6MB | 0.02s |
+| `Modulate(1.1, 1.3, 20)` | 0.77s | 0.54s | 0.44s | 7.3 / 14.2MB | — |
+| `Blur(2)` | 0.34s | 0.19s | 0.16s | 10.2 / 17.9MB | 0.38s |
+| `Blur(40)` | 0.34s | 0.20s | 0.21s | 16.4 / 24.4MB | 0.38s |
+| `Sharpen()` (light) | 0.40s | 0.21s | 0.14s | 8.3 / 16.1MB | 0.24s (Pillow's `SHARPEN`, also 3×3) |
+| `Sharpen(SharpenOptions{Sigma: 2})` | 0.42s | 0.23s | 0.19s | 10.9 / 19.9MB | 0.48s |
+| `Trim(10)` | 0.29s | 0.22s | 0.20s | 7.6 / 13.3MB | — |
+| `Extend(50, 50, 50, 50, white)` | 0.22s | 0.14s | 0.13s | 7.9 / 15.4MB | 0.02s |
+| `RotateBy(30, white)`, output 7197×6465 | 0.71s | 0.58s | 0.43s | 12.6 / 19.7MB | 0.57s |
 
-- Single-threaded, after subtracting the 0.55s of the no-operation case: blur adds 0.43s, of the same order as Pillow's 0.38s; rotation by 30° adds 0.70s, of which about 0.3s is spent encoding the additional 22 MP (estimated from the encoding time per megapixel), so the rotation itself is faster than Pillow's 0.57s.
-- With 6 threads, rotation levels off at about 0.7s: its output, twice as large, takes that much longer to encode.
+- Single-threaded, after subtracting the 0.20s of the no-operation case: blur adds 0.14s (Pillow 0.38s) and the unsharp mask 0.22s (0.48s), their box passes running with AVX2 or NEON on Pillow's integer arithmetic, every byte the same; trimming adds 0.09s, its 3×3 median taken 32 bytes at a time; rotation by 30° adds 0.51s, of which about 0.08s is spent encoding the additional 22 MP (estimated from the encoding time per megapixel), so the rotation itself takes about 0.43s, against Pillow's 0.57s.
 - With the memory limit lowered to 16MB (staged rows written to a temporary file), blur, sharpening, rotation and trimming produce results pixel-for-pixel identical to those without a memory limit (compared as PNG output); time increases by 0–15%, and peak memory remains within 13MB in all cases.
 
 Evaluated but not implemented:

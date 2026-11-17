@@ -221,6 +221,11 @@ func (h *hbox) apply(dst, row []uint8) {
 // repeated beyond them.
 func (h *hbox) pass(dst, src []uint8) {
 	w, ri := h.w, h.b.ri
+	if useSIMD && w > 0 {
+		_, _ = dst[4*w-1], src[4*w-1]
+		hboxRowSIMD(&dst[0], &src[0], w, ri, h.b.ww, h.b.fw, h.nc == 3)
+		return
+	}
 	last := w - 1
 	clamp := func(x int) int {
 		if x < 0 {
@@ -343,7 +348,14 @@ func (v *vbox) nextRow() ([]uint8, error) {
 			out := v.out[i][lo:hi]
 			a, b, c := v.ra[i][lo:hi], v.rb[i][lo:hi], v.rc[i][lo:hi]
 			a, b, c = a[:len(out)], b[:len(out)], c[:len(out)]
-			for j := range out {
+			j8 := 0
+			if useSIMD {
+				if j8 = len(out) &^ 7; j8 > 0 {
+					_ = sum[j8-1]
+					vboxRowSIMD(&out[0], &a[0], &b[0], &c[0], &sum[0], j8, v.b.ww, v.b.fw)
+				}
+			}
+			for j := j8; j < len(out); j++ {
 				s, bj := sum[j], uint32(b[j])
 				out[j] = v.b.value(s, uint32(a[j]), bj)
 				sum[j] = s + bj - uint32(c[j])
