@@ -218,7 +218,9 @@ func TestWindowFiltersStream(t *testing.T) {
 	} {
 		// A source of one strip: the whole image read at once.
 		whole := decodePNG(t, must(c.op(FromSource(oneStrip(m))).PNG().ToBytes()))
-		streamed := decodePNG(t, must(c.op(FromBytes(buf.Bytes())).MemoryLimit(2<<20).PNG().ToBytes()))
+		// Level 6: the default level's compressor needs more than the
+		// small limit allows.
+		streamed := decodePNG(t, must(c.op(FromBytes(buf.Bytes())).MemoryLimit(2<<20).PNG(PNGOptions{CompressionLevel: 6}).ToBytes()))
 		if maxd, _, _ := channelDiff(t, streamed, whole); maxd != 0 {
 			t.Errorf("%s: strips and whole differ by up to %d", c.what, maxd)
 		}

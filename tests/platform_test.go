@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"image/color"
-	"runtime"
 	"testing"
 
 	. "github.com/whhhh1500/goimgtools"
@@ -110,11 +109,11 @@ func TestSameOnEveryProcessor(t *testing.T) {
 		{"jpeg trellis", func() ([]byte, error) {
 			return photo.Clone().JPEG(JPEGOptions{Quality: 77, Optimize: true, Trellis: true}).ToBytes()
 		}, "8b4c90a04ea104ff"},
+		// Levels 7 to 9 have a compressor of their own: one checksum for
+		// every Go version.
 		{"png text level 7", func() ([]byte, error) {
 			return FromImage(textLike(320, 200)).PNG(PNGOptions{CompressionLevel: 7}).ToBytes()
-		}, byFlate("d83e8dfe83edf793", "ee8dde29d4265e21")},
-		// Levels 8 and 9 have a compressor of their own: one checksum
-		// for every Go version.
+		}, "418404b13eac9f66"},
 		{"png text level 8", func() ([]byte, error) {
 			return FromImage(textLike(320, 200)).PNG(PNGOptions{CompressionLevel: 8}).ToBytes()
 		}, "e47f67cef1a4891b"},
@@ -134,8 +133,8 @@ func TestSameOnEveryProcessor(t *testing.T) {
 		{"jpeg quant table 3", func() ([]byte, error) {
 			return photo.Clone().JPEG(JPEGOptions{Quality: 77, QuantTable: QuantTableImageMagick}).ToBytes()
 		}, "39b0657868638dd1"},
-		{"png", func() ([]byte, error) { return clear.Clone().PNG().ToBytes() }, byFlate("7d6848e3147d24ec", "2a1b227d06566024")},
-		{"png 40 colours", func() ([]byte, error) { return photo.Clone().PNG(PNGOptions{Colors: 40}).ToBytes() }, byFlate("a22a7198a696d7a8", "4b7205232df6241f")},
+		{"png", func() ([]byte, error) { return clear.Clone().PNG().ToBytes() }, "28793aaceffed8bc"},
+		{"png 40 colours", func() ([]byte, error) { return photo.Clone().PNG(PNGOptions{Colors: 40}).ToBytes() }, "a22a7198a696d7a8"},
 		{"webp", func() ([]byte, error) { return photo.Clone().WebP(WebPOptions{Quality: 70}).ToBytes() }, "3fd53ba37ca99645"},
 		{"webp lossless", func() ([]byte, error) { return clear.Clone().WebP(WebPOptions{Lossless: true}).ToBytes() }, "9d7241e10fec8b83"},
 		// Transparency: sharp YUV of the colours, the transparent area
@@ -163,16 +162,4 @@ func TestSameOnEveryProcessor(t *testing.T) {
 // animationBytes is an animation with more colours than a GIF palette holds.
 func animationBytes(t *testing.T) []byte {
 	return encodeAll(t, movingAnimation(120, 90, 5, true))
-}
-
-// byFlate picks the checksum of a PNG file by the standard library's
-// compress/flate, which Go 1.27 rewrote: the same pixels compress to other
-// bytes with Go 1.26, where the default level is also 6 instead of 7. (A
-// development version counts as the newer one.)
-func byFlate(go127, go126 string) string {
-	var minor int
-	if _, err := fmt.Sscanf(runtime.Version(), "go1.%d", &minor); err == nil && minor < 27 {
-		return go126
-	}
-	return go127
 }

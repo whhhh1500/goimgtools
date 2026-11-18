@@ -839,7 +839,9 @@ func TestExtendMode(t *testing.T) {
 		if limit > 0 {
 			m.MemoryLimit(limit)
 		}
-		out, err := m.PNG().ToBytes()
+		// Level 6: the default level's compressor needs more than the
+		// small limit allows.
+		out, err := m.PNG(PNGOptions{CompressionLevel: 6}).ToBytes()
 		if err != nil {
 			t.Fatalf("limit %d: %v", limit, err)
 		}

@@ -240,6 +240,10 @@ func recalculateMinMatchLen(f *freqs, depth int) int {
 // compressLazy is compress for the lazy parsing.
 func (c *Compressor) compressLazy(in []byte, start int, final bool) {
 	inEnd := len(in)
+	if n := min(c.p.maxBlockLength(), inEnd-start); len(c.items) < n {
+		// More than MaxInput.
+		c.items = make([]uint32, n)
+	}
 	mf := c.hc
 	mf.init()
 	base := 0

@@ -369,15 +369,18 @@ func (m *Image) JPEG(opts ...JPEGOptions) *Image {
 }
 
 // DefaultPNGLevel is the compression level of PNG output when PNGOptions
-// does not set one: 7 in a program built with Go 1.27 or later, 6 (the
-// standard library's) with Go 1.26.
+// does not set one: 7, compressed with a port of libdeflate's lazy parsing
+// (its level 7, to the byte), the same with every Go version.
 //
-// Go 1.27 rewrote compress/flate; its level 6 finds far fewer repeats than
-// zlib's: at 7 smooth images (gradients, skies, graphics) come out about
-// five times smaller and photos 4 to 25% smaller, in a similar time for
-// small images and up to 70% longer for large photos (24 megapixels).
-// Level 6 or below gives the standard library's speed. With Go 1.26 level
-// 7 is only 1 to 1.5% smaller than 6 and takes half as long again.
+// Against level 6 (the standard library's compress/flate), on 38 images:
+// gradients, skies and icons 1.3 to 4.2 times smaller, screenshots 20 to
+// 23% smaller, photographs 1.8 to 7.1% smaller, in 1.85 times the time on
+// one core. Against compress/flate's own level 7 (Go 1.27), on 126 images,
+// 1.8% smaller on average (from 28% smaller to 2.5% larger), in 19% more
+// time. The compressor takes about 2.3MB of memory (0.8MB for an image of
+// 150 x 103), counted in the memory limit; level 6 or below gives the
+// standard library's speed and memory, and bytes that differ between Go
+// 1.26 and 1.27.
 const DefaultPNGLevel = pngstream.DefaultLevel
 
 // PNGOptions are the optional settings of PNG.
@@ -390,13 +393,13 @@ type PNGOptions struct {
 	// data is compressed with a port of libdeflate's near-optimal parsing
 	// (its levels 10 and 12), its blocks split where it saves bits, as
 	// zopfli splits them, its symbols priced at their entropy, as zopfli
-	// prices them. On screenshots, photographs and game artwork the files
-	// are 14% (8) and 15.5% (9) smaller than at level 7; level 9 is 0.9%
+	// prices them. On six screenshots and photographs the files are 9 to
+	// 15% (8) and 10 to 21% (9) smaller than at level 7; level 9 is 0.9%
 	// smaller than oxipng -o max and 0.26% larger than ECT -9. Level 8
-	// takes about 10 times as long as level 7, level 9 about 20 times
-	// (oxipng -o max about 130, ECT -9 about 500). They take about 4MB
-	// (level 8) and 6.5MB (level 9) more memory per thread, and give the
-	// same file with every Go version.
+	// takes 5 to 20 times as long as level 7 on one core, level 9 18 to 65
+	// times (oxipng -o max about 6 times as long as level 9, ECT -9 about
+	// 25 times). They take about 4MB (level 8) and 6.5MB (level 9) more
+	// memory per thread, and give the same file with every Go version.
 	CompressionLevel int
 	// Colors, 2 to 256, reduces the image to that many colours, chosen for
 	// this image, and writes a paletted PNG. This is how PNG files are made

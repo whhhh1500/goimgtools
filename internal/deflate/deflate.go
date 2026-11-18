@@ -89,6 +89,12 @@ type Params struct {
 	SplitByCost  bool
 	SplitPasses  int
 	EntropyCosts bool
+
+	// MaxInput, when set, is the most data (beyond the dictionary) that a
+	// call to Compress is given: the lazy parsing's record of a block is
+	// made that long rather than BlockLen, which saves memory on small
+	// inputs. The output does not depend on it.
+	MaxInput int
 }
 
 // Level10, Level11 and Level12 are libdeflate's levels 10 to 12, but for
@@ -103,10 +109,19 @@ var (
 func (p Params) Bytes() int64 {
 	maxBlock := p.maxBlockLength()
 	if p.Lazy != 0 {
-		return hcBytes + 4*int64(maxBlock) + 4<<10
+		return hcBytes + 4*int64(p.lazyItems()) + int64(unsafe.Sizeof(Compressor{}))
 	}
-	return matchfinderBytes + 4*int64(p.cacheLength()) + 4*int64(maxBlock+maxMatch+1) + 4*int64(maxBlock) + 4<<10 +
+	return matchfinderBytes + 4*int64(p.cacheLength()) + 4*int64(maxBlock+maxMatch+1) + 4*int64(maxBlock) + int64(unsafe.Sizeof(Compressor{})) +
 		maxSplitBlocks*int64(unsafe.Sizeof(codes{})) + 3*8*(maxSplitBlocks+1)
+}
+
+// lazyItems is the length of the lazy parsing's record of a block: one
+// item for each byte at most.
+func (p Params) lazyItems() int {
+	if p.MaxInput > 0 {
+		return min(p.maxBlockLength(), p.MaxInput)
+	}
+	return p.maxBlockLength()
 }
 
 func (p Params) maxBlockLength() int {
@@ -156,7 +171,7 @@ type splitStats struct {
 type Compressor struct {
 	p Params
 
-	mf        btMatchfinder
+	mf        *btMatchfinder // the near-optimal parsing's
 	hc        *hcMatchfinder // the lazy parsing's
 	cache     []lzMatch
 	costToEnd []uint32
@@ -180,7 +195,7 @@ type Compressor struct {
 	w bitWriter
 
 	// Splitting by cost (see split.go).
-	partCodes [maxSplitBlocks]codes
+	partCodes []codes // maxSplitBlocks of them
 	bounds    []int
 	ends      []int
 	done      []bool
@@ -190,10 +205,12 @@ type Compressor struct {
 func New(p Params) *Compressor {
 	maxBlock := p.maxBlockLength()
 	if p.Lazy != 0 {
-		return &Compressor{p: p, hc: new(hcMatchfinder), items: make([]uint32, maxBlock)}
+		return &Compressor{p: p, hc: new(hcMatchfinder), items: make([]uint32, p.lazyItems())}
 	}
 	return &Compressor{
 		p:         p,
+		mf:        new(btMatchfinder),
+		partCodes: make([]codes, maxSplitBlocks),
 		cache:     make([]lzMatch, p.cacheLength()),
 		costToEnd: make([]uint32, maxBlock+maxMatch+1),
 		items:     make([]uint32, maxBlock),

@@ -20,19 +20,19 @@ import (
 // block but the last ends with a sync flush, the last is final). The
 // checksum is over all the data, in order.
 //
-// Up to level 7 the blocks are compressed with compress/flate; with Go
+// Up to level 6 the blocks are compressed with compress/flate; with Go
 // 1.27 or later, data of more than one block is compressed with
 // klauspost/compress's flate instead, which writes the same bytes and whose
 // writer takes a new dictionary when it is reset: compress/flate's has to
 // be made anew for each block, about 0.9MB of garbage per 256KB of data.
-// Paletted images at level 7 use libdeflate's lazy parsing instead
-// (internal/deflate, its level 7; see lazyLevel). Levels 8 and 9 use the
+// Level 7 uses libdeflate's lazy parsing (internal/deflate, its level 7;
+// see lazyLevel), the same with every Go version. Levels 8 and 9 use the
 // near-optimal parsing of libdeflate, with the settings of its levels 10
 // and 12, and the blocks of deflate split where it saves bits, as zopfli
 // does.
 //
 // The blocks are the same however many helpers the pipeline has (see
-// pipeline.Env.Go), and so is the file. Without helpers, up to level 7,
+// pipeline.Env.Go), and so is the file. Without helpers, up to level 6,
 // the blocks are compressed as the data comes, straight to the output,
 // with no buffer beyond the 32KB of the dictionary, and data of up to one
 // block comes out exactly as compress/zlib writes it; otherwise they are
@@ -67,6 +67,10 @@ type zBlocks struct {
 	near  *deflate.Params
 	comps chan *deflate.Compressor
 	made  int
+
+	// blk is the size of the blocks' buffers: zBlockBytes, or all the
+	// data when there is less.
+	blk int
 }
 
 const (
@@ -92,17 +96,22 @@ var nearLevels = map[int]deflate.Params{
 	9: withSplit(withBlocks(deflate.Level12, zBlockBytes), true, 2),
 }
 
-// lazyParams are the settings of paletted images at level 7: libdeflate's
-// level 7, its lazy parsing (see lazyLevel).
+// DefaultLevel is the compression level used when none is given.
+const DefaultLevel = 7
+
+// lazyParams are the settings of level 7: libdeflate's level 7, its lazy
+// parsing (see lazyLevel).
 var lazyParams = deflate.LazyLevel7
 
-// lazyLevel tells whether data of a colour type is compressed at the level
-// with libdeflate's lazy parsing rather than compress/flate: paletted
-// images at level 7. compress/flate's level 7 does poorly on their rows:
-// on images reduced to 256 colours, smooth gradients came out 1.4 to 4
-// times as large, a photograph 5% larger, and it takes about as long.
-func lazyLevel(level int, paletted bool) bool {
-	return level == 7 && paletted
+// lazyLevel tells whether the level is compressed with libdeflate's lazy
+// parsing rather than compress/flate: level 7. compress/flate's level 7
+// does poorly on the rows of paletted images (on images reduced to 256
+// colours, smooth gradients came out 1.4 to 4 times as large, a photograph
+// 5% larger, in about the same time) and is 3% larger on photographs,
+// screenshots and drawings in RGB and RGBA (from 1 to 5%, in two thirds of
+// the time); Go 1.26's level 7 is another again.
+func lazyLevel(level int) bool {
+	return level == 7
 }
 
 func withSplit(p deflate.Params, noSkip bool, passes int) deflate.Params {
@@ -174,13 +183,15 @@ func (r recorder) Write(p []byte) (int, error) {
 }
 
 // newZBlocks starts the zlib stream of total bytes of data.
-func newZBlocks(w io.Writer, level int, env *pipeline.Env, total int64, paletted bool) (*zBlocks, error) {
-	z := &zBlocks{w: w, env: env, level: level, sum: adler32.New(), ways: env.Helpers() + 1, multi: kflateSame && total > zBlockBytes}
+func newZBlocks(w io.Writer, level int, env *pipeline.Env, total int64) (*zBlocks, error) {
+	z := &zBlocks{w: w, env: env, level: level, sum: adler32.New(), ways: env.Helpers() + 1, multi: kflateSame && total > zBlockBytes,
+		blk: int(max(1, min(total, zBlockBytes)))}
 	if p, ok := nearLevels[level]; ok {
 		z.near = &p
 		z.comps = make(chan *deflate.Compressor, z.ways)
-	} else if lazyLevel(level, paletted) {
+	} else if lazyLevel(level) {
 		p := lazyParams
+		p.MaxInput = z.blk
 		z.near = &p
 		z.comps = make(chan *deflate.Compressor, z.ways)
 	} else if z.multi {
@@ -308,7 +319,7 @@ func (z *zBlocks) block() (*zBlock, error) {
 		b.out, b.writes, b.last, b.err = b.out[:0], b.writes[:0], false, nil
 	} else {
 		// The dictionary, the data and its output.
-		need := int64(zWindow + zBlockBytes + zBlockOut)
+		need := int64(zWindow + 2*z.blk + zBlockOut - zBlockBytes)
 		if err := z.env.Budget.Reserve(need, "png compression block"); err != nil {
 			if len(z.busy) == 0 {
 				return nil, err
@@ -321,7 +332,7 @@ func (z *zBlocks) block() (*zBlock, error) {
 			return z.block()
 		}
 		z.held += need
-		b = &zBlock{buf: make([]byte, 0, zWindow+zBlockBytes), out: make([]byte, 0, zBlockOut)}
+		b = &zBlock{buf: make([]byte, 0, zWindow+z.blk), out: make([]byte, 0, z.blk+zBlockOut-zBlockBytes)}
 	}
 	b.buf = append(b.buf[:0], z.tail...)
 	b.dict = len(z.tail)

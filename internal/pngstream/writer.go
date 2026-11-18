@@ -386,7 +386,7 @@ func (e *encoder) writeImage(w io.Writer, cb int, level int) error {
 
 	// Compressed in blocks, on the helpers of the pipeline where it has
 	// any; the same file either way (see zBlocks).
-	zw, err := newZBlocks(w, level, e.env, int64(b.Dy())*int64(sz), e.cb == cbP8 || e.cb == cbP4 || e.cb == cbP2 || e.cb == cbP1)
+	zw, err := newZBlocks(w, level, e.env, int64(b.Dy())*int64(sz))
 	if zw != nil {
 		defer zw.release()
 	}

@@ -251,14 +251,16 @@ func TestMemoryLimitAndDisk(t *testing.T) {
 	goDir := filepath.Join(runtime.GOROOT(), "src", "image", "testdata")
 	for _, name := range []string{"video-001.progressive.jpeg", "video-001.jpeg"} {
 		in := filepath.Join(goDir, name)
-		want, err := Open(in).PNG().ToBytes()
+		// Level 6: the default level's compressor needs more than these
+		// limits allow.
+		want, err := Open(in).PNG(PNGOptions{CompressionLevel: 6}).ToBytes()
 		if err != nil {
 			t.Fatal(err)
 		}
 		dir := t.TempDir()
 		// Each extra thread holds three strips of its own.
 		limit := int64(300+150*max(0, defaultThreads-1)) << 10
-		got, err := Open(in).MemoryLimit(limit).TempDir(dir).PNG().ToBytes()
+		got, err := Open(in).MemoryLimit(limit).TempDir(dir).PNG(PNGOptions{CompressionLevel: 6}).ToBytes()
 		if err != nil {
 			t.Fatalf("%s with a %dKB limit: %v", name, limit>>10, err)
 		}

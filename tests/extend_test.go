@@ -842,7 +842,9 @@ func TestRegisterFormat(t *testing.T) {
 		"reader":               FromReader(bytes.NewReader(up)),
 		"reader, small memory": FromReader(struct{ io.Reader }{bytes.NewReader(up)}).MemoryLimit(1 << 20),
 	} {
-		got, err := m.TempDir(dir).PNG().ToBytes()
+		// Level 6: the default level's compressor needs more than the
+		// small limit allows.
+		got, err := m.TempDir(dir).PNG(PNGOptions{CompressionLevel: 6}).ToBytes()
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
