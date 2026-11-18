@@ -4,7 +4,7 @@
 //
 // The mark is a tile of 64 x 64 chips repeated over the luminance, each
 // chip a few pixels wide, its values a mix of three signals derived from a
-// key: a reference of 24 sinusoids at known frequencies and phases, whose
+// key: a reference of 16 sinusoids at known frequencies and phases, whose
 // peaks in the spectrum of a copy tell the tile's size, angle and shear; a
 // random pattern of signs (sync), which tells where the tiles start; and
 // the payload, its bits coded with a convolutional code and spread over

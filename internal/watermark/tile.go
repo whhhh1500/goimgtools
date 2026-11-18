@@ -5,8 +5,12 @@ import "math"
 const (
 	// N is the number of chips along each side of the tile.
 	N = 64
-	// nRef is the number of reference sinusoids.
-	nRef = 24
+	// nRef is the number of reference sinusoids: of the same power in all,
+	// fewer stand out more in a damaged copy's spectrum, and are as visible.
+	// (The 22 attacks on 5 pictures with 3 keys read, with 32, 24, 20, 16
+	// and 12: 233, 239, 245, 245 and 243 marks of 330; the screen mark with
+	// 24, 16 and 12: 277, 280 and 280.)
+	nRef = 16
 	// refMin and refMax bound the reference frequencies, in cycles per
 	// tile, and wRef, wSync and wPay are the amplitudes of the reference,
 	// the sync pattern and the payload in the tile (each of unit power):
@@ -18,7 +22,10 @@ const (
 	// as visible as before, and the 22 attacks on 5 pictures with 3 keys
 	// read 239 marks of 330 against 217 (JPEG 30 12 against 8, WebP 60 9
 	// against 5); the screen mark, as visible, 277 against 274. (With 15%
-	// for the reference the photographs of a screen were lost: 220.)
+	// for the reference the photographs of a screen were lost: 220. With
+	// the reference at a half or a quarter where the picture is flat,
+	// where it shows most, and the whole stronger to be as visible: 219,
+	// 200, and a mostly white screenshot was not found at all.)
 	refMin, refMax    = 10, 20
 	wRef, wSync, wPay = 0.5, 0.447, 0.742
 )

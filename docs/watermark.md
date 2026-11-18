@@ -42,7 +42,7 @@ Fewer bytes are read back from more damaged copies: the bytes are protected by a
 
 ## How it works
 
-- **The tile.** The mark is a tile of 64 × 64 chips repeated over the picture's brightness, each chip a few pixels wide. Each chip's value mixes three signals drawn from the key: a reference of 24 sinusoids at known frequencies, a random pattern of signs (sync), and the payload. The payload's bits are coded and spread over the chips.
+- **The tile.** The mark is a tile of 64 × 64 chips repeated over the picture's brightness, each chip a few pixels wide. Each chip's value mixes three signals drawn from the key: a reference of 16 sinusoids at known frequencies (25% of its power), a random pattern of signs (sync, 20%), and the payload (55%). The reference is what the eye sees most of the mark, the more so the lower its frequencies: it is kept to a quarter of the power, between 10 and 20 cycles across a tile, which lets the whole be stronger for the same visibility. The payload's bits are coded and spread over the chips.
 - **Where it goes.** The tile is added where the picture hides it best: more in busy areas, less in flat ones (the noise visibility function of Voloshynovskiy et al.). It is pushed back from pure white and black, which it could not otherwise go past.
 - **Rows as they come.** The rows are marked as they arrive, from a window of a few rows around each. The result is the same on every processor and with any number of threads.
 - **Finding the tiling.** To read a copy, its spectrum is flattened, and each place is weighted by how clean it is, so that flat areas (where the flattened picture is mostly the mark) count as much as busy ones. The reference's peaks are then searched for over sizes and angles, mirrored or not, in the whole picture and in its middle. This is the template method of Pereira and Pun and of Digimarc; in a photograph the middle is less distorted by perspective.
@@ -55,42 +55,42 @@ The test pictures are three photographs (1500×844, 1280×720, 1600×500), a sma
 | Attack | Blind (default) | Blind, `Strength: 1.5` | Screen (default) | blind_watermark |
 |---|---|---|---|---|
 | None | 5 | 5 | 5 | 5 |
-| JPEG quality 90 / 70 / 50 / 30 | 5 / 4 / 4 / 4 | 5 / 5 / 5 / 4 | 5 / 5 / 5 / 4 | 5 / 4 / 4 / 3 |
-| WebP quality 60 | 3 | 4 | 4 | 3 |
+| JPEG quality 90 / 70 / 50 / 30 | 5 / 5 / 4 / 4 | 5 / 5 / 4 / 4 | 5 / 5 / 5 / 4 | 5 / 4 / 4 / 3 |
+| WebP quality 60 | 3 | 3 | 4 | 3 |
 | Half the size | 5 | 5 | 5 | 0 |
 | 70% of the size, then JPEG 80 | 5 | 5 | 5 | 0 |
-| Crop to 40% / 25% of each side | 3 / 1 | 4 / 2 | 3 / 2 | 0 / 0 |
+| Crop to 40% / 25% of each side | 4 / 1 | 4 / 2 | 3 / 2 | 0 / 0 |
 | Turned by 3° / 30°, cropped | 5 / 4 | 5 / 5 | 5 / 5 | 0 / 0 |
 | Darker (×0.8) / more contrast (×1.3) | 5 / 4 | 5 / 4 | 5 / 5 | 4 / 4 |
 | Noise (σ 8) | 4 | 5 | 5 | 5 |
 | Screenshot (shown at 1366 wide, JPEG 90) | 5 | 5 | 5 | 3 |
 | Perspective (corners moved up to 4%), JPEG 85 | 5 | 5 | 5 | 0 |
-| Photograph of a screen (simulated: perspective, lens blur, 3/4 the size, gamma, moiré, sensor noise, sharpening, JPEG 85) | 3 | 4 | 5 | 0 |
+| Photograph of a screen (simulated: perspective, lens blur, 3/4 the size, gamma, moiré, sensor noise, sharpening, JPEG 85) | 2 | 4 | 5 | 0 |
 
 How much each changes the picture (means over the five; SSIMULACRA2: 90 and above is indistinguishable, 70 high quality; butteraugli: under 1 invisible):
 
 | | PSNR | SSIMULACRA2 | butteraugli |
 |---|---|---|---|
-| Blind (default) | 45.2 dB | 79.3 | 3.9 |
-| Blind, `Strength: 1.5` | 41.8 dB | 67.6 | 5.7 |
-| Screen (default) | 38.8 dB | 50.4 | 9.1 |
+| Blind (default) | 45.3 dB | 79.7 | 3.9 |
+| Blind, `Strength: 1.5` | 41.8 dB | 68.1 | 5.8 |
+| Screen (default) | 38.9 dB | 51.0 | 9.4 |
 | blind_watermark (default) | 37.7 dB | 40.4 | 5.5 |
 
-blind_watermark cannot read its mark from a picture whose size or angle has changed. Its `recover` needs the original to put the picture back first. So it fails every geometric attack here. At `Strength: 1.5`, which changes the picture less than blind_watermark by PSNR and SSIMULACRA2 and more by butteraugli, the blind mark here survives JPEG and WebP better than it does, strong noise as well, and every geometric attack too.
+blind_watermark cannot read its mark from a picture whose size or angle has changed. Its `recover` needs the original to put the picture back first. So it fails every geometric attack here. At `Strength: 1.5`, which changes the picture less than blind_watermark by PSNR and SSIMULACRA2 and more by butteraugli, the blind mark here survives JPEG better than it does, WebP and strong noise as well, and every geometric attack too.
 
 Against the other libraries of the kind, on the same pictures and attacks (each at its defaults but where said; JPEG 90 / 70 / 50 / 30):
 
 | | PSNR | SSIMULACRA2 | butteraugli | JPEG | WebP 60 | Crop to 40% | Turned 3° | Perspective | Photograph of a screen |
 |---|---|---|---|---|---|---|---|---|---|
-| Blind (this package) | 45.2 dB | 79.3 | 3.9 | 5 / 4 / 4 / 4 | 3 | 3 | 5 | 5 | 3 |
-| Blind, `Strength: 1.5` | 41.8 dB | 67.6 | 5.7 | 5 / 5 / 5 / 4 | 4 | 4 | 5 | 5 | 4 |
-| Screen (this package) | 38.8 dB | 50.4 | 9.1 | 5 / 5 / 5 / 4 | 4 | 3 | 5 | 5 | 5 |
+| Blind (this package) | 45.3 dB | 79.7 | 3.9 | 5 / 5 / 4 / 4 | 3 | 4 | 5 | 5 | 2 |
+| Blind, `Strength: 1.5` | 41.8 dB | 68.1 | 5.8 | 5 / 5 / 4 / 4 | 3 | 4 | 5 | 5 | 4 |
+| Screen (this package) | 38.9 dB | 51.0 | 9.4 | 5 / 5 / 5 / 4 | 4 | 3 | 5 | 5 | 5 |
 | [blind_watermark](https://github.com/guofei9987/blind_watermark) | 37.7 dB | 40.4 | 5.5 | 5 / 4 / 4 / 3 | 3 | 0 | 0 | 0 | 0 |
 | [invisible-watermark](https://github.com/ShieldMnt/invisible-watermark) `dwtDctSvd` (as in Stable Diffusion) | 40.5 dB | 75.1 | 3.4 | 4 / 0 / 0 / 0 | 0 | 0 | 0 | 0 | 0 |
 | [TrustMark](https://github.com/adobe/trustmark) `Q` (Adobe's default) | 45.1 dB | 68.8 | 8.3 | 5 / 5 / 5 / 4 | 5 | 0 | 0 | 4 | 4 |
 | TrustMark `P` | 50.0 dB | 86.3 | 3.7 | 5 / 4 / 3 / 0 | 4 | 0 | 0 | 0 | 0 |
 
-invisible-watermark reads its mark back from 4 of the 5 untouched pictures (`dwtDct`: 3, less visible: SSIMULACRA2 87.1). TrustMark, a pair of neural networks that need PyTorch, survives recompression best: at about the visibility of the blind mark at `Strength: 1.5` (its model `Q`), it reads JPEG 90 to 30 as the blind mark here does (5 / 5 / 5 / 4), which reads 4 of 5 at JPEG 30 at its default too, and 5 at WebP 60, against 4 here. But it reads nothing that was cropped or turned, as its decoder takes the whole picture as it is. The marks here are the only ones of these that survive crops and turns.
+invisible-watermark reads its mark back from 4 of the 5 untouched pictures (`dwtDct`: 3, less visible: SSIMULACRA2 87.1). TrustMark, a pair of neural networks that need PyTorch, survives recompression best: at about the visibility of the blind mark at `Strength: 1.5` (its model `Q`), it reads 5 / 5 / 5 / 4 at JPEG 90 to 30, against 5 / 5 / 4 / 4 here (the blind mark reads 4 of 5 at JPEG 30 at its default too), and 5 at WebP 60, against 3 here. But it reads nothing that was cropped or turned, as its decoder takes the whole picture as it is. The marks here are the only ones of these that survive crops and turns.
 
 A harder simulation of a phone's photograph, done with this package's own operations, has stronger perspective and Pillow's sharpening. There the screen mark is read from all three photographs and not from the small photograph or the screenshot of a user interface; leaving any one of its steps out, from 3 to 5 of the 5.
 
