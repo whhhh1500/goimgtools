@@ -254,6 +254,21 @@ func getCoeffs(d *boolDec, pr *[nBand][nContext][nProb]uint8, first, ctx int, lv
 	return last
 }
 
+// frameFilter is the frame's loop filter level. With segments it only
+// switches the filter on, their levels being absolute; but decoders
+// (libwebp, libvpx) filter nothing when it is 0, whatever the segments
+// say, so it is the highest of theirs, not the first segment's.
+func (e *encoder) frameFilter() int {
+	if !e.updateMap {
+		return e.segs[0].filter
+	}
+	level := 0
+	for _, s := range e.segs[:e.nSegs] {
+		level = max(level, s.filter)
+	}
+	return level
+}
+
 // putHeader writes the frame header fields of the first partition
 // (RFC 6386 section 9.2 onwards).
 func (e *encoder) putHeader(bw *boolEnc) {
@@ -288,7 +303,7 @@ func (e *encoder) putHeader(bw *boolEnc) {
 		}
 	}
 	bw.putBit(false, 128) // normal (not simple) loop filter
-	bw.putUint(uint32(e.segs[0].filter), 6)
+	bw.putUint(uint32(e.frameFilter()), 6)
 	bw.putUint(0, 3)      // filter sharpness
 	bw.putBit(false, 128) // no filter level adjustments
 	log2Parts := uint32(0)

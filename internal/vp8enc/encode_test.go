@@ -1213,6 +1213,28 @@ func TestSegments(t *testing.T) {
 	}
 }
 
+// TestFrameFilter checks the frame's loop filter level: decoders filter
+// nothing when it is 0, so with segments it is the highest of theirs, even
+// when the first segment's is 0 (as the measuring often makes it).
+func TestFrameFilter(t *testing.T) {
+	e := &encoder{updateMap: true, nSegs: 4}
+	for k, f := range []int{0, 10, 6, 8} {
+		e.segs[k].filter = f
+	}
+	if got := e.frameFilter(); got != 10 {
+		t.Errorf("segments 0, 10, 6, 8: frame level %d", got)
+	}
+	e.nSegs = 3
+	if got := e.frameFilter(); got != 10 {
+		t.Errorf("segments 0, 10, 6: frame level %d", got)
+	}
+	e.updateMap, e.nSegs = false, 1
+	e.segs[0].filter = 7
+	if got := e.frameFilter(); got != 7 {
+		t.Errorf("one segment at 7: frame level %d", got)
+	}
+}
+
 // sameButAlpha reports whether two files are the same but for how their
 // alpha planes are coded, which depends on the memory limit (alphall.go):
 // the same VP8 chunk, and alpha planes that decode the same.

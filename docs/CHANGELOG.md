@@ -136,6 +136,7 @@ Nothing exported by 0.1.0 was removed or changed in its signature (checked with 
 
 ### Fixed
 
+- Lossy WebP at effort 5 and above (the default): the frame's loop filter level was written as that of the first segment, which the measuring often sets to 0 (the segment of the most textured macroblocks); decoders (libwebp, libvpx, this module's) then filter nothing in the whole frame, whatever the other segments' levels. It is now the highest of the segments' levels, which are written as they are. Smooth photographs at low sizes lost their loop filter: on one such photograph and 19 edited versions of it at quality 75, SSIMULACRA2 69.3 → 73.6 and butteraugli 1.28 → 1.19, the files the same size.
 - `Extend` and `FitContain` of an image with transparency kept as NRGBA (a PNG with alpha) went through premultiplied 8-bit RGBA, which moved the colours of translucent pixels (by up to 255/alpha levels: 4 at alpha 55); they keep them now.
 - `FastShrinkOnLoad` on a JPEG whose components are sampled in ways the decoder does not reduce itself (Go's test files 121121, 211211, 221122, 222112) failed with "shrink: unsupported pixel type"; the decoded image is averaged again.
 
