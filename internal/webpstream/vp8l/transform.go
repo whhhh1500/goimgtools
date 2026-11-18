@@ -135,6 +135,22 @@ func inversePredictor(t *transform, y int32) {
 // row (the second row of pix, w pixels wide, under the row above).
 // Modes 14 and 15 leave the pixels as they are.
 func predictRun(mode uint8, pix []byte, w, x0, x1 int32) {
+	if predSIMD && x1-x0 >= 4 {
+		// Whole groups of four pixels with SIMD, where there is a version
+		// for the mode (from x0 >= 1, the pixels left of and above the
+		// first are in pix, and the top-right of the last of a row is the
+		// first of the row, already final); the rest here.
+		if f := predAdd[mode&15]; f != nil {
+			k := (x1 - x0) &^ 3
+			p, top := int(4*(w+x0)), int(4*x0)
+			_, _ = pix[top-4], pix[p+4*int(k)-1]
+			_ = pix[top+4*int(k)+3]
+			f(&pix[p], &pix[top], int(k))
+			if x0 += k; x0 == x1 {
+				return
+			}
+		}
+	}
 	p, top := int(4*(w+x0)), int(4*x0)
 	n := int(x1 - x0)
 	switch mode {
@@ -294,8 +310,19 @@ func inverseCrossColor(t *transform, pix []byte) {
 }
 
 // inverseSubtractGreen undoes the subtract-green transform for one row.
+//
+// Two pixels at a time, as one little-endian word: each green copied to the
+// bytes of its red and blue and added there in 16-bit lanes, which keep the
+// carry from the next channel.
 func inverseSubtractGreen(pix []byte) {
-	for p := 0; p < len(pix); p += 4 {
+	p := 0
+	for ; p+8 <= len(pix); p += 8 {
+		v := binary.LittleEndian.Uint64(pix[p:])
+		g := v >> 8 & 0x000000ff000000ff
+		g |= g << 16
+		binary.LittleEndian.PutUint64(pix[p:], v&0xff00ff00ff00ff00|(v&0x00ff00ff00ff00ff+g)&0x00ff00ff00ff00ff)
+	}
+	for ; p < len(pix); p += 4 {
 		green := pix[p+1]
 		pix[p+0] += green
 		pix[p+2] += green
