@@ -3,7 +3,10 @@ package watermark
 import (
 	"bytes"
 	"image"
+	"image/draw"
+	"image/jpeg"
 	"math"
+	"sync"
 	"testing"
 
 	"github.com/whhhh1500/goimgtools/internal/testutil"
@@ -156,20 +159,61 @@ func TestRoundTrip(t *testing.T) {
 	for _, kind := range []Kind{Blind, Screen} {
 		marked := mark(t, src, []byte("user-1234"), "secret", Options{Kind: kind})
 		l, w, h := luma(marked)
-		got, ok := Detect(l, w, h, NewKey("secret"))
+		got, ok := Detect(l, w, h, NewKey("secret"), nil)
 		if !ok || string(got) != "user-1234" {
 			t.Errorf("kind %d: read %q, %v", kind, got, ok)
 		}
-		if _, ok := Detect(l, w, h, NewKey("wrong")); ok {
+		if _, ok := Detect(l, w, h, NewKey("wrong"), nil); ok {
 			t.Errorf("kind %d: read with the wrong key", kind)
 		}
 	}
 	l, w, h := luma(src)
-	if _, ok := Detect(l, w, h, NewKey("secret")); ok {
+	if _, ok := Detect(l, w, h, NewKey("secret"), nil); ok {
 		t.Error("read a mark from an unmarked picture")
 	}
-	if _, ok := Detect(make([]float64, 20*20), 20, 20, NewKey("secret")); ok {
+	if _, ok := Detect(make([]float64, 20*20), 20, 20, NewKey("secret"), nil); ok {
 		t.Error("read a mark from a tiny blank picture")
+	}
+}
+
+// TestDetectParallel: Detect finds the same with its work shared out as
+// without, read or not (saved as JPEG ever harder, with the slow ways
+// tried; unmarked).
+func TestDetectParallel(t *testing.T) {
+	allAtOnce := func(n int, fn func(i int)) {
+		var wg sync.WaitGroup
+		for i := range n {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				fn(i)
+			}()
+		}
+		wg.Wait()
+	}
+	src := testutil.Natural(700, 500, 4)
+	marked := mark(t, src, []byte("user-1234"), "secret", Options{})
+	pics := []*image.NRGBA{marked, src}
+	for _, q := range []int{60, 30, 15} {
+		var buf bytes.Buffer
+		if err := jpeg.Encode(&buf, marked, &jpeg.Options{Quality: q}); err != nil {
+			t.Fatal(err)
+		}
+		dec, err := jpeg.Decode(&buf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := image.NewNRGBA(dec.Bounds())
+		draw.Draw(n, n.Rect, dec, dec.Bounds().Min, draw.Src)
+		pics = append(pics, n)
+	}
+	for i, p := range pics {
+		l, w, h := luma(p)
+		a, oka := Detect(l, w, h, NewKey("secret"), nil)
+		b, okb := Detect(l, w, h, NewKey("secret"), allAtOnce)
+		if oka != okb || !bytes.Equal(a, b) {
+			t.Errorf("picture %d: %q %v alone, %q %v shared out", i, a, oka, b, okb)
+		}
 	}
 }
 

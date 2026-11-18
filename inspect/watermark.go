@@ -3,9 +3,11 @@ package inspect
 import (
 	"errors"
 	"image"
+	"io"
 
 	"github.com/whhhh1500/goimgtools"
 	"github.com/whhhh1500/goimgtools/internal/watermark"
+	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
 // ReadWatermark looks for a mark hidden with Image.InvisibleWatermark and
@@ -25,7 +27,9 @@ import (
 // A picture larger than 1024 pixels on its shorter side (or 2048 on its
 // longer) is reduced first. For one of that size the search takes under a
 // second when the mark is there (about one and a half when it is not, or
-// is badly damaged: more ways are tried) and about 80MB. The operations of img, if
+// is badly damaged: more ways are tried) and about 80MB. It shares its
+// work with the cores img may use (Threads, SetDefaultThreads), finding
+// the same: with 8, about 0.6 and 0.8 seconds. The operations of img, if
 // it has any, are run first.
 func ReadWatermark(img *goimgtools.Image, key string) ([]byte, bool, error) {
 	if img == nil {
@@ -40,28 +44,55 @@ func ReadWatermark(img *goimgtools.Image, key string) ([]byte, bool, error) {
 		m.Resize(max(1, int(float64(float64(w)*s)+0.5)), max(1, int(float64(float64(h)*s)+0.5)), goimgtools.ResizeOptions{
 			Fit: goimgtools.FitFill, Kernel: goimgtools.KernelBox, Method: goimgtools.MethodPillow, FastShrinkOnLoad: true})
 	}
-	pic, err := m.ToImage()
+	src, err := m.Stream(nil)
 	if err != nil {
 		return nil, false, err
 	}
-	l, lw, lh := luma(pic)
-	payload, ok := watermark.Detect(l, lw, lh, watermark.NewKey(key))
+	defer func() { src.Close() }()
+	// The brightness is taken from the strips as they come, held against
+	// the memory limit; the picture itself is not kept.
+	b := src.Bounds()
+	lw, lh := b.Dx(), b.Dy()
+	env := pipeline.EnvOf(src)
+	need := int64(8) * int64(lw) * int64(lh)
+	if err := env.Budget.Reserve(need, "the brightness of the picture (ReadWatermark)"); err != nil {
+		return nil, false, err
+	}
+	defer env.Budget.Release(need)
+	l := make([]float64, lw*lh)
+	for {
+		strip, err := src.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, false, err
+		}
+		sb := strip.Bounds()
+		luma(l[(sb.Min.Y-b.Min.Y)*lw:], lw, strip)
+	}
+	// The search shares its work with the cores the image may use
+	// (Threads, SetDefaultThreads); what it finds does not depend on them.
+	var par watermark.Parallel
+	if env.Helpers() > 0 {
+		par = env.Parallel
+	}
+	payload, ok := watermark.Detect(l, lw, lh, watermark.NewKey(key), par)
 	return payload, ok, nil
 }
 
-// luma is the brightness of each pixel, 0 to 255, of the colours as they
-// are (transparency left aside).
-func luma(pic image.Image) ([]float64, int, int) {
+// luma writes the brightness of each pixel of pic, 0 to 255, of the
+// colours as they are (transparency left aside), to l, in rows of w.
+func luma(l []float64, w int, pic image.Image) {
 	b := pic.Bounds()
-	w, h := b.Dx(), b.Dy()
-	l := make([]float64, w*h)
+	h := b.Dy()
 	lum := func(r, g, bl float64) float64 {
 		return float64(0.299*r) + float64(0.587*g) + float64(0.114*bl)
 	}
 	switch p := pic.(type) {
 	case *image.NRGBA:
 		for y := range h {
-			row := p.Pix[(y)*p.Stride:]
+			row := p.Pix[y*p.Stride:]
 			for x := range w {
 				l[y*w+x] = lum(float64(row[4*x]), float64(row[4*x+1]), float64(row[4*x+2]))
 			}
@@ -84,5 +115,4 @@ func luma(pic image.Image) ([]float64, int, int) {
 			}
 		}
 	}
-	return l, w, h
 }

@@ -21,28 +21,37 @@ func (d *detector) perspective(lum []float64, B mat2) (mapping, bool) {
 	cy, cx := float64(float64(h)/2), float64(float64(w)/2)
 	// Each window's centre relative to the picture's, and the ratio of
 	// the projective denominator there to the middle's.
-	var rows [][3]float64
-	for _, o := range [4][2]int{{h / 4, 0}, {h / 4, w / 2}, {0, w / 4}, {h / 2, w / 4}} {
+	windows := [4][2]int{{h / 4, 0}, {h / 4, w / 2}, {0, w / 4}, {h / 2, w / 4}}
+	var found [4]bool
+	var each [4][3]float64
+	d.parallel(len(windows), func(i int) {
+		o := windows[i]
 		win := make([]float64, cw*ch)
 		for y := range ch {
 			copy(win[y*cw:], lum[(y+o[0])*w+o[1]:][:cw])
 		}
-		dw := &detector{k: d.k, p: d.p, w: cw, h: ch}
+		dw := &detector{k: d.k, p: d.p, w: cw, h: ch, par: d.par}
 		dw.prepare(win)
 		Bw := dw.polishFrom(B)
 		Bl, ok := dw.lsq(Bw)
 		if !ok {
-			continue
+			return
 		}
 		det := float64(Bl[0][0]*Bl[1][1]) - float64(Bl[0][1]*Bl[1][0])
 		if det == 0 || det/det0 < 0.5 || det/det0 > 2 {
-			continue
+			return
 		}
 		// The tile's area in pixels is 1/det: the denominator there over
 		// the middle's is (det0/det)^(1/3).
 		ratio := math.Cbrt(det0 / det)
 		wy, wx := float64(o[0]+ch/2)-cy, float64(o[1]+cw/2)-cx
-		rows = append(rows, [3]float64{wy, wx, ratio - 1})
+		found[i], each[i] = true, [3]float64{wy, wx, ratio - 1}
+	})
+	var rows [][3]float64
+	for i := range windows {
+		if found[i] {
+			rows = append(rows, each[i])
+		}
 	}
 	if len(rows) < 3 {
 		return mapping{}, false

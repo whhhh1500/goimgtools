@@ -73,7 +73,16 @@ func TestInvisibleWatermark(t *testing.T) {
 			if got, ok := readMark(t, out, "k"); !ok || !bytes.Equal(got, payload) {
 				t.Errorf("kind %d, %s: read %q, %v", c.kind, name, got, ok)
 			}
+			// Shared out over four cores the search finds the same.
+			if name == "turned 7, cropped" {
+				if got, ok, err := inspect.ReadWatermark(FromBytes(out).Threads(4), "k"); err != nil || !ok || !bytes.Equal(got, payload) {
+					t.Errorf("kind %d, %s, four cores: read %q, %v, %v", c.kind, name, got, ok, err)
+				}
+			}
 		}
+	}
+	if got, ok, err := inspect.ReadWatermark(FromBytes(src).Threads(4), "k"); err != nil || ok {
+		t.Errorf("four cores, unmarked: read %q, %v, %v", got, ok, err)
 	}
 }
 

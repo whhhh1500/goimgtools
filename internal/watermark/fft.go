@@ -65,31 +65,48 @@ func cmul(a, b complex64) complex64 {
 // fft2 is the 2-D DFT of an h x w array (both powers of two), in place.
 // The columns go through a buffer, so that each transform reads memory in
 // order.
-func fft2(a []complex64, h, w int, inverse bool) {
+func fft2(a []complex64, h, w int, inverse bool) { fft2Par(a, h, w, inverse, nil) }
+
+// fft2Par is fft2 with its rows, then its columns, shared out by par (nil:
+// one at a time); the result is the same.
+func fft2Par(a []complex64, h, w int, inverse bool, par Parallel) {
+	if par == nil {
+		par = func(n int, fn func(i int)) {
+			for i := range n {
+				fn(i)
+			}
+		}
+	}
 	pw, ph := newFFTPlan(w), newFFTPlan(h)
-	for y := range h {
-		pw.transform(a[y*w:], inverse)
-	}
-	const cols = 8 // columns copied out at a time
-	buf := make([]complex64, cols*h)
-	for x0 := 0; x0 < w; x0 += cols {
-		n := min(cols, w-x0)
-		for y := range h {
-			row := a[y*w+x0 : y*w+x0+n]
-			for c, v := range row {
-				buf[c*h+y] = v
+	const rows = 32 // rows a share at a time
+	par((h+rows-1)/rows, func(i int) {
+		for y := i * rows; y < min(h, (i+1)*rows); y++ {
+			pw.transform(a[y*w:], inverse)
+		}
+	})
+	const cols = 8   // columns copied out at a time
+	const blocks = 8 // of them a share at a time
+	par((w+cols*blocks-1)/(cols*blocks), func(i int) {
+		buf := make([]complex64, cols*h)
+		for x0 := i * cols * blocks; x0 < min(w, (i+1)*cols*blocks); x0 += cols {
+			n := min(cols, w-x0)
+			for y := range h {
+				row := a[y*w+x0 : y*w+x0+n]
+				for c, v := range row {
+					buf[c*h+y] = v
+				}
+			}
+			for c := range n {
+				ph.transform(buf[c*h:], inverse)
+			}
+			for y := range h {
+				row := a[y*w+x0 : y*w+x0+n]
+				for c := range row {
+					row[c] = buf[c*h+y]
+				}
 			}
 		}
-		for c := range n {
-			ph.transform(buf[c*h:], inverse)
-		}
-		for y := range h {
-			row := a[y*w+x0 : y*w+x0+n]
-			for c := range row {
-				row[c] = buf[c*h+y]
-			}
-		}
-	}
+	})
 	if inverse {
 		s := 1 / float32(h*w)
 		for i, v := range a {

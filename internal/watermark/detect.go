@@ -3,6 +3,7 @@ package watermark
 import (
 	"math"
 	"slices"
+	"sync/atomic"
 )
 
 // WorkingSide is the most pixels along the shorter side, and twice that
@@ -15,15 +16,23 @@ const (
 	ns  = sub * N // samples of a folded tile along a side
 )
 
+// Parallel runs fn(0), fn(1), …, fn(n-1), each once, at the same time as
+// far as it can, and returns when all have returned (pipeline.Env's
+// Parallel). Detect's result is the same with any.
+type Parallel func(n int, fn func(i int))
+
 // Detect looks for a mark made with the key in the luminance of a picture
 // (w x h values, 0 to 255, rows top to bottom) and returns its payload.
-func Detect(lum []float64, w, h int, k Key) ([]byte, bool) {
+// par, if not nil, shares the work out; the result does not depend on it.
+func Detect(lum []float64, w, h int, k Key, par Parallel) ([]byte, bool) {
 	if w < 32 || h < 32 {
 		return nil, false
 	}
 	p := newPatterns(k)
-	d := &detector{k: k, p: p, w: w, h: h}
-	d.prepare(lum)
+	// The detectors keep par as it is: nil, they work alone and share their
+	// scratch.
+	d := &detector{k: k, p: p, w: w, h: h, par: par}
+	par = d.parallel
 	// The tiling is looked for in the whole picture and in its middle,
 	// half as wide and high: in a photograph, perspective changes the
 	// tile's size and angle across the picture, which spreads the
@@ -32,21 +41,28 @@ func Detect(lum []float64, w, h int, k Key) ([]byte, bool) {
 		c  candidate
 		in *detector
 	}
-	var cands []found
-	for _, c := range d.search() {
-		cands = append(cands, found{c, d})
-	}
-	if cw, ch := w/2, h/2; cw >= 128 && ch >= 128 {
-		mid := make([]float64, cw*ch)
-		for y := range ch {
-			copy(mid[y*cw:], lum[(y+h/4)*w+w/4:][:cw])
+	var searched [2][]found
+	par(2, func(i int) {
+		if i == 0 {
+			d.prepare(lum)
+			for _, c := range d.search() {
+				searched[0] = append(searched[0], found{c, d})
+			}
+			return
 		}
-		dm := &detector{k: k, p: p, w: cw, h: ch}
-		dm.prepare(mid)
-		for _, c := range dm.search() {
-			cands = append(cands, found{c, dm})
+		if cw, ch := w/2, h/2; cw >= 128 && ch >= 128 {
+			mid := make([]float64, cw*ch)
+			for y := range ch {
+				copy(mid[y*cw:], lum[(y+h/4)*w+w/4:][:cw])
+			}
+			dm := &detector{k: k, p: p, w: cw, h: ch, par: d.par}
+			dm.prepare(mid)
+			for _, c := range dm.search() {
+				searched[1] = append(searched[1], found{c, dm})
+			}
 		}
-	}
+	})
+	cands := append(searched[0], searched[1]...)
 	slices.SortStableFunc(cands, func(a, b found) int {
 		if a.c.z > b.c.z {
 			return -1
@@ -56,44 +72,72 @@ func Detect(lum []float64, w, h int, k Key) ([]byte, bool) {
 		}
 		return 0
 	})
+	// What the candidates share is worked out before they are shared out.
+	d.classOf()
+	d.syncFFT(0)
+	d.syncFFT(1)
 	// The quick way for every candidate: the tiling from the spectrum,
-	// placed by the sync pattern, its halves and regions.
+	// placed by the sync pattern, its halves and regions. The first by
+	// rank whose payload checks is the answer: candidates are taken in
+	// order, and none is begun after a better-ranked one has been read.
 	type placed struct {
-		B mat2
-		m mapping
-		z float64
+		B       mat2
+		m       mapping
+		z       float64
+		ok      bool // placed well enough to try (z of 4.5 or more)
+		payload []byte
+		read    bool
 	}
-	var tried []placed
-	for rank, f := range cands {
-		d.quick = rank >= quickFrom
+	out := make([]placed, len(cands))
+	var first atomic.Int64
+	first.Store(int64(len(cands)))
+	par(len(cands), func(rank int) {
+		if int64(rank) > first.Load() {
+			return
+		}
+		f := cands[rank]
+		dd := d.worker()
+		dd.quick = rank >= quickFrom
 		B := f.in.polish(f.c)
 		if b2, ok := f.in.lsq(B); ok {
 			B = b2
 		}
 		det := float64(B[0][0]*B[1][1]) - float64(B[0][1]*B[1][0])
 		if !(math.Abs(det) > 1e-12) {
-			continue
+			return
 		}
 		// The tile's sides in pixels: the columns of the inverse of B's
 		// transpose.
 		uy, ux := B[1][1]/det, -B[1][0]/det
 		vy, vx := -B[0][1]/det, B[0][0]/det
 		if math.Hypot(uy, ux) > 2*float64(max(w, h)) || math.Hypot(vy, vx) > 2*float64(max(w, h)) {
-			continue
+			return
 		}
-		m, z := d.align(B)
+		m, z := dd.align(B)
 		if z < 4.5 {
-			continue
+			return
 		}
-		if payload, ok := d.decode(m); ok {
-			return payload, true
+		o := placed{B: B, m: m, z: z, ok: true}
+		o.payload, o.read = dd.decode(m)
+		out[rank] = o
+		if o.read {
+			for cur := first.Load(); int64(rank) < cur && !first.CompareAndSwap(cur, int64(rank)); cur = first.Load() {
+			}
 		}
-		tried = append(tried, placed{B, m, z})
+	})
+	var tried []placed
+	for _, o := range out {
+		if o.read {
+			return o.payload, true
+		}
+		if o.ok {
+			tried = append(tried, o)
+		}
 	}
 	// The slower ways for the two tilings the sync pattern liked best,
 	// where it was found at all (a wrong tiling scores about 4): the
 	// whole mapping adjusted for the sync pattern, and a photograph's
-	// perspective from the tile's size around the middle.
+	// perspective from the tile's size around the middle; in that order.
 	slices.SortStableFunc(tried, func(a, b placed) int {
 		if a.z > b.z {
 			return -1
@@ -103,21 +147,33 @@ func Detect(lum []float64, w, h int, k Key) ([]byte, bool) {
 		}
 		return 0
 	})
+	var best []placed
 	for _, t := range tried[:min(2, len(tried))] {
 		if t.z < 6 {
 			break
 		}
-		if m2, z2 := d.optimize(t.m); z2 > t.z+0.5 {
-			if payload, ok := d.decode(m2); ok {
-				return payload, true
+		best = append(best, t)
+	}
+	type result struct {
+		payload []byte
+		read    bool
+	}
+	slow := make([]result, 2*len(best))
+	par(len(slow), func(j int) {
+		t, dd := best[j/2], d.worker()
+		if j%2 == 0 {
+			if m2, z2 := dd.optimize(t.m); z2 > t.z+0.5 {
+				slow[j].payload, slow[j].read = dd.decode(m2)
+			}
+		} else if mp, ok := dd.perspective(lum, t.B); ok {
+			if m3, z3 := dd.optimize(dd.orient(mp)); z3 >= 4.5 {
+				slow[j].payload, slow[j].read = dd.decode(m3)
 			}
 		}
-		if mp, ok := d.perspective(lum, t.B); ok {
-			if m3, z3 := d.optimize(d.orient(mp)); z3 >= 4.5 {
-				if payload, ok := d.decode(m3); ok {
-					return payload, true
-				}
-			}
+	})
+	for _, r := range slow {
+		if r.read {
+			return r.payload, true
 		}
 	}
 	return nil, false
@@ -139,7 +195,30 @@ type detector struct {
 	// Scratch of fold and corr, which are called a few thousand times.
 	foldCnt []float64
 	corrBuf []complex64
-	class   []uint8 // see classOf
+	class   []uint8  // see classOf
+	par     Parallel // nil: one thing at a time
+}
+
+// parallel runs fn(0) to fn(n-1) with d's Parallel, or one after another.
+func (d *detector) parallel(n int, fn func(i int)) {
+	if d.par == nil {
+		for i := range n {
+			fn(i)
+		}
+		return
+	}
+	d.par(n, fn)
+}
+
+// worker is d for one goroutine: what d has worked out is shared, read
+// only, and the scratch is its own. Without a Parallel it is d.
+func (d *detector) worker() *detector {
+	if d.par == nil {
+		return d
+	}
+	c := *d
+	c.foldCnt, c.corrBuf = nil, nil
+	return &c
 }
 
 // prepare whitens the picture (its spectrum flattened), evens out its
@@ -189,7 +268,7 @@ func (d *detector) whiten(y []float64) ([]float64, []float32) {
 			a[j*d.wp+i] = complex(float32(float64((y[j*w+i]-mean)*ty[j])*tx[i]), 0)
 		}
 	}
-	fft2(a, d.hp, d.wp, false)
+	fft2Par(a, d.hp, d.wp, false, d.par)
 	white := make([]float32, len(a))
 	for i, v := range a {
 		re, im := real(v), imag(v)
@@ -203,7 +282,7 @@ func (d *detector) whiten(y []float64) ([]float64, []float32) {
 	}
 	sm = nil
 	a[0], white[0] = 0, 0
-	fft2(a, d.hp, d.wp, true)
+	fft2Par(a, d.hp, d.wp, true, d.par)
 	r := make([]float64, w*h)
 	for j := range h {
 		for i := range w {

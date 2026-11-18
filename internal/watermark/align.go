@@ -425,23 +425,37 @@ func (d *detector) align(B mat2) (mapping, float64) {
 // regions or more) or an affine map (three to five).
 func (d *detector) regions(m *mapping, reg int) (mapping, bool) {
 	h, w := d.h, d.w
-	var pts, tgt [][2]float64
+	var grid []rect
 	for ry := 0; ry < max(1, h-reg/2); ry += reg / 2 {
 		for rx := 0; rx < max(1, w-reg/2); rx += reg / 2 {
 			g := rect{ry, rx, min(h, ry+reg), min(w, rx+reg)}
-			if 2*(g.y1-g.y0)*(g.x1-g.x0) < reg*reg {
-				continue
+			if 2*(g.y1-g.y0)*(g.x1-g.x0) >= reg*reg {
+				grid = append(grid, g)
 			}
-			c := d.corr(d.fold(m, g), 0)
-			zr, py, px := peak(c, 0, 0, ns/6)
-			if zr < 5 {
-				continue
-			}
-			dy, dx := subpeak(c, py, px)
-			cy, cx := float64(g.y0+g.y1)/2, float64(g.x0+g.x1)/2
-			a, b := m.at(cy, cx)
-			pts = append(pts, [2]float64{cy, cx})
-			tgt = append(tgt, [2]float64{a - float64(wrapHalf(dy)/ns), b - float64(wrapHalf(dx)/ns)})
+		}
+	}
+	type hit struct {
+		found    bool
+		pts, tgt [2]float64
+	}
+	hits := make([]hit, len(grid))
+	d.parallel(len(grid), func(i int) {
+		g, dd := grid[i], d.worker()
+		c := dd.corr(dd.fold(m, g), 0)
+		zr, py, px := peak(c, 0, 0, ns/6)
+		if zr < 5 {
+			return
+		}
+		dy, dx := subpeak(c, py, px)
+		cy, cx := float64(g.y0+g.y1)/2, float64(g.x0+g.x1)/2
+		a, b := m.at(cy, cx)
+		hits[i] = hit{true, [2]float64{cy, cx}, [2]float64{a - float64(wrapHalf(dy)/ns), b - float64(wrapHalf(dx)/ns)}}
+	})
+	var pts, tgt [][2]float64
+	for _, ht := range hits {
+		if ht.found {
+			pts = append(pts, ht.pts)
+			tgt = append(tgt, ht.tgt)
 		}
 	}
 	switch {
