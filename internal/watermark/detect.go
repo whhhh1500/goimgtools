@@ -277,8 +277,8 @@ func (d *detector) worker() *detector {
 // 0.125 and 0.5: 273 and 264; with whitenRadius 3, windows of 2, 4, 8 and
 // 16: 264, 263, 259 and 239; with a window of 4, whitenRadius 5, 10 and
 // 15: 271, 257 and 240. On the 24 Kodak photographs, not used to choose
-// them, after 18 attacks: 412 readings of 432 against 404, crops to 40%
-// 18 against 14; the blind mark at Strength 0.6 344 against 304.)
+// them, after 18 attacks: 400 readings of 432 against 393, crops to 40%
+// 18 against 14; the blind mark at Strength 0.6 320 against 289.)
 const (
 	evenRadius   = 3
 	evenFloor    = 0.25
