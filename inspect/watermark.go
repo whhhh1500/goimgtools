@@ -13,9 +13,10 @@ import (
 // ReadWatermark looks for a mark hidden with Image.InvisibleWatermark and
 // the same key, and returns its bytes; false when there is none, or it is
 // too damaged to read. What is returned is practically never a wrong mark:
-// each of the two thousand or so readings a search tries is checked against
-// a 32-bit CRC of the key and the bytes (about one chance in two million
-// for a picture without a mark). The original is not needed.
+// each of the three thousand or so readings a search tries at most is
+// checked against a 32-bit CRC of the key and the bytes (about one chance in
+// one and a half million for a picture without a mark). The original is not
+// needed.
 //
 // The picture may have been saved again, resized, cropped (it must keep
 // about two of the mark's repeats each way), turned by any angle, made
@@ -26,10 +27,11 @@ import (
 //
 // A picture larger than 1024 pixels on its shorter side (or 2048 on its
 // longer) is reduced first. For one of that size the search takes under a
-// second when the mark is there (about two when it is not, or is badly
-// damaged: more ways are tried) and about 80MB. It shares its work with
-// the cores img may use (Threads, SetDefaultThreads), finding the same:
-// with 8, about 0.5 and 0.8 seconds. The operations of img, if
+// second when the mark is there (about three when it is not, or is badly
+// damaged: more ways are tried, in more places) and about 80MB (100 when
+// nothing is found). It shares its work with the cores img may use
+// (Threads, SetDefaultThreads), finding the same: with 8, about 0.5 and 1
+// second. The operations of img, if
 // it has any, are run first.
 func ReadWatermark(img *goimgtools.Image, key string) ([]byte, bool, error) {
 	if img == nil {

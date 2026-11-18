@@ -41,37 +41,47 @@ func Detect(lum []float64, w, h int, k Key, par Parallel) ([]byte, bool) {
 		c  candidate
 		in *detector
 	}
-	var searched [2][]found
+	// within searches the windows of half the width and height at these
+	// places, each in a detector of its own, and returns the best of what
+	// they find, by the spectrum's score.
+	cw, ch := w/2, h/2
+	within := func(at [][2]int, n int) []found {
+		searched := make([][]found, len(at))
+		if cw >= 128 && ch >= 128 {
+			par(len(at), func(i int) {
+				win := make([]float64, cw*ch)
+				for y := range ch {
+					copy(win[y*cw:], lum[(y+at[i][1])*w+at[i][0]:][:cw])
+				}
+				dw := &detector{k: k, p: p, w: cw, h: ch, par: d.par}
+				dw.prepare(win)
+				for _, c := range dw.search() {
+					searched[i] = append(searched[i], found{c, dw})
+				}
+				// Only its spectrum is wanted from here on (polish, lsq).
+				dw.r, dw.magMax = nil, nil
+			})
+		}
+		var all []found
+		for _, s := range searched {
+			all = append(all, s...)
+		}
+		byZ(all, func(f found) float64 { return f.c.z })
+		return all[:min(n, len(all))]
+	}
+	var whole, middle []found
 	par(2, func(i int) {
 		if i == 0 {
 			d.prepare(lum)
 			for _, c := range d.search() {
-				searched[0] = append(searched[0], found{c, d})
+				whole = append(whole, found{c, d})
 			}
 			return
 		}
-		if cw, ch := w/2, h/2; cw >= 128 && ch >= 128 {
-			mid := make([]float64, cw*ch)
-			for y := range ch {
-				copy(mid[y*cw:], lum[(y+h/4)*w+w/4:][:cw])
-			}
-			dm := &detector{k: k, p: p, w: cw, h: ch, par: d.par}
-			dm.prepare(mid)
-			for _, c := range dm.search() {
-				searched[1] = append(searched[1], found{c, dm})
-			}
-		}
+		middle = within([][2]int{{w / 4, h / 4}}, 4)
 	})
-	cands := append(searched[0], searched[1]...)
-	slices.SortStableFunc(cands, func(a, b found) int {
-		if a.c.z > b.c.z {
-			return -1
-		}
-		if a.c.z < b.c.z {
-			return 1
-		}
-		return 0
-	})
+	cands := append(whole, middle...)
+	byZ(cands, func(f found) float64 { return f.c.z })
 	// What the candidates share is worked out before they are shared out.
 	d.classOf()
 	d.syncFFT(0)
@@ -88,51 +98,59 @@ func Detect(lum []float64, w, h int, k Key, par Parallel) ([]byte, bool) {
 		payload []byte
 		read    bool
 	}
-	out := make([]placed, len(cands))
-	var first atomic.Int64
-	first.Store(int64(len(cands)))
-	par(len(cands), func(rank int) {
-		if int64(rank) > first.Load() {
-			return
-		}
-		f := cands[rank]
-		dd := d.worker()
-		dd.quick = rank >= quickFrom
-		B := f.in.polish(f.c)
-		if b2, ok := f.in.lsq(B); ok {
-			B = b2
-		}
-		det := float64(B[0][0]*B[1][1]) - float64(B[0][1]*B[1][0])
-		if !(math.Abs(det) > 1e-12) {
-			return
-		}
-		// The tile's sides in pixels: the columns of the inverse of B's
-		// transpose.
-		uy, ux := B[1][1]/det, -B[1][0]/det
-		vy, vx := -B[0][1]/det, B[0][0]/det
-		if math.Hypot(uy, ux) > 2*float64(max(w, h)) || math.Hypot(vy, vx) > 2*float64(max(w, h)) {
-			return
-		}
-		m, z := dd.align(B)
-		if z < 4.5 {
-			return
-		}
-		o := placed{B: B, m: m, z: z, ok: true}
-		o.payload, o.read = dd.decode(m)
-		out[rank] = o
-		if o.read {
-			for cur := first.Load(); int64(rank) < cur && !first.CompareAndSwap(cur, int64(rank)); cur = first.Load() {
+	var tried []placed
+	// quickly places cands (those ranked from on, quickly: see quickFrom)
+	// and reads them.
+	quickly := func(cands []found, from int) ([]byte, bool) {
+		out := make([]placed, len(cands))
+		var first atomic.Int64
+		first.Store(int64(len(cands)))
+		par(len(cands), func(rank int) {
+			if int64(rank) > first.Load() {
+				return
+			}
+			f := cands[rank]
+			dd := d.worker()
+			dd.quick = rank >= from
+			B := f.in.polish(f.c)
+			if b2, ok := f.in.lsq(B); ok {
+				B = b2
+			}
+			det := float64(B[0][0]*B[1][1]) - float64(B[0][1]*B[1][0])
+			if !(math.Abs(det) > 1e-12) {
+				return
+			}
+			// The tile's sides in pixels: the columns of the inverse of B's
+			// transpose.
+			uy, ux := B[1][1]/det, -B[1][0]/det
+			vy, vx := -B[0][1]/det, B[0][0]/det
+			if math.Hypot(uy, ux) > 2*float64(max(w, h)) || math.Hypot(vy, vx) > 2*float64(max(w, h)) {
+				return
+			}
+			m, z := dd.align(B)
+			if z < 4.5 {
+				return
+			}
+			o := placed{B: B, m: m, z: z, ok: true}
+			o.payload, o.read = dd.decode(m)
+			out[rank] = o
+			if o.read {
+				for cur := first.Load(); int64(rank) < cur && !first.CompareAndSwap(cur, int64(rank)); cur = first.Load() {
+				}
+			}
+		})
+		for _, o := range out {
+			if o.read {
+				return o.payload, true
+			}
+			if o.ok {
+				tried = append(tried, o)
 			}
 		}
-	})
-	var tried []placed
-	for _, o := range out {
-		if o.read {
-			return o.payload, true
-		}
-		if o.ok {
-			tried = append(tried, o)
-		}
+		return nil, false
+	}
+	if payload, ok := quickly(cands, quickFrom); ok {
+		return payload, true
 	}
 	// The slower ways for the two tilings the sync pattern liked best,
 	// where it was found at all (a wrong tiling scores about 4): the
@@ -176,7 +194,34 @@ func Detect(lum []float64, w, h int, k Key, par Parallel) ([]byte, bool) {
 			return r.payload, true
 		}
 	}
+	// Last, in the four corners, half as wide and high, for a mark that
+	// is left in only part of the picture (a screenshot whose flat parts
+	// were compressed away, the sharper part of a photograph): the best four
+	// tilings found there, placed quickly. (Measured with the 22 attacks on 5
+	// pictures with 3 keys: 276 marks of 330 read against 271, the screen
+	// mark 293 against 288, most of them photographs of a screen. More of the
+	// corners' tilings, or the best placed region by region too, read no more
+	// and took longer where nothing is found; searched with the rest at first,
+	// the corners took a marked picture 76% longer to read.)
+	corners := [][2]int{{0, 0}, {w - cw, 0}, {0, h - ch}, {w - cw, h - ch}}
+	if payload, ok := quickly(within(corners, 4), 0); ok {
+		return payload, true
+	}
 	return nil, false
+}
+
+// byZ sorts v by score, best first, ties kept in order.
+func byZ[T any](v []T, z func(T) float64) {
+	slices.SortStableFunc(v, func(a, b T) int {
+		za, zb := z(a), z(b)
+		if za > zb {
+			return -1
+		}
+		if za < zb {
+			return 1
+		}
+		return 0
+	})
 }
 
 type detector struct {
@@ -339,7 +384,10 @@ type candidate struct {
 // search scores every period (log steps of 1.2%) and angle (0.4 degree
 // steps), the tiling mirrored or not, by the summed spectrum at the
 // reference's frequencies, and returns the four best apart from each
-// other.
+// other. (The spectrum as it is, interpolated, rather than its largest
+// over 3 x 3 bins, read 4 more marks of 330 with the 22 attacks on 5
+// pictures with 3 keys, the screen mark 5 more, but 3 fewer of the 24 Kodak
+// photographs of a screen made with Pillow, whose peaks spread more.)
 func (d *detector) search() []candidate {
 	maxK := 0.0
 	for _, f := range d.p.ref {

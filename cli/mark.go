@@ -19,7 +19,7 @@ func readMark(args []string, stdout, stderr io.Writer) error {
 	key := fl.String("key", "", "the `key` the mark was made with (-mark-key)")
 	asHex := fl.Bool("hex", false, "print the mark's bytes in hexadecimal")
 	fl.Usage = func() {
-		fmt.Fprint(stderr, "usage: goimgtools readmark [-key key] [-hex] file...\n\nPrints the invisible mark hidden in each image with -mark and the same\n-mark-key, or \"no mark\". The image may have been saved again, resized,\ncropped, turned, screenshotted or, for -mark-kind screen, photographed off a\nscreen (crop the photograph to the screen first). A mark that is printed is\nthe one that was hidden, but for about one chance in two million: a check of\nthe key and the bytes sees to that.\n\n")
+		fmt.Fprint(stderr, "usage: goimgtools readmark [-key key] [-hex] file...\n\nPrints the invisible mark hidden in each image with -mark and the same\n-mark-key, or \"no mark\". The image may have been saved again, resized,\ncropped, turned, screenshotted or, for -mark-kind screen, photographed off a\nscreen (crop the photograph to the screen first). A mark that is printed is\nthe one that was hidden, but for about one chance in one and a half million:\na check of the key and the bytes sees to that.\n\n")
 		fl.PrintDefaults()
 	}
 	if err := fl.Parse(args); err != nil {
