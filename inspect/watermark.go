@@ -24,8 +24,8 @@ import (
 //
 // A picture larger than 1024 pixels on its shorter side (or 2048 on its
 // longer) is reduced first. For one of that size the search takes under a
-// second when the mark is there (a few seconds when it is not, or is badly
-// damaged: more ways are tried) and about 80MB. The operations of img, if
+// second when the mark is there (about one and a half when it is not, or
+// is badly damaged: more ways are tried) and about 80MB. The operations of img, if
 // it has any, are run first.
 func ReadWatermark(img *goimgtools.Image, key string) ([]byte, bool, error) {
 	if img == nil {

@@ -62,6 +62,15 @@ func (d *detector) all() rect { return rect{0, 0, d.h, d.w} }
 // tile.
 const corrRefWeight = 0.4
 
+// regionsFrom is the z-score of the whole picture's placing below which
+// align does not look region by region, for the tilings the spectrum
+// likes less (see quickFrom).
+const regionsFrom = 5.0
+
+// quickFrom is the rank, by the spectrum's score, from which a tiling is
+// placed quickly (see regionsFrom).
+const quickFrom = 3
+
 // known is what every tile of a key has: the sync pattern and the
 // reference, in their shares of the tile (the reference's weighed by
 // corrRefWeight).
@@ -242,6 +251,14 @@ func (d *detector) align(B mat2) (mapping, float64) {
 	}
 	sy, sx := subpeak(d.corr(f, 0), y0, x0)
 	m = affine(A, -float64(sy/ns), -float64(sx/ns))
+	if d.quick && z0 < regionsFrom {
+		// Most likely a wrong tiling (about 4): the regions would find
+		// nothing, and are most of the time spent on it. (A tiling the
+		// spectrum likes best is always looked at region by region: a
+		// photograph's perspective can leave the whole picture scoring
+		// that low until its regions are placed.)
+		return m, z0
+	}
 	tilePx := math.Sqrt(1 / math.Abs(float64(A[0][0]*A[1][1])-float64(A[0][1]*A[1][0])))
 	// Region by region, as long as it helps: regions of about two tiles
 	// each way (three when too few of those find the pattern), each
@@ -431,6 +448,26 @@ func solve(a [][]float64) ([]float64, bool) {
 // coded bit's soft value, for every length of payload until one's check
 // matches.
 func (d *detector) decode(m mapping) ([]byte, bool) {
+	chips := d.payloadChips(m)
+	for n := 1; n <= MaxPayload; n++ {
+		ncoded := codedLen(n)
+		which, sign := spreading(d.k, ncoded)
+		soft := make([]float64, ncoded)
+		for i, v := range chips {
+			soft[which[i]] += float64(v * sign[i])
+		}
+		for _, bits := range listViterbi(soft, 8*(n+4)) {
+			if payload, ok := unframe(bits, d.k); ok {
+				return payload, true
+			}
+		}
+	}
+	return nil, false
+}
+
+// payloadChips is the folded picture's chips with what every tile has
+// taken out and the rest weighed for the payload (see decode).
+func (d *detector) payloadChips(m mapping) []float64 {
 	f := d.fold(&m, d.all())
 	a := make([]complex64, N*N)
 	for cy := range N {
@@ -500,18 +537,5 @@ func (d *detector) decode(m mapping) ([]byte, bool) {
 	for i, v := range a {
 		chips[i] = float64(real(v))
 	}
-	for n := 1; n <= MaxPayload; n++ {
-		ncoded := codedLen(n)
-		which, sign := spreading(d.k, ncoded)
-		soft := make([]float64, ncoded)
-		for i, v := range chips {
-			soft[which[i]] += float64(v * sign[i])
-		}
-		for _, bits := range listViterbi(soft, 8*(n+4)) {
-			if payload, ok := unframe(bits, d.k); ok {
-				return payload, true
-			}
-		}
-	}
-	return nil, false
+	return chips
 }

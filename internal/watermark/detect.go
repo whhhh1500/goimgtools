@@ -64,7 +64,8 @@ func Detect(lum []float64, w, h int, k Key) ([]byte, bool) {
 		z float64
 	}
 	var tried []placed
-	for _, f := range cands {
+	for rank, f := range cands {
+		d.quick = rank >= quickFrom
 		B := f.in.polish(f.c)
 		if b2, ok := f.in.lsq(B); ok {
 			B = b2
@@ -132,6 +133,9 @@ type detector struct {
 	magMax []float32 // the largest of mag over 3 x 3 bins
 	magBox []float32 // the mean of mag over 3 x 3 bins
 	syncFT [2][]complex64
+	// quick: align leaves out the regions when the whole picture
+	// scores low.
+	quick bool
 	// Scratch of fold and corr, which are called a few thousand times.
 	foldCnt []float64
 	corrBuf []complex64
