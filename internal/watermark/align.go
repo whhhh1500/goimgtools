@@ -737,8 +737,10 @@ func (d *detector) payloadChips(m mapping) []float64 {
 			weight[r] = float32(gain[r] / (left[r] / float64(bins[r])))
 		}
 	}
+	// The matched filter takes in how the sync pattern and the payload were
+	// weighed (shapeWeight).
 	for i := range a {
-		wt := weight[ring(i)]
+		wt := weight[ring(i)] * float32(shapeWeight(i/N, i%N))
 		a[i] = complex(real(a[i])*wt, imag(a[i])*wt)
 	}
 	fft2(a, N, N, true)

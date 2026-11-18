@@ -184,6 +184,42 @@ func TestRoundTrip(t *testing.T) {
 	}
 }
 
+// TestShape: shape weighs a pattern's spectrum by shapeWeight (against
+// the transforms of fft2) and keeps its power.
+func TestShape(t *testing.T) {
+	v := make([]float64, N*N)
+	r := newRNG(NewKey("k"), "test")
+	var p0 float64
+	for i := range v {
+		v[i] = r.sign()
+		p0 += v[i] * v[i]
+	}
+	a := make([]complex64, N*N)
+	for i, x := range v {
+		a[i] = complex(float32(x), 0)
+	}
+	shape(v)
+	fft2(a, N, N, false)
+	for i := range a {
+		w := float32(shapeWeight(i/N, i%N))
+		a[i] = complex(real(a[i])*w, imag(a[i])*w)
+	}
+	fft2(a, N, N, true)
+	var p1, pa, dot float64
+	for i, x := range v {
+		p1 += x * x
+		y := float64(real(a[i]))
+		pa += y * y
+		dot += x * y
+	}
+	if math.Abs(p1-p0) > 1e-9*p0 {
+		t.Errorf("power %v, want %v", p1, p0)
+	}
+	if c := dot / math.Sqrt(p1*pa); c < 1-1e-6 {
+		t.Errorf("correlation with the FFT's %v", c)
+	}
+}
+
 // TestDetectParallel: Detect finds the same with its work shared out as
 // without, read or not (saved as JPEG ever harder, with the slow ways
 // tried; unmarked).

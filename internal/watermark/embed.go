@@ -20,9 +20,11 @@ const (
 // The settings of each kind: the default number of tiles along the shorter
 // side, the smallest chip in pixels, and the mark's amplitude in levels
 // (0 to 255) where the picture is flat and where it is busy, at Strength 1.
-// The amplitudes make each kind at Strength 1 as visible as it was with the
-// tile of 40% reference (0.75 and 3, 1.5 and 6; see wRef), by SSIMULACRA2,
-// and less by butteraugli.
+// The amplitudes make each kind at Strength 1 about as visible by
+// SSIMULACRA2 as it was before the sync pattern and the payload were tilted
+// to the higher frequencies (0.84375 and 3.375, 1.665 and 6.66; see
+// shapeWeight), which those were with the tile of 40% reference (0.75 and
+// 3, 1.5 and 6; see wRef).
 // (Measured for Blind: chips of at least 2.5 or 3 pixels, which JPEG and
 // WebP keep better, leave small pictures too few tiles and read less
 // over all. As visible by SSIMULACRA2, less where flat and more where busy
@@ -35,8 +37,8 @@ const (
 var kinds = [...]struct {
 	density, minChip, flat, busy float64
 }{
-	Blind:  {density: 4, minChip: 2, flat: 0.84375, busy: 3.375},
-	Screen: {density: 4, minChip: 3, flat: 1.665, busy: 6.66},
+	Blind:  {density: 4, minChip: 2, flat: 0.9703125, busy: 3.88125},
+	Screen: {density: 4, minChip: 3, flat: 1.8315, busy: 7.326},
 }
 
 // Options are the settings of a mark.

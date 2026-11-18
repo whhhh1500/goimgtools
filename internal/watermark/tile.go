@@ -111,6 +111,7 @@ func newPatterns(k Key) *patterns {
 	for i := range p.sync {
 		p.sync[i] = s.sign()
 	}
+	shape(p.sync[:])
 	return p
 }
 
@@ -149,14 +150,18 @@ func spreading(k Key, ncoded int) (which []int32, sign []float64) {
 func tile(p *patterns, payload []byte, k Key) []float64 {
 	coded := encode(frameBits(payload, k))
 	which, sign := spreading(k, len(coded))
+	pay := make([]float64, N*N)
+	for i := range pay {
+		pay[i] = sign[i]
+		if coded[which[i]] == 1 {
+			pay[i] = -pay[i]
+		}
+	}
+	shape(pay)
 	t := make([]float64, N*N)
 	var power float64
 	for i := range t {
-		pay := sign[i]
-		if coded[which[i]] == 1 {
-			pay = -pay
-		}
-		v := float64(wRef*p.refPat[i]) + float64(wSync*p.sync[i]) + float64(wPay*pay)
+		v := float64(wRef*p.refPat[i]) + float64(wSync*p.sync[i]) + float64(wPay*pay[i])
 		t[i] = v
 		power += float64(v * v)
 	}
@@ -182,4 +187,93 @@ func mod(a, n int) int {
 		a += n
 	}
 	return a
+}
+
+// shapeWeight is what the spectrum of the sync pattern and the payload is
+// weighed by at bin (fy, fx) of the tile: the square root of the frequency
+// over 16 cycles a tile (taken as 1 at the lowest). Their chips are drawn
+// at random, of a flat spectrum; tilted to the higher frequencies, which
+// the eye sees less, they can be stronger as visible, and enough of them
+// is left after compression for the matched filter of payloadChips to read.
+// (Measured on the 24 Kodak photographs, as visible by SSIMULACRA2, after
+// the 22 attacks: 390 marks of 528 read against 358 at Strength 0.7, 452
+// against 430 at the default, WebP 60 22 and 24 against 18 and 24, crops
+// to 25% 11 against 6; butteraugli 5% to 7% higher. With the weight's power at
+// 0.25, 0.35, 0.75, 1 and 1.5: 374, 381, 395, 393 and 395, butteraugli up
+// with it; with -0.25 and -0.5, towards the lower frequencies, 314 and
+// 219; with the payload alone tilted, 382.)
+func shapeWeight(fy, fx int) float64 {
+	fy, fx = min(fy, N-fy), min(fx, N-fx)
+	return math.Sqrt(math.Sqrt(float64(max(1, fy*fy+fx*fx)))) / 2
+}
+
+// shape weighs v, N x N chips repeating, by shapeWeight in frequency, and
+// scales the result back to v's power. The transforms are written out
+// with cosTab, so that the tile is the same on every processor.
+func shape(v []float64) {
+	const mask = N - 1
+	sin := func(j int) float64 { return cosTab[(j+3*N/4)&mask] } // sin(2 pi j / N)
+	var p0 float64
+	for _, x := range v {
+		p0 += float64(x * x)
+	}
+	// Forward along the rows, then the columns.
+	re, im := make([]float64, N*N), make([]float64, N*N)
+	for y := range N {
+		row := v[y*N : y*N+N]
+		for k := range N {
+			var sr, si float64
+			for n, x := range row {
+				j := (k * n) & mask
+				sr += float64(x * cosTab[j])
+				si -= float64(x * sin(j))
+			}
+			re[y*N+k], im[y*N+k] = sr, si
+		}
+	}
+	fre, fim := make([]float64, N*N), make([]float64, N*N)
+	for x := range N {
+		for k := range N {
+			var sr, si float64
+			for n := range N {
+				j := (k * n) & mask
+				c, s := cosTab[j], sin(j)
+				a, b := re[n*N+x], im[n*N+x]
+				sr += float64(a*c) + float64(b*s)
+				si += float64(b*c) - float64(a*s)
+			}
+			w := shapeWeight(k, x)
+			fre[k*N+x], fim[k*N+x] = float64(sr*w), float64(si*w)
+		}
+	}
+	// Back along the columns, then the rows, keeping the real part.
+	for x := range N {
+		for n := range N {
+			var sr, si float64
+			for k := range N {
+				j := (k * n) & mask
+				c, s := cosTab[j], sin(j)
+				a, b := fre[k*N+x], fim[k*N+x]
+				sr += float64(a*c) - float64(b*s)
+				si += float64(b*c) + float64(a*s)
+			}
+			re[n*N+x], im[n*N+x] = sr, si
+		}
+	}
+	var p1 float64
+	for y := range N {
+		for n := range N {
+			var sr float64
+			for k := range N {
+				j := (k * n) & mask
+				sr += float64(re[y*N+k]*cosTab[j]) - float64(im[y*N+k]*sin(j))
+			}
+			v[y*N+n] = sr
+			p1 += float64(sr * sr)
+		}
+	}
+	scale := math.Sqrt(p0 / p1)
+	for i := range v {
+		v[i] *= scale
+	}
 }
