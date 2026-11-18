@@ -99,7 +99,7 @@ func (d *detector) classOf() []uint8 {
 // it; the places between hold the most. (Measured with the true tiling:
 // the payload's SNR up by 1 to 4 dB on photographs saved as PNG or JPEG
 // 70, 8 dB on a screenshot.)
-func (d *detector) foldWeighed(m *mapping) []float64 {
+func (d *detector) foldWeighed(m *mapping) ([]float64, []float64) {
 	class := d.classOf()
 	const nn = ns * ns
 	sum := make([]float64, classes*nn)
@@ -171,6 +171,7 @@ func (d *detector) foldWeighed(m *mapping) []float64 {
 		}
 	}
 	f := make([]float64, nn)
+	cover := make([]float64, nn)
 	for i := range nn {
 		var s, n float64
 		for c := range classes {
@@ -180,8 +181,9 @@ func (d *detector) foldWeighed(m *mapping) []float64 {
 		if n > 0 {
 			f[i] = s / n
 		}
+		cover[i] = n
 	}
-	return f
+	return f, cover
 }
 
 // corrRefWeight is how much of the reference the tiles are placed by,
@@ -664,7 +666,7 @@ const (
 // payloadChips is the folded picture's chips with what every tile has
 // taken out and the rest weighed for the payload (see decode).
 func (d *detector) payloadChips(m mapping) []float64 {
-	f := d.foldWeighed(&m)
+	f, cover := d.foldWeighed(&m)
 	a := make([]complex64, N*N)
 	for cy := range N {
 		for cx := range N {
@@ -737,6 +739,32 @@ func (d *detector) payloadChips(m mapping) []float64 {
 	chips := make([]float64, N*N)
 	for i, v := range a {
 		chips[i] = float64(real(v))
+	}
+	// Each chip weighed by how much was folded into it: in a crop some
+	// chips come from more copies of the tile than others, and are surer.
+	// (Measured on crops of the Kodak pictures with 6 keys, 432 crops of
+	// 40%, 30% and 25% of each side: 193 marks read against 179.)
+	{
+		var mean float64
+		w := make([]float64, N*N)
+		for cy := range N {
+			for cx := range N {
+				var s float64
+				for i := range sub {
+					for j := range sub {
+						s += cover[(sub*cy+i)*ns+sub*cx+j]
+					}
+				}
+				w[cy*N+cx] = s
+				mean += s
+			}
+		}
+		mean /= N * N
+		if mean > 0 {
+			for i := range chips {
+				chips[i] *= w[i] / mean
+			}
+		}
 	}
 	return chips
 }

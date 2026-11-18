@@ -96,15 +96,15 @@ On a standard set, the 24 photographs of the [Kodak suite](https://r0k.us/graphi
 
 | | PSNR | SSIMULACRA2 | butteraugli | JPEG 90 / 70 / 50 / 30 | WebP 60 | Crop to 40% / 25% | Turned 3° / 30° | Perspective | Photograph of a screen |
 |---|---|---|---|---|---|---|---|---|---|
-| Blind (this package) | 42.5 dB | 76.9 | 2.7 | 24 / 24 / 24 / 23 | 24 | 13 / 3 | 23 / 23 | 24 | 21 |
+| Blind (this package) | 42.5 dB | 76.9 | 2.7 | 24 / 24 / 24 / 23 | 23 | 14 / 3 | 23 / 23 | 24 | 21 |
 | Blind, `Strength: 1.5` | 39.0 dB | 63.2 | 4.1 | 24 / 24 / 24 / 24 | 24 | 20 / 10 | 24 / 24 | 24 | 24 |
-| Screen (this package) | 35.6 dB | 30.8 | 8.3 | 24 / 24 / 24 / 24 | 24 | 13 / 0 | 23 / 23 | 24 | 24 |
+| Screen (this package) | 35.6 dB | 30.8 | 8.3 | 24 / 24 / 24 / 24 | 24 | 12 / 0 | 23 / 23 | 24 | 24 |
 | blind_watermark | 38.0 dB | 43.4 | 4.6 | 24 / 24 / 22 / 0 | 19 | 0 / 0 | 0 / 0 | 0 | 0 |
 | invisible-watermark `dwtDctSvd` | 39.4 dB | 75.2 | 1.4 | 24 / 0 / 0 / 0 | 0 | 0 / 0 | 0 / 0 | 0 | 0 |
 | TrustMark `Q` | 42.5 dB | 54.7 | 9.5 | 24 / 24 / 24 / 22 | 24 | 0 / 0 | 0 / 0 | 21 | 11 |
 | TrustMark `P` | 49.4 dB | 87.4 | 2.6 | 24 / 19 / 1 / 0 | 11 | 0 / 0 | 0 / 0 | 0 | 0 |
 
-The other attacks (half the size, 70% and JPEG 80, darker, more contrast, noise, a screenshot) read 23 or 24 of 24 for the marks here and for TrustMark (`P`: 22 after more contrast); blind_watermark and invisible-watermark read none after halving. On these photographs the blind mark at its default changes the picture much less than TrustMark `Q` (SSIMULACRA2 76.9 against 54.7, butteraugli 2.7 against 9.5) and reads as many after JPEG and WebP; TrustMark `P`, about as visible by butteraugli, reads one at JPEG 50. Busy photographs hide a mark well: the first set's mostly white screenshot and its long, low photograph are harder.
+The other attacks (half the size, 70% and JPEG 80, darker, more contrast, noise, a screenshot) read 23 or 24 of 24 for the marks here and for TrustMark (`P`: 22 after more contrast); blind_watermark and invisible-watermark read none after halving. On these photographs the blind mark at its default changes the picture much less than TrustMark `Q` (SSIMULACRA2 76.9 against 54.7, butteraugli 2.7 against 9.5) and reads about as many after JPEG and WebP (23 and 23 at JPEG 30 and WebP 60, against 22 and 24); TrustMark `P`, about as visible by butteraugli, reads one at JPEG 50. Busy photographs hide a mark well: the first set's mostly white screenshot and its long, low photograph are harder.
 
 A harder simulation of a phone's photograph, done with this package's own operations, has stronger perspective and Pillow's sharpening. There the screen mark is read from all three photographs and not from the small photograph or the screenshot of a user interface; leaving any one of its steps out, from 3 to 5 of the 5.
 
