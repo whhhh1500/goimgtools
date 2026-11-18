@@ -286,6 +286,15 @@ type planeScaler struct {
 	bandY int
 	pend  [][]byte
 	free  [][]byte
+	// With planeSIMD: the weights across in 16 bits, 16 per destination
+	// sample, and how many groups of 8 samples from the first read no
+	// further than the row's end; whether the weights down fit 16 bits,
+	// and the rows and weight pairs of the destination row being made.
+	hz16    []int16
+	hGroups int
+	vSIMD   bool
+	vrows   []*int16
+	vpairs  []uint32
 }
 
 // newPlaneScaler returns the scaler of a sw × sh plane into dw × dh, and the
@@ -310,7 +319,49 @@ func newPlaneScaler(q *draw.Kernel, sw, sh, dw, dh int, ew, eh float64) (*planeS
 	}
 	p.acc = make([]int32, dw)
 	n := int64(len(p.hz.weights)+len(p.vt.weights))*4 + int64(dw+dh)*8 + int64(ringRows)*int64(dw)*2 + int64(dw)*4
+	if planeSIMD {
+		n += p.prepareSIMD()
+	}
 	return p, n
+}
+
+// prepareSIMD sets what the SIMD passes need, where the weights fit them,
+// and returns the memory it takes.
+func (p *planeScaler) prepareSIMD() int64 {
+	fit := func(ws []int32) bool {
+		for _, w := range ws {
+			if w < math.MinInt16 || w > math.MaxInt16 {
+				return false
+			}
+		}
+		return true
+	}
+	var mem int64
+	if hz := &p.hz; hz.n <= 16 && fit(hz.weights) {
+		// The destination samples whose 16 bytes from the first lie
+		// within the row (start does not decrease), in groups of 8.
+		e := 0
+		for e < p.dw && int(hz.start[e])+16 <= p.sw {
+			e++
+		}
+		if p.hGroups = e / 8; p.hGroups > 0 {
+			p.hz16 = make([]int16, 8*p.hGroups*16)
+			for x := range 8 * p.hGroups {
+				for k, w := range hz.weights[x*hz.n : x*hz.n+hz.n] {
+					p.hz16[x*16+k] = int16(w)
+				}
+			}
+			mem += int64(len(p.hz16)) * 2
+		}
+	}
+	if p.dw >= 16 && fit(p.vt.weights) {
+		np := (p.vt.n + 1) / 2
+		p.vSIMD = true
+		p.vrows = make([]*int16, 2*np)
+		p.vpairs = make([]uint32, np)
+		mem += int64(np) * 20
+	}
+	return mem
 }
 
 // feed takes the next source row.
@@ -320,7 +371,12 @@ func (p *planeScaler) feed(row []byte) {
 	r := p.ring[s%len(p.ring)]
 	hz := &p.hz
 	n := hz.n
-	for x := range r[:p.dw] {
+	x0 := 0
+	if p.hGroups > 0 {
+		planeHSIMD(&r[0], &row[0], &hz.start[0], &p.hz16[0], p.hGroups)
+		x0 = 8 * p.hGroups
+	}
+	for x := x0; x < p.dw; x++ {
 		ws := hz.weights[x*n : x*n+n]
 		src := row[hz.start[x]:]
 		src = src[:len(ws)]
@@ -336,18 +392,6 @@ func (p *planeScaler) feed(row []byte) {
 	for p.done < len(p.emitAt) && int(p.emitAt[p.done]) <= s {
 		d := p.done
 		p.done++
-		acc := p.acc
-		clear(acc)
-		lo := int(vt.start[d])
-		for k, w := range vt.weights[d*vt.n : d*vt.n+vt.n] {
-			if w == 0 {
-				continue
-			}
-			src := p.ring[(lo+k)%len(p.ring)]
-			for x, v := range src[:len(acc)] {
-				acc[x] += int32(v) * w
-			}
-		}
 		var out []byte
 		if k := d - p.bandY; k >= 0 && k < len(p.band) && len(p.pend) == 0 {
 			out = p.band[k]
@@ -356,9 +400,38 @@ func (p *planeScaler) feed(row []byte) {
 		} else {
 			out = make([]byte, p.dw)
 		}
+		lo := int(vt.start[d])
+		ws := vt.weights[d*vt.n : d*vt.n+vt.n]
+		c0 := 0
+		if p.vSIMD {
+			// Rows in pairs; an odd one out goes with itself at weight 0.
+			for k := 0; k < len(ws); k += 2 {
+				a := p.ring[(lo+k)%len(p.ring)]
+				b, wb := a, int32(0)
+				if k+1 < len(ws) {
+					b, wb = p.ring[(lo+k+1)%len(p.ring)], ws[k+1]
+				}
+				p.vrows[k], p.vrows[k+1] = &a[0], &b[0]
+				p.vpairs[k/2] = uint32(uint16(ws[k])) | uint32(uint16(wb))<<16
+			}
+			chunks := p.dw / 16
+			planeVSIMD(&out[0], &p.vrows[0], &p.vpairs[0], (len(ws)+1)/2, chunks)
+			c0 = 16 * chunks
+		}
+		acc := p.acc[c0:]
+		clear(acc)
+		for k, w := range ws {
+			if w == 0 {
+				continue
+			}
+			src := p.ring[(lo+k)%len(p.ring)][c0:]
+			for x, v := range src[:len(acc)] {
+				acc[x] += int32(v) * w
+			}
+		}
 		const sh = fixBits + hBits
 		for x, a := range acc {
-			out[x] = uint8(max(0, min(255, (a+1<<(sh-1))>>sh)))
+			out[c0+x] = uint8(max(0, min(255, (a+1<<(sh-1))>>sh)))
 		}
 		if len(p.pend) != 0 || d-p.bandY < 0 || d-p.bandY >= len(p.band) {
 			p.pend = append(p.pend, out)
