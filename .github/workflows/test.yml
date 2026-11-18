@@ -190,7 +190,11 @@ jobs:
         with:
           go-version: "1.27.x"
       - run: sudo apt-get update && sudo apt-get install -y qemu-user
-      - run: GOARCH=${{ matrix.arch }} go test -exec ${{ matrix.qemu }} -timeout 120m -skip "${{ matrix.skip || '^$' }}" ./tests ./pipeline ./inspect ./internal/resize ./internal/ops
+      # Each test's time is printed: emulation slows some far more than
+      # others (floating point most).
+      - run: |
+          set -o pipefail
+          GOARCH=${{ matrix.arch }} go test -exec ${{ matrix.qemu }} -timeout 120m -skip "${{ matrix.skip || '^$' }}" -v ./tests ./pipeline ./inspect ./internal/resize ./internal/ops | grep -E '^(--- (PASS|FAIL|SKIP)|FAIL|ok|panic)|^ +[^ ]+\.go:[0-9]+:'
 
   wasi:
     # WebAssembly, run by wasmtime: a 32-bit machine without threads.
