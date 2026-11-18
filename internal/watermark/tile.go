@@ -21,7 +21,9 @@ const (
 	// 18 and giving them 25% rather than 40% let the whole be 12% stronger
 	// as visible as before, and the 22 attacks on 5 pictures with 3 keys
 	// read 239 marks of 330 against 217 (JPEG 30 12 against 8, WebP 60 9
-	// against 5); the screen mark, as visible, 277 against 274. (With 15%
+	// against 5); the screen mark, as visible, 277 against 274. With 16
+	// sinusoids (nRef), 8 to 20 cycles read 229 and 238 with two sets of
+	// keys against 245 and 240. (With 15%
 	// for the reference the photographs of a screen were lost: 220. With
 	// the reference at a half or a quarter where the picture is flat,
 	// where it shows most, and the whole stronger to be as visible: 219,
