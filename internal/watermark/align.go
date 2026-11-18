@@ -744,26 +744,24 @@ func (d *detector) payloadChips(m mapping) []float64 {
 	// chips come from more copies of the tile than others, and are surer.
 	// (Measured on crops of the Kodak pictures with 6 keys, 432 crops of
 	// 40%, 30% and 25% of each side: 193 marks read against 179.)
-	{
-		var mean float64
-		w := make([]float64, N*N)
-		for cy := range N {
-			for cx := range N {
-				var s float64
-				for i := range sub {
-					for j := range sub {
-						s += cover[(sub*cy+i)*ns+sub*cx+j]
-					}
+	var mean float64
+	folded := make([]float64, N*N)
+	for cy := range N {
+		for cx := range N {
+			var s float64
+			for i := range sub {
+				for j := range sub {
+					s += cover[(sub*cy+i)*ns+sub*cx+j]
 				}
-				w[cy*N+cx] = s
-				mean += s
 			}
+			folded[cy*N+cx] = s
+			mean += s
 		}
-		mean /= N * N
-		if mean > 0 {
-			for i := range chips {
-				chips[i] *= w[i] / mean
-			}
+	}
+	mean /= N * N
+	if mean > 0 {
+		for i := range chips {
+			chips[i] *= folded[i] / mean
 		}
 	}
 	return chips
