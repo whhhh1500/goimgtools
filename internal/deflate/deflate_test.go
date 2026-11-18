@@ -159,17 +159,16 @@ func FuzzRoundTrip(f *testing.F) {
 	c := New(p)
 	p.NoSkip, p.SplitByCost, p.SplitPasses = true, true, 1
 	split := New(p)
+	lazy, lazy2 := New(LazyLevel6), New(LazyLevel9)
 	f.Fuzz(func(t *testing.T, data []byte, start int) {
 		if start < 0 || start > len(data) {
 			start = 0
 		}
-		z := c.Compress(nil, data, start, true)
-		if got := inflate(t, data[:start], z); !bytes.Equal(got, data[start:]) {
-			t.Fatal("round trip differs")
-		}
-		z = split.Compress(nil, data, start, true)
-		if got := inflate(t, data[:start], z); !bytes.Equal(got, data[start:]) {
-			t.Fatal("round trip differs")
+		for _, c := range []*Compressor{c, split, lazy, lazy2} {
+			z := c.Compress(nil, data, start, true)
+			if got := inflate(t, data[:start], z); !bytes.Equal(got, data[start:]) {
+				t.Fatalf("round trip differs (lazy %d)", c.p.Lazy)
+			}
 		}
 	})
 }

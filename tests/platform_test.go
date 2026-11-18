@@ -135,7 +135,7 @@ func TestSameOnEveryProcessor(t *testing.T) {
 			return photo.Clone().JPEG(77, JPEGOptions{QuantTable: QuantTableImageMagick}).ToBytes()
 		}, "39b0657868638dd1"},
 		{"png", func() ([]byte, error) { return clear.Clone().PNG().ToBytes() }, byFlate("7d6848e3147d24ec", "2a1b227d06566024")},
-		{"png 40 colours", func() ([]byte, error) { return photo.Clone().PNG(PNGOptions{Colors: 40}).ToBytes() }, byFlate("da59c525b9109a63", "4b7205232df6241f")},
+		{"png 40 colours", func() ([]byte, error) { return photo.Clone().PNG(PNGOptions{Colors: 40}).ToBytes() }, byFlate("a22a7198a696d7a8", "4b7205232df6241f")},
 		{"webp", func() ([]byte, error) { return photo.Clone().WebP(WebPOptions{Quality: 70}).ToBytes() }, "3fd53ba37ca99645"},
 		{"webp lossless", func() ([]byte, error) { return clear.Clone().WebP(WebPOptions{Lossless: true}).ToBytes() }, "9d7241e10fec8b83"},
 		// Transparency: sharp YUV of the colours, the transparent area

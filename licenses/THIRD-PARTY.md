@@ -120,6 +120,15 @@ final block, so that a stream can be compressed in pieces. Without a
 dictionary, with libdeflate's settings, its output is byte for byte
 libdeflate's (checked at levels 10, 11 and 12).
 
+`internal/deflate` also ports libdeflate's lazy parsing, the compressor of
+its levels 5 to 9 (`lib/deflate_compress.c`:
+`deflate_compress_lazy_generic`, the minimum match length heuristics;
+`lib/hc_matchfinder.h`, with its multi-hop links), rewritten in Go the same
+way. Without a dictionary its output is byte for byte libdeflate's at
+levels 5 to 9 (checked on photographs, screenshots, paletted images, text,
+random data and runs, from 18 bytes to 72MB; libdeflate stores inputs of
+up to 55 bytes, which this port compresses).
+
 `internal/inflate` decompresses with the method of libdeflate's
 decompressor (`lib/deflate_decompress.c`, `lib/decompress_template.h`): a
 64-bit bit buffer refilled without a branch, decode tables whose entries

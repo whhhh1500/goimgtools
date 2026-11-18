@@ -2,7 +2,8 @@
 // encoding: a port to Go of the near-optimal parsing of libdeflate
 // (https://github.com/ebiggers/libdeflate, lib/deflate_compress.c, levels
 // 10 to 12; Copyright 2016 Eric Biggers, Copyright 2024 Google LLC, MIT
-// licence, see licenses/LICENSE-LIBDEFLATE).
+// licence, see licenses/LICENSE-LIBDEFLATE), and of its lazy parsing
+// (levels 5 to 9, see lazy.go).
 //
 // All the matches at each position are found with binary trees and kept;
 // then, from the end of a block back to its start, the cheapest way on to
@@ -60,8 +61,11 @@ const (
 	maxMatchesPerPos = maxMatch - minMatch + 1
 )
 
-// Params are the settings of a level of libdeflate's near-optimal parsing.
+// Params are the settings of a level of libdeflate's near-optimal parsing,
+// or with Lazy of its lazy parsing (which uses only SearchDepth, NiceLen
+// and BlockLen).
 type Params struct {
+	Lazy          int // 1: lazy parsing; 2: lazy2, which looks two positions ahead
 	SearchDepth   int // nodes visited in a binary tree, at most
 	NiceLen       int // a match this long is taken without looking further
 	Passes        int // passes of the parse, at most
@@ -98,6 +102,9 @@ var (
 // Bytes is the memory a Compressor with the parameters takes.
 func (p Params) Bytes() int64 {
 	maxBlock := p.maxBlockLength()
+	if p.Lazy != 0 {
+		return hcBytes + 4*int64(maxBlock) + 4<<10
+	}
 	return matchfinderBytes + 4*int64(p.cacheLength()) + 4*int64(maxBlock+maxMatch+1) + 4*int64(maxBlock) + 4<<10 +
 		maxSplitBlocks*int64(unsafe.Sizeof(codes{})) + 3*8*(maxSplitBlocks+1)
 }
@@ -150,6 +157,7 @@ type Compressor struct {
 	p Params
 
 	mf        btMatchfinder
+	hc        *hcMatchfinder // the lazy parsing's
 	cache     []lzMatch
 	costToEnd []uint32
 	items     []uint32 // the choice at each position: a literal, or a match's length<<optimumLenShift | offset
@@ -181,6 +189,9 @@ type Compressor struct {
 // New makes a compressor; it takes p.Bytes() of memory.
 func New(p Params) *Compressor {
 	maxBlock := p.maxBlockLength()
+	if p.Lazy != 0 {
+		return &Compressor{p: p, hc: new(hcMatchfinder), items: make([]uint32, maxBlock)}
+	}
 	return &Compressor{
 		p:         p,
 		cache:     make([]lzMatch, p.cacheLength()),
@@ -253,7 +264,11 @@ func (c *Compressor) Compress(dst, in []byte, start int, final bool) []byte {
 		if start > windowSize {
 			in, start = in[start-windowSize:], windowSize
 		}
-		c.compress(in, start, final)
+		if c.p.Lazy != 0 {
+			c.compressLazy(in, start, final)
+		} else {
+			c.compress(in, start, final)
+		}
 	}
 	if !final {
 		c.w.add(0, 3)
