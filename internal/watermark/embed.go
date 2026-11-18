@@ -20,14 +20,19 @@ const (
 // The settings of each kind: the default number of tiles along the shorter
 // side, the smallest chip in pixels, and the mark's amplitude in levels
 // (0 to 255) where the picture is flat and where it is busy, at Strength 1.
+// The amplitudes make each kind at Strength 1 as visible as it was with the
+// tile of 40% reference (0.75 and 3, 1.5 and 6; see wRef), by SSIMULACRA2,
+// and less by butteraugli.
 // (Measured for Blind: chips of at least 2.5 or 3 pixels, which JPEG and
 // WebP keep better, leave small pictures too few tiles and read less
-// over all.)
+// over all. As visible by SSIMULACRA2, less where flat and more where busy
+// reads about 5% more after JPEG and WebP but is more visible by
+// butteraugli; more only where strongly textured reads less.)
 var kinds = [...]struct {
 	density, minChip, flat, busy float64
 }{
-	Blind:  {density: 4, minChip: 2, flat: 0.75, busy: 3},
-	Screen: {density: 4, minChip: 3, flat: 1.5, busy: 6},
+	Blind:  {density: 4, minChip: 2, flat: 0.84375, busy: 3.375},
+	Screen: {density: 4, minChip: 3, flat: 1.665, busy: 6.66},
 }
 
 // Options are the settings of a mark.

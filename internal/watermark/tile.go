@@ -8,14 +8,19 @@ const (
 	// nRef is the number of reference sinusoids.
 	nRef = 24
 	// refMin and refMax bound the reference frequencies, in cycles per
-	// tile.
-	refMin, refMax = 5, 18
-	// The amplitudes of the reference, the sync pattern and the payload
-	// in the tile (each of unit power): 40%, 15% and 45% of its power.
-	// (More for the payload, 60% with 25% or 30% for the reference,
-	// read no more after JPEG and WebP, and less after a photograph's
-	// perspective: the reference places the tiles there.)
-	wRef, wSync, wPay = 0.63, 0.39, 0.67
+	// tile, and wRef, wSync and wPay are the amplitudes of the reference,
+	// the sync pattern and the payload in the tile (each of unit power):
+	// 25%, 20% and 55% of its power. The reference's sinusoids are what
+	// the eye sees most of the mark (alone, at the same power, SSIMULACRA2
+	// 74.0 against 83.9 and 83.5 for the others), the more so the lower
+	// their frequency: taking them from 10 to 20 cycles rather than 5 to
+	// 18 and giving them 25% rather than 40% let the whole be 12% stronger
+	// as visible as before, and the 22 attacks on 5 pictures with 3 keys
+	// read 239 marks of 330 against 217 (JPEG 30 12 against 8, WebP 60 9
+	// against 5); the screen mark, as visible, 277 against 274. (With 15%
+	// for the reference the photographs of a screen were lost: 220.)
+	refMin, refMax    = 10, 20
+	wRef, wSync, wPay = 0.5, 0.447, 0.742
 )
 
 // cosTab is cos(2 pi m / 64), written out so that the reference is the

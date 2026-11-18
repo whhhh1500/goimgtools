@@ -707,7 +707,9 @@ func (d *detector) payloadChips(m mapping) []float64 {
 	// noise that is stronger at some frequencies (JPEG's) than others.
 	// (Measured worse, as noisier estimates of the noise alone: the power
 	// left less the payload's expected share, and the difference of the
-	// folds of alternate tiles; the payload's SNR down by up to 4.6 dB.)
+	// folds of alternate tiles; the payload's SNR down by up to 4.6 dB.
+	// The noise of each bin over the 5 x 5 or 7 x 7 around it instead of
+	// rings read as many after JPEG and WebP.)
 	var left [rings]float64
 	var bins [rings]int
 	for i := range a {
