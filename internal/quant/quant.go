@@ -17,16 +17,19 @@
 //     are refined with k-means over the histogram and then over a sample
 //     of the stored pixels (palette.go, polish);
 //   - colour distance: Euclidean over alpha-premultiplied channels and
-//     alpha, so fully transparent pixels are one colour; opaque pixels only
-//     ever get opaque palette entries (when the palette has room for both
-//     kinds);
+//     alpha, so fully transparent pixels are one colour, with the colour
+//     channels weighted and in the gamma of libimagequant (hist.go); opaque
+//     pixels only ever get opaque palette entries (when the palette has room
+//     for both kinds);
 //   - mapping: an exact nearest-entry search through per-cell candidate
 //     lists, and serpentine Floyd-Steinberg error diffusion that is turned
-//     down where the image is busy (nearest.go).
+//     down where the image is busy and where the error is large
+//     (nearest.go).
 //
 // The ideas are those described for pngquant / libimagequant (premultiplied
-// alpha, error-driven median cut, k-means refinement, weighting by local
-// smoothness, a dither map) and for Wu's quantizer (cutting where the
+// alpha, weighted channels in a gamma of their own, error-driven median
+// cut, k-means refinement, weighting by local smoothness, a dither map,
+// damping of large errors) and for Wu's quantizer (cutting where the
 // variance left is least). Only the ideas: the code is written for this
 // package and none of theirs was read into it or translated.
 package quant

@@ -200,15 +200,27 @@ func refine(pts []bin, cent [][4]float64) [][4]float64 {
 
 func sq(d int32) int32 { return d * d }
 
-// toNRGBA rounds a centre to an 8-bit colour.
+// toNRGBA rounds a centre to an 8-bit colour: each channel to the value
+// whose coordinate is nearest.
 func toNRGBA(c [4]float64) color.NRGBA {
 	a := c[3] / alphaScale
 	if a >= 254.5 {
 		a = 255
 	}
-	f := 255 / (a * colorScale)
-	ch := func(v float64) uint8 { return uint8(min(255, max(0, float64(v*f)+0.5))) }
-	return color.NRGBA{ch(c[0]), ch(c[1]), ch(c[2]), uint8(min(255, max(1, a+0.5)))}
+	f := 255 / a
+	ch := func(k int, v float64) uint8 {
+		t := float64(v * f) // the coordinate at full opacity
+		at := func(i int) float64 { return float64(gammaLevel[i] * chanScale[k]) }
+		i := sort.Search(256, func(i int) bool { return at(i) >= t })
+		switch {
+		case i == 256:
+			return 255
+		case i > 0 && t-at(i-1) <= at(i)-t:
+			return uint8(i - 1)
+		}
+		return uint8(i)
+	}
+	return color.NRGBA{ch(0, c[0]), ch(1, c[1]), ch(2, c[2]), uint8(min(255, max(1, a+0.5)))}
 }
 
 // centres chooses up to k palette colours for the points, as coordinates.

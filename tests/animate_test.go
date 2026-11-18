@@ -293,23 +293,42 @@ func TestAnimatedChangedParts(t *testing.T) {
 	}
 }
 
-// nearestDist is the squared distance from c to the nearest entry of pal.
-func nearestDist(c color.RGBA, pal color.Palette) int {
-	best := -1
+// quantDist is the colour distance of the quantizer between two opaque
+// colours: libimagequant's, each channel to the power 0.5499/0.45455 and
+// weighted, red 0.5, green 1, blue 0.45.
+func quantDist(a, b color.RGBA) float64 {
+	g := func(v uint8) float64 { return 255 * math.Pow(float64(v)/255, 0.5499/0.45455) }
+	d := 0.0
+	for i, w := range [3]float64{0.5, 1, 0.45} {
+		x, y := [3]uint8{a.R, a.G, a.B}[i], [3]uint8{b.R, b.G, b.B}[i]
+		e := w * (g(x) - g(y))
+		d += e * e
+	}
+	return d
+}
+
+// rgbDist is the squared distance between two colours, that of the
+// standard library's mapping to a palette (the fixed palette's).
+func rgbDist(a, b color.RGBA) float64 {
+	d := func(x, y uint8) float64 { e := float64(x) - float64(y); return e * e }
+	return d(a.R, b.R) + d(a.G, b.G) + d(a.B, b.B)
+}
+
+// nearestDist is the distance (by dist) from c to the nearest opaque entry
+// of pal.
+func nearestDist(c color.RGBA, pal color.Palette, dist func(a, b color.RGBA) float64) float64 {
+	best := -1.0
 	for _, p := range pal {
 		q := color.RGBAModel.Convert(p).(color.RGBA)
 		if q.A != 255 {
 			continue
 		}
-		d := sqd(c.R, q.R) + sqd(c.G, q.G) + sqd(c.B, q.B)
-		if best < 0 || d < best {
+		if d := dist(c, q); best < 0 || d < best {
 			best = d
 		}
 	}
 	return best
 }
-
-func sqd(a, b uint8) int { d := int(a) - int(b); return d * d }
 
 // TestAnimatedColours: frames with more colours together than a GIF holds
 // get one palette of at most the colours asked for; without dithering
@@ -366,10 +385,16 @@ func TestAnimatedColours(t *testing.T) {
 				t.Errorf("%+v: frame %d has a palette of its own", c, i)
 			}
 			if c.NoDither {
+				dist := quantDist
+				if c.FixedPalette {
+					dist = rgbDist
+				}
 				for p := 0; p < len(shown[i].Pix); p += 4 {
 					src := color.RGBA{want[i].Pix[p], want[i].Pix[p+1], want[i].Pix[p+2], 255}
 					got := color.RGBA{shown[i].Pix[p], shown[i].Pix[p+1], shown[i].Pix[p+2], shown[i].Pix[p+3]}
-					if got.A != 255 || sqd(src.R, got.R)+sqd(src.G, got.G)+sqd(src.B, got.B) != nearestDist(src, real) {
+					// The quantizer works in fixed point, a sixteenth of a level
+					// of green: a tie or near tie can go either way.
+					if got.A != 255 || dist(src, got) > nearestDist(src, real, dist)*1.01+0.5 {
 						t.Fatalf("%+v: frame %d pixel %d is %v for %v, not the nearest colour", c, i, p/4, got, src)
 					}
 				}

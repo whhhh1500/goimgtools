@@ -45,28 +45,58 @@ type bin struct {
 
 // Colours are compared in a space with premultiplied colour channels, as
 // pngquant does: the more transparent two pixels are, the less their colour
-// difference counts, and at alpha 0 it does not count at all. Coordinates
-// are fixed point: red, green and blue times alpha/255 times 16, and alpha
-// times 20. The larger factor of alpha is a weight of about 1.5 on its
-// squared difference: an alpha error shows in all three channels over a
-// light background and not at all over a dark one.
+// difference counts, and at alpha 0 it does not count at all. The colour
+// channels are those of libimagequant (pngquant's library): each value
+// taken to the power 1.21 (gammaLevel), which moves dark shades closer
+// together and light ones apart, and weighted, red by 0.5, green by 1 and
+// blue by 0.45, as the eye tells greens apart best and blues worst. On
+// photographs that gives palettes and dithering that measure better by
+// SSIMULACRA2 and butteraugli than equal weights do (by 2.8 and 0.24 on 12
+// photographs reduced to 256 colours, before large errors were damped, see
+// nearest.go). Coordinates are fixed point: the
+// colour channels times alpha/255 times 16 times their weight, alpha times
+// 20. The larger factor of alpha is a weight of about 1.5 on its squared
+// difference against green: an alpha error shows in all three channels
+// over a light background and not at all over a dark one.
 const (
-	colorScale = 16
+	colorScale = 16 // per level of green
 	alphaScale = 20
-	maxC       = 255 * colorScale
+	maxC       = 255 * colorScale // the largest coordinate of a colour channel
 	maxA       = 255 * alphaScale
 )
+
+// chanScale is the coordinate per level of each colour channel.
+var chanScale = [3]float64{0.5 * colorScale, colorScale, 0.45 * colorScale}
+
+// chanCoord is the coordinate of each value of each colour channel of an
+// opaque pixel.
+var chanCoord = func() (t [3][256]int32) {
+	for c := range t {
+		for v := range t[c] {
+			t[c][v] = int32(float64(gammaLevel[v]*chanScale[c]) + 0.5)
+		}
+	}
+	return t
+}()
+
+// chanLevel is the coordinate of value v (0 to 255, not necessarily whole)
+// of colour channel c of an opaque pixel, interpolated in gammaLevel.
+func chanLevel(c int, v float64) float64 {
+	i := min(int(v), 254)
+	g := gammaLevel[i] + float64(float64(v-float64(i))*float64(gammaLevel[i+1]-gammaLevel[i]))
+	return float64(g * chanScale[c])
+}
 
 // coords returns the coordinates of an 8-bit non-premultiplied colour.
 func coords(r, g, b, a uint8) [4]int32 {
 	if a == 255 {
-		return [4]int32{int32(r) * colorScale, int32(g) * colorScale, int32(b) * colorScale, maxA}
+		return [4]int32{chanCoord[0][r], chanCoord[1][g], chanCoord[2][b], maxA}
 	}
-	k := int32(a) * colorScale
+	k := int32(a)
 	return [4]int32{
-		(int32(r)*k + 127) / 255,
-		(int32(g)*k + 127) / 255,
-		(int32(b)*k + 127) / 255,
+		(chanCoord[0][r]*k + 127) / 255,
+		(chanCoord[1][g]*k + 127) / 255,
+		(chanCoord[2][b]*k + 127) / 255,
 		int32(a) * alphaScale,
 	}
 }
@@ -274,9 +304,9 @@ func points(bins []bin) (pts []bin, opaque int) {
 			b = float64(j&15<<4) + float64(q.v[2])/w
 			a = float64(j>>12*17+1) + float64(q.v[3])/w
 		}
-		f := a / 255 * colorScale
+		f := a / 255
 		bins[n] = bin{n: q.n, v: [4]int32{
-			int32(float64(r*f) + 0.5), int32(float64(g*f) + 0.5), int32(float64(b*f) + 0.5), int32(float64(a*alphaScale) + 0.5),
+			int32(float64(chanLevel(0, r)*f) + 0.5), int32(float64(chanLevel(1, g)*f) + 0.5), int32(float64(chanLevel(2, b)*f) + 0.5), int32(float64(a*alphaScale) + 0.5),
 		}}
 		n++
 	}

@@ -78,6 +78,7 @@
 
 ### 变更
 
+- GIF 输出与 PNG 减色按 libimagequant（pngquant 的库，sharp 也用它）的方式比较颜色：在其 gamma 下（各通道取 1.21 次幂），绿色权重高于红、蓝（1、0.5、0.45），此前三者等同；抖动时超过 10 级的误差只传四分之三，同 libimagequant 对大误差的抑制，免得它们在后续像素上累积成错色斑点。12 张照片减到 256 色写成 GIF，SSIMULACRA2 由 75.6 升到 81.3，butteraugli 由 1.66 降到 1.07，文件小 2%（sharp：76.9、1.64）；800 万像素照片减到 256 色的 PNG 由 70.9 升到 78.5，文件小 4%，缩到四分之一尺寸时为 82.3，pngquant 为 79.5，文件小 11%；GIF 动画减到 128 色由 76.8 升到 82.8。PSNR 平等看待各通道，可能下降至多 1.5dB。用时多 1–2%。
 - JPEG 按 libjpeg-turbo 的方式写出，逐字节一致（与 sharp 的文件完全相同，与 Pillow 的文件只差其 JFIF 段）：libjpeg 的颜色转换、下采样、精确整数正 DCT、边外填充块、优化哈夫曼表与标记，速度不变。分辨率按 libjpeg 写为 JFIF 1.01。
 - `FastShrinkOnLoad` 也用于无 alpha 的有损 WebP：缩小至三分之一以下时，按 libwebp 解码时的缩放方式以结果两倍的尺寸解码，其余由缩放核完成（6000×4000 的缩到 400×400 以内 0.39s，原为 0.74s；与不用此选项的结果相比 48–51dB）。
 - `FastShrinkOnLoad` 改用 libjpeg 的缩小反 DCT（`jidctred.c`）缩小各块，不再用自行推导的平均，速度不变：4:4:4 与灰度 JPEG 的平面与 libjpeg 的缩放解码（Pillow 的 `draft`）相同，与完整解码后缩放的结果一样接近（46.7–50.5dB）。

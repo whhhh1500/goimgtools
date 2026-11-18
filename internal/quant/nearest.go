@@ -9,8 +9,9 @@ import (
 // searcher finds the palette entry nearest to a point, exactly, without
 // looking at every entry.
 //
-// The space is divided into cells 8 levels wide along the colour axes, in
-// slabs 6.4 levels thick along alpha, plus one slab for "exactly opaque",
+// The space is divided into cells 8 levels wide along the colour axes (16
+// and 18 along red and blue, whose levels are closer together), in slabs
+// 6.4 levels thick along alpha, plus one slab for "exactly opaque",
 // where every pixel of an opaque image lies. For a cell, only some entries
 // can be the nearest one of any point in it: those whose smallest possible
 // distance to the cell is not above the smallest of the entries' largest
@@ -37,7 +38,8 @@ type searcher struct {
 }
 
 const (
-	cellShift  = 7 // cells of 128 units
+	cellShift  = 7 // cells of 128 units along green and alpha
+	rbShift    = 6 // and of 64 along red and blue, at most half as long
 	alphaSlabs = maxA>>cellShift + 1
 	fullSide   = maxC>>cellShift + 1
 	poolChunk  = 1 << 16
@@ -104,7 +106,7 @@ func (s *searcher) nearest(t0, t1, t2, t3 int32) int {
 	}
 	// Dithering can push a colour past what its alpha allows; such points
 	// share the last cell of their axis.
-	c0, c1, c2 := min(t0>>cellShift, n-1), min(t1>>cellShift, n-1), min(t2>>cellShift, n-1)
+	c0, c1, c2 := min(t0>>rbShift, n-1), min(t1>>cellShift, n-1), min(t2>>rbShift, n-1)
 	ci := (c0*n+c1)*n + c2
 	v := slab[ci]
 	if v == 0 {
@@ -138,8 +140,12 @@ func (s *searcher) fill(sl int, c [3]int32) uint32 {
 	var lo, hi [4]int32
 	n := s.side[sl]
 	for i := 0; i < 3; i++ {
-		lo[i] = c[i] << cellShift
-		hi[i] = lo[i] + 1<<cellShift - 1
+		sh := int32(rbShift)
+		if i == 1 {
+			sh = cellShift
+		}
+		lo[i] = c[i] << sh
+		hi[i] = lo[i] + 1<<sh - 1
 		if c[i] == n-1 {
 			hi[i] = maxC
 		}
@@ -340,10 +346,19 @@ func activity(act []uint16, prev, cur, next []byte) {
 // (summed over the channels) is at least twice the activity around it
 // beyond calmActivity, and proportionally less otherwise, down to an
 // eighth. pngquant's "dither map" serves the same purpose.
+//
+// And an error larger than bigError (in coordinates, the length of the
+// error) is passed on at three quarters, as libimagequant passes on its
+// "crazy high" ones: passed on whole, it adds up over the pixels after it,
+// in colours the palette is far from, into specks of the wrong colour.
+// Small errors, which spread the steps of smooth gradients, go on whole.
+// On 12 photographs reduced to 256 colours that gains 3 in SSIMULACRA2 and
+// a quarter of butteraugli (3-norm); a smooth one loses nothing.
 const (
 	calmActivity = 6
 	errorPerAct  = 8 // sixteenths of the error passed on, per error/activity
 	leastDither  = 2 // sixteenths
+	bigError     = 10 * colorScale
 )
 
 // row maps one row. y is the row's number from the top of the image: with
@@ -393,6 +408,9 @@ func (m *mapper) row(src, dst []byte, act []uint16, y int) {
 		dst[x] = uint8(j)
 		q := &m.pal[j]
 		d0, d1, d2, d3 := t0-q[0], t1-q[1], t2-q[2], t3-q[3]
+		if sq(d0)+sq(d1)+sq(d2)+sq(d3) > bigError*bigError {
+			d0, d1, d2, d3 = d0*3/4, d1*3/4, d2*3/4, d3*3/4
+		}
 		if a := int32(act[x]) - calmActivity; a > 0 {
 			ds := max(d0, -d0) + max(d1, -d1) + max(d2, -d2) + max(d3, -d3)
 			if s := max(ds*errorPerAct/(a*colorScale), leastDither); s < 16 {
