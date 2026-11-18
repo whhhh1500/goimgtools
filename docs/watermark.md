@@ -76,6 +76,20 @@ How much each changes the picture (means over the five; SSIMULACRA2: 90 and abov
 
 blind_watermark cannot read its mark from a picture whose size or angle has changed. Its `recover` needs the original to put the picture back first. So it fails every geometric attack here. At `Strength: 1.5`, which changes the picture less than blind_watermark by PSNR and SSIMULACRA2 and more by butteraugli, the blind mark here survives JPEG as well as it does (WebP and strong noise a little less), and every geometric attack too.
 
+Against the other libraries of the kind, on the same pictures and attacks (each at its defaults but where said; JPEG 90 / 70 / 50 / 30):
+
+| | PSNR | SSIMULACRA2 | butteraugli | JPEG | WebP 60 | Crop to 40% | Turned 3° | Perspective | Photograph of a screen |
+|---|---|---|---|---|---|---|---|---|---|
+| Blind (this package) | 45.8 dB | 79.5 | 4.6 | 5 / 4 / 4 / 2 | 1 | 2 | 4 | 5 | 3 |
+| Blind, `Strength: 1.5` | 42.3 dB | 68.0 | 7.0 | 5 / 4 / 4 / 3 | 2 | 4 | 5 | 5 | 5 |
+| Screen (this package) | 39.4 dB | 50.9 | 10.2 | 5 / 5 / 5 / 4 | 4 | 3 | 5 | 5 | 5 |
+| [blind_watermark](https://github.com/guofei9987/blind_watermark) | 37.7 dB | 40.4 | 5.5 | 5 / 4 / 4 / 3 | 3 | 0 | 0 | 0 | 0 |
+| [invisible-watermark](https://github.com/ShieldMnt/invisible-watermark) `dwtDctSvd` (as in Stable Diffusion) | 40.5 dB | 75.1 | 3.4 | 4 / 0 / 0 / 0 | 0 | 0 | 0 | 0 | 0 |
+| [TrustMark](https://github.com/adobe/trustmark) `Q` (Adobe's default) | 45.1 dB | 68.8 | 8.3 | 5 / 5 / 5 / 4 | 5 | 0 | 0 | 4 | 4 |
+| TrustMark `P` | 50.0 dB | 86.3 | 3.7 | 5 / 4 / 3 / 0 | 4 | 0 | 0 | 0 | 0 |
+
+invisible-watermark reads its mark back from 4 of the 5 untouched pictures (`dwtDct`: 3, less visible: SSIMULACRA2 87.1). TrustMark, a pair of neural networks that need PyTorch, survives recompression best: at about the visibility of the blind mark at `Strength: 1.5` (its model `Q`), it reads 4 of 5 at JPEG 30 and 5 at WebP 60, against 3 and 2 here. But it reads nothing that was cropped or turned, as its decoder takes the whole picture as it is. The marks here are the only ones of these that survive crops and turns.
+
 A harder simulation of a phone's photograph, done with this package's own operations, has stronger perspective and Pillow's sharpening. There the screen mark is read from two of the three photographs (the third is at the edge: its copy decoded by Go's own JPEG decoder is read) and not from the small photograph or the screenshot of a user interface; leaving any one of its steps out, from 3 or 4 of the 5.
 
 ## Limits

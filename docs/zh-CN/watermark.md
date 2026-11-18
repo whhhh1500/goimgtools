@@ -76,6 +76,20 @@ goimgtools readmark -key "our secret" leaked.jpg
 
 blind_watermark 无法从尺寸或角度变过的图像中读出水印：它的 `recover` 要靠原图先把图像还原，所以这里所有几何攻击都失败。取 `Strength: 1.5` 时，按 PSNR 与 SSIMULACRA2 本库对图像的改变比 blind_watermark 小，按 butteraugli 则大一些；此时本库的盲水印对 JPEG 的承受力与它相当（WebP 与强噪声略逊），所有几何攻击也都经得起。
 
+与同类库对比，同样的图像与攻击（除注明者外均为各自的默认设置；JPEG 90 / 70 / 50 / 30）：
+
+| | PSNR | SSIMULACRA2 | butteraugli | JPEG | WebP 60 | 裁到 40% | 旋转 3° | 透视 | 对着屏幕拍照 |
+|---|---|---|---|---|---|---|---|---|---|
+| 盲水印（本库） | 45.8 dB | 79.5 | 4.6 | 5 / 4 / 4 / 2 | 1 | 2 | 4 | 5 | 3 |
+| 盲水印，`Strength: 1.5` | 42.3 dB | 68.0 | 7.0 | 5 / 4 / 4 / 3 | 2 | 4 | 5 | 5 | 5 |
+| 防泄露（本库） | 39.4 dB | 50.9 | 10.2 | 5 / 5 / 5 / 4 | 4 | 3 | 5 | 5 | 5 |
+| [blind_watermark](https://github.com/guofei9987/blind_watermark) | 37.7 dB | 40.4 | 5.5 | 5 / 4 / 4 / 3 | 3 | 0 | 0 | 0 | 0 |
+| [invisible-watermark](https://github.com/ShieldMnt/invisible-watermark) `dwtDctSvd`（Stable Diffusion 所用） | 40.5 dB | 75.1 | 3.4 | 4 / 0 / 0 / 0 | 0 | 0 | 0 | 0 | 0 |
+| [TrustMark](https://github.com/adobe/trustmark) `Q`（Adobe 的默认模型） | 45.1 dB | 68.8 | 8.3 | 5 / 5 / 5 / 4 | 5 | 0 | 0 | 4 | 4 |
+| TrustMark `P` | 50.0 dB | 86.3 | 3.7 | 5 / 4 / 3 / 0 | 4 | 0 | 0 | 0 | 0 |
+
+invisible-watermark 在未受任何处理的 5 张图上只能读回 4 张（`dwtDct` 只有 3 张，可见度更低：SSIMULACRA2 87.1）。TrustMark 是需要 PyTorch 的一对神经网络，对重新压缩的承受力最强：在与本库盲水印 `Strength: 1.5` 相当的可见度下（其 `Q` 模型），JPEG 30 读出 4 张、WebP 60 读出 5 张，本库为 3 张与 2 张；但凡经过裁剪或旋转就一张也读不出，因为它的解码器直接读取整幅图像。这几种方案中，只有本库的水印经得起裁剪与旋转。
+
 另做了一组更严苛的拍屏模拟，用本库自己的操作完成，透视更强，锐化用 Pillow 的锐化。在这组模拟下，防泄露水印能从三张照片中的两张读出（第三张处在临界：用 Go 自带的 JPEG 解码器解出的副本能读出），小照片和界面截图读不出；只去掉其中任意一步时，5 张中能读出 3 到 4 张。
 
 ## 局限

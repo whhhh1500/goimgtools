@@ -20,6 +20,9 @@ const (
 // The settings of each kind: the default number of tiles along the shorter
 // side, the smallest chip in pixels, and the mark's amplitude in levels
 // (0 to 255) where the picture is flat and where it is busy, at Strength 1.
+// (Measured for Blind: chips of at least 2.5 or 3 pixels, which JPEG and
+// WebP keep better, leave small pictures too few tiles and read less
+// over all.)
 var kinds = [...]struct {
 	density, minChip, flat, busy float64
 }{

@@ -12,6 +12,9 @@ const (
 	refMin, refMax = 5, 18
 	// The amplitudes of the reference, the sync pattern and the payload
 	// in the tile (each of unit power): 40%, 15% and 45% of its power.
+	// (More for the payload, 60% with 25% or 30% for the reference,
+	// read no more after JPEG and WebP, and less after a photograph's
+	// perspective: the reference places the tiles there.)
 	wRef, wSync, wPay = 0.63, 0.39, 0.67
 )
 
