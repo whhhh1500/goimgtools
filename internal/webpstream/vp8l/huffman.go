@@ -64,6 +64,11 @@ type hTree struct {
 	// buildTable): rootBits bits index its root (mask selects them).
 	table          []uint32
 	rootBits, mask uint32
+	// only is set for the code of a single symbol, sym, of no bits: the
+	// decoder takes it without a lookup, and without making the next code
+	// wait for one to know how many bits it took.
+	only bool
+	sym  uint32
 }
 
 // insert inserts into the hTree a symbol whose encoding is the least
@@ -218,6 +223,7 @@ func (h *hTree) buildSimple(nSymbols uint32, symbols [2]uint32, alphabetSize uin
 func (h *hTree) single(symbol uint32) {
 	h.table = []uint32{symbol << 16}
 	h.rootBits, h.mask = 0, 0
+	h.only, h.sym = true, symbol
 }
 
 // tableBytes is the memory of h's table or nodes.

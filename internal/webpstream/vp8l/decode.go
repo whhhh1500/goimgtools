@@ -478,7 +478,7 @@ type hGroup [nHuff]hTree
 
 const (
 	// hGroupBytes is the size of an hGroup without its nodes or tables.
-	hGroupBytes = nHuff * (24 + 4<<lutSize + 24 + 8)
+	hGroupBytes = nHuff * (24 + 4<<lutSize + 24 + 8 + 8)
 	// hNodeBytes is the size of an hNode.
 	hNodeBytes = 8
 )
@@ -671,13 +671,11 @@ type pixels struct {
 	ringPix int64
 
 	// p is the number of pixels decoded, pos the ring offset of pixel p.
-	// cachedP is the number of pixels entered in the color cache, cpos the
-	// ring offset of pixel cachedP.
-	p, cachedP int64
-	pos, cpos  int
-	x, y       int32
-	hg         *hGroup
-	lookupHG   bool
+	p        int64
+	pos      int
+	x, y     int32
+	hg       *hGroup
+	lookupHG bool
 
 	// reserved is what this image holds of the budget.
 	reserved int64
@@ -766,23 +764,20 @@ func (s *pixels) row(y int32, dst []byte) error {
 	return nil
 }
 
-// updateColorCache inserts the pixels decoded since the last update into the
-// color cache. Note that VP8L assumes ARGB order, but the ring is in RGBA
-// order.
-func (s *pixels) updateColorCache() {
-	ring, cpos := s.ring, s.cpos
-	for ; s.cachedP < s.p; s.cachedP++ {
-		argb := uint32(ring[cpos+0])<<16 |
-			uint32(ring[cpos+1])<<8 |
-			uint32(ring[cpos+2])<<0 |
-			uint32(ring[cpos+3])<<24
-		s.ccEntries[(argb*colorCacheMultiplier)>>s.ccShift] = argb
-		cpos += 4
-		if cpos == len(ring) {
-			cpos = 0
+// cacheCopied enters the n pixels from ring offset pos, which an LZ77 copy
+// has just written, in the color cache. Note that VP8L assumes ARGB order,
+// but the ring is in RGBA order: a pixel is read as one little-endian word,
+// whose red and blue bytes change places.
+func (s *pixels) cacheCopied(pos, n int) {
+	ring, cc, shift := s.ring, s.ccEntries, s.ccShift
+	for ; n > 0; n-- {
+		v := binary.LittleEndian.Uint32(ring[pos:])
+		argb := v&0xff00ff00 | v&0xff<<16 | v>>16&0xff
+		cc[(argb*colorCacheMultiplier)>>shift] = argb
+		if pos += 4; pos == len(ring) {
+			pos = 0
 		}
 	}
-	s.cpos = cpos
 }
 
 // run decodes pixels until at least target of them are decoded. It can
@@ -793,6 +788,10 @@ func (s *pixels) run(target int64) error {
 	p, pos := s.p, s.pos
 	x, y := s.x, s.y
 	hg, lookupHG := s.hg, s.lookupHG
+	// Every pixel decoded goes into the color cache, in order, as it is
+	// decoded: a literal at once, a copy once copied. A pixel taken from the
+	// cache is already there, at the place it would go to.
+	cc, ccShift := s.ccEntries, s.ccShift
 	// The bits are kept here, where they can stay in registers, and handed
 	// back to d around every call that reads from it.
 	bits, nb := d.bits, d.nBits
@@ -832,7 +831,9 @@ func (s *pixels) run(target int64) error {
 		case green < nLiteralCodes:
 			// We have a literal pixel.
 			var red, blue, alpha uint32
-			if h := &hg[huffRed]; h.table != nil && nb >= 15 {
+			if h := &hg[huffRed]; h.only {
+				red = h.sym
+			} else if h.table != nil && nb >= 15 {
 				e := h.entry(bits)
 				bits, nb, red = bits>>(e&0xff), nb-e&0xff, e>>16
 			} else {
@@ -847,7 +848,9 @@ func (s *pixels) run(target int64) error {
 				d.refill()
 				bits, nb = d.bits, d.nBits
 			}
-			if h := &hg[huffBlue]; h.table != nil && nb >= 15 {
+			if h := &hg[huffBlue]; h.only {
+				blue = h.sym
+			} else if h.table != nil && nb >= 15 {
 				e := h.entry(bits)
 				bits, nb, blue = bits>>(e&0xff), nb-e&0xff, e>>16
 			} else {
@@ -857,7 +860,9 @@ func (s *pixels) run(target int64) error {
 				}
 				bits, nb = d.bits, d.nBits
 			}
-			if h := &hg[huffAlpha]; h.table != nil && nb >= 15 {
+			if h := &hg[huffAlpha]; h.only {
+				alpha = h.sym
+			} else if h.table != nil && nb >= 15 {
 				e := h.entry(bits)
 				bits, nb, alpha = bits>>(e&0xff), nb-e&0xff, e>>16
 			} else {
@@ -871,6 +876,10 @@ func (s *pixels) run(target int64) error {
 			ring[pos+1] = uint8(green)
 			ring[pos+2] = uint8(blue)
 			ring[pos+3] = uint8(alpha)
+			if cc != nil {
+				argb := alpha<<24 | red<<16 | green<<8 | blue
+				cc[(argb*colorCacheMultiplier)>>ccShift] = argb
+			}
 			pos += 4
 			if pos == len(ring) {
 				pos = 0
@@ -914,6 +923,7 @@ func (s *pixels) run(target int64) error {
 			if q < 0 {
 				q += len(ring)
 			}
+			from := pos
 			for n := 4 * int(length); n > 0; {
 				k := min(n, len(ring)-pos, len(ring)-q)
 				dst, src := ring[pos:pos+k], ring[q:q+k]
@@ -934,6 +944,9 @@ func (s *pixels) run(target int64) error {
 					q = 0
 				}
 			}
+			if cc != nil {
+				s.cacheCopied(from, int(length))
+			}
 			p += int64(length)
 
 			x += int32(length)
@@ -943,18 +956,13 @@ func (s *pixels) run(target int64) error {
 			lookupHG = hMask != 0
 
 		default:
-			// We have a color cache lookup. First, insert previous pixels
-			// into the cache.
-			s.p = p
-			if s.ccEntries != nil {
-				s.updateColorCache()
-			}
+			// We have a color cache lookup.
 			green -= nLiteralCodes + nLengthCodes
-			if int(green) >= len(s.ccEntries) {
+			if int(green) >= len(cc) {
 				d.bits, d.nBits = bits, nb
 				return errors.New("vp8l: invalid color cache index")
 			}
-			argb := s.ccEntries[green]
+			argb := cc[green]
 			ring[pos+0] = uint8(argb >> 16)
 			ring[pos+1] = uint8(argb >> 8)
 			ring[pos+2] = uint8(argb >> 0)
@@ -976,12 +984,6 @@ func (s *pixels) run(target int64) error {
 	s.p, s.pos = p, pos
 	s.x, s.y = x, y
 	s.hg, s.lookupHG = hg, lookupHG
-	// Enter the new pixels in the color cache while they are in the ring.
-	// golang.org/x/image/vp8l does this only before a cache lookup; the cache
-	// contents at that point are the same either way.
-	if s.ccEntries != nil {
-		s.updateColorCache()
-	}
 	return nil
 }
 
