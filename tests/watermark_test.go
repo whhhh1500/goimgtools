@@ -84,6 +84,31 @@ func TestInvisibleWatermark(t *testing.T) {
 	if got, ok, err := inspect.ReadWatermark(FromBytes(src).Threads(4), "k"); err != nil || ok {
 		t.Errorf("four cores, unmarked: read %q, %v, %v", got, ok, err)
 	}
+	// Small pictures, smooth (chips of 2 pixels) and busy (chips of a
+	// pixel), as they are and saved as JPEG.
+	busy := testutil.Natural(192, 128, 7)
+	r := uint32(1)
+	for i := range busy.Pix {
+		if i%4 != 3 {
+			r = r*1664525 + 1013904223
+			busy.Pix[i] = uint8(max(0, min(255, int(busy.Pix[i])+int(r>>24)%41-20)))
+		}
+	}
+	for name, pic := range map[string][]byte{"smooth": pngBytes(t, testutil.Natural(240, 160, 7)), "busy": pngBytes(t, busy)} {
+		marked, err := FromBytes(pic).InvisibleWatermark(payload, InvisibleWatermarkOptions{Key: "k"}).PNG().ToBytes()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for attack, m := range map[string]*Image{"as it is": FromBytes(marked).PNG(), "jpeg 80": FromBytes(marked).JPEG(JPEGOptions{Quality: 80})} {
+			out, err := m.ToBytes()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, ok := readMark(t, out, "k"); !ok || !bytes.Equal(got, payload) {
+				t.Errorf("small %s picture, %s: read %q, %v", name, attack, got, ok)
+			}
+		}
+	}
 }
 
 // TestInvisibleWatermarkSame: the marked picture is the same however many

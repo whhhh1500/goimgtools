@@ -321,7 +321,18 @@ func (d *detector) search() []candidate {
 	for _, f := range d.p.ref {
 		maxK = max(maxK, math.Hypot(float64(f[0]), float64(f[1])))
 	}
-	pmin, pmax := max(16, 2.5*maxK), 1.2*float64(min(d.w, d.h))
+	// The smallest tile looked for puts the reference's highest frequency
+	// at 0.4 cycles a pixel; in a small picture, at the Nyquist frequency,
+	// for the tiles of chips of a pixel (smallSide) made smaller still.
+	// (Measured on the Kodak pictures made 448 x 299 and then reduced to
+	// 75%: 23 of 24 read against 6. In a large picture the smaller tiles
+	// only add false ones to place: a picture without a mark took 21% longer
+	// to search.)
+	cycles := 2.5
+	if min(d.w, d.h) < 400 {
+		cycles = 2.0
+	}
+	pmin, pmax := max(16, cycles*maxK), 1.2*float64(min(d.w, d.h))
 	var periods []float64
 	for lp := math.Log(pmin); lp < math.Log(pmax); lp += 0.012 {
 		periods = append(periods, math.Exp(lp))

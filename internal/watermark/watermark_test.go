@@ -217,6 +217,55 @@ func TestDetectParallel(t *testing.T) {
 	}
 }
 
+// TestTexture: a flat picture's texture is 0, a checkerboard of 0 and 90's
+// (the luma's deviation over every 3 x 3 window, 4 of one and 5 of the
+// other) about 44.7; a small busy picture's blind mark gets chips of a
+// pixel, a smooth one's and a large one's do not.
+func TestTexture(t *testing.T) {
+	const w, h = 40, 30
+	row := make([]uint8, 4*w)
+	flat := NewTextureMeter(w)
+	board := NewTextureMeter(w)
+	for y := range h {
+		for x := range w {
+			v := uint8(0)
+			if (x+y)%2 == 1 {
+				v = 90
+			}
+			row[4*x], row[4*x+1], row[4*x+2], row[4*x+3] = v, v, v, 255
+		}
+		board.Row(row)
+		flat.Row(make([]uint8, 4*w))
+	}
+	if flat.Mean() != 0 {
+		t.Errorf("flat texture %v", flat.Mean())
+	}
+	if got := board.Mean(); math.Abs(got-90*math.Sqrt(20.0/81)) > 0.01 {
+		t.Errorf("checkerboard texture %v, want %v", got, 90*math.Sqrt(20.0/81))
+	}
+	k := NewKey("k")
+	for _, c := range []struct {
+		w, h    int
+		texture float64
+		chip    float64
+	}{
+		{240, 160, fineTexture, 1},
+		{240, 160, fineTexture - 0.1, 2},
+		{600, 400, fineTexture, 2},
+	} {
+		if !NeedsTexture(Options{}, c.w, c.h) && c.w < smallSide {
+			t.Errorf("%d x %d: texture not wanted", c.w, c.h)
+		}
+		m, err := NewMarker([]byte("x"), k, Options{Texture: c.texture}, c.w, c.h)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if m.chip != c.chip {
+			t.Errorf("%d x %d, texture %v: chip %v, want %v", c.w, c.h, c.texture, m.chip, c.chip)
+		}
+	}
+}
+
 // TestNewMarker: the settings are checked.
 func TestNewMarker(t *testing.T) {
 	k := NewKey("")

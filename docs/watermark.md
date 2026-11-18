@@ -36,7 +36,7 @@ goimgtools readmark -key "our secret" leaked.jpg
 | `Kind` | `WatermarkBlind` or `WatermarkScreen` (see above) |
 | `Key` | The secret the mark is made with. Only the same key finds and reads the mark, and without it a mark cannot be forged. The empty key is a key like any other |
 | `Strength` | Scales the mark's amplitude: 1 (the default) is the kind's balance; 0.5 is harder to see and to find; 2 survives more and is easier to see; at most 16 |
-| `Density` | About how many times the mark repeats along the shorter side, 1 to 16 (default 4). Denser, a smaller piece of the picture still carries a whole mark: a crop must keep about two repeats each way. The mark's details are then finer, so a picture reduced much more is harder to read. Each detail is at least 2 pixels, 3 for `WatermarkScreen` |
+| `Density` | About how many times the mark repeats along the shorter side, 1 to 16 (default 4). Denser, a smaller piece of the picture still carries a whole mark: a crop must keep about two repeats each way. The mark's details are then finer, so a picture reduced much more is harder to read. Each detail is at least 2 pixels, 3 for `WatermarkScreen`; on a busy picture under 300 pixels on its shorter side the blind mark goes down to details of 1 pixel, to keep enough repeats |
 
 Fewer bytes are read back from more damaged copies: the bytes are protected by a convolutional code (constraint length 9, rate 1/6) spread over thousands of places, and fewer bytes leave more of them for each bit. What is read is practically never a wrong mark: a 32-bit CRC of the key and the bytes is checked for each of the two thousand or so readings a search tries, which leaves about one chance in two million that a picture without a mark, or read with another key, gives one; otherwise `found == false`.
 
@@ -96,7 +96,7 @@ On a standard set, the 24 photographs of the [Kodak suite](https://r0k.us/graphi
 
 | | PSNR | SSIMULACRA2 | butteraugli | JPEG 90 / 70 / 50 / 30 | WebP 60 | Crop to 40% / 25% | Turned 3° / 30° | Perspective | Photograph of a screen |
 |---|---|---|---|---|---|---|---|---|---|
-| Blind (this package) | 42.5 dB | 76.9 | 2.7 | 24 / 24 / 24 / 23 | 23 | 14 / 3 | 23 / 23 | 24 | 21 |
+| Blind (this package) | 42.5 dB | 76.9 | 2.7 | 24 / 24 / 24 / 23 | 23 | 14 / 4 | 22 / 23 | 24 | 21 |
 | Blind, `Strength: 1.5` | 39.0 dB | 63.2 | 4.1 | 24 / 24 / 24 / 24 | 24 | 20 / 10 | 24 / 24 | 24 | 24 |
 | Screen (this package) | 35.6 dB | 30.8 | 8.3 | 24 / 24 / 24 / 24 | 24 | 12 / 0 | 23 / 23 | 24 | 24 |
 | blind_watermark | 38.0 dB | 43.4 | 4.6 | 24 / 24 / 22 / 0 | 19 | 0 / 0 | 0 / 0 | 0 | 0 |
@@ -114,6 +114,6 @@ A harder simulation of a phone's photograph, done with this package's own operat
 
 - **Visibility and robustness trade off.** A mark that survives a camera is a faint texture up close in flat areas. One that cannot be seen at all survives less. `Strength` moves along that line: the blind mark at 1 suits pictures that stay digital: here it was read from the photographs saved again as JPEG down to quality 30, and as WebP at 60 from three of the five pictures (WebP's filters take more of it); use 1.5 to 2 for harder recompression and for flat pictures; the screen mark is for what may be photographed.
 - **Flat pictures carry less.** A user interface or a document, mostly white, has few places to hide the mark. Its flat areas carry it weakly, so raise `Strength` for such pictures.
-- **Small pictures and small crops carry fewer repeats.** A picture of 640×360 or less is read more poorly after heavy damage. A crop must keep about two repeats each way: raise `Density` when crops are likely, which also makes the mark's details finer.
+- **Small pictures and small crops carry fewer repeats.** A picture of 640×360 or less is read more poorly after heavy damage. The blind mark of a small photograph has details of a pixel, so that it repeats enough: the 24 Kodak photographs made 384×256 are all read as they are and after JPEG 80 and WebP 80, made 256×171 24, 21 and 22, made 192×128 23, 13 and 16; after JPEG 50 or WebP 60 18 and 18 at 384×256, 1 and 7 at 256×171. A smooth small picture keeps details of 2 pixels, which WebP and JPEG keep better there. A crop must keep about two repeats each way: raise `Density` when crops are likely, which also makes the mark's details finer.
 - **Photographs of a screen.** Crop the photograph to the screen, and keep the angle moderate. The simulations above are what is measured; real phones, screens and distances vary.
 - **It is not a lock.** Someone who knows the mark is there can still damage it beyond reading (heavy noise, a strong blur, re-drawing the picture). The key keeps others from reading the mark or making a false one, not from destroying it.

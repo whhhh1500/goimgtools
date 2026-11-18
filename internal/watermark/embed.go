@@ -40,10 +40,27 @@ type Options struct {
 	Kind     Kind
 	Strength float64 // 0 means 1
 	Density  float64 // tiles along the shorter side; 0 means the kind's
+	// Texture is the picture's texture (TextureMeter), where NeedsTexture
+	// says it is wanted; 0 when not measured.
+	Texture float64
 }
 
 // MaxDensity is the most tiles along the shorter side.
 const MaxDensity = 16
+
+// smallSide is the shorter side below which the blind mark's chips go
+// down to a pixel, where they would otherwise be the smallest of the kind
+// and the picture is busy enough (fineTexture): chips of 2 pixels leave
+// such a picture two tiles or fewer each way, too few to read even
+// untouched. (Measured on the Kodak pictures made
+// smaller, of 24, untouched / JPEG 80 / WebP 80: at 384 x 256 16, 16, 13
+// against 24, 24, 24; at 256 x 171 7, 5, 0 against 24, 21, 22; at 448 x
+// 299 21, 22, 17 against 24, 24, 24. Chips of 1.25 or 1.5 pixels, fewer
+// tiles, read less; chips of a little over 1, as the density gives, read
+// less after JPEG 50. From a shorter side of 300 up chips of a pixel read
+// more after JPEG and WebP and crops but nothing once the picture is
+// halved: 640 x 360 with 3 keys, 243 of 330 against 245.)
+const smallSide = 300
 
 // Marker adds a mark to the rows of an image of a given size.
 type Marker struct {
@@ -82,7 +99,13 @@ func NewMarker(payload []byte, k Key, o Options, w, h int) (*Marker, error) {
 	}
 	m := &Marker{w: w, h: h, flat: float64(strength * set.flat), busy: float64(strength * set.busy),
 		tile: tile(newPatterns(k), payload, k)}
-	m.chip = max(set.minChip, float64(min(w, h))/float64(density*N))
+	m.chip = float64(min(w, h)) / float64(density*N)
+	if m.chip < set.minChip {
+		m.chip = set.minChip
+		if o.Kind == Blind && min(w, h) < smallSide && o.Texture >= fineTexture {
+			m.chip = 1
+		}
+	}
 	m.r = max(1, int(math.Round(m.chip)))
 	m.cx0 = make([]int32, w)
 	m.cfx = make([]float64, w)

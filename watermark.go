@@ -67,7 +67,10 @@ type InvisibleWatermarkOptions struct {
 // picture hides it best: more in busy areas, less in flat ones, and pushed
 // back from pure white and black, which it could not otherwise go past.
 // The rows are marked as they come, from a window of a few rows around
-// each, as 8-bit colour; transparency is kept.
+// each, as 8-bit colour; transparency is kept. The blind mark of a picture
+// under 300 pixels on its shorter side has finer details where the
+// picture is busy: such a picture is first read whole into working storage
+// (a temporary file beyond its share of the memory limit) to measure that.
 func (m *Image) InvisibleWatermark(mark []byte, opts ...InvisibleWatermarkOptions) *Image {
 	m.atMostOne("InvisibleWatermark", len(opts))
 	o := first(opts)
