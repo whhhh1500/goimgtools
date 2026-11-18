@@ -53,6 +53,8 @@ const usage = `usage:
                                         finding duplicates (-similar bits)
   goimgtools exif file...               camera, time and place from the EXIF
                                         block
+  goimgtools readmark -key K file...    the invisible mark (-mark) of each
+                                        image, if any
   goimgtools formats                    the formats that are read and written
   goimgtools fonts [-all]               list the fonts text is drawn with by
                                         default (-all: every installed font)
@@ -65,7 +67,7 @@ With -text and no input file, the text itself is the image:
 The output format follows the extension of output (.jpg, .png, .webp, .gif,
 .bmp, .tif) unless -format is given. Operations are applied in this order:
 rotate, flip, flop, trim, crop, resize, extend, grayscale, modulate, blur,
-sharpen, the -op steps (in the order given), flatten, watermark.
+sharpen, the -op steps (in the order given), flatten, watermark, -mark.
 
 options:
 `
@@ -128,6 +130,8 @@ type options struct {
 	grayscale, grayLinear                          *bool
 	blur, blurMinAmp                               *float64
 	blurMethod                                     *string
+	mark, markKey, markKind                        *string
+	markStrength, markDensity                      *float64
 }
 
 // register defines the shared options on fs.
@@ -217,6 +221,11 @@ func register(fs *flag.FlagSet) *options {
 		threads:        fs.Int("threads", 1, "CPU cores to use for one image, at most the number of CPUs: 2 decodes on a core of its own, 3 encodes on another, more go to resizing, -blur, -sharpen, -modulate, -rotate and JPEG and PNG encoding"),
 		maxPixels:      fs.Int("max-pixels", 0, "largest image accepted or made, in `megapixels` (default 268: 16383 x 16383); all frames together for -animated"),
 		tmp:            fs.String("tmp", "", "`directory` for temporary files (default: the system one)"),
+		mark:           fs.String("mark", "", "hide this `text` (1 to 32 bytes: a user ID, a serial number) in the image, invisibly, to be read back with goimgtools readmark and -mark-key, without the original"),
+		markKey:        fs.String("mark-key", "", "the secret `key` of -mark: only the same key reads the mark"),
+		markKind:       fs.String("mark-kind", "blind", "-mark made to survive what is done to a file (blind: re-encoding, resizing, cropping, turning, screenshots; it cannot be seen) or also a photograph of a screen showing the image (screen: against leaks; a faint texture up close)"),
+		markStrength:   fs.Float64("mark-strength", 1, "how strong -mark is: 0.5 harder to see and to find, 2 survives more and is easier to see"),
+		markDensity:    fs.Float64("mark-density", 0, "about how many times -mark repeats along the shorter side, 1 to 16 (default 4): denser survives smaller crops, sparser greater reductions"),
 	}
 	fs.Func("op", "apply an operation by name, `NAME[:ARG,ARG...]`, as goimgtools ops lists them (built-in or added by the program); may be given more than once, done in that order after -sharpen", func(v string) error {
 		name, _, _ := strings.Cut(v, ":")
@@ -244,6 +253,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 			return hash(args[1:], stdout, stderr)
 		case "exif":
 			return exifInfo(args[1:], stdout, stderr)
+		case "readmark":
+			return readMark(args[1:], stdout, stderr)
 		case "formats":
 			return formatTable(args[1:], stdout)
 		case "fonts":
@@ -731,6 +742,13 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 			return nil, fmt.Errorf("-watermark-pivot: %w", err)
 		}
 		im.Composite(wm, co)
+	}
+	if *o.mark != "" {
+		kind, ok := map[string]goimgtools.WatermarkKind{"blind": goimgtools.WatermarkBlind, "screen": goimgtools.WatermarkScreen}[*o.markKind]
+		if !ok {
+			return nil, fmt.Errorf("-mark-kind: %q is not blind or screen", *o.markKind)
+		}
+		im.InvisibleWatermark([]byte(*o.mark), goimgtools.InvisibleWatermarkOptions{Kind: kind, Key: *o.markKey, Strength: *o.markStrength, Density: *o.markDensity})
 	}
 	if *o.maxSize != "" {
 		n, err := parseSize(*o.maxSize)

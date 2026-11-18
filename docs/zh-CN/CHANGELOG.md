@@ -33,6 +33,7 @@
 
 ### 新增
 
+- 隐形水印：`InvisibleWatermark`（`InvisibleWatermarkOptions`：`Kind`、`Key`、`Strength`、`Density`；`WatermarkKind`：`WatermarkBlind`、`WatermarkScreen`；`MaxWatermarkBytes`）藏入 1–32 个字节，用 `inspect.ReadWatermark` 与密钥读回，不需要原图：码片图块由正弦参考信号、同步图案与经卷积码编码并带 CRC 的字节组成，加在图像能藏住它的地方；读取时由频谱找出图块排布，叠加各副本，逐区域对准（照片的透视用单应变换），再译码。`WatermarkBlind` 经得起重新保存、缩放、裁剪、旋转、调亮度与对比度、截图；`WatermarkScreen` 还经得起对着屏幕拍照（见[隐形水印](watermark.md)）。按名字调用 `invisible-watermark`；命令行 `-mark`、`-mark-key`、`-mark-kind`、`-mark-strength`、`-mark-density` 与 `goimgtools readmark`。
 - 图像调整操作：`Grayscale`、`Modulate`、`Blur`、`Sharpen`（轻度锐化或反锐化掩模）、`Extend`、`Trim`，以及任意角度的 `Rotate`（与 sharp 的 `rotate` 逐字节一致）。
 - `inspect.Stats`、`inspect.Hash`（感知哈希）、`inspect.ReadExif` / `ParseExif`；子命令 `stats`、`hash`、`exif`。`Stats` 还报告 sharp 的 `stats()` 所报告的各项，数值一致到末几位：`Channels`（类型 `ChannelStats`）、`Entropy`、`Sharpness`。
 - 按名称注册操作：`RegisterOperation`、`UnregisterOperation`、`LookupOperation`、`Operations`、`Image.Do`。包裹每一步骤的钩子：`Image.Around`。`ParseColor`。

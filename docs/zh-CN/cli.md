@@ -86,6 +86,7 @@ goimgtools -op median:3 -op normalize -op "tint:#704214" scan.jpg out.jpg
 | `-watermark-opacity 0–1` | 整体不透明度 |
 | `-watermark-blend MODE` | 水印颜色与底图的混合方式：over（默认）、multiply、screen、overlay、darken、lighten、color-dodge、color-burn、hard-light、soft-light、difference、exclusion |
 | `-watermark-tile`、`-watermark-gap X,Y` | 平铺与间距 |
+| `-mark 文字`、`-mark-key 密钥`、`-mark-kind blind\|screen`、`-mark-strength 强度`、`-mark-density 密度` | 1–32 字节的隐形水印，最后加入；用 `goimgtools readmark -key 密钥 文件...` 读回（见[隐形水印](watermark.md)） |
 | `-text 文字` | 无需输入文件，直接将文字渲染为图像 |
 | `-font`、`-font-size`、`-text-color`、`-text-background`、`-text-width` | 字体（以逗号分隔，可为文件或字体名）、字号、颜色、背景、换行宽度 |
 | `-stroke-width`、`-stroke-color` | 描边 |

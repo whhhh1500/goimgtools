@@ -86,6 +86,7 @@ Operations run in a fixed order: rotate → flip → trim → crop → resize �
 | `-watermark-opacity 0–1` | Overall opacity |
 | `-watermark-blend MODE` | How the watermark's colours mix with the image's: over (default), multiply, screen, overlay, darken, lighten, color-dodge, color-burn, hard-light, soft-light, difference, exclusion |
 | `-watermark-tile`, `-watermark-gap X,Y` | Tiling and spacing |
+| `-mark text`, `-mark-key K`, `-mark-kind blind\|screen`, `-mark-strength S`, `-mark-density D` | Invisible watermark of 1–32 bytes, applied last; `goimgtools readmark -key K file...` reads it back (see [Invisible watermarks](watermark.md)) |
 | `-text text` | Render the text directly as an image, without an input file |
 | `-font`, `-font-size`, `-text-color`, `-text-background`, `-text-width` | Font (comma-separated files or font names), font size, colour, background, wrap width |
 | `-stroke-width`, `-stroke-color` | Stroke |

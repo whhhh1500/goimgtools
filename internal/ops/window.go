@@ -40,14 +40,22 @@ type windowStage struct {
 	reserved int64
 	opaque   bool
 	mirror   bool // rows past the edges are mirrored, not repeated
-	// newRow makes a function that makes one row of the result from the
+	// newRow makes a function that makes row y of the result from the
 	// rows of its window, one for each part of the work.
-	newRow func() func(win [][]uint8, dst []uint8)
-	rows   []func(win [][]uint8, dst []uint8)
+	newRow func() func(y int, win [][]uint8, dst []uint8)
+	rows   []func(y int, win [][]uint8, dst []uint8)
 	wins   [][][]uint8
 }
 
 func newWindow(src pipeline.Source, r int, newRow func() func(win [][]uint8, dst []uint8)) (*windowStage, error) {
+	return newWindowAt(src, r, func() func(int, [][]uint8, []uint8) {
+		row := newRow()
+		return func(_ int, win [][]uint8, dst []uint8) { row(win, dst) }
+	})
+}
+
+// newWindowAt is newWindow for rows that depend on where they are.
+func newWindowAt(src pipeline.Source, r int, newRow func() func(y int, win [][]uint8, dst []uint8)) (*windowStage, error) {
 	env := pipeline.EnvOf(src)
 	b := src.Bounds()
 	w := &windowStage{src: pipeline.Map(src, func(*image.NRGBA) error { return nil }), env: env,
@@ -124,7 +132,7 @@ func (w *windowStage) Next() (image.Image, error) {
 				}
 				win[i] = w.ring[sy%len(w.ring)]
 			}
-			row(win, w.out.Pix[(y-y0)*w.out.Stride:][:4*w.w])
+			row(y, win, w.out.Pix[(y-y0)*w.out.Stride:][:4*w.w])
 		}
 	})
 	out := w.out

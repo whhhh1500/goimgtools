@@ -1,0 +1,171 @@
+package watermark
+
+import (
+	"bytes"
+	"image"
+	"testing"
+
+	"github.com/whhhh1500/goimgtools/internal/testutil"
+)
+
+// mark marks an NRGBA image in memory as the pipeline does, row by row
+// with the rows around each repeated past the edges.
+func mark(t *testing.T, src *image.NRGBA, payload []byte, key string, o Options) *image.NRGBA {
+	t.Helper()
+	w, h := src.Rect.Dx(), src.Rect.Dy()
+	m, err := NewMarker(payload, NewKey(key), o, w, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := image.NewNRGBA(image.Rect(0, 0, w, h))
+	row := m.NewRow()
+	r := m.Radius()
+	win := make([][]uint8, 2*r+1)
+	for y := range h {
+		for i := range win {
+			sy := max(0, min(h-1, y-r+i))
+			win[i] = src.Pix[sy*src.Stride : sy*src.Stride+4*w]
+		}
+		row(y, win, out.Pix[y*out.Stride:y*out.Stride+4*w])
+	}
+	return out
+}
+
+func luma(img *image.NRGBA) ([]float64, int, int) {
+	w, h := img.Rect.Dx(), img.Rect.Dy()
+	l := make([]float64, w*h)
+	for y := range h {
+		for x := range w {
+			p := img.Pix[y*img.Stride+4*x:]
+			l[y*w+x] = float64(0.299*float64(p[0])) + float64(0.587*float64(p[1])) + float64(0.114*float64(p[2]))
+		}
+	}
+	return l, w, h
+}
+
+// TestCode: the payload and its check come back from the convolutional
+// code with weak and wrong bits, and not with another key.
+func TestCode(t *testing.T) {
+	k := NewKey("k")
+	for _, payload := range [][]byte{{0}, []byte("user-1234"), bytes.Repeat([]byte{0xa5}, MaxPayload)} {
+		coded := encode(frameBits(payload, k))
+		if len(coded) != codedLen(len(payload)) {
+			t.Fatalf("coded length %d, want %d", len(coded), codedLen(len(payload)))
+		}
+		soft := make([]float64, len(coded))
+		for i, b := range coded {
+			soft[i] = 1 - 2*float64(b)
+			// A quarter of the bits weak and one in 37 wrong.
+			if i%4 == 1 {
+				soft[i] *= 0.2
+			}
+			if i%37 == 5 {
+				soft[i] = -soft[i]
+			}
+		}
+		got, ok := unframe(viterbi(soft, 8*(len(payload)+4)), k)
+		if !ok || !bytes.Equal(got, payload) {
+			t.Errorf("%x: decoded %x, %v", payload, got, ok)
+		}
+		if _, ok := unframe(viterbi(soft, 8*(len(payload)+4)), NewKey("other")); ok {
+			t.Errorf("%x: checks with another key", payload)
+		}
+	}
+}
+
+// TestListViterbi: the list decoder's first sequence is the Viterbi
+// decoder's, the others are different and no likelier, and a sequence
+// whose best decoding is wrong is often second.
+func TestListViterbi(t *testing.T) {
+	r := &rng{3}
+	k := NewKey("k")
+	payload := []byte("list-test")
+	coded := encode(frameBits(payload, k))
+	nbits := 8 * (len(payload) + 4)
+	metric := func(bits []uint8, soft []float64) float64 {
+		c := encode(bits)
+		var m float64
+		for i, b := range c {
+			m += (1 - 2*float64(b)) * soft[i]
+		}
+		return m
+	}
+	rescued := 0
+	for trial := range 200 {
+		soft := make([]float64, len(coded))
+		for i, b := range coded {
+			// Heavy noise: about one bit in five wrong.
+			noise := (float64(r.intn(2001)) - 1000) / 1000 * 1.9
+			soft[i] = 1 - 2*float64(b) + noise
+		}
+		list := listViterbi(soft, nbits)
+		if len(list) != listSize {
+			t.Fatalf("trial %d: %d sequences", trial, len(list))
+		}
+		if !bytes.Equal(list[0], viterbi(soft, nbits)) {
+			t.Fatalf("trial %d: the first sequence is not Viterbi's", trial)
+		}
+		for i := 1; i < len(list); i++ {
+			if bytes.Equal(list[i], list[i-1]) || metric(list[i], soft) > metric(list[i-1], soft)+1e-9 {
+				t.Fatalf("trial %d: sequence %d repeated or likelier than the one before", trial, i)
+			}
+		}
+		if _, ok := unframe(list[0], k); !ok {
+			for _, bits := range list[1:] {
+				if got, ok := unframe(bits, k); ok && bytes.Equal(got, payload) {
+					rescued++
+					break
+				}
+			}
+		}
+	}
+	if rescued == 0 {
+		t.Error("the list never found the payload where the best sequence missed it")
+	}
+}
+
+// TestRoundTrip: a mark of each kind is read back with its key, not with
+// another, and nothing is read from the picture unmarked.
+func TestRoundTrip(t *testing.T) {
+	src := testutil.Natural(900, 600, 1)
+	for _, kind := range []Kind{Blind, Screen} {
+		marked := mark(t, src, []byte("user-1234"), "secret", Options{Kind: kind})
+		l, w, h := luma(marked)
+		got, ok := Detect(l, w, h, NewKey("secret"))
+		if !ok || string(got) != "user-1234" {
+			t.Errorf("kind %d: read %q, %v", kind, got, ok)
+		}
+		if _, ok := Detect(l, w, h, NewKey("wrong")); ok {
+			t.Errorf("kind %d: read with the wrong key", kind)
+		}
+	}
+	l, w, h := luma(src)
+	if _, ok := Detect(l, w, h, NewKey("secret")); ok {
+		t.Error("read a mark from an unmarked picture")
+	}
+	if _, ok := Detect(make([]float64, 20*20), 20, 20, NewKey("secret")); ok {
+		t.Error("read a mark from a tiny blank picture")
+	}
+}
+
+// TestNewMarker: the settings are checked.
+func TestNewMarker(t *testing.T) {
+	k := NewKey("")
+	for _, c := range []struct {
+		payload []byte
+		o       Options
+	}{
+		{nil, Options{}},
+		{make([]byte, MaxPayload+1), Options{}},
+		{[]byte{1}, Options{Kind: 2}},
+		{[]byte{1}, Options{Kind: -1}},
+		{[]byte{1}, Options{Strength: -1}},
+		{[]byte{1}, Options{Strength: 17}},
+		{[]byte{1}, Options{Density: 0.5}},
+		{[]byte{1}, Options{Density: MaxDensity + 1}},
+	} {
+		if _, err := NewMarker(c.payload, k, c.o, 100, 100); err == nil {
+			t.Errorf("%d bytes, %+v: accepted", len(c.payload), c.o)
+		}
+	}
+}

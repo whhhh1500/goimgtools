@@ -33,6 +33,7 @@ What can still surprise code written for 0.1.0:
 
 ### Added
 
+- Invisible watermarks: `InvisibleWatermark` (`InvisibleWatermarkOptions`: `Kind`, `Key`, `Strength`, `Density`; `WatermarkKind`: `WatermarkBlind`, `WatermarkScreen`; `MaxWatermarkBytes`) hides 1–32 bytes, read back with `inspect.ReadWatermark` and the key, without the original: a tile of chips with a reference of sinusoids, a sync pattern and the convolutionally coded bytes with a CRC, added where the picture hides it, found again by its spectrum, folded, placed region by region (a homography for a photograph's perspective) and decoded. `WatermarkBlind` survives saving again, resizing, cropping, turning, brightness and contrast and screenshots; `WatermarkScreen` also a photograph of a screen (see [Invisible watermarks](watermark.md)). By name `invisible-watermark`; on the command line `-mark`, `-mark-key`, `-mark-kind`, `-mark-strength`, `-mark-density` and `goimgtools readmark`.
 - Image adjustments: `Grayscale`, `Modulate`, `Blur`, `Sharpen` (mild sharpening or unsharp masking), `Extend`, `Trim`, and `Rotate` by any angle (sharp's `rotate` to the byte).
 - `inspect.Stats`, `inspect.Hash` (perceptual hash) and `inspect.ReadExif` / `ParseExif`; the `stats`, `hash` and `exif` commands. `Stats` also reports what sharp's `stats()` does, to the last digits: `Channels` (type `ChannelStats`), `Entropy` and `Sharpness`.
 - Operations by name: `RegisterOperation`, `UnregisterOperation`, `LookupOperation`, `Operations` and `Image.Do`. Hooks around every step: `Image.Around`. `ParseColor`.

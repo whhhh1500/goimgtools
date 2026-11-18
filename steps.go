@@ -215,6 +215,10 @@ func describe(op operation) (string, []string) {
 			return "pixels", nil
 		}
 		return "pipe", nil
+	case invisibleWatermarkOp:
+		// Neither the mark nor the key: hooks and logs see that there is
+		// one, of which kind.
+		return "invisible-watermark", []string{watermarkKindNames[o.o.Kind]}
 	}
 	return fmt.Sprintf("%T", op), nil
 }
@@ -226,10 +230,11 @@ var (
 		KernelMKS2021: "mks2021", KernelBox: "box", KernelHamming: "hamming"}
 	positionNames = map[Position]string{NorthWest: "northwest", North: "north", NorthEast: "northeast",
 		West: "west", Center: "center", East: "east", SouthWest: "southwest", South: "south", SouthEast: "southeast"}
-	interestingNames = map[Interesting]string{InterestingEntropy: "entropy", InterestingAttention: "attention"}
-	lightNames       = map[bool]string{false: "srgb", true: "linear"}
-	methodNames      = map[Method]string{MethodDefault: "draw", MethodLibvips: "libvips", MethodPillow: "pillow"}
-	extensionNames   = map[ExtendMode]string{ExtendCopy: "copy", ExtendRepeat: "repeat", ExtendMirror: "mirror"}
+	interestingNames   = map[Interesting]string{InterestingEntropy: "entropy", InterestingAttention: "attention"}
+	lightNames         = map[bool]string{false: "srgb", true: "linear"}
+	methodNames        = map[Method]string{MethodDefault: "draw", MethodLibvips: "libvips", MethodPillow: "pillow"}
+	extensionNames     = map[ExtendMode]string{ExtendCopy: "copy", ExtendRepeat: "repeat", ExtendMirror: "mirror"}
+	watermarkKindNames = map[WatermarkKind]string{WatermarkBlind: "blind", WatermarkScreen: "screen"}
 )
 
 // colorWord writes c as ParseColor reads it.
@@ -801,6 +806,36 @@ var builtInOps = map[string]OperationDef{
 				o.Lightness = v[3]
 			}
 			m.Modulate(v[0], v[1], v[2], o)
+			return nil
+		}},
+	"invisible-watermark": {Name: "invisible-watermark", Usage: "TEXT[,KEY[,blind|screen[,STRENGTH[,DENSITY]]]]",
+		Help: "InvisibleWatermark: hide TEXT (1 to 32 bytes) with the secret KEY, to be read back with inspect.ReadWatermark (the steps a hook sees show the kind alone)",
+		builtIn: func(m *Image, a []string) error {
+			if err := wantArgs(a, 1, 5); err != nil {
+				return err
+			}
+			var o InvisibleWatermarkOptions
+			if len(a) > 1 {
+				o.Key = a[1]
+			}
+			if len(a) > 2 {
+				k, err := pick(watermarkKindNames, a[2], "kind")
+				if err != nil {
+					return err
+				}
+				o.Kind = k
+			}
+			if len(a) > 3 {
+				v, err := argFloats(a[3:])
+				if err != nil {
+					return err
+				}
+				o.Strength = v[0]
+				if len(v) > 1 {
+					o.Density = v[1]
+				}
+			}
+			m.InvisibleWatermark([]byte(a[0]), o)
 			return nil
 		}},
 	"boxblur": {Name: "boxblur", Usage: "RADIUS", Help: "Box blur: each pixel the mean of the square of side 2*RADIUS+1 around it, as Pillow's BoxBlur",

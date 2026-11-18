@@ -83,6 +83,7 @@ err := goimgtools.Open("in.jpg").
 | `EnsureAlpha(alpha)` | 为不含透明的图像加上给定不透明度（0–1）的透明通道（值为 alpha·255 舍去小数，与 sharp 的 `ensureAlpha` 逐字节一致）；已含透明的图像保持不变 |
 | `RemoveAlpha()` | 去掉透明度：每个像素显示其存储的颜色（sharp 的 `removeAlpha`）；与 `Flatten` 不同，不与背景色混合 |
 | `Composite(overlay, CompositeOptions{...})` | 图像叠加 / 水印（见[水印](#水印)） |
+| `InvisibleWatermark(mark, InvisibleWatermarkOptions{Kind, Key, Strength, Density})` | 隐形地藏入 1–32 个字节，用 `inspect.ReadWatermark` 与密钥读回，不需要原图；`WatermarkBlind` 经得起对文件的处理，`WatermarkScreen` 还经得起对着屏幕拍照（见[隐形水印](watermark.md)） |
 | `Animated()` | 处理 GIF、WebP 或 PNG 动画（APNG）的每一帧并输出 GIF、WebP 或 PNG 动画（APNG）。WebP 的各帧按 libwebp 动画解码器的方式绘制（混合与否、清除与否），逐像素一致；APNG 的各帧按其规范绘制。静态图像不受影响；无法保留的动画（输出为其他格式）返回包装了 `errors.ErrUnsupported` 的错误。WebP 第一帧完整存储，之后各帧仅存储变化的矩形区域。GIF 的所有帧共用一套按画面内容选取的调色板（`GIFOptions` 的 `Colors`、`NoDither` 依然有效；颜色数不超过该值时原样保留），自第二帧起仅存储变化的部分（见[压缩](compression.md)）。APNG 为无损：所有帧共不超过 256 种颜色时共用一套调色板，否则为 RGB 或 RGBA；之后各帧存储与其底图不同的矩形（前一帧保留、清除或撤销，按 apngopt 的方法选择），原样写入或把未变像素设为透明后叠加，取最小者；`CompressionLevel` 有效，`Colors` 不适用（报错） |
 | `Pixels(fn)` | 自定义逐像素操作：`fn` 逐条带接收 8 位 NRGBA 数据并原地修改（见[扩展](extending.md)） |
 | `Pipe(op)` | 在链的当前位置插入任意自定义操作（见[扩展](extending.md)） |
@@ -277,6 +278,7 @@ goimgtools.Text("第一行\n第二行 Mixed", goimgtools.TextOptions{
 | `goimgtools stats 文件...` | `inspect.Stats(img)` | 遍历全部像素：平均色、亮度、面积占比最大的几种颜色、是否实为灰度图像、是否确有透明像素、颜色数（不超过 256 种时）。可用于选取占位色、决定使用深色或浅色文字、判断能否存储为灰度或调色板图像。另有 sharp 的 `stats()` 所报告的各项，数值一致到末几位：`Channels`（红、绿、蓝、透明各通道的最低与最高值及其首次出现的位置、总和、平均值、标准差）、`Entropy`（熵）与 `Sharpness`（锐度） |
 | `goimgtools hash 文件...` | `inspect.Hash(img)` | 64 位感知哈希：同一图像改变尺寸、格式或压缩率后，哈希值仅相差数位；不同图像约相差一半。`-similar 10` 列出彼此相近的文件，用于查找重复图像 |
 | `goimgtools exif 文件...` | `inspect.ReadExif(img)` | EXIF 中的相机、镜头、拍摄时间、曝光参数、GPS 位置等 |
+| `goimgtools readmark -key 密钥 文件...` | `inspect.ReadWatermark(img, key)` | 用 `InvisibleWatermark` 与同一密钥藏入的标记，不需要原图；没有时如实报告（见[隐形水印](watermark.md)） |
 | | `inspect.ReadXmp(img)` | 文件的 XMP 数据包（XML），即 sharp 的 `metadata().xmp`；`info` 会显示文件是否含 XMP |
 | `goimgtools formats` | `Formats()`、`CodecByName()` | 支持的格式、各格式的扩展名及是否可读、可写 |
 
