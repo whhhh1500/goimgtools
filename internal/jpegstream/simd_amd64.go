@@ -31,12 +31,17 @@ func yccH2V1SIMD(dst, y, cb, cr *byte, chunks int)
 //go:noescape
 func yccRowSIMD(dst, y, cb, cr *byte, chunks int)
 
-// fdctQuantSIMD is fdct of b and the division of quantizeCoefs (without a
-// dead zone) with AVX2, the coefficients in zig-zag order; b is not
-// changed.
+// fdctQuant16 is fdct of b and the division of quantizeCoefs (without a
+// dead zone) with AVX2 in 16-bit lanes, after libjpeg-turbo's, by the table
+// tab (encoder.nat16), the coefficients in zig-zag order; b is not changed.
 //
 //go:noescape
-func fdctQuantSIMD(b *block, half *[blockSize]int32, recip *[blockSize]uint32, out *[blockSize]int16)
+func fdctQuant16(b *block, tab *[3][blockSize]uint16, out *[blockSize]int16)
+
+// fdctQuant is quantize for useSIMD and no dead zone.
+func fdctQuant(e *encoder, b *block, q quantIndex, zz *qblock) {
+	fdctQuant16(b, &e.nat16[q], (*[blockSize]int16)(zz))
+}
 
 // rgbaBlockSIMD is rgbaToYCbCr of a whole 8x8 block, pix its first pixel,
 // with AVX2.

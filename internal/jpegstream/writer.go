@@ -33,6 +33,39 @@ func div(a, b int32) int32 {
 // recip returns the number divBy needs to divide by b: 2^32 / b, rounded up.
 func recip(b int32) uint64 { return (1<<32 + uint64(b) - 1) / uint64(b) }
 
+// recip16 returns libjpeg-turbo's reciprocal, correction and scale of the
+// divisor d (compute_reciprocal in its jcdctmgr.c), by which its
+// jquanti-avx2.asm divides: |x| plus the correction, times the reciprocal,
+// the top 16 bits, times the scale, the top 16 bits. For every divisor 8*q
+// (q from 1 to 255) and every |x| up to 32767 that is (|x| + d/2) / d,
+// divBy's result (TestRecip16).
+func recip16(d uint32) (fq, c, scale uint16) {
+	r := 16 + mbits.Len32(d) - 1
+	q, rem := uint32(1)<<r/d, uint32(1)<<r%d
+	cc := d / 2
+	switch {
+	case rem == 0: // a power of two
+		q >>= 1
+		r--
+	case rem <= d/2:
+		cc++
+	default:
+		q++
+	}
+	return uint16(q), uint16(cc), uint16(1 << (32 - r))
+}
+
+// setQuant sets entry j (zig-zag order) of quantization table i to x, with
+// what the divisions by it need.
+func (e *encoder) setQuant(i quantIndex, j, x int) {
+	e.quant[i][j] = uint8(x)
+	e.recip[i][j] = recip(8 * int32(x))
+	e.natHalf[i][unzig[j]] = 4 * int32(x)
+	e.natRecip[i][unzig[j]] = uint32(e.recip[i][j])
+	fq, c, sc := recip16(8 * uint32(x))
+	e.nat16[i][0][unzig[j]], e.nat16[i][1][unzig[j]], e.nat16[i][2][unzig[j]] = fq, c, sc
+}
+
 // divBy is div(a, b) for a b whose recip is m, with a multiplication in
 // place of the division. The result is the same for every a an encoder
 // meets: it is exact while (|a| + b/2) * b < 2^32, and coefficients are
@@ -214,6 +247,9 @@ type encoder struct {
 	// order, for fdctQuantSIMD.
 	natHalf  [nQuantIndex][blockSize]int32
 	natRecip [nQuantIndex][blockSize]uint32
+	// nat16 holds the reciprocals, corrections and scales of recip16 of 8 *
+	// quant, in natural order, for fdctQuant16.
+	nat16 [nQuantIndex][3][blockSize]uint16
 	// deadZone, when set, is how far from zero (in 1/100000 of a step) an
 	// AC coefficient of each table must be to be kept (QuantTableJpegli).
 	deadZone *[2]int64
@@ -398,7 +434,7 @@ type qblock [blockSize]int16
 // table q into zz.
 func (e *encoder) quantize(b *block, q quantIndex, zz *qblock) {
 	if useSIMD && e.deadZone == nil {
-		fdctQuantSIMD(b, &e.natHalf[q], &e.natRecip[q], (*[blockSize]int16)(zz))
+		fdctQuant(e, b, q, zz)
 		return
 	}
 	fdct(b)
@@ -1322,10 +1358,7 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 					x = 255
 				}
 			}
-			e.quant[i][j] = uint8(x)
-			e.recip[i][j] = recip(8 * int32(x))
-			e.natHalf[i][unzig[j]] = 4 * int32(x)
-			e.natRecip[i][unzig[j]] = uint32(e.recip[i][j])
+			e.setQuant(quantIndex(i), j, x)
 		}
 	}
 	// The tables of jpegli come with its dead zone, unless the trellis

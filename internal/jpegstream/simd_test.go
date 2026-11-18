@@ -207,10 +207,7 @@ func TestFdctQuantSIMD(t *testing.T) {
 				if i%3 == 0 {
 					x = 1 + rng.IntN(8)
 				}
-				e.quant[q][j] = uint8(x)
-				e.recip[q][j] = recip(8 * int32(x))
-				e.natHalf[q][unzig[j]] = 4 * int32(x)
-				e.natRecip[q][unzig[j]] = uint32(e.recip[q][j])
+				e.setQuant(quantIndex(q), j, x)
 			}
 		}
 		var b block

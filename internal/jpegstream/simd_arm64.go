@@ -46,3 +46,8 @@ const acMaskSIMD = true
 //
 //go:noescape
 func acMaskAsm(w *byte, al uint) uint64
+
+// fdctQuant is quantize for useSIMD and no dead zone.
+func fdctQuant(e *encoder, b *block, q quantIndex, zz *qblock) {
+	fdctQuantSIMD(b, &e.natHalf[q], &e.natRecip[q], (*[blockSize]int16)(zz))
+}

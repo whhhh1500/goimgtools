@@ -29,3 +29,5 @@ func nonzeros(zz *qblock) uint64 { return nonzerosGo(zz) }
 const acMaskSIMD = false
 
 func acMaskAsm(w *byte, al uint) uint64 { panic("unreachable") }
+
+func fdctQuant(e *encoder, b *block, q quantIndex, zz *qblock) { panic("unreachable") }
