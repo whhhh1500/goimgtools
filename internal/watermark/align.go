@@ -188,7 +188,9 @@ func (d *detector) foldWeighed(m *mapping) []float64 {
 // with the sync pattern, against its share of the tile. More than none
 // makes the placing surer (measured: JPEG 50, a photograph's perspective);
 // 0.4 did better than all of it, whose peaks repeat a little across the
-// tile.
+// tile. (With the reference at 25% of the tile and 10 to 20 cycles, 0.2
+// to 2 read about as many: 239 to 248 marks of 330, 0.4 and 1 alike with
+// other keys.)
 const corrRefWeight = 0.4
 
 // regionsFrom is the z-score of the whole picture's placing below which
