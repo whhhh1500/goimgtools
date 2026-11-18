@@ -27,7 +27,11 @@ const (
 // WebP keep better, leave small pictures too few tiles and read less
 // over all. As visible by SSIMULACRA2, less where flat and more where busy
 // reads about 5% more after JPEG and WebP but is more visible by
-// butteraugli; more only where strongly textured reads less.)
+// butteraugli; more only where strongly textured reads less. The just
+// noticeable difference of Wu et al., as Meta's PixelSeal weighs its mark
+// by (more in dark places and along edges), read less on the 24 Kodak
+// photographs after the 22 attacks, about as visible: 294 of 528 against
+// 330 at SSIMULACRA2 86, 400 against 430 at 77.)
 var kinds = [...]struct {
 	density, minChip, flat, busy float64
 }{
