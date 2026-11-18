@@ -204,7 +204,7 @@ func register(fs *flag.FlagSet) *options {
 		webpEffort:     fs.Int("webp-effort", 0, "WebP: effort 1 (fastest) to 9 (smallest file); default 5 (for lossy, all there is but for transparency)"),
 		gifColors:      fs.Int("gif-colors", 0, "largest number of colours in a GIF, 1-256 (default 256)"),
 		gifFixed:       fs.Bool("gif-fixed-palette", false, "GIF: use the standard fixed palette instead of colours chosen for the image (faster, a much worse picture)"),
-		gifLossy:       fs.Int("gif-lossy", 0, "GIF: lossy compression, the colour difference 1-255 it may accept (16-32 for photographic GIFs: 18-32% smaller); 0 keeps every pixel"),
+		gifLossy:       fs.Int("gif-lossy", 0, "GIF: lossy compression, the colour difference 1-255 it may accept (16-32 for photographic animations: 24-48% smaller; 8-16 for dithered stills); 0 keeps every pixel"),
 		tiffComp:       fs.String("tiff-compression", "none", "TIFF compression: none, deflate or lzw"),
 		tiffPredictor:  fs.Bool("tiff-predictor", false, "TIFF: store each sample as its difference from the pixel to its left (horizontal predictor): photographs compress much better with deflate or lzw"),
 		animated:       fs.Bool("animated", false, "process every frame of an animated GIF, WebP or PNG and write an animated GIF, WebP or PNG (APNG); only what changes is stored (GIF: one palette for all frames, -gif-colors, -no-dither); another output format is an error"),

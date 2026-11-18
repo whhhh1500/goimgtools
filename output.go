@@ -202,11 +202,12 @@ type GIFOptions struct {
 	// (distance in RGB, 0 to 255 a channel) from the pixel's where that
 	// makes the data shorter (the lossy LZW of gifsicle, written from its
 	// description); 0, the default, keeps every pixel. 16 to 32 suit
-	// photographic animations: on one of 557KB (400x533, 8 frames) 16
-	// made it 18% smaller and 24 32% smaller, looking better at the same
-	// size than fewer Colors (SSIMULACRA2 79 at 453KB against 77 at 501KB
-	// with 128 colours). A dithered still image loses more (8 to 16 suit
-	// it), pictures of a few flat colours gain little.
+	// photographic animations: on one of 556KB (400x533, 8 frames) 16
+	// made it 24% smaller and 24 39% smaller, looking better at about the
+	// same size than fewer Colors (SSIMULACRA2 85.7 at 486KB with 12
+	// against 82.8 at 471KB with 128 colours). A dithered still image
+	// loses more (8 to 16 suit it), pictures of a few flat colours gain
+	// little.
 	Lossy int
 }
 
