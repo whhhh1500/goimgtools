@@ -14,7 +14,13 @@ const MaxPayload = 32
 // 37, the most for the length and rate), ended by eight zeros. (Simulated
 // against the constraint length 7, rate 1/3 code of NASA's standard, with
 // its bits repeated over the tile as these are, for 9 bytes: 0.6 dB less
-// signal for half the payloads read, 0.7 dB for nine in ten.)
+// signal for half the payloads read, 0.7 dB for nine in ten. With the list
+// decoding of decode, 9 bytes are read down to a coded bit's soft value of
+// about 0.53 of its spread, measured on the Kodak photographs marked at
+// Strength 0.7 and saved as WebP 60, read with their true tiling; the
+// rate's capacity limit is about 0.48, less than 1 dB away, and the copies
+// not read were all but one below it: a better code would read hardly any
+// more.)
 const (
 	constraint = 9
 	states     = 1 << (constraint - 1)
