@@ -3,6 +3,7 @@ package watermark
 import (
 	"bytes"
 	"image"
+	"math"
 	"testing"
 
 	"github.com/whhhh1500/goimgtools/internal/testutil"
@@ -63,20 +64,22 @@ func TestCode(t *testing.T) {
 				soft[i] = -soft[i]
 			}
 		}
-		got, ok := unframe(viterbi(soft, 8*(len(payload)+4)), k)
+		got, ok := unframe(forward(nil, soft, 8*(len(payload)+4)).list(1)[0], k)
 		if !ok || !bytes.Equal(got, payload) {
 			t.Errorf("%x: decoded %x, %v", payload, got, ok)
 		}
-		if _, ok := unframe(viterbi(soft, 8*(len(payload)+4)), NewKey("other")); ok {
+		if _, ok := unframe(forward(nil, soft, 8*(len(payload)+4)).list(1)[0], NewKey("other")); ok {
 			t.Errorf("%x: checks with another key", payload)
 		}
 	}
 }
 
-// TestListViterbi: the list decoder's first sequence is the Viterbi
-// decoder's, the others are different and no likelier, and a sequence
-// whose best decoding is wrong is often second.
-func TestListViterbi(t *testing.T) {
+// TestList: the list's first sequence has the best metric, the others are
+// different and each no likelier than the one before, none is likelier
+// than the last (checked against every sequence differing from the best
+// in up to two bits), and a sequence whose best decoding is wrong is often
+// later in the list.
+func TestList(t *testing.T) {
 	r := &rng{3}
 	k := NewKey("k")
 	payload := []byte("list-test")
@@ -94,20 +97,42 @@ func TestListViterbi(t *testing.T) {
 	for trial := range 200 {
 		soft := make([]float64, len(coded))
 		for i, b := range coded {
-			// Heavy noise: about one bit in five wrong.
-			noise := (float64(r.intn(2001)) - 1000) / 1000 * 1.9
+			// Heavy noise: about one bit in four wrong.
+			noise := (float64(r.intn(2001)) - 1000) / 1000 * 2.4
 			soft[i] = 1 - 2*float64(b) + noise
 		}
-		list := listViterbi(soft, nbits)
+		tr := forward(nil, soft, nbits)
+		list := tr.list(listSize)
 		if len(list) != listSize {
 			t.Fatalf("trial %d: %d sequences", trial, len(list))
 		}
-		if !bytes.Equal(list[0], viterbi(soft, nbits)) {
-			t.Fatalf("trial %d: the first sequence is not Viterbi's", trial)
+		if m := metric(list[0], soft); math.Abs(m-tr.best()) > 1e-9 {
+			t.Fatalf("trial %d: the first sequence's metric %v, the best %v", trial, m, tr.best())
 		}
 		for i := 1; i < len(list); i++ {
 			if bytes.Equal(list[i], list[i-1]) || metric(list[i], soft) > metric(list[i-1], soft)+1e-9 {
 				t.Fatalf("trial %d: sequence %d repeated or likelier than the one before", trial, i)
+			}
+		}
+		if trial < 20 {
+			// No sequence near the best outside the list is likelier than
+			// its last.
+			last := metric(list[len(list)-1], soft)
+			in := map[string]bool{}
+			for _, s := range list {
+				in[string(s)] = true
+			}
+			for i := range nbits {
+				for j := i; j < nbits; j++ {
+					s := append([]uint8{}, list[0]...)
+					s[i] ^= 1
+					if j > i {
+						s[j] ^= 1
+					}
+					if !in[string(s)] && metric(s, soft) > last+1e-9 {
+						t.Fatalf("trial %d: a sequence outside the list is likelier than its last", trial)
+					}
+				}
 			}
 		}
 		if _, ok := unframe(list[0], k); !ok {

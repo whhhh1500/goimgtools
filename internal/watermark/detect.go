@@ -139,6 +139,7 @@ type detector struct {
 	// Scratch of fold and corr, which are called a few thousand times.
 	foldCnt []float64
 	corrBuf []complex64
+	class   []uint8 // see classOf
 }
 
 // prepare whitens the picture (its spectrum flattened), evens out its

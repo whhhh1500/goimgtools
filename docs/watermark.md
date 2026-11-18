@@ -36,7 +36,7 @@ goimgtools readmark -key "our secret" leaked.jpg
 | `Strength` | Scales the mark's amplitude: 1 (the default) is the kind's balance; 0.5 is harder to see and to find; 2 survives more and is easier to see; at most 16 |
 | `Density` | About how many times the mark repeats along the shorter side, 1 to 16 (default 4). Denser, a smaller piece of the picture still carries a whole mark: a crop must keep about two repeats each way. The mark's details are then finer, so a picture reduced much more is harder to read. Each detail is at least 2 pixels, 3 for `WatermarkScreen` |
 
-Fewer bytes are read back from more damaged copies: the bytes are protected by a convolutional code spread over thousands of places, and fewer bytes leave more of them for each bit. What is read is practically never a wrong mark: a 32-bit CRC of the key and the bytes is checked for each of the thousand or so readings a search tries, which leaves about one chance in a million that a picture without a mark, or read with another key, gives one; otherwise `found == false`.
+Fewer bytes are read back from more damaged copies: the bytes are protected by a convolutional code (constraint length 9, rate 1/6) spread over thousands of places, and fewer bytes leave more of them for each bit. What is read is practically never a wrong mark: a 32-bit CRC of the key and the bytes is checked for each of the two thousand or so readings a search tries, which leaves about one chance in two million that a picture without a mark, or read with another key, gives one; otherwise `found == false`.
 
 ## How it works
 
@@ -44,7 +44,7 @@ Fewer bytes are read back from more damaged copies: the bytes are protected by a
 - **Where it goes.** The tile is added where the picture hides it best: more in busy areas, less in flat ones (the noise visibility function of Voloshynovskiy et al.). It is pushed back from pure white and black, which it could not otherwise go past.
 - **Rows as they come.** The rows are marked as they arrive, from a window of a few rows around each. The result is the same on every processor and with any number of threads.
 - **Finding the tiling.** To read a copy, its spectrum is flattened, and each place is weighted by how clean it is, so that flat areas (where the flattened picture is mostly the mark) count as much as busy ones. The reference's peaks are then searched for over sizes and angles, mirrored or not, in the whole picture and in its middle. This is the template method of Pereira and Pun and of Digimarc; in a photograph the middle is less distorted by perspective.
-- **Placing it.** Every copy of the tile is folded onto one, which adds up the mark and averages the picture away. The sync pattern, with some of the reference, says where the tiles start. The placement is corrected from halves of the picture, then region by region with a homography, or, where the regions are too weak, from the tile's size in four windows (a homography changes the area a tile covers as the cube of its denominator). Finally the payload is decoded. What every tile has (the sync pattern and the reference) shows how much the copy weakened the mark at each frequency, as resampling and compression blur it: that much of it is taken out, and the rest is weighed by the same response over the noise left at that frequency (a matched filter). The four likeliest bit sequences (a list Viterbi decoder) are checked in turn.
+- **Placing it.** Every copy of the tile is folded onto one, which adds up the mark and averages the picture away. The sync pattern, with some of the reference, says where the tiles start. The placement is corrected from halves of the picture, then region by region with a homography, or, where the regions are too weak, from the tile's size in four windows (a homography changes the area a tile covers as the cube of its denominator). Finally the payload is decoded. For it the tiles are folded again with each place weighed: the places are put in twelve classes by how busy the flattened picture is around them, and each class counts by how much of the mark it holds over its noise, as measured on what every tile has (the sync pattern and the reference). Where the picture is flat, compression leaves little of the mark; where it is busy, the picture drowns it; the places between hold the most. The same known part then shows how much the copy weakened the mark at each frequency, as resampling and compression blur it: that much of it is taken out, and the rest is weighed by the same response over the noise left at that frequency (a matched filter). The likeliest bit sequences of every length of payload are checked against the CRC, more of them for the lengths that fit best (Viterbi's algorithm, then a best-first search back through its trellis that yields the sequences in order of likelihood).
 
 ## Measurements
 
@@ -53,14 +53,14 @@ The test pictures are three photographs (1500×844, 1280×720, 1600×500), a sma
 | Attack | Blind (default) | Blind, `Strength: 1.5` | Screen (default) | blind_watermark |
 |---|---|---|---|---|
 | None | 5 | 5 | 5 | 5 |
-| JPEG quality 90 / 70 / 50 / 30 | 5 / 4 / 4 / 2 | 5 / 4 / 4 / 3 | 5 / 5 / 5 / 4 | 5 / 4 / 4 / 3 |
-| WebP quality 60 | 1 | 2 | 4 | 3 |
-| Half the size | 4 | 5 | 5 | 0 |
-| 70% of the size, then JPEG 80 | 3 | 4 | 5 | 0 |
-| Crop to 40% / 25% of each side | 2 / 1 | 4 / 2 | 3 / 1 | 0 / 0 |
-| Turned by 3° / 30°, cropped | 4 / 4 | 5 / 4 | 5 / 4 | 0 / 0 |
-| Darker (×0.8) / more contrast (×1.3) | 5 / 4 | 5 / 4 | 5 / 4 | 4 / 4 |
-| Noise (σ 8) | 4 | 4 | 5 | 5 |
+| JPEG quality 90 / 70 / 50 / 30 | 5 / 4 / 4 / 2 | 5 / 5 / 4 / 4 | 5 / 5 / 5 / 4 | 5 / 4 / 4 / 3 |
+| WebP quality 60 | 1 | 3 | 4 | 3 |
+| Half the size | 5 | 5 | 5 | 0 |
+| 70% of the size, then JPEG 80 | 5 | 5 | 5 | 0 |
+| Crop to 40% / 25% of each side | 3 / 1 | 4 / 2 | 3 / 1 | 0 / 0 |
+| Turned by 3° / 30°, cropped | 5 / 4 | 5 / 5 | 5 / 5 | 0 / 0 |
+| Darker (×0.8) / more contrast (×1.3) | 5 / 4 | 5 / 4 | 5 / 5 | 4 / 4 |
+| Noise (σ 8) | 4 | 5 | 5 | 5 |
 | Screenshot (shown at 1366 wide, JPEG 90) | 5 | 5 | 5 | 3 |
 | Perspective (corners moved up to 4%), JPEG 85 | 5 | 5 | 5 | 0 |
 | Photograph of a screen (simulated: perspective, lens blur, 3/4 the size, gamma, moiré, sensor noise, sharpening, JPEG 85) | 3 | 5 | 5 | 0 |
@@ -69,28 +69,28 @@ How much each changes the picture (means over the five; SSIMULACRA2: 90 and abov
 
 | | PSNR | SSIMULACRA2 | butteraugli |
 |---|---|---|---|
-| Blind (default) | 45.8 dB | 79.5 | 4.6 |
-| Blind, `Strength: 1.5` | 42.3 dB | 68.0 | 7.0 |
-| Screen (default) | 39.4 dB | 50.9 | 10.2 |
+| Blind (default) | 45.7 dB | 79.3 | 4.2 |
+| Blind, `Strength: 1.5` | 42.3 dB | 67.5 | 6.4 |
+| Screen (default) | 39.3 dB | 50.2 | 9.3 |
 | blind_watermark (default) | 37.7 dB | 40.4 | 5.5 |
 
-blind_watermark cannot read its mark from a picture whose size or angle has changed. Its `recover` needs the original to put the picture back first. So it fails every geometric attack here. At `Strength: 1.5`, which changes the picture less than blind_watermark by PSNR and SSIMULACRA2 and more by butteraugli, the blind mark here survives JPEG as well as it does (WebP and strong noise a little less), and every geometric attack too.
+blind_watermark cannot read its mark from a picture whose size or angle has changed. Its `recover` needs the original to put the picture back first. So it fails every geometric attack here. At `Strength: 1.5`, which changes the picture less than blind_watermark by PSNR and SSIMULACRA2 and more by butteraugli, the blind mark here survives JPEG better than it does, WebP and strong noise as well, and every geometric attack too.
 
 Against the other libraries of the kind, on the same pictures and attacks (each at its defaults but where said; JPEG 90 / 70 / 50 / 30):
 
 | | PSNR | SSIMULACRA2 | butteraugli | JPEG | WebP 60 | Crop to 40% | Turned 3° | Perspective | Photograph of a screen |
 |---|---|---|---|---|---|---|---|---|---|
-| Blind (this package) | 45.8 dB | 79.5 | 4.6 | 5 / 4 / 4 / 2 | 1 | 2 | 4 | 5 | 3 |
-| Blind, `Strength: 1.5` | 42.3 dB | 68.0 | 7.0 | 5 / 4 / 4 / 3 | 2 | 4 | 5 | 5 | 5 |
-| Screen (this package) | 39.4 dB | 50.9 | 10.2 | 5 / 5 / 5 / 4 | 4 | 3 | 5 | 5 | 5 |
+| Blind (this package) | 45.7 dB | 79.3 | 4.2 | 5 / 4 / 4 / 2 | 1 | 3 | 5 | 5 | 3 |
+| Blind, `Strength: 1.5` | 42.3 dB | 67.5 | 6.4 | 5 / 5 / 4 / 4 | 3 | 4 | 5 | 5 | 5 |
+| Screen (this package) | 39.3 dB | 50.2 | 9.3 | 5 / 5 / 5 / 4 | 4 | 3 | 5 | 5 | 5 |
 | [blind_watermark](https://github.com/guofei9987/blind_watermark) | 37.7 dB | 40.4 | 5.5 | 5 / 4 / 4 / 3 | 3 | 0 | 0 | 0 | 0 |
 | [invisible-watermark](https://github.com/ShieldMnt/invisible-watermark) `dwtDctSvd` (as in Stable Diffusion) | 40.5 dB | 75.1 | 3.4 | 4 / 0 / 0 / 0 | 0 | 0 | 0 | 0 | 0 |
 | [TrustMark](https://github.com/adobe/trustmark) `Q` (Adobe's default) | 45.1 dB | 68.8 | 8.3 | 5 / 5 / 5 / 4 | 5 | 0 | 0 | 4 | 4 |
 | TrustMark `P` | 50.0 dB | 86.3 | 3.7 | 5 / 4 / 3 / 0 | 4 | 0 | 0 | 0 | 0 |
 
-invisible-watermark reads its mark back from 4 of the 5 untouched pictures (`dwtDct`: 3, less visible: SSIMULACRA2 87.1). TrustMark, a pair of neural networks that need PyTorch, survives recompression best: at about the visibility of the blind mark at `Strength: 1.5` (its model `Q`), it reads 4 of 5 at JPEG 30 and 5 at WebP 60, against 3 and 2 here. But it reads nothing that was cropped or turned, as its decoder takes the whole picture as it is. The marks here are the only ones of these that survive crops and turns.
+invisible-watermark reads its mark back from 4 of the 5 untouched pictures (`dwtDct`: 3, less visible: SSIMULACRA2 87.1). TrustMark, a pair of neural networks that need PyTorch, survives recompression best: at about the visibility of the blind mark at `Strength: 1.5` (its model `Q`), it reads 4 of 5 at JPEG 30, as the blind mark here does, and 5 at WebP 60, against 3 here. But it reads nothing that was cropped or turned, as its decoder takes the whole picture as it is. The marks here are the only ones of these that survive crops and turns.
 
-A harder simulation of a phone's photograph, done with this package's own operations, has stronger perspective and Pillow's sharpening. There the screen mark is read from two of the three photographs (the third is at the edge: its copy decoded by Go's own JPEG decoder is read) and not from the small photograph or the screenshot of a user interface; leaving any one of its steps out, from 3 or 4 of the 5.
+A harder simulation of a phone's photograph, done with this package's own operations, has stronger perspective and Pillow's sharpening. There the screen mark is read from all three photographs and not from the small photograph or the screenshot of a user interface; leaving any one of its steps out, from 3 to 5 of the 5.
 
 ## Limits
 

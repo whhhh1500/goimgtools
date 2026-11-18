@@ -123,7 +123,11 @@ func spreading(k Key, ncoded int) (which []int32, sign []float64) {
 	return which, sign
 }
 
-// tile is the mark of payload: its chips, of unit power.
+// tile is the mark of payload: its chips, of unit power. (Measured: the
+// payload in blocks of 2 x 2 chips, which JPEG and WebP keep better, has
+// 1 to 5 dB more SNR after JPEG 30 but is more visible; as visible as now
+// (Strength 0.85), the 22 attacks read 74 marks of 110 against 77,
+// losing crops and photographs of a screen.)
 func tile(p *patterns, payload []byte, k Key) []float64 {
 	coded := encode(frameBits(payload, k))
 	which, sign := spreading(k, len(coded))

@@ -169,8 +169,14 @@ jobs:
             qemu: qemu-arm
           - arch: s390x
             qemu: qemu-s390x
+          # Its emulator's floating point is the slowest by far: with the
+          # invisible watermark's tests the job went from 24 minutes to 71,
+          # most of it reading marks after the attacks. The marks it makes
+          # are still checked (TestInvisibleWatermarkSame and the golden
+          # hashes).
           - arch: riscv64
             qemu: qemu-riscv64
+            skip: "^TestInvisibleWatermark$"
           - arch: ppc64le
             qemu: qemu-ppc64le
           - arch: loong64
@@ -184,7 +190,7 @@ jobs:
         with:
           go-version: "1.27.x"
       - run: sudo apt-get update && sudo apt-get install -y qemu-user
-      - run: GOARCH=${{ matrix.arch }} go test -exec ${{ matrix.qemu }} -timeout 120m ./tests ./pipeline ./inspect ./internal/resize ./internal/ops
+      - run: GOARCH=${{ matrix.arch }} go test -exec ${{ matrix.qemu }} -timeout 120m -skip "${{ matrix.skip || '^$' }}" ./tests ./pipeline ./inspect ./internal/resize ./internal/ops
 
   wasi:
     # WebAssembly, run by wasmtime: a 32-bit machine without threads.

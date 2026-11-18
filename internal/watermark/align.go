@@ -1,6 +1,9 @@
 package watermark
 
-import "math"
+import (
+	"math"
+	"slices"
+)
 
 // mapping takes a pixel (y, x) to tile coordinates (a, b), in tiles: a
 // homography on (y, x, 1), an affine map when its last row is (0, 0, 1).
@@ -54,6 +57,132 @@ func (d *detector) fold(m *mapping, g rect) []float64 {
 }
 
 func (d *detector) all() rect { return rect{0, 0, d.h, d.w} }
+
+// classes is the number of classes the places of a picture are put in, by
+// the energy of the whitened picture around them, to be weighed apart.
+const classes = 12
+
+// classOf is each place's class (once for a picture): by the energy of
+// the whitened picture within 8 pixels, in classes of equal numbers of
+// places.
+func (d *detector) classOf() []uint8 {
+	if d.class != nil {
+		return d.class
+	}
+	e := make([]float32, len(d.r))
+	for i, v := range d.r {
+		e[i] = float32(v * v)
+	}
+	boxClampInPlace(e, d.w, d.h, 8)
+	s := make([]float32, 0, len(e)/7+1)
+	for i := 0; i < len(e); i += 7 {
+		s = append(s, e[i])
+	}
+	slices.Sort(s)
+	var edges [classes - 1]float32
+	for c := range edges {
+		edges[c] = s[(c+1)*len(s)/classes]
+	}
+	d.class = make([]uint8, len(e))
+	for i, v := range e {
+		c, _ := slices.BinarySearch(edges[:], v)
+		d.class[i] = uint8(c)
+	}
+	return d.class
+}
+
+// foldWeighed is fold over the whole picture with each class of places
+// (classOf) weighed by how much of the mark it holds over its noise, both
+// measured on what every tile has (the sync pattern and the reference):
+// a matched filter across the picture's parts. Where the picture is flat
+// JPEG leaves little of the mark, and where it is busy the picture drowns
+// it; the places between hold the most. (Measured with the true tiling:
+// the payload's SNR up by 1 to 4 dB on photographs saved as PNG or JPEG
+// 70, 8 dB on a screenshot.)
+func (d *detector) foldWeighed(m *mapping) []float64 {
+	class := d.classOf()
+	const nn = ns * ns
+	sum := make([]float64, classes*nn)
+	cnt := make([]float64, classes*nn)
+	for y := range d.h {
+		row := d.r[y*d.w : y*d.w+d.w]
+		cl := class[y*d.w : y*d.w+d.w]
+		for x := range d.w {
+			a, b := m.at(float64(y)+0.5, float64(x)+0.5)
+			ia := int((a - math.Floor(a)) * ns)
+			ib := int((b - math.Floor(b)) * ns)
+			if ia >= ns {
+				ia = ns - 1
+			}
+			if ib >= ns {
+				ib = ns - 1
+			}
+			i := int(cl[x])*nn + ia*ns + ib
+			sum[i] += row[x]
+			cnt[i]++
+		}
+	}
+	// What every tile has, as the fold samples it.
+	kt := make([]float64, N*N)
+	for i := range kt {
+		kt[i] = float64(wSync*d.p.sync[i]) + float64(wRef*d.p.refPat[i])
+	}
+	kn := make([]float64, nn)
+	for i := range ns {
+		for j := range ns {
+			kn[i*ns+j] = field(kt, float64((float64(i)+0.5)/sub)-0.5, float64((float64(j)+0.5)/sub)-0.5)
+		}
+	}
+	// Each class's gain g (the mean of its places is g times what is known,
+	// plus the payload and noise) and noise per place v: weight g / v.
+	var weight [classes]float64
+	found := false
+	for c := range classes {
+		s, n := sum[c*nn:][:nn], cnt[c*nn:][:nn]
+		var mk, kk float64
+		for i := range nn {
+			if n[i] > 0 {
+				mk += float64(s[i] / n[i] * kn[i])
+				kk += float64(kn[i] * kn[i])
+			}
+		}
+		if !(kk > 0) {
+			continue
+		}
+		g := mk / kk
+		var v float64
+		var used int
+		for i := range nn {
+			if n[i] > 0 {
+				e := s[i]/n[i] - float64(g*kn[i])
+				v += float64(float64(e*e) * n[i])
+				used++
+			}
+		}
+		v /= float64(used)
+		if g > 0 && v > 0 {
+			weight[c] = g / v
+			found = true
+		}
+	}
+	if !found {
+		for c := range weight {
+			weight[c] = 1
+		}
+	}
+	f := make([]float64, nn)
+	for i := range nn {
+		var s, n float64
+		for c := range classes {
+			s += float64(weight[c] * sum[c*nn+i])
+			n += float64(weight[c] * cnt[c*nn+i])
+		}
+		if n > 0 {
+			f[i] = s / n
+		}
+	}
+	return f
+}
 
 // corrRefWeight is how much of the reference the tiles are placed by,
 // with the sync pattern, against its share of the tile. More than none
@@ -449,14 +578,55 @@ func solve(a [][]float64) ([]float64, bool) {
 // matches.
 func (d *detector) decode(m mapping) ([]byte, bool) {
 	chips := d.payloadChips(m)
-	for n := 1; n <= MaxPayload; n++ {
+	softOf := func(n int) []float64 {
 		ncoded := codedLen(n)
 		which, sign := spreading(d.k, ncoded)
 		soft := make([]float64, ncoded)
 		for i, v := range chips {
 			soft[which[i]] += float64(v * sign[i])
 		}
-		for _, bits := range listViterbi(soft, 8*(n+4)) {
+		return soft
+	}
+	// The likeliest few sequences of every length (later ones often pass
+	// the check when the first does not); the lengths whose best path fits
+	// the soft values best (its metric over the size of the soft values)
+	// are then searched further. (In 9 of 10 marks read where about half
+	// are, the true length fits best.)
+	type fit struct {
+		n     int
+		score float64
+	}
+	var fits []fit
+	var t *trellis
+	for n := 1; n <= MaxPayload; n++ {
+		soft := softOf(n)
+		t = forward(t, soft, 8*(n+4))
+		for _, bits := range t.list(listFirst) {
+			if payload, ok := unframe(bits, d.k); ok {
+				return payload, true
+			}
+		}
+		var sq float64
+		for _, v := range soft {
+			sq += float64(v * v)
+		}
+		if sq > 0 {
+			fits = append(fits, fit{n, t.best() / math.Sqrt(float64(float64(len(soft))*sq))})
+		}
+	}
+	slices.SortStableFunc(fits, func(a, b fit) int {
+		if a.score > b.score {
+			return -1
+		}
+		if a.score < b.score {
+			return 1
+		}
+		return 0
+	})
+	for _, f := range fits[:min(listLengths, len(fits))] {
+		t = forward(t, softOf(f.n), 8*(f.n+4))
+		list := t.list(listSize)
+		for _, bits := range list[min(listFirst, len(list)):] {
 			if payload, ok := unframe(bits, d.k); ok {
 				return payload, true
 			}
@@ -465,10 +635,20 @@ func (d *detector) decode(m mapping) ([]byte, bool) {
 	return nil, false
 }
 
+// decode checks listFirst sequences of every payload length, then
+// listSize of the listLengths lengths that fit best. Every sequence
+// checked is a chance of 2^-32 of taking noise for a mark: with these,
+// 32 x 4 + 4 x 12 = 176 for a tiling, about 4 in 100 million.
+const (
+	listFirst   = 4
+	listLengths = 4
+	listSize    = 16
+)
+
 // payloadChips is the folded picture's chips with what every tile has
 // taken out and the rest weighed for the payload (see decode).
 func (d *detector) payloadChips(m mapping) []float64 {
-	f := d.fold(&m, d.all())
+	f := d.foldWeighed(&m)
 	a := make([]complex64, N*N)
 	for cy := range N {
 		for cx := range N {
@@ -511,6 +691,9 @@ func (d *detector) payloadChips(m mapping) []float64 {
 	// What is left, the payload as changed and noise, is weighed at each
 	// ring by its gain over the power left there: the matched filter for
 	// noise that is stronger at some frequencies (JPEG's) than others.
+	// (Measured worse, as noisier estimates of the noise alone: the power
+	// left less the payload's expected share, and the difference of the
+	// folds of alternate tiles; the payload's SNR down by up to 4.6 dB.)
 	var left [rings]float64
 	var bins [rings]int
 	for i := range a {

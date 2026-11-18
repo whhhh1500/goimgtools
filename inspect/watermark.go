@@ -11,9 +11,9 @@ import (
 // ReadWatermark looks for a mark hidden with Image.InvisibleWatermark and
 // the same key, and returns its bytes; false when there is none, or it is
 // too damaged to read. What is returned is practically never a wrong mark:
-// each of the thousand or so readings a search tries is checked against a
-// 32-bit CRC of the key and the bytes (about one chance in a million for
-// a picture without a mark). The original is not needed.
+// each of the two thousand or so readings a search tries is checked against
+// a 32-bit CRC of the key and the bytes (about one chance in two million
+// for a picture without a mark). The original is not needed.
 //
 // The picture may have been saved again, resized, cropped (it must keep
 // about two of the mark's repeats each way), turned by any angle, made
