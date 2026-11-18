@@ -221,6 +221,25 @@ func (d *detector) worker() *detector {
 	return &c
 }
 
+// evenRadius is the radius of the window prepare evens the picture out
+// over, evenFloor the share of the median of its local sizes added to each
+// one, and whitenRadius the radius of the bins whiten divides the spectrum
+// by. A small window with little of a floor lets the flat parts of a
+// damaged copy count fully, and a smoother spectrum keeps the reference's
+// peaks standing out. (Measured with the 22 attacks on 5 pictures with 3
+// keys, against 8, 1 and 3: 271 marks of 330 read against 244, with 3
+// other keys 271 against 243, the screen mark 288 against 279. Floors of
+// 0.125 and 0.5: 273 and 264; with whitenRadius 3, windows of 2, 4, 8 and
+// 16: 264, 263, 259 and 239; with a window of 4, whitenRadius 5, 10 and
+// 15: 271, 257 and 240. On the 24 Kodak photographs, not used to choose
+// them, after 18 attacks: 412 readings of 432 against 404, crops to 40%
+// 18 against 14; the blind mark at Strength 0.6 344 against 304.)
+const (
+	evenRadius   = 3
+	evenFloor    = 0.25
+	whitenRadius = 7
+)
+
 // prepare whitens the picture (its spectrum flattened), evens out its
 // parts (each place over the size of the picture around it, so that flat
 // areas, where the whitened picture is mostly the mark, count as much as
@@ -231,13 +250,18 @@ func (d *detector) prepare(lum []float64) {
 	for i, v := range r1 {
 		sq[i] = v * v
 	}
-	loc := boxClamp(sq, d.w, d.h, 8)
+	loc := boxClamp(sq, d.w, d.h, evenRadius)
 	for i, v := range loc {
 		loc[i] = math.Sqrt(v)
 	}
 	med := median(loc)
 	for i := range r1 {
-		r1[i] /= loc[i] + med
+		// Nothing to even out where the picture is flat all round.
+		if s := loc[i] + float64(evenFloor*med); s > 0 {
+			r1[i] /= s
+		} else {
+			r1[i] = 0
+		}
 	}
 	var mag []float32
 	d.r, mag = d.whiten(r1)
@@ -274,7 +298,7 @@ func (d *detector) whiten(y []float64) ([]float64, []float32) {
 		re, im := real(v), imag(v)
 		white[i] = float32(math.Sqrt(float64(float32(re*re) + float32(im*im))))
 	}
-	sm := boxWrap(white, d.wp, d.hp, 3)
+	sm := boxWrap(white, d.wp, d.hp, whitenRadius)
 	for i := range a {
 		s := sm[i] + 1e-9
 		a[i] = complex(real(a[i])/s, imag(a[i])/s)

@@ -174,6 +174,14 @@ func TestRoundTrip(t *testing.T) {
 	if _, ok := Detect(make([]float64, 20*20), 20, 20, NewKey("secret"), nil); ok {
 		t.Error("read a mark from a tiny blank picture")
 	}
+	// A flat picture, which has nothing to even out (once a panic).
+	flat := make([]float64, 300*200)
+	for i := range flat {
+		flat[i] = 200
+	}
+	if _, ok := Detect(flat, 300, 200, NewKey("secret"), nil); ok {
+		t.Error("read a mark from a flat picture")
+	}
 }
 
 // TestDetectParallel: Detect finds the same with its work shared out as

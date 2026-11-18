@@ -44,6 +44,9 @@ func (d *detector) fold(m *mapping, g rect) []float64 {
 			if ib >= ns {
 				ib = ns - 1
 			}
+			if ia < 0 || ib < 0 {
+				continue // not a number: a mapping gone wild
+			}
 			acc[ia*ns+ib] += row[x]
 			cnt[ia*ns+ib]++
 		}
@@ -116,6 +119,9 @@ func (d *detector) foldWeighed(m *mapping) ([]float64, []float64) {
 			}
 			if ib >= ns {
 				ib = ns - 1
+			}
+			if ia < 0 || ib < 0 {
+				continue
 			}
 			i := int(cl[x])*nn + ia*ns + ib
 			sum[i] += row[x]

@@ -141,7 +141,11 @@ func spreading(k Key, ncoded int) (which []int32, sign []float64) {
 // payload in blocks of 2 x 2 chips, which JPEG and WebP keep better, has
 // 1 to 5 dB more SNR after JPEG 30 but is more visible; as visible as now
 // (Strength 0.85), the 22 attacks read 74 marks of 110 against 77,
-// losing crops and photographs of a screen.)
+// losing crops and photographs of a screen. Reading the mark back as it
+// is made and strengthening the coded bits the picture works against
+// reads more with the tiling known, but as visible the 22 attacks on 5
+// pictures with 3 keys read 213 to 246 marks of 330 against 244 to 252:
+// what is lost is mostly the tiling, whose reference gets a smaller share.)
 func tile(p *patterns, payload []byte, k Key) []float64 {
 	coded := encode(frameBits(payload, k))
 	which, sign := spreading(k, len(coded))
