@@ -68,3 +68,12 @@ func nonzeros(zz *qblock) uint64 {
 	}
 	return nonzerosGo(zz)
 }
+
+// acMaskSIMD selects acMaskAsm, acFirst's mask with AVX2.
+var acMaskSIMD = useSIMD
+
+// acMaskAsm returns the coefficients of the block at w (64 int16, as
+// stored) that are not zero once |c| >> al: bit k for coefficient k.
+//
+//go:noescape
+func acMaskAsm(w *byte, al uint) uint64

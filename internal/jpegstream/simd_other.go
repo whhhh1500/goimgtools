@@ -25,3 +25,7 @@ func idct4SIMD(b *block, dst *byte, stride int) { panic("unreachable") }
 // nonzeros returns the mask of the nonzero values of zz: bit k is set when
 // zz[k] != 0.
 func nonzeros(zz *qblock) uint64 { return nonzerosGo(zz) }
+
+const acMaskSIMD = false
+
+func acMaskAsm(w *byte, al uint) uint64 { panic("unreachable") }

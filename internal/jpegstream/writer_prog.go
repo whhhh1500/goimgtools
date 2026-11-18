@@ -49,6 +49,15 @@ type progComp struct {
 func (c *progComp) findLast() {
 	for i := range c.last {
 		w := c.buf[i*blockSize*2 : (i+1)*blockSize*2]
+		if acMaskSIMD {
+			// The highest AC coefficient that is not zero, 0 for none.
+			last := 0
+			if m := acMaskAsm(&w[0], 0) &^ 1; m != 0 {
+				last = 63 - mbits.LeadingZeros64(m)
+			}
+			c.last[i] = uint8(last)
+			continue
+		}
 		k := blockSize - 1
 		for k > 0 && w[2*k] == 0 && w[2*k+1] == 0 {
 			k--
@@ -181,31 +190,42 @@ func (s *progScan) dcRefine(w []byte) {
 
 // acFirst codes coefficients ss to se without their low al bits; those
 // after last are zero.
+//
+// As libjpeg-turbo's encode_mcu_AC_first does, it first marks the
+// coefficients that are not zero once their low bits are dropped (without
+// a branch), then goes from one marked coefficient to the next: the scan
+// search codes every candidate scan of every block this way, and most
+// coefficients of a band are zero.
 func (s *progScan) acFirst(t int, w []byte, last int) {
-	r := 0
 	end := min(s.se, last)
-	for k := s.ss; k <= end; k++ {
-		v := coefAt(w, k)
-		if v == 0 {
-			r++
-			continue
+	al := uint(s.al)
+	var m uint64
+	if acMaskSIMD {
+		if end >= s.ss {
+			m = acMaskAsm(&w[0], al) & (^uint64(0) >> uint(63-end)) &^ (1<<uint(s.ss) - 1)
 		}
+	} else {
+		for k := s.ss; k <= end; k++ {
+			v := coefAt(w, k)
+			a := uint32((v^v>>31)-v>>31) >> al
+			m |= uint64((a|-a)>>31) << uint(k)
+		}
+	}
+	k := s.ss // the position after the last coefficient coded
+	for m != 0 {
+		j := mbits.TrailingZeros64(m)
+		m &= m - 1
 		// The point transform of AC divides, rounding towards zero.
-		var a, b int32
+		v := coefAt(w, j)
+		a, b := v>>al, v>>al
 		if v < 0 {
-			a = -v >> s.al
+			a = -v >> al
 			b = ^a
-		} else {
-			a = v >> s.al
-			b = a
-		}
-		if a == 0 {
-			r++
-			continue
 		}
 		if s.eobRun > 0 {
 			s.emitEOBRun(t)
 		}
+		r := j - k
 		for r > 15 {
 			s.symbol(t, 0xf0)
 			r -= 16
@@ -213,12 +233,9 @@ func (s *progScan) acFirst(t int, w []byte, last int) {
 		n := uint32(mbits.Len32(uint32(a)))
 		s.symbol(t, uint8(r<<4)|uint8(n))
 		s.putBits(uint32(b), n)
-		r = 0
+		k = j + 1
 	}
-	if end < s.se {
-		r += s.se - max(end, s.ss-1)
-	}
-	if r > 0 {
+	if k <= s.se {
 		s.eobRun++
 		if s.eobRun == 0x7fff {
 			s.emitEOBRun(t)
@@ -229,31 +246,43 @@ func (s *progScan) acFirst(t int, w []byte, last int) {
 // acRefine sends bit al of coefficients ss to se: for a coefficient that
 // was already nonzero a correction bit, for one that becomes nonzero now a
 // symbol with the run of still-zero coefficients before it.
+//
+// As acFirst, it goes from one coefficient that is not zero at this bit
+// plane to the next, using two masks: those (nz), and those that become
+// nonzero now (one: |c| >> al is 1); the coefficients in between are the
+// zeros of the runs.
 func (s *progScan) acRefine(t int, w []byte, last int) {
-	var abs [blockSize]int32
+	end := min(s.se, last)
+	al := uint(s.al)
+	var nz, one uint64
+	if end >= s.ss {
+		if acMaskSIMD {
+			rm := (^uint64(0) >> uint(63-end)) &^ (1<<uint(s.ss) - 1)
+			n0, n1 := acMaskAsm(&w[0], al), acMaskAsm(&w[0], al+1)
+			nz, one = n0&rm, n0&^n1&rm
+		} else {
+			for k := s.ss; k <= end; k++ {
+				v := coefAt(w, k)
+				a := uint32((v^v>>31)-v>>31) >> al
+				nz |= uint64((a|-a)>>31) << uint(k)
+				e := a ^ 1
+				one |= uint64(1^(e|-e)>>31) << uint(k)
+			}
+		}
+	}
 	// eob is the last coefficient that becomes nonzero in this scan.
 	eob := 0
-	end := min(s.se, last)
-	for k := s.ss; k <= end; k++ {
-		a := coefAt(w, k)
-		if a < 0 {
-			a = -a
-		}
-		a >>= s.al
-		abs[k] = a
-		if a == 1 {
-			eob = k
-		}
+	if one != 0 {
+		eob = 63 - mbits.LeadingZeros64(one)
 	}
 	// This block's correction bits are corr[start:start+nbr]: after those of
 	// the pending EOB run, or at the front once that run has been written.
 	r, start, nbr := 0, s.be, 0
-	for k := s.ss; k <= end; k++ {
-		a := abs[k]
-		if a == 0 {
-			r++
-			continue
-		}
+	p := s.ss - 1 // the last coefficient visited
+	for m := nz; m != 0; m &= m - 1 {
+		k := mbits.TrailingZeros64(m)
+		r += k - p - 1
+		p = k
 		// Write the zero runs that are needed; not after the last newly
 		// nonzero coefficient, where an EOB does the job.
 		for r > 15 && k <= eob {
@@ -263,15 +292,16 @@ func (s *progScan) acRefine(t int, w []byte, last int) {
 			s.putCorr(s.corr[start : start+nbr])
 			start, nbr = 0, 0
 		}
-		if a > 1 {
+		v := coefAt(w, k)
+		if one&(1<<uint(k)) == 0 {
 			// Already nonzero: only its correction bit.
-			s.corr[start+nbr] = byte(a & 1)
+			s.corr[start+nbr] = byte(((v^v>>31)-v>>31)>>al) & 1
 			nbr++
 			continue
 		}
 		s.emitEOBRun(t)
 		s.symbol(t, uint8(r<<4)|1)
-		if coefAt(w, k) < 0 {
+		if v < 0 {
 			s.putBits(0, 1)
 		} else {
 			s.putBits(1, 1)
@@ -280,9 +310,8 @@ func (s *progScan) acRefine(t int, w []byte, last int) {
 		start, nbr = 0, 0
 		r = 0
 	}
-	if end < s.se {
-		r += s.se - max(end, s.ss-1)
-	}
+	// The coefficients after the last one visited are zero.
+	r += s.se - p
 	if r > 0 || nbr > 0 {
 		s.eobRun++
 		s.be += nbr
