@@ -61,7 +61,7 @@ func Hash(img *goimgtools.Image) (Fingerprint, error) {
 		return 0, errors.New("goimgtools/inspect: Hash needs an image")
 	}
 	small, err := img.Clone().
-		Rotate().
+		AutoOrient().
 		Resize(9, 8, goimgtools.ResizeOptions{Fit: goimgtools.FitFill, Kernel: goimgtools.KernelLinear, FastShrinkOnLoad: true}).
 		Flatten(color.White).
 		ToImage()

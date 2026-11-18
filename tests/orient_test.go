@@ -8,6 +8,7 @@ import (
 	"image/color"
 	stddraw "image/draw"
 	"image/png"
+	"math"
 	"testing"
 
 	. "github.com/whhhh1500/goimgtools"
@@ -148,7 +149,7 @@ func TestRotateFlipFlop(t *testing.T) {
 	}
 	// A turn after another operation, and a JPEG (planar strips) turned.
 	in := pngBytes(t, imgs["nrgba"])
-	got, err := FromBytes(in).Extract(3, 5, 40, 20).Rotate(90).PNG().ToBytes()
+	got, err := FromBytes(in).Crop(3, 5, 40, 20).Rotate(90).PNG().ToBytes()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,8 +166,8 @@ func TestRotateFlipFlop(t *testing.T) {
 	stddraw.Draw(rgba, rgba.Bounds(), dec, image.Point{}, stddraw.Src)
 	sameImage(t, "jpeg rotated", decodePNG(t, got), turnRef(rgba, 8))
 
-	if _, err := FromBytes(in).Rotate(45).PNG().ToBytes(); err == nil {
-		t.Error("Rotate(45) accepted")
+	if _, err := FromBytes(in).Rotate(math.Inf(1)).PNG().ToBytes(); err == nil {
+		t.Error("Rotate(+Inf) accepted")
 	}
 }
 
@@ -196,13 +197,13 @@ func TestAutoOrient(t *testing.T) {
 			if orient >= 5 {
 				ww, wh = 80, 120
 			}
-			if w, h, err := FromBytes(in).Rotate().OutputSize(); err != nil || w != ww || h != wh {
+			if w, h, err := FromBytes(in).AutoOrient().OutputSize(); err != nil || w != ww || h != wh {
 				t.Fatalf("orientation %d: OutputSize after Rotate() = %dx%d, %v", orient, w, h, err)
 			}
-			if info, err := FromBytes(in).Rotate().Metadata(); err != nil || info.Width != 120 || info.Height != 80 {
+			if info, err := FromBytes(in).AutoOrient().Metadata(); err != nil || info.Width != 120 || info.Height != 80 {
 				t.Fatalf("orientation %d: Metadata after Rotate() = %+v, %v", orient, info, err)
 			}
-			got, err := FromBytes(in).Rotate().PNG().ToBytes()
+			got, err := FromBytes(in).AutoOrient().PNG().ToBytes()
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -214,7 +215,7 @@ func TestAutoOrient(t *testing.T) {
 			sameImage(t, "no rotate", decodePNG(t, got), rgba)
 
 			// Resize after Rotate(): the box applies to the upright image.
-			got, err = FromBytes(in).Rotate().Resize(60, 0).PNG().ToBytes()
+			got, err = FromBytes(in).AutoOrient().Resize(60, 0).PNG().ToBytes()
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -231,7 +232,7 @@ func TestAutoOrient(t *testing.T) {
 				t.Errorf("orientation %d: resize after rotate differs from rotate then resize by %.2f levels", orient, d)
 			}
 			// With shrink-on-load in front as well.
-			got, err = FromBytes(in).Rotate().Resize(30, 0, ResizeOptions{FastShrinkOnLoad: true}).PNG().ToBytes()
+			got, err = FromBytes(in).AutoOrient().Resize(30, 0, ResizeOptions{FastShrinkOnLoad: true}).PNG().ToBytes()
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -285,7 +286,7 @@ func TestMetadataKept(t *testing.T) {
 	jp := withAPP(jpegBytes(src, 90), segs...)
 
 	info, err := FromBytes(jp).Metadata()
-	if err != nil || !info.HasProfile || !info.HasExif || info.Orientation != 6 {
+	if err != nil || !info.HasICC || !info.HasExif || info.Orientation != 6 {
 		t.Fatalf("Metadata = %+v, %v", info, err)
 	}
 	read := func(b []byte) (string, bool, bool, int, []byte) {
@@ -301,14 +302,14 @@ func TestMetadataKept(t *testing.T) {
 		}
 		icc := pipeline.MetaOf(src).ICC
 		src.Close()
-		return info.Format, info.HasProfile, info.HasExif, info.Orientation, icc
+		return info.Format, info.HasICC, info.HasExif, info.Orientation, icc
 	}
 	for _, out := range []string{"jpeg", "png", "webp", "webp lossless", "tiff"} {
 		enc := func(m *Image) []byte {
 			t.Helper()
 			switch out {
 			case "jpeg":
-				m.JPEG(90)
+				m.JPEG(JPEGOptions{Quality: 90})
 			case "png":
 				m.PNG()
 			case "webp":
@@ -353,7 +354,7 @@ func TestMetadataKept(t *testing.T) {
 			t.Errorf("%s KeepExif: profile %v exif %v orientation %d", out, prof, ex, orient)
 		}
 		// Turned upright: the copied EXIF says so, so viewers do not turn it again.
-		c := enc(FromBytes(jp).Rotate().KeepExif())
+		c := enc(FromBytes(jp).AutoOrient().KeepExif())
 		if _, _, ex, orient, _ := read(c); !ex || orient != 1 {
 			t.Errorf("%s Rotate+KeepExif: exif %v orientation %d", out, ex, orient)
 		}
@@ -374,8 +375,8 @@ func TestMetadataKept(t *testing.T) {
 	}
 	// Without metadata in the input the output is byte for byte what it was.
 	plain := jpegBytes(src, 90)
-	x, _ := FromBytes(plain).KeepExif().JPEG(90).ToBytes()
-	y, _ := FromBytes(plain).StripICC().JPEG(90).ToBytes()
+	x, _ := FromBytes(plain).KeepExif().JPEG(JPEGOptions{Quality: 90}).ToBytes()
+	y, _ := FromBytes(plain).StripICC().JPEG(JPEGOptions{Quality: 90}).ToBytes()
 	if !bytes.Equal(x, y) {
 		t.Error("options changed the output of an image without metadata")
 	}
@@ -401,7 +402,7 @@ func TestMetadataKept(t *testing.T) {
 	}
 	// Turned upright from the EXIF of a WebP.
 	wp, _ := FromBytes(jp).KeepExif().WebP().ToBytes()
-	up, err := FromBytes(wp).Rotate().PNG().ToBytes()
+	up, err := FromBytes(wp).AutoOrient().PNG().ToBytes()
 	if err != nil {
 		t.Fatal(err)
 	}

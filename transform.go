@@ -148,7 +148,7 @@ type TransformOptions struct {
 // samples one.
 //
 // The whole image is kept in working storage first (a temporary file beyond
-// its share of the limit), as for RotateBy.
+// its share of the limit), as for Rotate.
 func (m *Image) Transform(width, height int, t Transformation, opts ...TransformOptions) *Image {
 	m.atMostOne("Transform", len(opts))
 	o := first(opts)

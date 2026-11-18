@@ -9,7 +9,7 @@ import (
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
-// TestPillowRotate: RotateBy with RotatePillow is Pillow's Image.rotate (of
+// TestPillowRotate: Rotate with MethodPillow is Pillow's Image.rotate (of
 // the opposite angle), to the byte: colour, with transparency and grey;
 // nearest, bilinear and bicubic; with and without expand; the corners
 // left as Pillow fills them or in a colour; quarter turns of an image that
@@ -109,8 +109,8 @@ func TestPillowRotate(t *testing.T) {
 		{"pillow/gray.png", -123.4, InterpolateBicubic, true, color.Gray{120}, "a999df3db8625b50"},
 	} {
 		for _, threads := range []int{1, 4} {
-			o := RotateOptions{Method: RotatePillow, Interpolator: c.interp, Expand: c.expand}
-			out, err := FromBytes(sourcePNG(t, c.in)).Threads(threads).RotateBy(c.deg, c.bg, o).PNG().ToBytes()
+			o := RotateOptions{Method: MethodPillow, Interpolator: c.interp, Expand: c.expand, Background: c.bg}
+			out, err := FromBytes(sourcePNG(t, c.in)).Threads(threads).Rotate(c.deg, o).PNG().ToBytes()
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -122,8 +122,8 @@ func TestPillowRotate(t *testing.T) {
 	}
 	// By name, and the words of the steps.
 	in := sourcePNG(t, "pillow/median-rgba-source.png")
-	o := RotateOptions{Method: RotatePillow, Interpolator: InterpolateBicubic, Expand: true}
-	want := must(FromBytes(in).RotateBy(33, nil, o).PNG().ToBytes())
+	o := RotateOptions{Method: MethodPillow, Interpolator: InterpolateBicubic, Expand: true}
+	want := must(FromBytes(in).Rotate(33, o).PNG().ToBytes())
 	var words []string
 	got := must(FromBytes(in).Do("rotate", "33", "pillow", "bicubic", "expand").Around(func(s Step, src pipeline.Source, run func(pipeline.Source) (pipeline.Source, error)) (pipeline.Source, error) {
 		words = append([]string{s.Name}, s.Args...)
@@ -141,13 +141,13 @@ func TestPillowRotate(t *testing.T) {
 			t.Errorf("rotate %v accepted", args)
 		}
 	}
-	for _, o := range []RotateOptions{{Method: 2}, {Interpolator: 9}} {
-		if _, err := FromBytes(in).RotateBy(10, nil, o).PNG().ToBytes(); err == nil {
-			t.Errorf("RotateBy(%+v) accepted", o)
+	for _, o := range []RotateOptions{{Method: 3}, {Interpolator: 9}} {
+		if _, err := FromBytes(in).Rotate(10, o).PNG().ToBytes(); err == nil {
+			t.Errorf("Rotate(%+v) accepted", o)
 		}
 	}
 	// The size is known without the pixels.
-	if w, h, err := FromBytes(in).RotateBy(30, nil, RotateOptions{Method: RotatePillow, Expand: true}).OutputSize(); err != nil || w != 182 || h != 165 {
+	if w, h, err := FromBytes(in).Rotate(30, RotateOptions{Method: MethodPillow, Expand: true}).OutputSize(); err != nil || w != 182 || h != 165 {
 		t.Errorf("OutputSize %dx%d, %v", w, h, err)
 	}
 }

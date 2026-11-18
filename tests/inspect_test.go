@@ -53,7 +53,7 @@ func TestVerify(t *testing.T) {
 	}
 	// What is wrong with the recipe is reported too; nothing is no image.
 	in := pngBytes(t, testutil.Images(40, 30)["nrgba"])
-	if err := inspect.Verify(FromBytes(in).Extract(0, 0, 500, 500)); err == nil {
+	if err := inspect.Verify(FromBytes(in).Crop(0, 0, 500, 500)); err == nil {
 		t.Error("a recipe that cannot run was verified")
 	}
 	if err := inspect.Verify(FromBytes([]byte("not an image"))); !errors.Is(err, ErrFormat) {

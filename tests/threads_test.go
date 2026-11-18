@@ -55,20 +55,20 @@ func TestSameWithHelpers(t *testing.T) {
 		"blur 3":     func(m *Image) *Image { return m.Blur(3) },
 		"blur 40":    func(m *Image) *Image { return m.Blur(40) },
 		"blur 600":   func(m *Image) *Image { return m.Blur(600) },
-		"kernel 0.7": func(m *Image) *Image { return m.Blur(0.7, BlurOptions{Method: BlurLibvips}) },
-		"kernel 12":  func(m *Image) *Image { return m.Blur(12, BlurOptions{Method: BlurLibvips}) },
+		"kernel 0.7": func(m *Image) *Image { return m.Blur(0.7, BlurOptions{Method: MethodLibvips}) },
+		"kernel 12":  func(m *Image) *Image { return m.Blur(12, BlurOptions{Method: MethodLibvips}) },
 		"kernel 5, 0.001": func(m *Image) *Image {
-			return m.Blur(5, BlurOptions{Method: BlurLibvips, MinAmplitude: 0.001})
+			return m.Blur(5, BlurOptions{Method: MethodLibvips, MinAmplitude: 0.001})
 		},
-		"kernel 400":   func(m *Image) *Image { return m.Blur(400, BlurOptions{Method: BlurLibvips}) },
+		"kernel 400":   func(m *Image) *Image { return m.Blur(400, BlurOptions{Method: MethodLibvips}) },
 		"unsharp 2":    func(m *Image) *Image { return m.Sharpen(SharpenOptions{Sigma: 2, Amount: 1.2, Threshold: 2}) },
 		"unsharp 25":   func(m *Image) *Image { return m.Sharpen(SharpenOptions{Sigma: 25}) },
 		"mild sharpen": func(m *Image) *Image { return m.Sharpen() },
 		"resize libvips down": func(m *Image) *Image {
-			return m.Resize(97, 0, ResizeOptions{Kernel: KernelLanczos3, Method: ResizeLibvips})
+			return m.Resize(97, 0, ResizeOptions{Kernel: KernelLanczos3, Method: MethodLibvips})
 		},
 		"resize libvips up and down": func(m *Image) *Image {
-			return m.Resize(1100, 70, ResizeOptions{Fit: FitFill, Kernel: KernelMitchell, Method: ResizeLibvips})
+			return m.Resize(1100, 70, ResizeOptions{Fit: FitFill, Kernel: KernelMitchell, Method: MethodLibvips})
 		},
 		"enhance sharpness":  func(m *Image) *Image { return m.Enhance(EnhanceSharpness, 1.8) },
 		"filter emboss":      func(m *Image) *Image { return m.Filter(FilterEmboss) },
@@ -77,19 +77,19 @@ func TestSameWithHelpers(t *testing.T) {
 		"equalize":           func(m *Image) *Image { return m.Equalize() },
 		"autocontrast":       func(m *Image) *Image { return m.AutoContrast(AutoContrastOptions{CutoffLow: 2, CutoffHigh: 3}) },
 		"resize pillow down": func(m *Image) *Image {
-			return m.Resize(97, 0, ResizeOptions{Kernel: KernelLanczos3, Method: ResizePillow})
+			return m.Resize(97, 0, ResizeOptions{Kernel: KernelLanczos3, Method: MethodPillow})
 		},
 		"resize pillow up and down": func(m *Image) *Image {
-			return m.Resize(1100, 70, ResizeOptions{Fit: FitFill, Kernel: KernelHamming, Method: ResizePillow})
+			return m.Resize(1100, 70, ResizeOptions{Fit: FitFill, Kernel: KernelHamming, Method: MethodPillow})
 		},
 		"resize pillow nearest": func(m *Image) *Image {
-			return m.Resize(31, 0, ResizeOptions{Kernel: KernelNearest, Method: ResizePillow})
+			return m.Resize(31, 0, ResizeOptions{Kernel: KernelNearest, Method: MethodPillow})
 		},
 		"resize libvips nearest": func(m *Image) *Image {
-			return m.Resize(31, 0, ResizeOptions{Kernel: KernelNearest, Method: ResizeLibvips})
+			return m.Resize(31, 0, ResizeOptions{Kernel: KernelNearest, Method: MethodLibvips})
 		},
 		"sharpen lightness": func(m *Image) *Image {
-			return m.Sharpen(SharpenOptions{Sigma: 1.3, Method: SharpenLibvips})
+			return m.Sharpen(SharpenOptions{Sigma: 1.3, Method: MethodLibvips})
 		},
 		"modulate":  func(m *Image) *Image { return m.Modulate(1.1, 1.4, 33) },
 		"median 5":  func(m *Image) *Image { return m.Median(5) },
@@ -107,14 +107,14 @@ func TestSameWithHelpers(t *testing.T) {
 		"channels": func(m *Image) *Image {
 			return m.Recomb([][]float64{{0.4, 0.6, 0}, {0, 1, 0}, {0.2, 0.2, 0.6}}).Unflatten().ExtractChannel(ChannelAlpha)
 		},
-		"rotate 30":    func(m *Image) *Image { return m.RotateBy(30, color.White) },
+		"rotate 30":    func(m *Image) *Image { return m.Rotate(30, RotateOptions{Background: color.White}) },
 		"affine":       func(m *Image) *Image { return m.Affine(0.9, 0.35, -0.2, 1.1, AffineOptions{OutputX: 3.5}) },
 		"affine clear": func(m *Image) *Image { return m.Affine(1.2, 0, 0, 0.8, AffineOptions{Background: color.Transparent}) },
 		"affine bicubic": func(m *Image) *Image {
 			return m.Affine(0.7, -0.5, 0.5, 0.7, AffineOptions{Interpolator: InterpolateBicubic, Background: color.Transparent})
 		},
-		"rotate -77.7":     func(m *Image) *Image { return m.RotateBy(-77.7, color.Transparent) },
-		"blur, rotate, sh": func(m *Image) *Image { return m.Blur(1.5).RotateBy(12, nil).Sharpen() },
+		"rotate -77.7":     func(m *Image) *Image { return m.Rotate(-77.7, RotateOptions{Background: color.Transparent}) },
+		"blur, rotate, sh": func(m *Image) *Image { return m.Blur(1.5).Rotate(12).Sharpen() },
 	}
 	dir := t.TempDir()
 	for iname, in := range images {
@@ -145,7 +145,7 @@ func TestSameWithHelpers(t *testing.T) {
 	in := images["photo 700x300"]
 	var first []byte
 	for _, threads := range []int{1, 4, 8} {
-		out, err := FromBytes(in).Blur(2).Sharpen(SharpenOptions{Sigma: 1}).Modulate(1, 1.2, 10).RotateBy(5, color.White).
+		out, err := FromBytes(in).Blur(2).Sharpen(SharpenOptions{Sigma: 1}).Modulate(1, 1.2, 10).Rotate(5, RotateOptions{Background: color.White}).
 			Threads(threads).PNG().ToBytes()
 		if err != nil {
 			t.Fatal(err)

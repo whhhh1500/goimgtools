@@ -93,12 +93,12 @@ type resizeSpec struct {
 
 // target returns the size a sw × sh image is resized to.
 func (r resizeSpec) target(sw, sh int) (dw, dh int) {
-	if r.o.Method == ResizePillow && r.width > 0 && r.height > 0 {
+	if r.o.Method == MethodPillow && r.width > 0 && r.height > 0 {
 		if w, h, ok := r.pillowSize(sw, sh); ok {
 			return w, h
 		}
 	}
-	if r.o.Method == ResizePillow && r.o.Fit == FitInside {
+	if r.o.Method == MethodPillow && r.o.Fit == FitInside {
 		return r.thumbSize(sw, sh)
 	}
 	fsw, fsh := float64(sw), float64(sh)
@@ -125,7 +125,7 @@ func (r resizeSpec) target(sw, sh int) (dw, dh int) {
 	return max(1, int(math.Round(fsw*fx))), max(1, int(math.Round(fsh*fy)))
 }
 
-// pillowSize is the size ResizePillow resizes a sw × sh image to for a box
+// pillowSize is the size MethodPillow resizes a sw × sh image to for a box
 // of both sides: Pillow's ImageOps.contain (FitInside without ReducingGap,
 // and FitContain, before ImageOps.pad pads it), ImageOps.cover
 // (FitOutside), ImageOps.fit (FitCover: the box itself) and Image.thumbnail
@@ -177,7 +177,7 @@ func (r resizeSpec) fitBox(sw, sh int) [4]float64 {
 	return [4]float64{left, top, left + cw, top + ch}
 }
 
-// thumbSize is FitInside with ResizePillow: the size Pillow's
+// thumbSize is FitInside with MethodPillow: the size Pillow's
 // Image.thumbnail gives a sw × sh image for the box (each side whole,
 // floor or ceiling, whichever keeps the aspect ratio closer); a side of 0
 // follows the other. With WithoutEnlargement a box the image fits in leaves
@@ -214,8 +214,8 @@ func (r resizeSpec) thumbSize(sw, sh int) (int, int) {
 type resizeOp struct {
 	spec   resizeSpec
 	kernel *draw.Kernel
-	vips   resize.VipsKernel   // for ResizeLibvips
-	pillow resize.PillowFilter // for ResizePillow
+	vips   resize.VipsKernel   // for MethodLibvips
+	pillow resize.PillowFilter // for MethodPillow
 }
 
 func (z resizeOp) apply(src pipeline.Source, r *run) (pipeline.Source, error) {
@@ -228,9 +228,9 @@ func (z resizeOp) apply(src pipeline.Source, r *run) (pipeline.Source, error) {
 // would have given.
 func (z resizeOp) resize(src pipeline.Source, turn ops.Orientation, pre preShrunk, r *run) (pipeline.Source, error) {
 	switch z.spec.o.Method {
-	case ResizeLibvips:
+	case MethodLibvips:
 		return z.resizeVips(src, turn, pre, r)
-	case ResizePillow:
+	case MethodPillow:
 		return z.resizePillow(src, turn, pre, r)
 	}
 	b := src.Bounds()
@@ -270,7 +270,7 @@ func (z resizeOp) resize(src pipeline.Source, turn ops.Orientation, pre preShrun
 	return z.fitBox(ops.Orient(out, turn), dw, dh, false)
 }
 
-// resizeVips is resize with ResizeLibvips: sharp's resize of src, which is
+// resizeVips is resize with MethodLibvips: sharp's resize of src, which is
 // then turned by turn (sharp's EXIF turn, which it does after the resize).
 // src may be a JPEG the decoder has reduced (pre): libvips keeps of it
 // floor(w/k) × floor(h/k), what libjpeg makes of the last partial block
@@ -308,7 +308,7 @@ func (z resizeOp) resizeVips(src pipeline.Source, turn ops.Orientation, pre preS
 	return z.fitBox(ops.Orient(out, turn), dw, dh, hs != 1 || vs != 1)
 }
 
-// resizePillow is resize with ResizePillow: Pillow's resize of src to the
+// resizePillow is resize with MethodPillow: Pillow's resize of src to the
 // size the box asks of the image (of the image before the decoder reduced
 // it, pre, as Pillow's draft keeps the size asked for), then turned by turn
 // (no turn: turns are done first for it).
@@ -476,7 +476,7 @@ func vipsBackground(c color.Color) color.Color {
 	return color.NRGBA{R: ch(n.R), G: ch(n.G), B: ch(n.B), A: n.A}
 }
 
-// extractOp is Extract.
+// extractOp is Crop.
 type extractOp struct{ left, top, width, height int }
 
 func (e extractOp) apply(src pipeline.Source, _ *run) (pipeline.Source, error) {
@@ -658,7 +658,7 @@ func applyOps(list []operation, src pipeline.Source, r *run, pre preShrunk) (_ p
 			if i == 0 {
 				p = pre
 			}
-			if z.spec.o.Method == ResizePillow || z.spec.o.Method == ResizeLibvips && !autoTurns(list[i:end]) {
+			if z.spec.o.Method == MethodPillow || z.spec.o.Method == MethodLibvips && !autoTurns(list[i:end]) {
 				// As sharp: turns asked for before the resize are done
 				// before it; with Pillow every turn.
 				if p.k > 1 {
@@ -704,7 +704,7 @@ func autoTurns(list []operation) bool {
 }
 
 // vipsShrinkOnLoad is the factor sharp has libjpeg reduce a JPEG by while
-// it decodes it, for the resize z (with ResizeLibvips) after turn: of the
+// it decodes it, for the resize z (with MethodLibvips) after turn: of the
 // factors the resize reduces the two sides by, the smaller one; 8, 4 or 2,
 // the largest it reaches (twice that without FastShrinkOnLoad, which
 // leaves at least 2 to the resize), halved when the factor is that whole
@@ -744,7 +744,7 @@ func vipsShrinkOnLoad(src pipeline.Source, z resizeSpec, turn ops.Orientation) i
 }
 
 // vipsWebPScale is the size sharp has libwebp decode a WebP at, for the
-// resize z (with ResizeLibvips and FastShrinkOnLoad) after turn: the image
+// resize z (with MethodLibvips and FastShrinkOnLoad) after turn: the image
 // scaled by 1/s, s the smaller of the factors the resize reduces the two
 // sides by, each side rounded to the nearest (half to even, as libvips'
 // rint); 0, 0 when s is not above 1.
@@ -766,7 +766,7 @@ func vipsWebPScale(src pipeline.Source, z resizeSpec, turn ops.Orientation) (int
 }
 
 // webpScale is the size a lossy WebP is decoded at, as libwebp scales it
-// while decoding it, for the resize z (with ResizeDraw and FastShrinkOnLoad)
+// while decoding it, for the resize z (with MethodDefault and FastShrinkOnLoad)
 // after turn: twice the size of the result, which leaves the kernel a
 // reduction of 2, when that is at most a third of the image each way; 0, 0
 // otherwise.

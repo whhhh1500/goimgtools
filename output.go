@@ -252,15 +252,14 @@ func (m *Image) MaxFileSize(n int64) *Image {
 	return m
 }
 
-// JPEGOptions are the optional settings of JPEG. Both make the file
-// smaller without changing a single pixel; both need the whole image
-// before the first byte can be written, so its coefficients are kept in
-// working storage (a temporary file beyond its memory share), which takes
-// some extra time.
+// JPEGOptions are the optional settings of JPEG. Optimize and Progressive
+// make the file smaller without changing a single pixel; they need the
+// whole image before the first byte can be written, so its coefficients
+// are kept in working storage (a temporary file beyond its memory share),
+// which takes some extra time. Trellis, QuantTable and ChromaSubsampling
+// change the pixels.
 type JPEGOptions struct {
-	// Quality is 1 to 100; 0 means the default, 80. It is where the
-	// quality given to JPEG goes, and is for ToFormat, which has no
-	// argument for it.
+	// Quality is 1 to 100; 0 means the default, 80.
 	Quality int
 	// Optimize builds the coding tables for this image instead of using
 	// the standard ones.
@@ -360,15 +359,12 @@ const (
 // Keep QuantTableJpegli the value jpegstream knows it by.
 var _ = [1]struct{}{}[QuantTableJpegli-jpegstream.QuantTableJpegli]
 
-// JPEG selects JPEG output. quality is 1–100; 0 means the default, 80.
-// Without options the file is the one the standard library writes.
-func (m *Image) JPEG(quality int, opts ...JPEGOptions) *Image {
+// JPEG selects JPEG output, at quality 80 unless JPEGOptions says
+// otherwise. The file is what libjpeg-turbo, and so Pillow and sharp,
+// write with the same settings, to the byte (see the compatibility notes).
+func (m *Image) JPEG(opts ...JPEGOptions) *Image {
 	m.atMostOne("JPEG", len(opts))
-	o := first(opts)
-	if quality != 0 {
-		o.Quality = quality
-	}
-	m.format, m.options = "jpeg", o
+	m.format, m.options = "jpeg", first(opts)
 	return m
 }
 

@@ -45,15 +45,15 @@ func TestJPEGOptimizeAndProgressive(t *testing.T) {
 	for name, src := range map[string]image.Image{"colour": photoLike(613, 457), "gray": testutil.Images(301, 203)["gray"]} {
 		in := pngBytes(t, src)
 		for _, q := range []int{60, 90} {
-			plain, err := FromBytes(in).JPEG(q).ToBytes()
+			plain, err := FromBytes(in).JPEG(JPEGOptions{Quality: q}).ToBytes()
 			if err != nil {
 				t.Fatal(err)
 			}
-			opt, err := FromBytes(in).JPEG(q, JPEGOptions{Optimize: true}).ToBytes()
+			opt, err := FromBytes(in).JPEG(JPEGOptions{Quality: q, Optimize: true}).ToBytes()
 			if err != nil {
 				t.Fatalf("%s q%d optimize: %v", name, q, err)
 			}
-			prog, err := FromBytes(in).JPEG(q, JPEGOptions{Progressive: true}).ToBytes()
+			prog, err := FromBytes(in).JPEG(JPEGOptions{Quality: q, Progressive: true}).ToBytes()
 			if err != nil {
 				t.Fatalf("%s q%d progressive: %v", name, q, err)
 			}
@@ -86,8 +86,8 @@ func TestJPEGOptimizeAndProgressive(t *testing.T) {
 	// temporary file), with a size limit on top.
 	in := pngBytes(t, photoLike(613, 457))
 	dir := t.TempDir()
-	want, _ := FromBytes(in).Resize(400, 0).JPEG(80, JPEGOptions{Progressive: true}).ToBytes()
-	got, err := FromBytes(in).Resize(400, 0).JPEG(80, JPEGOptions{Progressive: true}).MemoryLimit(1 << 20).TempDir(dir).ToBytes()
+	want, _ := FromBytes(in).Resize(400, 0).JPEG(JPEGOptions{Quality: 80, Progressive: true}).ToBytes()
+	got, err := FromBytes(in).Resize(400, 0).JPEG(JPEGOptions{Quality: 80, Progressive: true}).MemoryLimit(1 << 20).TempDir(dir).ToBytes()
 	if err != nil || !bytes.Equal(got, want) {
 		t.Errorf("progressive under a 1MB limit: err %v, same bytes %v", err, bytes.Equal(got, want))
 	}
@@ -95,19 +95,20 @@ func TestJPEGOptimizeAndProgressive(t *testing.T) {
 		t.Errorf("%d temp files left", left)
 	}
 	limit := int64(len(want) * 2 / 3)
-	small, err := FromBytes(in).Resize(400, 0).JPEG(80, JPEGOptions{Progressive: true}).MaxFileSize(limit).ToBytes()
+	small, err := FromBytes(in).Resize(400, 0).JPEG(JPEGOptions{Quality: 80, Progressive: true}).MaxFileSize(limit).ToBytes()
 	if err != nil || int64(len(small)) > limit || !progressive(small) {
 		t.Errorf("progressive with a size limit: err %v, %d bytes for a limit of %d", err, len(small), limit)
 	}
 	// The options apply to a size limit too: the same limit allows at least
 	// as high a quality with them as without.
-	plainSmall, err := FromBytes(in).Resize(400, 0).JPEG(80).MaxFileSize(limit).ToBytes()
+	plainSmall, err := FromBytes(in).Resize(400, 0).JPEG(JPEGOptions{Quality: 80}).MaxFileSize(limit).ToBytes()
 	if err != nil {
 		t.Fatal(err)
 	}
 	qualityOf := func(file []byte, o JPEGOptions) int {
 		for q := 80; q >= 1; q-- {
-			if b, _ := FromBytes(in).Resize(400, 0).JPEG(q, o).ToBytes(); bytes.Equal(b, file) {
+			o.Quality = q
+			if b, _ := FromBytes(in).Resize(400, 0).JPEG(o).ToBytes(); bytes.Equal(b, file) {
 				return q
 			}
 		}
@@ -310,7 +311,7 @@ func TestJPEGJpegliTables(t *testing.T) {
 		gray.Pix[i] = uint8(i * 7)
 	}
 	for _, c := range cases {
-		b, err := FromImage(colour).JPEG(c.q, JPEGOptions{QuantTable: QuantTableJpegli}).ToBytes()
+		b, err := FromImage(colour).JPEG(JPEGOptions{Quality: c.q, QuantTable: QuantTableJpegli}).ToBytes()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -318,7 +319,7 @@ func TestJPEGJpegliTables(t *testing.T) {
 		if !bytes.Equal(tables[0], c.luma[:]) || !bytes.Equal(tables[1], c.chroma[:]) {
 			t.Errorf("quality %d: luma %v, chroma %v", c.q, tables[0], tables[1])
 		}
-		b, err = FromImage(gray).JPEG(c.q, JPEGOptions{QuantTable: QuantTableJpegli}).ToBytes()
+		b, err = FromImage(gray).JPEG(JPEGOptions{Quality: c.q, QuantTable: QuantTableJpegli}).ToBytes()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -334,11 +335,11 @@ func TestJPEGJpegliTables(t *testing.T) {
 // refused.
 func TestJPEGQuantTables(t *testing.T) {
 	src := photoLike(200, 120)
-	std, err := FromImage(src).JPEG(75).ToBytes()
+	std, err := FromImage(src).JPEG(JPEGOptions{Quality: 75}).ToBytes()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if t0, err := FromImage(src).JPEG(75, JPEGOptions{QuantTable: 0}).ToBytes(); err != nil || !bytes.Equal(t0, std) {
+	if t0, err := FromImage(src).JPEG(JPEGOptions{Quality: 75, QuantTable: 0}).ToBytes(); err != nil || !bytes.Equal(t0, std) {
 		t.Errorf("table 0 is not the default file: %v", err)
 	}
 	// Quality 50 scales the table by 100%, quality 75 by 50%; the values
@@ -350,7 +351,7 @@ func TestJPEGQuantTables(t *testing.T) {
 		135, 156, 131, 124, 131, 156, 189, 169, 169, 189, 238, 226, 238, 311, 311, 418,
 	}
 	for _, c := range []struct{ q, scale int }{{50, 100}, {75, 50}} {
-		b, err := FromImage(src).JPEG(c.q, JPEGOptions{QuantTable: QuantTableImageMagick}).ToBytes()
+		b, err := FromImage(src).JPEG(JPEGOptions{Quality: c.q, QuantTable: QuantTableImageMagick}).ToBytes()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -365,7 +366,7 @@ func TestJPEGQuantTables(t *testing.T) {
 	}
 	for n := QuantTableStandard; n <= QuantTableJpegli; n++ {
 		for _, o := range []JPEGOptions{{QuantTable: n}, {QuantTable: n, Progressive: true, Trellis: true}} {
-			b, err := FromImage(src).JPEG(80, o).ToBytes()
+			b, err := FromImage(src).JPEG(o).ToBytes()
 			if err != nil {
 				t.Fatalf("table %d: %v", n, err)
 			}
@@ -379,7 +380,7 @@ func TestJPEGQuantTables(t *testing.T) {
 		}
 	}
 	for _, n := range []QuantTable{-1, QuantTableJpegli + 1} {
-		if _, err := FromImage(src).JPEG(80, JPEGOptions{QuantTable: n}).ToBytes(); err == nil || errors.Is(err, ErrFormat) {
+		if _, err := FromImage(src).JPEG(JPEGOptions{Quality: 80, QuantTable: n}).ToBytes(); err == nil || errors.Is(err, ErrFormat) {
 			t.Errorf("table %d: %v", n, err)
 		}
 	}
@@ -485,8 +486,8 @@ func TestJPEGChromaSubsampling(t *testing.T) {
 	} {
 		var plain *image.YCbCr
 		for i, o := range []JPEGOptions{{}, {Optimize: true}, {Progressive: true}, {Trellis: true}, {Progressive: true, Trellis: true}} {
-			o.ChromaSubsampling = c.sub
-			data := must(FromImage(src).JPEG(85, o).ToBytes())
+			o.Quality, o.ChromaSubsampling = 85, c.sub
+			data := must(FromImage(src).JPEG(o).ToBytes())
 			// The standard library tells the layout of the file.
 			m, err := jpeg.Decode(bytes.NewReader(data))
 			if err != nil {
@@ -524,11 +525,11 @@ func TestJPEGChromaSubsampling(t *testing.T) {
 	}
 	// A greyscale image has one component whatever is asked.
 	g := image.NewGray(image.Rect(0, 0, 33, 17))
-	m, err := decodeJPEG(bytes.NewReader(must(FromImage(g).JPEG(80, JPEGOptions{ChromaSubsampling: Chroma444}).ToBytes())))
+	m, err := decodeJPEG(bytes.NewReader(must(FromImage(g).JPEG(JPEGOptions{Quality: 80, ChromaSubsampling: Chroma444}).ToBytes())))
 	if _, ok := m.(*image.Gray); err != nil || !ok {
 		t.Errorf("grey with Chroma444: %T, %v", m, err)
 	}
-	if _, err := FromImage(src).JPEG(80, JPEGOptions{ChromaSubsampling: 7}).ToBytes(); err == nil {
+	if _, err := FromImage(src).JPEG(JPEGOptions{Quality: 80, ChromaSubsampling: 7}).ToBytes(); err == nil {
 		t.Error("ChromaSubsampling 7: no error")
 	}
 }

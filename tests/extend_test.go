@@ -131,7 +131,7 @@ func TestPipe(t *testing.T) {
 	in := pngBytes(t, src)
 	red := color.NRGBA{200, 10, 20, 255}
 
-	m := FromBytes(in).Resize(200, 0).Pipe(border{7, red}).Extract(0, 0, 214, 100)
+	m := FromBytes(in).Resize(200, 0).Pipe(border{7, red}).Crop(0, 0, 214, 100)
 	w, h, err := FromBytes(in).Resize(200, 0).Pipe(border{7, red}).OutputSize()
 	if err != nil || w != 214 || h != 140+14 {
 		t.Fatalf("size with a border: %dx%d, %v; want 214x154", w, h, err)
@@ -227,7 +227,7 @@ func TestPipeLifecycle(t *testing.T) {
 		closed.Store(0)
 		rows.Store(0)
 	}
-	if _, err := FromBytes(in).Pipe(c).JPEG(80).ToBytes(); err != nil {
+	if _, err := FromBytes(in).Pipe(c).JPEG(JPEGOptions{Quality: 80}).ToBytes(); err != nil {
 		t.Fatal(err)
 	}
 	check("a run", 1, 480)
@@ -236,7 +236,7 @@ func TestPipeLifecycle(t *testing.T) {
 	}
 	check("OutputSize", 1, 0)
 	// A later operation fails when the chain is built.
-	if _, err := FromBytes(in).Pipe(c).Extract(0, 0, 5000, 5000).ToBytes(); err == nil {
+	if _, err := FromBytes(in).Pipe(c).Crop(0, 0, 5000, 5000).ToBytes(); err == nil {
 		t.Fatal("extract outside the image accepted")
 	}
 	check("a chain that cannot be built", 1, 0)
@@ -370,7 +370,7 @@ type photo struct {
 	credit string
 }
 
-func openPhoto(data []byte, credit string) photo { return photo{FromBytes(data).Rotate(), credit} }
+func openPhoto(data []byte, credit string) photo { return photo{FromBytes(data).AutoOrient(), credit} }
 
 func (p photo) Web() photo {
 	p.Resize(160, 0).Composite(Text(p.credit, TextOptions{Size: 12, Color: color.White}),
@@ -384,13 +384,13 @@ func TestEmbedding(t *testing.T) {
 	in := jpegBytes(testutil.Images(320, 240)["rgba-opaque"], 90)
 	p := openPhoto(in, "© test")
 	p.Flatten(color.White) // a method of Image, called on the new type
-	got, err := p.Web().JPEG(80).ToBytes()
+	got, err := p.Web().JPEG(JPEGOptions{Quality: 80}).ToBytes()
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, err := FromBytes(in).Rotate().Flatten(color.White).Resize(160, 0).
+	want, err := FromBytes(in).AutoOrient().Flatten(color.White).Resize(160, 0).
 		Composite(Text("© test", TextOptions{Size: 12, Color: color.White}), CompositeOptions{Gravity: SouthEast, Left: -4, Top: -4}).
-		JPEG(80).ToBytes()
+		JPEG(JPEGOptions{Quality: 80}).ToBytes()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -550,7 +550,7 @@ func TestStream(t *testing.T) {
 	if err := os.WriteFile(path, jp, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	m := Open(path).Rotate().Resize(120, 0).KeepExif()
+	m := Open(path).AutoOrient().Resize(120, 0).KeepExif()
 	want, err := m.Clone().PNG().ToBytes()
 	if err != nil {
 		t.Fatal(err)
@@ -822,7 +822,7 @@ func TestRegisterFormat(t *testing.T) {
 		t.Fatalf("ToFormat gives another file than the extension (%v)", err)
 	}
 	info, err := Open(path).Metadata()
-	if err != nil || info.Format != "tpix" || info.Width != 310 || info.Height != 205 || !info.HasAlpha || !info.HasProfile {
+	if err != nil || info.Format != "tpix" || info.Width != 310 || info.Height != 205 || !info.HasAlpha || !info.HasICC {
 		t.Fatalf("Metadata: %+v, %v", info, err)
 	}
 	back, err := Open(path).PNG().ToBytes()
@@ -850,7 +850,7 @@ func TestRegisterFormat(t *testing.T) {
 	}
 
 	// The chain works on it, and the result goes on to any format.
-	small, err := FromBytes(file).Resize(100, 0).Rotate(90).JPEG(80).ToBytes()
+	small, err := FromBytes(file).Resize(100, 0).Rotate(90).JPEG(JPEGOptions{Quality: 80}).ToBytes()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -952,7 +952,7 @@ func TestWrapBuiltinFormat(t *testing.T) {
 	in := jpegBytes(testutil.Images(320, 240)["rgba-opaque"], 90)
 	run := func() []byte {
 		t.Helper()
-		out, err := FromBytes(in).Resize(160, 0, ResizeOptions{FastShrinkOnLoad: true}).JPEG(70, JPEGOptions{Progressive: true}).ToBytes()
+		out, err := FromBytes(in).Resize(160, 0, ResizeOptions{FastShrinkOnLoad: true}).JPEG(JPEGOptions{Quality: 70, Progressive: true}).ToBytes()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1030,17 +1030,17 @@ func TestToFormat(t *testing.T) {
 			t.Errorf("%s: ToFormat gives another file than the method (%v)", what, err)
 		}
 	}
-	same("jpeg", FromBytes(in).ToFormat("jpeg"), FromBytes(in).JPEG(0))
-	same("jpeg with options", FromBytes(in).ToFormat("JPG", JPEGOptions{Quality: 60, Optimize: true}), FromBytes(in).JPEG(60, JPEGOptions{Optimize: true}))
-	same("jpeg, options by pointer", FromBytes(in).ToFormat("jpeg", &JPEGOptions{Quality: 60}), FromBytes(in).JPEG(60))
+	same("jpeg", FromBytes(in).ToFormat("jpeg"), FromBytes(in).JPEG())
+	same("jpeg with options", FromBytes(in).ToFormat("JPG", JPEGOptions{Quality: 60, Optimize: true}), FromBytes(in).JPEG(JPEGOptions{Quality: 60, Optimize: true}))
+	same("jpeg, options by pointer", FromBytes(in).ToFormat("jpeg", &JPEGOptions{Quality: 60}), FromBytes(in).JPEG(JPEGOptions{Quality: 60}))
 	same("png", FromBytes(in).ToFormat(".png", PNGOptions{Colors: 16}), FromBytes(in).PNG(PNGOptions{Colors: 16}))
 	same("webp", FromBytes(in).ToFormat("webp", WebPOptions{Lossless: true}), FromBytes(in).WebP(WebPOptions{Lossless: true}))
 	same("gif", FromBytes(in).ToFormat("gif", GIFOptions{Colors: 8}), FromBytes(in).GIF(GIFOptions{Colors: 8}))
 	same("tiff", FromBytes(in).ToFormat("tif", TIFFOptions{Compression: TIFFDeflate}), FromBytes(in).TIFF(TIFFOptions{Compression: TIFFDeflate}))
 	same("bmp", FromBytes(in).ToFormat("bmp"), FromBytes(in).BMP())
-	// The quality argument of JPEG wins over the field; the field alone works.
-	same("quality", FromBytes(in).JPEG(60, JPEGOptions{Quality: 20}), FromBytes(in).JPEG(60))
-	same("quality field", FromBytes(in).JPEG(0, JPEGOptions{Quality: 60}), FromBytes(in).JPEG(60))
+	// The default quality is 80.
+	same("default quality", FromBytes(in).JPEG(), FromBytes(in).JPEG(JPEGOptions{Quality: 80}))
+	same("quality", FromBytes(in).ToFormat("jpg", JPEGOptions{Quality: 60}), FromBytes(in).JPEG(JPEGOptions{Quality: 60}))
 	// Options of one format do not leak into another chosen afterwards by
 	// the file name.
 	dir := t.TempDir()
@@ -1063,9 +1063,9 @@ func TestToFormat(t *testing.T) {
 // TestCustomFilter: a filter of the caller's own is used as given.
 func TestCustomFilter(t *testing.T) {
 	in := pngBytes(t, testutil.Images(400, 300)["rgba-opaque"])
-	tent := &Filter{Support: 1, At: func(t float64) float64 { return 1 - t }}
+	tent := &CustomKernel{Support: 1, At: func(t float64) float64 { return 1 - t }}
 	for _, size := range []int{150, 640} {
-		a, err := FromBytes(in).Resize(size, 0, ResizeOptions{Filter: tent}).PNG().ToBytes()
+		a, err := FromBytes(in).Resize(size, 0, ResizeOptions{CustomKernel: tent}).PNG().ToBytes()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1074,8 +1074,8 @@ func TestCustomFilter(t *testing.T) {
 			t.Errorf("to %d: the tent filter differs from KernelLinear (%v)", size, err)
 		}
 	}
-	for _, bad := range []*Filter{{}, {Support: 1}, {Support: -1, At: tent.At}, {Support: math.Inf(1), At: tent.At}, {Support: math.NaN(), At: tent.At}} {
-		if _, err := FromBytes(in).Resize(100, 0, ResizeOptions{Filter: bad}).ToBytes(); err == nil {
+	for _, bad := range []*CustomKernel{{}, {Support: 1}, {Support: -1, At: tent.At}, {Support: math.Inf(1), At: tent.At}, {Support: math.NaN(), At: tent.At}} {
+		if _, err := FromBytes(in).Resize(100, 0, ResizeOptions{CustomKernel: bad}).ToBytes(); err == nil {
 			t.Errorf("filter %+v accepted", *bad)
 		}
 	}
@@ -1146,7 +1146,7 @@ func TestPanicBecomesError(t *testing.T) {
 func TestLimitOutputPixels(t *testing.T) {
 	in := pngBytes(t, testutil.Images(40, 30)["rgba-opaque"])
 	var w countingWriter
-	err := FromBytes(in).Resize(40000, 0).JPEG(80).ToWriter(&w)
+	err := FromBytes(in).Resize(40000, 0).JPEG(JPEGOptions{Quality: 80}).ToWriter(&w)
 	if !errors.Is(err, ErrPixelLimit) || w.n != 0 {
 		t.Errorf("40000x30000 from a 40x30 file: %v, %d bytes written", err, w.n)
 	}
@@ -1241,7 +1241,7 @@ func TestRegisterWhileRunning(t *testing.T) {
 					return
 				default:
 				}
-				if _, err := FromBytes(in).Resize(32, 0).JPEG(80).ToBytes(); err != nil {
+				if _, err := FromBytes(in).Resize(32, 0).JPEG(JPEGOptions{Quality: 80}).ToBytes(); err != nil {
 					t.Error(err)
 					return
 				}

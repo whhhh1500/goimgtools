@@ -35,15 +35,15 @@ func TestSameOnEveryProcessor(t *testing.T) {
 		{"affine translucent", clear.Clone().Affine(0.8, -0.4, 0.3, 1.2, AffineOptions{Background: color.NRGBA{9, 99, 199, 128}}), "c29f9c57b9c451e0"},
 		{"affine bicubic", photo.Clone().Affine(0.9, 0.35, -0.2, 1.1, AffineOptions{Interpolator: InterpolateBicubic}), "105b41db60612f2c"},
 		{"affine bicubic translucent", clear.Clone().Affine(0.8, -0.4, 0.3, 1.2, AffineOptions{Interpolator: InterpolateBicubic}), "5c43553bc4eb0a91"},
-		{"blur kernel", photo.Clone().Blur(6, BlurOptions{Method: BlurLibvips}), "bd79e44679602cf7"},
-		{"blur kernel translucent", clear.Clone().Blur(1.7, BlurOptions{Method: BlurLibvips, MinAmplitude: 0.01}), "70237cb818d8b9ec"},
+		{"blur kernel", photo.Clone().Blur(6, BlurOptions{Method: MethodLibvips}), "bd79e44679602cf7"},
+		{"blur kernel translucent", clear.Clone().Blur(1.7, BlurOptions{Method: MethodLibvips, MinAmplitude: 0.01}), "70237cb818d8b9ec"},
 		{"unsharp mask", photo.Clone().Sharpen(SharpenOptions{Sigma: 1.5, Amount: 1.7, Threshold: 2}), "39a6d26dcb229159"},
 		{"mild sharpen", photo.Clone().Sharpen(), "1656909198e7d9c8"},
-		{"sharpen lightness", photo.Clone().Sharpen(SharpenOptions{Sigma: 1.2, Method: SharpenLibvips}), "d31a17aef6543a56"},
-		{"sharpen lightness translucent", clear.Clone().Sharpen(SharpenOptions{Sigma: 0.9, Method: SharpenLibvips}), "010012faaa37a465"},
-		{"rotate", photo.Clone().RotateBy(23.5, color.White), "6a31d1ab774afdea"},
-		{"rotate translucent", clear.Clone().RotateBy(-140, color.Transparent), "1ff52d2f8da42763"},
-		{"extend, trim", photo.Clone().Extend(3, 4, 5, 6, color.NRGBA{9, 8, 7, 255}).Trim(10), "d1998b95dee39434"},
+		{"sharpen lightness", photo.Clone().Sharpen(SharpenOptions{Sigma: 1.2, Method: MethodLibvips}), "d31a17aef6543a56"},
+		{"sharpen lightness translucent", clear.Clone().Sharpen(SharpenOptions{Sigma: 0.9, Method: MethodLibvips}), "010012faaa37a465"},
+		{"rotate", photo.Clone().Rotate(23.5, RotateOptions{Background: color.White}), "6a31d1ab774afdea"},
+		{"rotate translucent", clear.Clone().Rotate(-140, RotateOptions{Background: color.Transparent}), "1ff52d2f8da42763"},
+		{"extend, trim", photo.Clone().Extend(3, 4, 5, 6, ExtendOptions{Background: color.NRGBA{9, 8, 7, 255}}).Trim(10), "d1998b95dee39434"},
 		{"resize cubic", photo.Clone().Resize(117, 0), "5cdeb0a2e42b9640"},
 		{"resize lanczos up", clear.Clone().Resize(400, 0, ResizeOptions{Kernel: KernelLanczos3}), "04647b41febc98fb"},
 		{"resize in linear light", photo.Clone().Resize(127, 0, ResizeOptions{LinearLight: true, Kernel: KernelLanczos3}), "5b9f6206ffcfbd15"},
@@ -63,16 +63,16 @@ func TestSameOnEveryProcessor(t *testing.T) {
 		{"attention crop", photo.Clone().Resize(120, 140, ResizeOptions{Fit: FitCover, Interesting: InterestingAttention}), "689cfd7a72fd4c9e"},
 		{"entropy crop", photo.Clone().Resize(150, 60, ResizeOptions{Fit: FitCover, Interesting: InterestingEntropy}), "d5a7e04db11ef0a0"},
 		{"alpha channel", clear.Clone().ExtractChannel(ChannelAlpha), "e880988a7dc509ad"},
-		{"resize libvips", photo.Clone().Resize(97, 0, ResizeOptions{Kernel: KernelLanczos3, Method: ResizeLibvips}), "0021404ad205d433"},
-		{"resize libvips translucent", clear.Clone().Resize(400, 50, ResizeOptions{Fit: FitFill, Kernel: KernelMKS2021, Method: ResizeLibvips}), "75485f3a5472db7f"},
+		{"resize libvips", photo.Clone().Resize(97, 0, ResizeOptions{Kernel: KernelLanczos3, Method: MethodLibvips}), "0021404ad205d433"},
+		{"resize libvips translucent", clear.Clone().Resize(400, 50, ResizeOptions{Fit: FitFill, Kernel: KernelMKS2021, Method: MethodLibvips}), "75485f3a5472db7f"},
 		{"enhance", photo.Clone().Enhance(EnhanceSharpness, 1.6).Enhance(EnhanceColor, 1.3).Enhance(EnhanceContrast, 0.8), "22429f5f874bed97"},
 		{"pillow filters", photo.Clone().Filter(FilterSmoothMore).Filter(FilterEdgeEnhance), "9339e0ee44175ebb"},
 		{"pillow filter translucent", clear.Clone().Filter(FilterBlur), "c43147e9dc7a1044"},
 		{"autocontrast", photo.Clone().AutoContrast(AutoContrastOptions{CutoffLow: 1.5, CutoffHigh: 2.5}), "1a0f7d7e646a9784"},
-		{"resize pillow", photo.Clone().Resize(97, 0, ResizeOptions{Kernel: KernelLanczos3, Method: ResizePillow}), "a507ca964967b586"},
-		{"resize pillow translucent", clear.Clone().Resize(400, 50, ResizeOptions{Fit: FitFill, Kernel: KernelHamming, Method: ResizePillow}), "e37043c622b45c1a"},
+		{"resize pillow", photo.Clone().Resize(97, 0, ResizeOptions{Kernel: KernelLanczos3, Method: MethodPillow}), "a507ca964967b586"},
+		{"resize pillow translucent", clear.Clone().Resize(400, 50, ResizeOptions{Fit: FitFill, Kernel: KernelHamming, Method: MethodPillow}), "e37043c622b45c1a"},
 		{"resize libvips contain", clear.Clone().Resize(60, 60, ResizeOptions{Fit: FitContain, Kernel: KernelCubic,
-			Background: color.NRGBA{200, 10, 90, 99}, Method: ResizeLibvips}), "9ff49d5906aebc1c"},
+			Background: color.NRGBA{200, 10, 90, 99}, Method: MethodLibvips}), "9ff49d5906aebc1c"},
 	}
 	for _, c := range cases {
 		env := pipeline.NewEnv(0, t.TempDir())
@@ -103,12 +103,12 @@ func TestSameOnEveryProcessor(t *testing.T) {
 		do   func() ([]byte, error)
 		want string
 	}{
-		{"jpeg", func() ([]byte, error) { return photo.Clone().JPEG(83).ToBytes() }, "17e7e54b996696d4"},
+		{"jpeg", func() ([]byte, error) { return photo.Clone().JPEG(JPEGOptions{Quality: 83}).ToBytes() }, "17e7e54b996696d4"},
 		{"jpeg progressive", func() ([]byte, error) {
-			return photo.Clone().JPEG(83, JPEGOptions{Progressive: true, Optimize: true}).ToBytes()
+			return photo.Clone().JPEG(JPEGOptions{Quality: 83, Progressive: true, Optimize: true}).ToBytes()
 		}, "fa220cd8e057ac2d"},
 		{"jpeg trellis", func() ([]byte, error) {
-			return photo.Clone().JPEG(77, JPEGOptions{Optimize: true, Trellis: true}).ToBytes()
+			return photo.Clone().JPEG(JPEGOptions{Quality: 77, Optimize: true, Trellis: true}).ToBytes()
 		}, "8b4c90a04ea104ff"},
 		{"png text level 7", func() ([]byte, error) {
 			return FromImage(textLike(320, 200)).PNG(PNGOptions{CompressionLevel: 7}).ToBytes()
@@ -123,16 +123,16 @@ func TestSameOnEveryProcessor(t *testing.T) {
 		}, "61817650c4bc5347"},
 		{"gif lossy", func() ([]byte, error) { return photo.Clone().GIF(GIFOptions{Lossy: 24}).ToBytes() }, "7fcd09eb9c1eea96"},
 		{"jpeg jpegli tables", func() ([]byte, error) {
-			return photo.Clone().JPEG(77, JPEGOptions{QuantTable: QuantTableJpegli, Progressive: true}).ToBytes()
+			return photo.Clone().JPEG(JPEGOptions{Quality: 77, QuantTable: QuantTableJpegli, Progressive: true}).ToBytes()
 		}, "da2d555832c82e5f"},
 		{"jpeg 4:4:4 progressive", func() ([]byte, error) {
-			return photo.Clone().JPEG(83, JPEGOptions{Progressive: true, ChromaSubsampling: Chroma444}).ToBytes()
+			return photo.Clone().JPEG(JPEGOptions{Quality: 83, Progressive: true, ChromaSubsampling: Chroma444}).ToBytes()
 		}, "0fbd533c18adfad7"},
 		{"jpeg 4:2:2 trellis", func() ([]byte, error) {
-			return photo.Clone().JPEG(77, JPEGOptions{Optimize: true, Trellis: true, ChromaSubsampling: Chroma422}).ToBytes()
+			return photo.Clone().JPEG(JPEGOptions{Quality: 77, Optimize: true, Trellis: true, ChromaSubsampling: Chroma422}).ToBytes()
 		}, "12036896ee7978f7"},
 		{"jpeg quant table 3", func() ([]byte, error) {
-			return photo.Clone().JPEG(77, JPEGOptions{QuantTable: QuantTableImageMagick}).ToBytes()
+			return photo.Clone().JPEG(JPEGOptions{Quality: 77, QuantTable: QuantTableImageMagick}).ToBytes()
 		}, "39b0657868638dd1"},
 		{"png", func() ([]byte, error) { return clear.Clone().PNG().ToBytes() }, byFlate("7d6848e3147d24ec", "2a1b227d06566024")},
 		{"png 40 colours", func() ([]byte, error) { return photo.Clone().PNG(PNGOptions{Colors: 40}).ToBytes() }, byFlate("a22a7198a696d7a8", "4b7205232df6241f")},

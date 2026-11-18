@@ -216,10 +216,10 @@ func FuzzChain(f *testing.F) {
 		m := FromBytes(data).LimitInputPixels(1 << 15).LimitOutputPixels(1 << 15).MemoryLimit(8 << 20).TempDir(dir).
 			Threads([]int{1, 2, 3, 5, 8}[pick(28, 5)])
 		if bit(0) {
-			m.Rotate()
+			m.AutoOrient()
 		}
 		if bit(1) {
-			m.Rotate(90 * pick(2, 4))
+			m.Rotate(float64(90 * pick(2, 4)))
 		}
 		if bit(4) {
 			m.Flip()
@@ -227,10 +227,10 @@ func FuzzChain(f *testing.F) {
 		if bit(5) {
 			m.Resize(int(w%400), int(h%400), ResizeOptions{Fit: Fit(pick(6, 5)), Kernel: Kernel(pick(9, 10)),
 				FastShrinkOnLoad: bit(12), WithoutEnlargement: bit(13), Position: Position(more % 10), Interesting: Interesting(w % 3),
-				LinearLight: more&0x400 != 0, Method: ResizeMethod(h >> 14 % 3), ReducingGap: float64(w>>13) / 2})
+				LinearLight: more&0x400 != 0, Method: Method(h >> 14 % 3), ReducingGap: float64(w>>13) / 2})
 		}
 		if bit(14) {
-			m.Extract(int(w%7), int(h%5), 1+int(w%50), 1+int(h%50))
+			m.Crop(int(w%7), int(h%5), 1+int(w%50), 1+int(h%50))
 		}
 		if bit(15) {
 			m.Flatten(color.NRGBA{uint8(w), uint8(h), uint8(flags), 255})
@@ -247,7 +247,7 @@ func FuzzChain(f *testing.F) {
 			m.Modulate(float64(w%30)/10, float64(h%30)/10, float64(int16(w)))
 		}
 		if has(2) {
-			m.Blur(0.3+float64(more>>9), BlurOptions{Method: BlurMethod(h & 1)})
+			m.Blur(0.3+float64(more>>9), BlurOptions{Method: Method(h % 3)})
 			m.BoxBlur(float64(more>>10) / 3)
 		}
 		if has(3) {
@@ -258,13 +258,13 @@ func FuzzChain(f *testing.F) {
 			m.Curves([][2]uint8{{uint8(w), uint8(h)}, {uint8(w >> 8), uint8(h >> 8)}, {uint8(more), uint8(more >> 8)}}, CurvesOptions{Blue: [][2]uint8{{0, uint8(w)}, {255, uint8(h)}}})
 		}
 		if has(5) {
-			m.Extend(int(w%7), int(h%9), int(w%5), int(h%3), color.NRGBA{uint8(w), uint8(h), 9, uint8(more)})
+			m.Extend(int(w%7), int(h%9), int(w%5), int(h%3), ExtendOptions{Background: color.NRGBA{uint8(w), uint8(h), 9, uint8(more)}})
 		}
 		if has(6) {
 			m.Trim(float64(h%60), TrimOptions{LineArt: w&1 == 1, Margin: int(w % 5)})
 		}
 		if has(7) {
-			m.RotateBy(float64(int16(h))/7, color.Transparent, RotateOptions{Method: RotateMethod(more & 1), Interpolator: Interpolator(w % 3), Expand: h&2 != 0})
+			m.Rotate(float64(int16(h))/7, RotateOptions{Background: color.Transparent, Method: Method(more & 1), Interpolator: Interpolator(w % 3), Expand: h&2 != 0})
 			if more&4 != 0 {
 				f := func(b uint16, d float64) float64 { return float64(int8(b)) / d }
 				tr := []Transformation{
@@ -333,7 +333,7 @@ func FuzzChain(f *testing.F) {
 			m.RemoveAlpha()
 		}
 		if extra>>26&3 == 3 {
-			m.ExtendWith(int(w%5), int(h%9), int(w%3), int(h%70), ExtendMode(more%3))
+			m.Extend(int(w%5), int(h%9), int(w%3), int(h%70), ExtendOptions{Mode: ExtendMode(more % 3)})
 		}
 		if extra>>28&3 == 3 {
 			if w&1 == 0 {
@@ -372,11 +372,11 @@ func FuzzChain(f *testing.F) {
 		}
 		switch pick(23, 12) {
 		case 0:
-			m.JPEG(1+int(w%100), JPEGOptions{Trellis: bit(12), QuantTable: QuantTable(h % 10)})
+			m.JPEG(JPEGOptions{Quality: 1 + int(w%100), Trellis: bit(12), QuantTable: QuantTable(h % 10)})
 		case 1:
-			m.JPEG(1+int(w%100), JPEGOptions{Progressive: true})
+			m.JPEG(JPEGOptions{Quality: 1 + int(w%100), Progressive: true})
 		case 2:
-			m.JPEG(1+int(w%100), JPEGOptions{Optimize: true, Trellis: bit(13)})
+			m.JPEG(JPEGOptions{Quality: 1 + int(w%100), Optimize: true, Trellis: bit(13)})
 		case 3:
 			m.PNG()
 		case 4:
@@ -401,7 +401,7 @@ func FuzzChain(f *testing.F) {
 		case 10:
 			m.WebP(WebPOptions{Lossless: true, Effort: 1 + int(h%9)})
 		case 11:
-			m.JPEG(80).MaxFileSize(200 + int64(w)*4)
+			m.JPEG(JPEGOptions{Quality: 80}).MaxFileSize(200 + int64(w)*4)
 		}
 		// Within the pixel limits above no input has more than a moment's
 		// work in it; one that takes this long has found a way around them.

@@ -52,7 +52,7 @@ func TestICCLookupTables(t *testing.T) {
 			if worst > c.limit {
 				t.Errorf("%s, %d threads: up to %d levels from LittleCMS", c.in, threads, worst)
 			}
-			if info, err := FromBytes(out).Metadata(); err != nil || info.HasProfile {
+			if info, err := FromBytes(out).Metadata(); err != nil || info.HasICC {
 				t.Errorf("%s: the output has a profile (%v)", c.in, err)
 			}
 		}
@@ -63,7 +63,7 @@ func TestICCLookupTables(t *testing.T) {
 	want := nrgbaOf(decodePNG(t, must(os.ReadFile("testdata/icc/gray-dotgain-lcms.png"))))
 	for _, out := range [][]byte{must(FromBytes(gray).ToSRGB().PNG().ToBytes()), must(FromBytes(gray).GIF().ToBytes())} {
 		info, err := FromBytes(out).Metadata()
-		if err != nil || info.HasProfile || info.Color != "gray" && info.Color != "palette" {
+		if err != nil || info.HasICC || info.Color != "gray" && info.Color != "palette" {
 			t.Errorf("grey output: %+v, %v", info, err)
 		}
 		m, err := FromBytes(out).ToImage()
@@ -90,7 +90,7 @@ func TestICCLookupTables(t *testing.T) {
 	tr := p.ToSRGB()
 	raw := nrgbaOf(decodePNG(t, must(FromBytes(gray).StripICC().Tint(color.RGBA{112, 66, 20, 255}).PNG().ToBytes())))
 	tinted := must(FromBytes(gray).Tint(color.RGBA{112, 66, 20, 255}).PNG().ToBytes())
-	if info, err := FromBytes(tinted).Metadata(); err != nil || info.HasProfile {
+	if info, err := FromBytes(tinted).Metadata(); err != nil || info.HasICC {
 		t.Errorf("tinted: %+v, %v", info, err)
 	}
 	got := nrgbaOf(decodePNG(t, tinted))
@@ -100,12 +100,12 @@ func TestICCLookupTables(t *testing.T) {
 			t.Fatalf("tinted pixel %d: %v, want %v", i/4, got.Pix[i:i+3], [3]uint8{r, g, b})
 		}
 	}
-	if info, err := FromBytes(must(FromBytes(gray).Resize(20, 0).JPEG(90).ToBytes())).Metadata(); err != nil || !info.HasProfile {
+	if info, err := FromBytes(must(FromBytes(gray).Resize(20, 0).JPEG(JPEGOptions{Quality: 90}).ToBytes())).Metadata(); err != nil || !info.HasICC {
 		t.Errorf("still grey: %+v, %v", info, err)
 	}
 	// StripICC drops the profile from the output, not from the conversion.
 	in := must(os.ReadFile("testdata/icc/cmyk-lut16.jpg"))
-	if info, err := FromBytes(in).Metadata(); err != nil || info.Color != "cmyk" || !info.HasProfile {
+	if info, err := FromBytes(in).Metadata(); err != nil || info.Color != "cmyk" || !info.HasICC {
 		t.Errorf("input: %+v, %v", info, err)
 	}
 	if !bytes.Equal(must(FromBytes(in).StripICC().PNG().ToBytes()), must(FromBytes(in).PNG().ToBytes())) {

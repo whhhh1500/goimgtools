@@ -479,13 +479,13 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 	switch strings.ToLower(*o.rotate) {
 	case "":
 	case "auto":
-		im.Rotate()
+		im.AutoOrient()
 	default:
 		deg, err := strconv.ParseFloat(*o.rotate, 64)
 		if err != nil || math.IsNaN(deg) || math.IsInf(deg, 0) {
 			return nil, fmt.Errorf("-rotate: want auto or a number of degrees, got %q", *o.rotate)
 		}
-		im.RotateBy(deg, bg)
+		im.Rotate(deg, goimgtools.RotateOptions{Background: bg})
 	}
 	if *o.flip {
 		im.Flip()
@@ -513,7 +513,7 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 		if err != nil {
 			return nil, fmt.Errorf("-crop: %w", err)
 		}
-		im.Extract(v[0], v[1], v[2], v[3])
+		im.Crop(v[0], v[1], v[2], v[3])
 	}
 	if *o.resize != "" {
 		w, h, err := size(*o.resize)
@@ -536,8 +536,8 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 		if !ok {
 			return nil, fmt.Errorf("-kernel: unknown filter %q", *o.kernel)
 		}
-		method, ok := map[string]goimgtools.ResizeMethod{"draw": goimgtools.ResizeDraw, "libvips": goimgtools.ResizeLibvips,
-			"pillow": goimgtools.ResizePillow}[strings.ToLower(*o.resizeMethod)]
+		method, ok := map[string]goimgtools.Method{"draw": goimgtools.MethodDefault, "libvips": goimgtools.MethodLibvips,
+			"pillow": goimgtools.MethodPillow}[strings.ToLower(*o.resizeMethod)]
 		if !ok {
 			return nil, fmt.Errorf("-resize-method: want draw, libvips or pillow, got %q", *o.resizeMethod)
 		}
@@ -568,10 +568,10 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 		}
 		switch *o.extendWith {
 		case "":
-			im.Extend(v[0], v[1], v[2], v[3], bg)
+			im.Extend(v[0], v[1], v[2], v[3], goimgtools.ExtendOptions{Background: bg})
 		case "copy", "repeat", "mirror":
-			im.ExtendWith(v[0], v[1], v[2], v[3], map[string]goimgtools.ExtendMode{
-				"copy": goimgtools.ExtendCopy, "repeat": goimgtools.ExtendRepeat, "mirror": goimgtools.ExtendMirror}[*o.extendWith])
+			im.Extend(v[0], v[1], v[2], v[3], goimgtools.ExtendOptions{Mode: map[string]goimgtools.ExtendMode{
+				"copy": goimgtools.ExtendCopy, "repeat": goimgtools.ExtendRepeat, "mirror": goimgtools.ExtendMirror}[*o.extendWith]})
 		default:
 			return nil, fmt.Errorf("-extend-with: unknown way %q", *o.extendWith)
 		}
@@ -591,7 +591,7 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 		im.Modulate(v[0], v[1], v[2], goimgtools.ModulateOptions{Lightness: v[3]})
 	}
 	if *o.blur != 0 {
-		method, ok := map[string]goimgtools.BlurMethod{"pillow": goimgtools.BlurPillow, "libvips": goimgtools.BlurLibvips}[*o.blurMethod]
+		method, ok := map[string]goimgtools.Method{"pillow": goimgtools.MethodPillow, "libvips": goimgtools.MethodLibvips}[*o.blurMethod]
 		if !ok {
 			return nil, fmt.Errorf("-blur-method: want pillow or libvips, got %q", *o.blurMethod)
 		}
@@ -606,7 +606,7 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 			if err != nil {
 				return nil, fmt.Errorf("-sharpen: %w", err)
 			}
-			so := goimgtools.SharpenOptions{Sigma: v[0], Method: goimgtools.SharpenLibvips}
+			so := goimgtools.SharpenOptions{Sigma: v[0], Method: goimgtools.MethodLibvips}
 			if len(v) == 6 {
 				so.Curve = &goimgtools.SharpenCurve{Flat: v[1], Jagged: v[2], JaggedFrom: v[3], MaxBrighten: v[4], MaxDarken: v[5]}
 			}
@@ -750,7 +750,7 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 		if !ok {
 			return nil, fmt.Errorf("-jpeg-chroma: %q is not 420, 422 or 444", *o.jpegChroma)
 		}
-		im.JPEG(*o.quality, goimgtools.JPEGOptions{Optimize: *o.jpegOpt, Progressive: *o.jpegProg, Trellis: *o.jpegTrellis, QuantTable: goimgtools.QuantTable(*o.jpegQuantTable),
+		im.JPEG(goimgtools.JPEGOptions{Quality: *o.quality, Optimize: *o.jpegOpt, Progressive: *o.jpegProg, Trellis: *o.jpegTrellis, QuantTable: goimgtools.QuantTable(*o.jpegQuantTable),
 			ChromaSubsampling: chroma})
 	case "png":
 		im.PNG(goimgtools.PNGOptions{CompressionLevel: *o.pngLevel, Colors: *o.pngColors, NoDither: *o.noDither})

@@ -66,9 +66,9 @@ func decodeAny(t *testing.T, what string, b []byte) image.Image {
 
 // outputs are all the ways a file can be written.
 var outputs = map[string]func(*Image) *Image{
-	"jpeg":             func(m *Image) *Image { return m.JPEG(80) },
-	"jpeg optimized":   func(m *Image) *Image { return m.JPEG(80, JPEGOptions{Optimize: true}) },
-	"jpeg progressive": func(m *Image) *Image { return m.JPEG(80, JPEGOptions{Progressive: true}) },
+	"jpeg":             func(m *Image) *Image { return m.JPEG(JPEGOptions{Quality: 80}) },
+	"jpeg optimized":   func(m *Image) *Image { return m.JPEG(JPEGOptions{Quality: 80, Optimize: true}) },
+	"jpeg progressive": func(m *Image) *Image { return m.JPEG(JPEGOptions{Quality: 80, Progressive: true}) },
 	"png":              func(m *Image) *Image { return m.PNG() },
 	"png 16 colours":   func(m *Image) *Image { return m.PNG(PNGOptions{Colors: 16}) },
 	"png 2 colours":    func(m *Image) *Image { return m.PNG(PNGOptions{Colors: 2, NoDither: true}) },
@@ -136,9 +136,9 @@ func TestSmallestThroughOperations(t *testing.T) {
 		{"rotate 90", func(m *Image, w, h int) *Image { return m.Rotate(90) }, func(w, h int) (int, int) { return h, w }},
 		{"rotate 180", func(m *Image, w, h int) *Image { return m.Rotate(180) }, same},
 		{"rotate 270, then to 3 high", func(m *Image, w, h int) *Image { return m.Rotate(270).Resize(0, 3) }, func(w, h int) (int, int) { return max(1, int(math.Round(float64(h)*3/float64(w)))), 3 }},
-		{"auto-orient", func(m *Image, w, h int) *Image { return m.Rotate() }, same},
+		{"auto-orient", func(m *Image, w, h int) *Image { return m.AutoOrient() }, same},
 		{"flip, flop", func(m *Image, w, h int) *Image { return m.Flip().Flop() }, same},
-		{"last pixel", func(m *Image, w, h int) *Image { return m.Extract(w-1, h-1, 1, 1) }, func(w, h int) (int, int) { return 1, 1 }},
+		{"last pixel", func(m *Image, w, h int) *Image { return m.Crop(w-1, h-1, 1, 1) }, func(w, h int) (int, int) { return 1, 1 }},
 		{"flatten", func(m *Image, w, h int) *Image { return m.Flatten(color.White) }, same},
 		{"logo larger than the image", func(m *Image, w, h int) *Image { return m.Composite(logo, CompositeOptions{Gravity: Center}) }, same},
 		{"logo turned and tiled", func(m *Image, w, h int) *Image {
@@ -157,9 +157,11 @@ func TestSmallestThroughOperations(t *testing.T) {
 		{"blur wider than the image", func(m *Image, w, h int) *Image { return m.Blur(400) }, same},
 		{"mild sharpen", func(m *Image, w, h int) *Image { return m.Sharpen() }, same},
 		{"unsharp mask", func(m *Image, w, h int) *Image { return m.Sharpen(SharpenOptions{Sigma: 3, Amount: 2, Threshold: 2}) }, same},
-		{"extend", func(m *Image, w, h int) *Image { return m.Extend(1, 2, 3, 4, color.Transparent) }, func(w, h int) (int, int) { return w + 6, h + 4 }},
-		{"extend with mirror", func(m *Image, w, h int) *Image { return m.ExtendWith(5, 2, 9, 4, ExtendMirror) }, func(w, h int) (int, int) { return w + 6, h + 14 }},
-		{"extend with copy", func(m *Image, w, h int) *Image { return m.ExtendWith(0, 2, 3, 1, ExtendCopy) }, func(w, h int) (int, int) { return w + 3, h + 3 }},
+		{"extend", func(m *Image, w, h int) *Image {
+			return m.Extend(1, 2, 3, 4, ExtendOptions{Background: color.Transparent})
+		}, func(w, h int) (int, int) { return w + 6, h + 4 }},
+		{"extend with mirror", func(m *Image, w, h int) *Image { return m.Extend(5, 2, 9, 4, ExtendOptions{Mode: ExtendMirror}) }, func(w, h int) (int, int) { return w + 6, h + 14 }},
+		{"extend with copy", func(m *Image, w, h int) *Image { return m.Extend(0, 2, 3, 1, ExtendOptions{Mode: ExtendCopy}) }, func(w, h int) (int, int) { return w + 3, h + 3 }},
 		{"levels", func(m *Image, w, h int) *Image { return m.Negate().Linear(1.1, -3).Gamma(0.8).Threshold(90) }, same},
 		{"tint, normalize", func(m *Image, w, h int) *Image { return m.Tint(color.RGBA{9, 99, 199, 255}).Normalize() }, same},
 		{"median", func(m *Image, w, h int) *Image { return m.Median(3) }, same},
@@ -183,8 +185,10 @@ func TestSmallestThroughOperations(t *testing.T) {
 		{"convolve", func(m *Image, w, h int) *Image {
 			return m.Convolve(Convolution{Width: 5, Height: 3, Weights: []float64{1, 0, -1, 2, 0, -2, 1, 0, -1, 1, 2, 3, 4, 5, 6}, Offset: 100})
 		}, same},
-		{"extend, trim", func(m *Image, w, h int) *Image { return m.Extend(1, 2, 3, 4, color.RGBA{1, 2, 3, 255}).Trim(0) }, nil},
-		{"turn 33 degrees", func(m *Image, w, h int) *Image { return m.RotateBy(33, nil) }, func(w, h int) (int, int) {
+		{"extend, trim", func(m *Image, w, h int) *Image {
+			return m.Extend(1, 2, 3, 4, ExtendOptions{Background: color.RGBA{1, 2, 3, 255}}).Trim(0)
+		}, nil},
+		{"turn 33 degrees", func(m *Image, w, h int) *Image { return m.Rotate(33) }, func(w, h int) (int, int) {
 			// The box around the turned image, each side rounded (half away
 			// from zero), as libvips.
 			s, c := math.Sincos(33 * math.Pi / 180)
@@ -288,8 +292,8 @@ func TestLargestSides(t *testing.T) {
 		max   int // the largest side the format holds; 0 for no limit worth testing
 		write func(*Image) *Image
 	}{
-		{"jpeg", 65535, func(m *Image) *Image { return m.JPEG(60) }},
-		{"jpeg progressive", 65535, func(m *Image) *Image { return m.JPEG(60, JPEGOptions{Progressive: true}) }},
+		{"jpeg", 65535, func(m *Image) *Image { return m.JPEG(JPEGOptions{Quality: 60}) }},
+		{"jpeg progressive", 65535, func(m *Image) *Image { return m.JPEG(JPEGOptions{Quality: 60, Progressive: true}) }},
 		{"gif", 65535, func(m *Image) *Image { return m.GIF(GIFOptions{FixedPalette: true}) }},
 		{"gif adaptive", 65535, func(m *Image) *Image { return m.GIF() }},
 		{"webp", 16383, func(m *Image) *Image { return m.WebP() }},
@@ -394,7 +398,7 @@ func TestWideAndTallWithinMemory(t *testing.T) {
 				return &stripes{w: size.X, h: size.Y, env: e}, nil
 			})
 			var w countingWriter
-			err := chain(in).TempDir(t.TempDir()).JPEG(70).ToWriter(&w)
+			err := chain(in).TempDir(t.TempDir()).JPEG(JPEGOptions{Quality: 70}).ToWriter(&w)
 			noPanic(t, what, err)
 			if err != nil && !errors.Is(err, ErrMemoryLimit) {
 				t.Errorf("%s: %v", what, err)
@@ -424,10 +428,10 @@ func TestArgumentExtremes(t *testing.T) {
 	}
 	base := func() *Image { return FromBytes(in) }
 	cases := []c{
-		{"quality 1", func() *Image { return base().JPEG(1) }, true},
-		{"quality 100", func() *Image { return base().JPEG(100) }, true},
-		{"quality 101", func() *Image { return base().JPEG(101) }, false},
-		{"quality -1", func() *Image { return base().JPEG(-1) }, false},
+		{"quality 1", func() *Image { return base().JPEG(JPEGOptions{Quality: 1}) }, true},
+		{"quality 100", func() *Image { return base().JPEG(JPEGOptions{Quality: 100}) }, true},
+		{"quality 101", func() *Image { return base().JPEG(JPEGOptions{Quality: 101}) }, false},
+		{"quality -1", func() *Image { return base().JPEG(JPEGOptions{Quality: -1}) }, false},
 		{"webp quality 1", func() *Image { return base().WebP(WebPOptions{Quality: 1}) }, true},
 		{"webp quality 100", func() *Image { return base().WebP(WebPOptions{Quality: 100}) }, true},
 		{"webp quality 101", func() *Image { return base().WebP(WebPOptions{Quality: 101}) }, false},
@@ -453,15 +457,18 @@ func TestArgumentExtremes(t *testing.T) {
 		{"resize unknown fit", func() *Image { return base().Resize(10, 10, ResizeOptions{Fit: 99}) }, false},
 		{"resize unknown kernel", func() *Image { return base().Resize(10, 10, ResizeOptions{Kernel: 99}) }, false},
 		{"no enlargement", func() *Image { return base().Resize(big, 0, ResizeOptions{WithoutEnlargement: true}) }, true},
-		{"rotate 45", func() *Image { return base().Rotate(45) }, false},
+		{"rotate 45", func() *Image { return base().Rotate(45) }, true},
+		{"rotate NaN", func() *Image { return base().Rotate(math.NaN()) }, false},
+		{"rotate Inf", func() *Image { return base().Rotate(math.Inf(-1)) }, false},
+		{"rotate huge", func() *Image { return base().Rotate(math.MaxFloat64) }, true},
 		{"rotate -90", func() *Image { return base().Rotate(-90) }, true},
-		{"rotate MinInt", func() *Image { return base().Rotate(math.MinInt) }, false},
+		{"rotate MinInt", func() *Image { return base().Rotate(math.MinInt) }, true},
 		{"rotate 360000", func() *Image { return base().Rotate(360000) }, true},
-		{"rotate twice", func() *Image { return base().Rotate(90, 180) }, false},
-		{"extract nothing", func() *Image { return base().Extract(0, 0, 0, 0) }, false},
-		{"extract negative", func() *Image { return base().Extract(-1, 0, 10, 10) }, false},
-		{"extract overflow", func() *Image { return base().Extract(math.MaxInt, math.MaxInt, math.MaxInt, math.MaxInt) }, false},
-		{"extract all", func() *Image { return base().Extract(0, 0, 64, 48) }, true},
+		{"rotate two options", func() *Image { return base().Rotate(90, RotateOptions{}, RotateOptions{}) }, false},
+		{"extract nothing", func() *Image { return base().Crop(0, 0, 0, 0) }, false},
+		{"extract negative", func() *Image { return base().Crop(-1, 0, 10, 10) }, false},
+		{"extract overflow", func() *Image { return base().Crop(math.MaxInt, math.MaxInt, math.MaxInt, math.MaxInt) }, false},
+		{"extract all", func() *Image { return base().Crop(0, 0, 64, 48) }, true},
 		{"opacity 2", func() *Image { return base().Composite(logo, CompositeOptions{Opacity: 2}) }, false},
 		{"opacity -1", func() *Image { return base().Composite(logo, CompositeOptions{Opacity: -1}) }, false},
 		{"opacity NaN", func() *Image { return base().Composite(logo, CompositeOptions{Opacity: nan}) }, false},
@@ -503,9 +510,9 @@ func TestArgumentExtremes(t *testing.T) {
 		{"pixel limit 1", func() *Image { return base().LimitInputPixels(1) }, false},
 		{"pixel limit exact", func() *Image { return base().LimitInputPixels(64 * 48) }, true},
 		{"pixel limit one short", func() *Image { return base().LimitInputPixels(64*48 - 1) }, false},
-		{"max file size 1", func() *Image { return base().JPEG(80).MaxFileSize(1) }, false},
-		{"max file size MaxInt64", func() *Image { return base().JPEG(80).MaxFileSize(math.MaxInt64) }, true},
-		{"max file size -1", func() *Image { return base().JPEG(80).MaxFileSize(-1) }, false},
+		{"max file size 1", func() *Image { return base().JPEG(JPEGOptions{Quality: 80}).MaxFileSize(1) }, false},
+		{"max file size MaxInt64", func() *Image { return base().JPEG(JPEGOptions{Quality: 80}).MaxFileSize(math.MaxInt64) }, true},
+		{"max file size -1", func() *Image { return base().JPEG(JPEGOptions{Quality: 80}).MaxFileSize(-1) }, false},
 		{"temp dir that does not exist", func() *Image { return base().TempDir(filepath.Join(t.TempDir(), "no", "such")) }, true},
 		{"text empty", func() *Image { return Text("") }, false},
 		{"text of spaces", func() *Image { return Text("   \n\n  ") }, false},
@@ -551,17 +558,17 @@ func TestArgumentExtremes(t *testing.T) {
 		{"sharpen amount Inf", func() *Image { return base().Sharpen(SharpenOptions{Sigma: 1, Amount: inf}) }, false},
 		{"sharpen threshold 255", func() *Image { return base().Sharpen(SharpenOptions{Sigma: 1, Threshold: 255}) }, true},
 		{"modulate 0, 0", func() *Image { return base().Modulate(0, 0, 0) }, true},
-		{"jpeg quant table 8", func() *Image { return base().JPEG(80, JPEGOptions{QuantTable: 8}) }, true},
+		{"jpeg quant table 8", func() *Image { return base().JPEG(JPEGOptions{Quality: 80, QuantTable: 8}) }, true},
 		{"gif lossy 255", func() *Image { return base().GIF(GIFOptions{Lossy: 255}) }, true},
 		{"gif lossy 256", func() *Image { return base().GIF(GIFOptions{Lossy: 256}) }, false},
-		{"jpeg quant table 9", func() *Image { return base().JPEG(80, JPEGOptions{QuantTable: 9}) }, true},
-		{"jpeg quant table 10", func() *Image { return base().JPEG(80, JPEGOptions{QuantTable: 10}) }, false},
-		{"jpeg quant table -1", func() *Image { return base().JPEG(80, JPEGOptions{QuantTable: -1}) }, false},
+		{"jpeg quant table 9", func() *Image { return base().JPEG(JPEGOptions{Quality: 80, QuantTable: 9}) }, true},
+		{"jpeg quant table 10", func() *Image { return base().JPEG(JPEGOptions{Quality: 80, QuantTable: 10}) }, false},
+		{"jpeg quant table -1", func() *Image { return base().JPEG(JPEGOptions{Quality: 80, QuantTable: -1}) }, false},
 		{"modulate 1e6", func() *Image { return base().Modulate(1e6, 1e6, 1e9) }, true},
 		{"modulate Inf", func() *Image { return base().Modulate(inf, 1, 0) }, false},
-		{"extend 0", func() *Image { return base().Extend(0, 0, 0, 0, nil) }, true},
-		{"extend MaxInt", func() *Image { return base().Extend(math.MaxInt, 0, 0, 0, nil) }, false},
-		{"extend MaxInt32 both", func() *Image { return base().Extend(0, math.MaxInt32, 0, math.MaxInt32, nil) }, false},
+		{"extend 0", func() *Image { return base().Extend(0, 0, 0, 0) }, true},
+		{"extend MaxInt", func() *Image { return base().Extend(math.MaxInt, 0, 0, 0) }, false},
+		{"extend MaxInt32 both", func() *Image { return base().Extend(0, math.MaxInt32, 0, math.MaxInt32) }, false},
 		{"trim 255", func() *Image { return base().Trim(255) }, true},
 		{"linear 1e300", func() *Image { return base().Linear(1e300, -1e300) }, true},
 		{"linear NaN", func() *Image { return base().Linear(nan, 0) }, false},
@@ -589,10 +596,10 @@ func TestArgumentExtremes(t *testing.T) {
 			return base().Convolve(Convolution{Width: 3, Height: 1, Weights: []float64{1e300, -1e300, 1e300}})
 		}, true},
 		{"trim Inf", func() *Image { return base().Trim(inf) }, false},
-		{"turn 1e300 degrees", func() *Image { return base().RotateBy(1e300, nil) }, true},
-		{"turn 1e-300 degrees", func() *Image { return base().RotateBy(1e-300, nil) }, true},
-		{"turn -0.0000001 degrees", func() *Image { return base().RotateBy(-1e-7, color.Transparent) }, true},
-		{"turn NaN", func() *Image { return base().RotateBy(nan, nil) }, false},
+		{"turn 1e300 degrees", func() *Image { return base().Rotate(1e300) }, true},
+		{"turn 1e-300 degrees", func() *Image { return base().Rotate(1e-300) }, true},
+		{"turn -0.0000001 degrees", func() *Image { return base().Rotate(-1e-7, RotateOptions{Background: color.Transparent}) }, true},
+		{"turn NaN", func() *Image { return base().Rotate(nan) }, false},
 		{"watermark 10 times the width", func() *Image { return base().Composite(base(), CompositeOptions{WidthRatio: 10}) }, true},
 		{"watermark a millionth of the height", func() *Image { return base().Composite(base(), CompositeOptions{HeightRatio: 1e-6}) }, true},
 		{"watermark ratio 10.5", func() *Image { return base().Composite(base(), CompositeOptions{WidthRatio: 10.5}) }, false},

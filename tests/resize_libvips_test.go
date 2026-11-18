@@ -20,7 +20,7 @@ func rgbaSum(t *testing.T, m image.Image) string {
 	return fmt.Sprintf("%x", sha256.Sum256(n.Pix))[:16]
 }
 
-// TestResizeLibvips: ResizeLibvips is sharp's resize, to the byte. The sums
+// TestResizeLibvips: MethodLibvips is sharp's resize, to the byte. The sums
 // are of the pixels of sharp 0.35.5 (libvips 8.18.7) for
 // sharp(input)[.rotate(90)|.flop()|.rotate()].resize(width || null,
 // height || null, options): every kernel reducing (with and without box
@@ -155,7 +155,7 @@ func TestResizeLibvips(t *testing.T) {
 		{"sharp/resize-exif6.jpg", "auto", 90, 60, ResizeOptions{Kernel: KernelLanczos3, Fit: FitFill, FastShrinkOnLoad: true}, "9ccb5d56b1e25615"},
 		{"sharp/resize-exif6.jpg", "auto", 50, 50, ResizeOptions{Kernel: KernelLanczos3, Fit: FitCover, FastShrinkOnLoad: true}, "f625a500d93a9dc1"},
 	} {
-		c.o.Method = ResizeLibvips
+		c.o.Method = MethodLibvips
 		for _, threads := range []int{1, 3} {
 			m := FromBytes(sourcePNG(t, c.in)).Threads(threads)
 			switch c.pre {
@@ -164,7 +164,7 @@ func TestResizeLibvips(t *testing.T) {
 			case "flop":
 				m.Flop()
 			case "auto":
-				m.Rotate()
+				m.AutoOrient()
 			}
 			out, err := m.Resize(c.w, c.h, c.o).PNG().ToBytes()
 			if err != nil {

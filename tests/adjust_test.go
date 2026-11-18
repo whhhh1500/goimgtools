@@ -165,7 +165,7 @@ func TestGrayscale(t *testing.T) {
 		t.Errorf("differs from Pillow by up to %d, %.3f on average", maxd, mean)
 	}
 	// A JPEG becomes a greyscale JPEG.
-	jp, err := FromBytes(jpegBytes(photoLike(160, 120), 90)).Grayscale().JPEG(85).ToBytes()
+	jp, err := FromBytes(jpegBytes(photoLike(160, 120), 90)).Grayscale().JPEG(JPEGOptions{Quality: 85}).ToBytes()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -370,7 +370,7 @@ func TestBlur(t *testing.T) {
 	}
 }
 
-// TestBlurLibvips: BlurLibvips is sharp's blur to the byte, with the 8-bit
+// TestBlurLibvips: MethodLibvips is sharp's blur to the byte, with the 8-bit
 // weights of libvips' vector path (sigma 2, and 3 cut off at 0.01 of the
 // peak), with the integer weights of a mask wider than 1024 (sigma 300),
 // and on an image with transparency, premultiplied as libvips does it.
@@ -388,7 +388,7 @@ func TestBlurLibvips(t *testing.T) {
 		{"blur-kernel-rgba-0.7", rgba, 0.7, 0},
 		{"blur-kernel-rgba-25", rgba, 25, 0},
 	} {
-		out, err := FromBytes(c.src).Blur(c.sigma, BlurOptions{Method: BlurLibvips, MinAmplitude: c.min}).PNG().ToBytes()
+		out, err := FromBytes(c.src).Blur(c.sigma, BlurOptions{Method: MethodLibvips, MinAmplitude: c.min}).PNG().ToBytes()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -405,7 +405,7 @@ func TestBlurLibvips(t *testing.T) {
 		t.Fatal(err)
 	}
 	if maxd, _, _ := channelDiff(t, decodePNG(t, box), readPNG(t, "sharp/blur-kernel-2.png")); maxd == 0 {
-		t.Error("BlurPillow gave sharp's blur")
+		t.Error("MethodPillow gave sharp's blur")
 	}
 	// Under a small limit the window of rows goes to a temporary file (at
 	// sigma 100 it is the 300 rows of the image, 3.6MB), with the same
@@ -414,7 +414,7 @@ func TestBlurLibvips(t *testing.T) {
 	for name, in := range map[string][]byte{"opaque": pngBytes(t, photoLike(3000, 300)),
 		"translucent": pngBytes(t, testutil.Images(3000, 300)["nrgba"])} {
 		for _, sigma := range []float64{10, 100} {
-			o := BlurOptions{Method: BlurLibvips}
+			o := BlurOptions{Method: MethodLibvips}
 			big, used := budgetAfter(t, FromBytes(in).Blur(sigma, o), 64<<20, dir)
 			small, used2 := budgetAfter(t, FromBytes(in).Blur(sigma, o), 2<<20, dir)
 			if used != 0 || used2 != 0 {
@@ -426,8 +426,8 @@ func TestBlurLibvips(t *testing.T) {
 	if n := tempFiles(dir); n != 0 {
 		t.Errorf("%d temporary files left", n)
 	}
-	for _, o := range []BlurOptions{{Method: 2}, {Method: -1}, {MinAmplitude: 0.2}, {Method: BlurLibvips, MinAmplitude: 0.0005},
-		{Method: BlurLibvips, MinAmplitude: 1.5}, {Method: BlurLibvips, MinAmplitude: math.NaN()}} {
+	for _, o := range []BlurOptions{{Method: 3}, {Method: -1}, {MinAmplitude: 0.2}, {Method: MethodLibvips, MinAmplitude: 0.0005},
+		{Method: MethodLibvips, MinAmplitude: 1.5}, {Method: MethodLibvips, MinAmplitude: math.NaN()}} {
 		if _, err := FromBytes(rgb).Blur(2, o).ToBytes(); err == nil {
 			t.Errorf("Blur(2, %+v) accepted", o)
 		}
@@ -449,7 +449,7 @@ func TestBlurLibvips(t *testing.T) {
 	}
 }
 
-// TestSharpenLibvips: SharpenLibvips is sharp's sharpen with a sigma,
+// TestSharpenLibvips: MethodLibvips is sharp's sharpen with a sigma,
 // within a level on a few values (where sharp's cube roots, the C
 // library's, are a unit in the last place off the exact ones), with the
 // default curve, another, and with transparency.
@@ -459,10 +459,10 @@ func TestSharpenLibvips(t *testing.T) {
 		name string
 		m    *Image
 	}{
-		{"sharpen-lightness-1", FromBytes(rgb).Sharpen(SharpenOptions{Sigma: 1, Method: SharpenLibvips})},
-		{"sharpen-lightness-curve", FromBytes(rgb).Sharpen(SharpenOptions{Sigma: 2.5, Method: SharpenLibvips,
+		{"sharpen-lightness-1", FromBytes(rgb).Sharpen(SharpenOptions{Sigma: 1, Method: MethodLibvips})},
+		{"sharpen-lightness-curve", FromBytes(rgb).Sharpen(SharpenOptions{Sigma: 2.5, Method: MethodLibvips,
 			Curve: &SharpenCurve{Flat: 0.5, Jagged: 3, JaggedFrom: 1.5, MaxBrighten: 15, MaxDarken: 25}})},
-		{"sharpen-lightness-rgba", FromBytes(rgba).Sharpen(SharpenOptions{Sigma: 1, Method: SharpenLibvips})},
+		{"sharpen-lightness-rgba", FromBytes(rgba).Sharpen(SharpenOptions{Sigma: 1, Method: MethodLibvips})},
 	} {
 		got := decodePNG(t, must(c.m.PNG().ToBytes()))
 		maxd, mean, over := channelDiff(t, got, readPNG(t, "sharp/"+c.name+".png"))
@@ -471,13 +471,13 @@ func TestSharpenLibvips(t *testing.T) {
 		}
 	}
 	// The curve is what was asked; by name the same.
-	a := must(FromBytes(rgb).Sharpen(SharpenOptions{Sigma: 0.8, Method: SharpenLibvips, Curve: &SharpenCurve{Flat: 0, Jagged: 4, JaggedFrom: 1, MaxBrighten: 5, MaxDarken: 5}}).PNG().ToBytes())
+	a := must(FromBytes(rgb).Sharpen(SharpenOptions{Sigma: 0.8, Method: MethodLibvips, Curve: &SharpenCurve{Flat: 0, Jagged: 4, JaggedFrom: 1, MaxBrighten: 5, MaxDarken: 5}}).PNG().ToBytes())
 	b := must(FromBytes(rgb).Do("sharpen", "0.8", "libvips", "0", "4", "1", "5", "5").PNG().ToBytes())
 	if !bytes.Equal(a, b) {
 		t.Error("by name: another image")
 	}
-	for _, o := range []SharpenOptions{{Method: SharpenLibvips}, {Sigma: 1, Method: SharpenLibvips, Amount: 2},
-		{Sigma: 1, Curve: &SharpenCurve{}}, {Sigma: 1, Method: 5}, {Sigma: 1, Method: SharpenLibvips, Curve: &SharpenCurve{Flat: -1}}} {
+	for _, o := range []SharpenOptions{{Method: MethodLibvips}, {Sigma: 1, Method: MethodLibvips, Amount: 2},
+		{Sigma: 1, Curve: &SharpenCurve{}}, {Sigma: 1, Method: 5}, {Sigma: 1, Method: MethodLibvips, Curve: &SharpenCurve{Flat: -1}}} {
 		if _, err := FromBytes(rgb).Sharpen(o).PNG().ToBytes(); err == nil {
 			t.Errorf("Sharpen(%+v) accepted", o)
 		}
@@ -558,7 +558,7 @@ func TestSharpen(t *testing.T) {
 func TestExtend(t *testing.T) {
 	m := testutil.Images(40, 30)["nrgba"]
 	for _, bg := range []color.Color{nil, color.White, color.Transparent, color.NRGBA{10, 200, 30, 128}} {
-		out, err := FromImage(m).Extend(3, 5, 7, 11, bg).PNG().ToBytes()
+		out, err := FromImage(m).Extend(3, 5, 7, 11, ExtendOptions{Background: bg}).PNG().ToBytes()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -573,14 +573,14 @@ func TestExtend(t *testing.T) {
 			t.Errorf("border %v: off by %d", bg, d)
 		}
 	}
-	if _, err := FromImage(m).Extend(0, -1, 0, 0, nil).ToBytes(); err == nil {
+	if _, err := FromImage(m).Extend(0, -1, 0, 0).ToBytes(); err == nil {
 		t.Error("a negative border accepted")
 	}
 	// 40040 x 40030 pixels: beyond the default limit of 16383 x 16383.
-	if _, err := FromImage(m).Extend(20000, 20000, 20000, 20000, nil).ToBytes(); !errors.Is(err, ErrPixelLimit) {
+	if _, err := FromImage(m).Extend(20000, 20000, 20000, 20000).ToBytes(); !errors.Is(err, ErrPixelLimit) {
 		t.Errorf("a border beyond the pixel limit: %v", err)
 	}
-	if w, h, err := FromImage(m).Extend(1, 2, 3, 4, nil).OutputSize(); err != nil || w != 46 || h != 34 {
+	if w, h, err := FromImage(m).Extend(1, 2, 3, 4).OutputSize(); err != nil || w != 46 || h != 34 {
 		t.Errorf("OutputSize %dx%d, %v", w, h, err)
 	}
 }
@@ -666,46 +666,46 @@ func TestTrim(t *testing.T) {
 	}
 }
 
-// TestRotateBy: any angle as sharp's rotate, to the byte (30 and 60
+// TestRotateAngle: any angle as sharp's rotate, to the byte (30 and 60
 // degrees, whose sines and cosines must be rounded as libvips' are for the
 // box to be sharp's); quarter turns exactly as Rotate; turned there and
 // back, the picture again.
-func TestRotateBy(t *testing.T) {
+func TestRotateAngle(t *testing.T) {
 	rgb, rgba := sourcePNG(t, "pillow/source.png"), sourcePNG(t, "pillow/median-rgba-source.png")
 	for _, c := range []struct {
 		name string
 		m    *Image
 	}{
-		{"rotate-30", FromBytes(rgb).RotateBy(30, nil)},
-		{"rotate-60", FromBytes(rgb).RotateBy(60, nil)},
-		{"rotate--17.5", FromBytes(rgb).RotateBy(-17.5, color.White)},
-		{"rotate-200", FromBytes(rgb).RotateBy(200, color.NRGBA{0x33, 0x66, 0x99, 255})},
-		{"rotate-rgba-45", FromBytes(rgba).RotateBy(45, color.Transparent)},
+		{"rotate-30", FromBytes(rgb).Rotate(30)},
+		{"rotate-60", FromBytes(rgb).Rotate(60)},
+		{"rotate--17.5", FromBytes(rgb).Rotate(-17.5, RotateOptions{Background: color.White})},
+		{"rotate-200", FromBytes(rgb).Rotate(200, RotateOptions{Background: color.NRGBA{0x33, 0x66, 0x99, 255}})},
+		{"rotate-rgba-45", FromBytes(rgba).Rotate(45, RotateOptions{Background: color.Transparent})},
 	} {
 		got := decodePNG(t, must(c.m.PNG().ToBytes()))
 		if maxd, mean, _ := channelDiff(t, got, readPNG(t, "sharp/"+c.name+".png")); maxd != 0 {
 			t.Errorf("%s: differs from sharp by up to %d (mean %.3f)", c.name, maxd, mean)
 		}
 	}
-	// Quarter turns are Rotate's, to the byte.
+	// Any multiple of 90 degrees is the quarter turn it comes to.
 	src := testutil.Images(73, 41)["nrgba"]
 	in := pngBytes(t, src)
 	for _, c := range []struct {
 		deg float64
-		rot int
+		rot float64
 	}{{90, 90}, {-90, 270}, {180, 180}, {450, 90}, {-270, 90}, {0, 0}, {360, 0}} {
-		a, err := FromBytes(in).RotateBy(c.deg, nil).PNG().ToBytes()
+		a, err := FromBytes(in).Rotate(c.deg).PNG().ToBytes()
 		if err != nil {
 			t.Fatal(err)
 		}
 		b, _ := FromBytes(in).Rotate(c.rot).PNG().ToBytes()
 		if !bytes.Equal(a, b) {
-			t.Errorf("RotateBy(%v) differs from Rotate(%d)", c.deg, c.rot)
+			t.Errorf("Rotate(%v) differs from Rotate(%v)", c.deg, c.rot)
 		}
 	}
 	// There and back: the middle of the picture is what it was.
 	photo := photoLike(300, 200)
-	back, err := FromImage(photo).RotateBy(25, nil).RotateBy(-25, nil).PNG().ToBytes()
+	back, err := FromImage(photo).Rotate(25).Rotate(-25).PNG().ToBytes()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -719,27 +719,27 @@ func TestRotateBy(t *testing.T) {
 		t.Errorf("turned there and back: %.1f levels off on average", mean)
 	}
 	// Size, an opaque result for an opaque background, the pixel limit.
-	if w, h, err := FromImage(photo).RotateBy(30, nil).OutputSize(); err != nil || w != 360 || h != 323 {
+	if w, h, err := FromImage(photo).Rotate(30).OutputSize(); err != nil || w != 360 || h != 323 {
 		t.Errorf("OutputSize %dx%d, %v; want 360x323", w, h, err)
 	}
-	opq, _ := FromImage(photo).RotateBy(30, color.White).PNG().ToBytes()
+	opq, _ := FromImage(photo).Rotate(30, RotateOptions{Background: color.White}).PNG().ToBytes()
 	if info, _ := FromBytes(opq).Metadata(); info.HasAlpha {
 		t.Error("an opaque picture on an opaque background came out with alpha")
 	}
-	if _, err := FromImage(photo).Resize(16000, 0, ResizeOptions{Kernel: KernelNearest}).RotateBy(45, nil).ToBytes(); !errors.Is(err, ErrPixelLimit) {
+	if _, err := FromImage(photo).Resize(16000, 0, ResizeOptions{Kernel: KernelNearest}).Rotate(45).ToBytes(); !errors.Is(err, ErrPixelLimit) {
 		t.Errorf("a turn beyond the pixel limit: %v", err)
 	}
 	for _, bad := range []float64{math.NaN(), math.Inf(-1)} {
-		if _, err := FromImage(photo).RotateBy(bad, nil).ToBytes(); err == nil {
-			t.Errorf("RotateBy(%v) accepted", bad)
+		if _, err := FromImage(photo).Rotate(bad).ToBytes(); err == nil {
+			t.Errorf("Rotate(%v) accepted", bad)
 		}
 	}
 	// Large, under a small limit: tiles on disk, the same pixels as in
 	// memory, everything given back.
 	dir := t.TempDir()
 	large := pngBytes(t, photoLike(1500, 1000))
-	inMem, used := budgetAfter(t, FromBytes(large).RotateBy(33, nil), 256<<20, dir)
-	onDisk, used2 := budgetAfter(t, FromBytes(large).RotateBy(33, nil), 2<<20, dir)
+	inMem, used := budgetAfter(t, FromBytes(large).Rotate(33), 256<<20, dir)
+	onDisk, used2 := budgetAfter(t, FromBytes(large).Rotate(33), 2<<20, dir)
 	if used != 0 || used2 != 0 {
 		t.Errorf("%d and %d bytes still reserved", used, used2)
 	}
@@ -753,8 +753,8 @@ func TestRotateBy(t *testing.T) {
 // on an animation and through the command-line tests' formats.
 func TestAdjustTogether(t *testing.T) {
 	jp := jpegBytes(photoLike(640, 480), 90)
-	out, err := FromBytes(jp).Rotate().Trim(10).Resize(320, 0).Extend(8, 8, 8, 8, color.White).
-		Modulate(1.05, 1.1, 0).Sharpen().RotateBy(3, color.White).JPEG(85).ToBytes()
+	out, err := FromBytes(jp).AutoOrient().Trim(10).Resize(320, 0).Extend(8, 8, 8, 8, ExtendOptions{Background: color.White}).
+		Modulate(1.05, 1.1, 0).Sharpen().Rotate(3, RotateOptions{Background: color.White}).JPEG(JPEGOptions{Quality: 85}).ToBytes()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -762,8 +762,8 @@ func TestAdjustTogether(t *testing.T) {
 		t.Errorf("chain: %+v, %v", c, err)
 	}
 	for _, threads := range []int{1, 2, 3, 4, 8} {
-		again, err := FromBytes(jp).Rotate().Trim(10).Resize(320, 0).Extend(8, 8, 8, 8, color.White).
-			Modulate(1.05, 1.1, 0).Sharpen().RotateBy(3, color.White).Threads(threads).JPEG(85).ToBytes()
+		again, err := FromBytes(jp).AutoOrient().Trim(10).Resize(320, 0).Extend(8, 8, 8, 8, ExtendOptions{Background: color.White}).
+			Modulate(1.05, 1.1, 0).Sharpen().Rotate(3, RotateOptions{Background: color.White}).Threads(threads).JPEG(JPEGOptions{Quality: 85}).ToBytes()
 		if err != nil || !bytes.Equal(again, out) {
 			t.Errorf("threads %d: another file (%v)", threads, err)
 		}
@@ -776,12 +776,12 @@ func TestAdjustTogether(t *testing.T) {
 	}
 }
 
-// TestExtendWith: the borders ExtendWith makes are sharp 0.35's extend
-// with extendWith copy, repeat and mirror, pixel for pixel, also when they
-// are wider than the image; colours and transparency are copied as they
+// TestExtendMode: the borders ExtendCopy, ExtendRepeat and ExtendMirror
+// make are sharp 0.35's extend with extendWith copy, repeat and mirror,
+// pixel for pixel, also when they are wider than the image; colours and transparency are copied as they
 // are, a greyscale image stays greyscale, and with a small memory limit
 // the image is kept in a temporary file.
-func TestExtendWith(t *testing.T) {
+func TestExtendMode(t *testing.T) {
 	// A 4 x 3 greyscale image whose pixels are 0 to 11 (times 20); sharp's
 	// results, a hex digit a pixel, rows apart.
 	src := image.NewGray(image.Rect(0, 0, 4, 3))
@@ -800,7 +800,7 @@ func TestExtendWith(t *testing.T) {
 		{ExtendMirror, [4]int{2, 1, 2, 3}, "65445677 21001233 21001233 65445677 a9889abb a9889abb 65445677"},
 		{ExtendMirror, [4]int{5, 9, 7, 10}, "54456776544567765445677 9889abba9889abba9889abb 9889abba9889abba9889abb 54456776544567765445677 10012332100123321001233 10012332100123321001233 54456776544567765445677 9889abba9889abba9889abb 9889abba9889abba9889abb 54456776544567765445677 10012332100123321001233 10012332100123321001233 54456776544567765445677 9889abba9889abba9889abb 9889abba9889abba9889abb"},
 	} {
-		out, err := FromImage(src).ExtendWith(c.trbl[0], c.trbl[1], c.trbl[2], c.trbl[3], c.how).ToImage()
+		out, err := FromImage(src).Extend(c.trbl[0], c.trbl[1], c.trbl[2], c.trbl[3], ExtendOptions{Mode: c.how}).ToImage()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -835,7 +835,7 @@ func TestExtendWith(t *testing.T) {
 		return i
 	}
 	for _, limit := range []int64{0, 1536 << 10} {
-		m := FromImage(tr).ExtendWith(250, 7, 410, 333, ExtendMirror)
+		m := FromImage(tr).Extend(250, 7, 410, 333, ExtendOptions{Mode: ExtendMirror})
 		if limit > 0 {
 			m.MemoryLimit(limit)
 		}
@@ -868,7 +868,7 @@ func TestExtendWith(t *testing.T) {
 		{ExtendCopy, [4]int{4, 9, 6, 3}, func(x, y int) (int, int) { return max(0, min(x-3, 899)), max(0, min(y-4, 599)) }},
 		{ExtendMirror, [4]int{0, 950, 0, 20}, func(x, y int) (int, int) { return mirror(x-20, 900), y }},
 	} {
-		out, err := FromImage(photo).ExtendWith(c.trbl[0], c.trbl[1], c.trbl[2], c.trbl[3], c.how).ToImage()
+		out, err := FromImage(photo).Extend(c.trbl[0], c.trbl[1], c.trbl[2], c.trbl[3], ExtendOptions{Mode: c.how}).ToImage()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -892,12 +892,12 @@ func TestExtendWith(t *testing.T) {
 	if fmt.Sprint(words) != "[1 2 3 4 mirror]" {
 		t.Errorf("extend words %v", words)
 	}
-	for _, m := range []*Image{FromImage(src).ExtendWith(-1, 0, 0, 0, ExtendCopy), FromImage(src).ExtendWith(1, 1, 1, 1, 3)} {
+	for _, m := range []*Image{FromImage(src).Extend(-1, 0, 0, 0, ExtendOptions{Mode: ExtendCopy}), FromImage(src).Extend(1, 1, 1, 1, ExtendOptions{Mode: 4}), FromImage(src).Extend(1, 1, 1, 1, ExtendOptions{Mode: -1})} {
 		if _, err := m.PNG().ToBytes(); err == nil {
 			t.Error("no error")
 		}
 	}
-	if w, h, err := FromImage(src).ExtendWith(1, 2, 3, 4, ExtendRepeat).OutputSize(); err != nil || w != 10 || h != 7 {
+	if w, h, err := FromImage(src).Extend(1, 2, 3, 4, ExtendOptions{Mode: ExtendRepeat}).OutputSize(); err != nil || w != 10 || h != 7 {
 		t.Errorf("OutputSize %d x %d, %v", w, h, err)
 	}
 }

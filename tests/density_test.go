@@ -56,7 +56,7 @@ func TestDensity(t *testing.T) {
 		}
 	}
 	// A JPEG without a resolution is as before: no JFIF segment.
-	if out := must(FromImage(photo).JPEG(85).ToBytes()); bytes.Contains(out[:40], []byte("JFIF")) {
+	if out := must(FromImage(photo).JPEG(JPEGOptions{Quality: 85}).ToBytes()); bytes.Contains(out[:40], []byte("JFIF")) {
 		t.Error("a JFIF segment without a resolution")
 	}
 	// Density replaces the resolution of a kept EXIF block (which the
@@ -68,7 +68,7 @@ func TestDensity(t *testing.T) {
 		}
 	}
 	// JFIF in dots per centimetre: 118 is 300 per inch.
-	out := must(FromImage(photo).Density(300).JPEG(85).ToBytes())
+	out := must(FromImage(photo).Density(300).JPEG(JPEGOptions{Quality: 85}).ToBytes())
 	i := bytes.Index(out, []byte("JFIF\x00"))
 	cm := append([]byte(nil), out...)
 	cm[i+7], cm[i+8], cm[i+9] = 2, 0, 118

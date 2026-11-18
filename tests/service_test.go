@@ -10,6 +10,7 @@ import (
 	"image/png"
 	"io"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -186,7 +187,7 @@ func TestErrorKinds(t *testing.T) {
 		t.Errorf("bad overlay: %v", err)
 	}
 	// Bad arguments are neither.
-	if _, err := FromBytes(files["png"]).Extract(0, 0, 9000, 9000).PNG().ToBytes(); err == nil || errors.Is(err, ErrFormat) {
+	if _, err := FromBytes(files["png"]).Crop(0, 0, 9000, 9000).PNG().ToBytes(); err == nil || errors.Is(err, ErrFormat) {
 		t.Errorf("crop outside the image: %v", err)
 	}
 }
@@ -196,14 +197,14 @@ func TestErrorKinds(t *testing.T) {
 func TestClone(t *testing.T) {
 	in := pngBytes(t, testutil.Images(613, 457)["rgba-opaque"])
 	base := FromBytes(in).Rotate(90)
-	thumb := base.Clone().Resize(100, 0).JPEG(70)
+	thumb := base.Clone().Resize(100, 0).JPEG(JPEGOptions{Quality: 70})
 	large := base.Clone().Resize(400, 0).WebP()
 	plain := base.Clone()
 	for _, c := range []struct {
 		name      string
 		got, want *Image
 	}{
-		{"thumb", thumb, FromBytes(in).Rotate(90).Resize(100, 0).JPEG(70)},
+		{"thumb", thumb, FromBytes(in).Rotate(90).Resize(100, 0).JPEG(JPEGOptions{Quality: 70})},
 		{"large", large, FromBytes(in).Rotate(90).Resize(400, 0).WebP()},
 		{"plain", plain.PNG(), FromBytes(in).Rotate(90).PNG()},
 		{"base", base.PNG(), FromBytes(in).Rotate(90).PNG()},
@@ -224,9 +225,9 @@ func TestClone(t *testing.T) {
 		t.Error("methods are documented to return the Image they are called on")
 	}
 	// An error recorded in a clone stays there.
-	bad := base.Clone().Rotate(45)
+	bad := base.Clone().Rotate(math.NaN())
 	if _, err := bad.PNG().ToBytes(); err == nil {
-		t.Error("Rotate(45) in a clone: no error")
+		t.Error("Rotate(NaN) in a clone: no error")
 	}
 	if _, err := base.Clone().PNG().ToBytes(); err != nil {
 		t.Errorf("the base after a failed clone: %v", err)
@@ -265,13 +266,13 @@ func TestContext(t *testing.T) {
 	in := pngBytes(t, testutil.Images(1200, 900)["rgba-opaque"])
 	dir := t.TempDir()
 	chains := map[string]func(*Image) *Image{
-		"plain":       func(m *Image) *Image { return m.JPEG(80) },
+		"plain":       func(m *Image) *Image { return m.JPEG(JPEGOptions{Quality: 80}) },
 		"resize":      func(m *Image) *Image { return m.Resize(300, 0).PNG() },
-		"rotate":      func(m *Image) *Image { return m.Rotate(90).JPEG(80) },
-		"size limit":  func(m *Image) *Image { return m.JPEG(80).MaxFileSize(40 << 10) },
+		"rotate":      func(m *Image) *Image { return m.Rotate(90).JPEG(JPEGOptions{Quality: 80}) },
+		"size limit":  func(m *Image) *Image { return m.JPEG(JPEGOptions{Quality: 80}).MaxFileSize(40 << 10) },
 		"png colours": func(m *Image) *Image { return m.PNG(PNGOptions{Colors: 64}) },
 		"webp":        func(m *Image) *Image { return m.WebP() },
-		"threads":     func(m *Image) *Image { return m.Threads(3).Resize(300, 0).JPEG(80) },
+		"threads":     func(m *Image) *Image { return m.Threads(3).Resize(300, 0).JPEG(JPEGOptions{Quality: 80}) },
 	}
 	for name, chain := range chains {
 		// Without a cancellation the context changes nothing.
@@ -305,10 +306,10 @@ func TestContext(t *testing.T) {
 	// Cancelled while writing, after everything has been read: a half turn
 	// has the whole image in store before the first row goes out, so only
 	// the encoder is still at work.
-	full, _ := FromBytes(in).Rotate(180).JPEG(90).ToBytes()
+	full, _ := FromBytes(in).Rotate(180).JPEG(JPEGOptions{Quality: 90}).ToBytes()
 	ctx, cancel := context.WithCancel(context.Background())
 	w := &cancelOnWrite{cancel: cancel}
-	err := FromBytes(in).Rotate(180).JPEG(90).WithContext(ctx).ToWriter(w)
+	err := FromBytes(in).Rotate(180).JPEG(JPEGOptions{Quality: 90}).WithContext(ctx).ToWriter(w)
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("cancelled while writing: %v", err)
 	}
@@ -318,7 +319,7 @@ func TestContext(t *testing.T) {
 	// A deadline that has passed.
 	ctx, cancel = context.WithTimeout(context.Background(), -1)
 	defer cancel()
-	if _, err := FromBytes(in).WithContext(ctx).JPEG(80).ToBytes(); !errors.Is(err, context.DeadlineExceeded) {
+	if _, err := FromBytes(in).WithContext(ctx).JPEG(JPEGOptions{Quality: 80}).ToBytes(); !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("deadline passed: %v", err)
 	}
 	// An animation, frame by frame.
@@ -346,13 +347,13 @@ func TestMisuse(t *testing.T) {
 		"zero Image":         &zero,
 		"two Resize options": FromBytes(in).Resize(10, 10, ResizeOptions{}, ResizeOptions{}),
 		"two Composite opts": FromBytes(in).Composite(logo, CompositeOptions{}, CompositeOptions{}),
-		"two JPEG options":   FromBytes(in).JPEG(80, JPEGOptions{}, JPEGOptions{}),
+		"two JPEG options":   FromBytes(in).JPEG(JPEGOptions{}, JPEGOptions{}),
 		"two PNG options":    FromBytes(in).PNG(PNGOptions{}, PNGOptions{}),
 		"two WebP options":   FromBytes(in).WebP(WebPOptions{}, WebPOptions{}),
 		"two GIF options":    FromBytes(in).GIF(GIFOptions{}, GIFOptions{}),
 		"two TIFF options":   FromBytes(in).TIFF(TIFFOptions{}, TIFFOptions{}),
 		"two Text options":   Text("x", TextOptions{}, TextOptions{}),
-		"two angles":         FromBytes(in).Rotate(90, 180),
+		"two Rotate options": FromBytes(in).Rotate(90, RotateOptions{}, RotateOptions{}),
 	} {
 		func() {
 			defer func() {
@@ -374,7 +375,7 @@ func TestMisuse(t *testing.T) {
 		}()
 	}
 	// One options value, or none, is fine.
-	if _, err := FromBytes(in).Resize(10, 10, ResizeOptions{}).Composite(logo).Flatten(color.White).JPEG(80, JPEGOptions{}).ToBytes(); err != nil {
+	if _, err := FromBytes(in).Resize(10, 10, ResizeOptions{}).Composite(logo).Flatten(color.White).JPEG(JPEGOptions{Quality: 80}).ToBytes(); err != nil {
 		t.Error(err)
 	}
 }
@@ -424,11 +425,11 @@ func TestConcurrentRuns(t *testing.T) {
 	in := pngBytes(t, testutil.Images(300, 220)["rgba-opaque"])
 	logo := pngBytes(t, testutil.Images(30, 20)["nrgba"])
 	recipes := map[string]*Image{
-		"size limit":  FromBytes(in).Rotate().Resize(200, 0).Composite(FromBytes(logo), CompositeOptions{Gravity: SouthEast}).JPEG(80).MaxFileSize(5000),
+		"size limit":  FromBytes(in).AutoOrient().Resize(200, 0).Composite(FromBytes(logo), CompositeOptions{Gravity: SouthEast}).JPEG(JPEGOptions{Quality: 80}).MaxFileSize(5000),
 		"png colours": FromBytes(in).Resize(200, 0).PNG(PNGOptions{Colors: 32}),
 		"webp":        FromBytes(in).Rotate(90).WebP(WebPOptions{Quality: 60}),
 		"text mark": FromBytes(in).Composite(Text("mark", TextOptions{Size: 20, Color: color.White, StrokeWidth: 1}),
-			CompositeOptions{Tile: true, Angle: -30, Opacity: 0.4}).JPEG(80, JPEGOptions{Progressive: true}),
+			CompositeOptions{Tile: true, Angle: -30, Opacity: 0.4}).JPEG(JPEGOptions{Quality: 80, Progressive: true}),
 		"threads": FromBytes(in).Threads(3).Resize(150, 0).GIF(),
 	}
 	for name, m := range recipes {

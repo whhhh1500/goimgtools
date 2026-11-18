@@ -257,7 +257,7 @@ func TestBlendModes(t *testing.T) {
 	over := FromBytes(sourcePNG(t, "sharp/blend-overlay.png"))
 	ref := readPNG(t, "sharp/blend.png")
 	for mode := BlendOver; mode <= BlendExclusion; mode++ {
-		out, err := FromBytes(src).Extract(40, 30, 24, 16).Composite(over, CompositeOptions{Blend: mode}).PNG().ToBytes()
+		out, err := FromBytes(src).Crop(40, 30, 24, 16).Composite(over, CompositeOptions{Blend: mode}).PNG().ToBytes()
 		if err != nil {
 			t.Fatalf("%v: %v", mode, err)
 		}
@@ -283,7 +283,7 @@ func TestBlendModes(t *testing.T) {
 	rgba := sourcePNG(t, "pillow/median-rgba-source.png")
 	pd := nrgbaOf(readPNG(t, "sharp/blend-pd.png"))
 	for mode := BlendClear; mode <= BlendSaturate; mode++ {
-		got := nrgbaOf(decodePNG(t, must(FromBytes(rgba).Extract(40, 30, 24, 16).Composite(over.Clone().Extract(0, 0, 16, 10),
+		got := nrgbaOf(decodePNG(t, must(FromBytes(rgba).Crop(40, 30, 24, 16).Composite(over.Clone().Crop(0, 0, 16, 10),
 			CompositeOptions{Left: 5, Top: 3, Blend: mode}).PNG().ToBytes())))
 		row := int(mode - BlendClear)
 		for i := 0; i < len(got.Pix); i += 4 {

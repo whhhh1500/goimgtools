@@ -22,10 +22,10 @@ import (
 func TestAroundSeesEveryStep(t *testing.T) {
 	in := pngBytes(t, photoLike(160, 120))
 	recipe := func(m *Image) *Image {
-		return m.Rotate(90).Flip().Flop().Trim(5).Extract(2, 3, 100, 140).
+		return m.Rotate(90).Flip().Flop().Trim(5).Crop(2, 3, 100, 140).
 			Resize(50, 60, ResizeOptions{Fit: FitCover, Kernel: KernelLanczos3}).
-			Extend(1, 2, 3, 4, color.NRGBA{1, 2, 3, 200}).Grayscale().Modulate(1.1, 0.9, 30).Blur(1.5).
-			Sharpen(SharpenOptions{Sigma: 1, Amount: 2, Threshold: 3}).Sharpen().RotateBy(12.5, color.White).
+			Extend(1, 2, 3, 4, ExtendOptions{Background: color.NRGBA{1, 2, 3, 200}}).Grayscale().Modulate(1.1, 0.9, 30).Blur(1.5).
+			Sharpen(SharpenOptions{Sigma: 1, Amount: 2, Threshold: 3}).Sharpen().Rotate(12.5, RotateOptions{Background: color.White}).
 			Flatten(color.NRGBA{9, 8, 7, 255}).Pixels(func(*image.NRGBA) error { return nil })
 	}
 	var seen []Step
@@ -332,18 +332,20 @@ func TestDoBuiltIns(t *testing.T) {
 		{"resize", []string{"40", "40", "contain", "nearest"}, func(m *Image) *Image {
 			return m.Resize(40, 40, ResizeOptions{Fit: FitContain, Kernel: KernelNearest})
 		}},
-		{"crop", []string{"1", "2", "30", "20"}, func(m *Image) *Image { return m.Extract(1, 2, 30, 20) }},
-		{"rotate", []string{"auto"}, func(m *Image) *Image { return m.Rotate() }},
+		{"crop", []string{"1", "2", "30", "20"}, func(m *Image) *Image { return m.Crop(1, 2, 30, 20) }},
+		{"rotate", []string{"auto"}, func(m *Image) *Image { return m.AutoOrient() }},
 		{"rotate", []string{"270"}, func(m *Image) *Image { return m.Rotate(270) }},
-		{"rotate", []string{"33", "transparent"}, func(m *Image) *Image { return m.RotateBy(33, color.Transparent) }},
+		{"rotate", []string{"33", "transparent"}, func(m *Image) *Image { return m.Rotate(33, RotateOptions{Background: color.Transparent}) }},
 		{"flip", nil, func(m *Image) *Image { return m.Flip() }},
 		{"flop", nil, func(m *Image) *Image { return m.Flop() }},
 		{"trim", nil, func(m *Image) *Image { return m.Trim(10) }},
-		{"extend", []string{"1", "2", "3", "4", "#0f0"}, func(m *Image) *Image { return m.Extend(1, 2, 3, 4, color.RGBA{0, 255, 0, 255}) }},
+		{"extend", []string{"1", "2", "3", "4", "#0f0"}, func(m *Image) *Image {
+			return m.Extend(1, 2, 3, 4, ExtendOptions{Background: color.RGBA{0, 255, 0, 255}})
+		}},
 		{"grayscale", nil, func(m *Image) *Image { return m.Grayscale() }},
 		{"modulate", []string{"1.2", "0.5", "-40"}, func(m *Image) *Image { return m.Modulate(1.2, 0.5, -40) }},
 		{"blur", []string{"0.8"}, func(m *Image) *Image { return m.Blur(0.8) }},
-		{"blur", []string{"1.5", "libvips"}, func(m *Image) *Image { return m.Blur(1.5, BlurOptions{Method: BlurLibvips}) }},
+		{"blur", []string{"1.5", "libvips"}, func(m *Image) *Image { return m.Blur(1.5, BlurOptions{Method: MethodLibvips}) }},
 		{"sharpen", nil, func(m *Image) *Image { return m.Sharpen() }},
 		{"sharpen", []string{"2", "1", "4"}, func(m *Image) *Image { return m.Sharpen(SharpenOptions{Sigma: 2, Amount: 1, Threshold: 4}) }},
 		{"flatten", []string{"white"}, func(m *Image) *Image { return m.Flatten(color.White) }},
@@ -472,7 +474,7 @@ func TestWrapBuiltIn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, _ := FromBytes(jpg).Rotate().PNG().ToBytes()
+	b, _ := FromBytes(jpg).AutoOrient().PNG().ToBytes()
 	if !bytes.Equal(a, b) {
 		t.Error("rotate auto made by New does not turn by the file's orientation")
 	}

@@ -12,7 +12,7 @@ One of the library's design goals is that functionality can be extended without 
 | A custom type with all the methods of `Image` plus new ones (equivalent to inheritance) | Embed `*goimgtools.Image` |
 | A custom input (an image in memory, a computed image, pixels read from another source) | `FromImage(img)`, `FromSource(open)` |
 | A custom file format, or overriding how the library reads or writes one of its formats | `RegisterFormat(codec)`, `CodecByName(name)`, `ToFormat(name, options)` |
-| A custom resize filter | `ResizeOptions{Filter: &goimgtools.Filter{...}}` |
+| A custom resize filter | `ResizeOptions{CustomKernel: &goimgtools.CustomKernel{...}}` |
 | Pass the result to the calling code instead of writing a file | `Stream(env)` (pixel stream), `ToImage()` (a complete `image.Image`) |
 | Name a custom operation and call it by name like a built-in operation (`Do`, command-line `-op`) | `RegisterOperation(def)`, `Do(name, args...)`, `Operations()` |
 | Override the behaviour of built-in operations: add custom processing before and after each step, or replace an entire step with a custom implementation (equivalent to overriding a method) | `Around(hook)` |
@@ -111,7 +111,7 @@ type Product struct {
 }
 
 func OpenProduct(path, sku string) Product {
-    return Product{goimgtools.Open(path).Rotate(), sku}
+    return Product{goimgtools.Open(path).AutoOrient(), sku}
 }
 
 // Listing appends the shop's standard steps
@@ -124,7 +124,7 @@ func (p Product) Listing() Product {
 
 p := OpenProduct("in.jpg", "SKU-0042")
 p.Flatten(color.White)            // a method of Image itself
-err := p.Listing().JPEG(85).ToFile("out.jpg")
+err := p.Listing().JPEG(goimgtools.JPEGOptions{Quality: 85}).ToFile("out.jpg")
 ```
 
 To reuse a group of steps without defining a new type, write them as a function and apply it with `Apply`:
@@ -132,10 +132,10 @@ To reuse a group of steps without defining a new type, write them as a function 
 ```go
 func Thumbnail(size int) func(*goimgtools.Image) *goimgtools.Image {
     return func(m *goimgtools.Image) *goimgtools.Image {
-        return m.Rotate().Resize(size, size, goimgtools.ResizeOptions{Fit: goimgtools.FitCover})
+        return m.AutoOrient().Resize(size, size, goimgtools.ResizeOptions{Fit: goimgtools.FitCover})
     }
 }
-goimgtools.Open("in.jpg").Apply(Thumbnail(200)).JPEG(80).ToFile("out.jpg")
+goimgtools.Open("in.jpg").Apply(Thumbnail(200)).JPEG().ToFile("out.jpg")
 ```
 
 ## Custom inputs
@@ -163,7 +163,7 @@ goimgtools.RegisterFormat(goimgtools.Codec{
 })
 
 goimgtools.Open("in.jpg").Resize(800, 0).ToFile("out.ppm")
-goimgtools.Open("in.ppm").Rotate(90).JPEG(80).ToFile("out.jpg")
+goimgtools.Open("in.ppm").Rotate(90).JPEG().ToFile("out.jpg")
 ```
 
 Either `Decode` alone (read-only) or `Encode` alone (write-only) may be supplied. A complete PPM reader and writer takes fewer than a hundred lines; see [example_test.go](../example_test.go).

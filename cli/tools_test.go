@@ -48,7 +48,7 @@ func TestInfo(t *testing.T) {
 	writePNG(t, b, testutil.Images(30, 20)["gray"])
 	anim := animation(t, dir, 5, 20)
 	big := filepath.Join(dir, "big.jpg")
-	if err := goimgtools.FromImage(testutil.Images(800, 500)["rgba-opaque"]).JPEG(80).ToFile(big); err != nil {
+	if err := goimgtools.FromImage(testutil.Images(800, 500)["rgba-opaque"]).JPEG(goimgtools.JPEGOptions{Quality: 80}).ToFile(big); err != nil {
 		t.Fatal(err)
 	}
 	out, _, err := cli("info", a, b, anim, big)
@@ -151,7 +151,7 @@ func TestCompare(t *testing.T) {
 	writePNG(t, a, src)
 	for path, m := range map[string]*goimgtools.Image{
 		same:  goimgtools.FromImage(src),
-		lossy: goimgtools.FromImage(src).JPEG(40),
+		lossy: goimgtools.FromImage(src).JPEG(goimgtools.JPEGOptions{Quality: 40}),
 		small: goimgtools.FromImage(src).Resize(100, 0),
 	} {
 		if err := m.ToFile(path); err != nil {
@@ -236,7 +236,7 @@ func TestStatsHashExif(t *testing.T) {
 	}
 	a, small, other, notImage := filepath.Join(dir, "a.png"), filepath.Join(dir, "small.jpg"), filepath.Join(dir, "other.png"), filepath.Join(dir, "notes.txt")
 	writePNG(t, a, red)
-	if err := goimgtools.FromImage(red).Resize(32, 0).JPEG(90).ToFile(small); err != nil {
+	if err := goimgtools.FromImage(red).Resize(32, 0).JPEG(goimgtools.JPEGOptions{Quality: 90}).ToFile(small); err != nil {
 		t.Fatal(err)
 	}
 	writePNG(t, other, testutil.Images(64, 48)["gray"])
@@ -267,7 +267,7 @@ func TestStatsHashExif(t *testing.T) {
 	if _, err := os.Stat(frame); err != nil {
 		t.Skip("the test images of Go are not here: ", err)
 	}
-	if err := goimgtools.Open(frame).Resize(75, 0).JPEG(85).ToFile(small); err != nil {
+	if err := goimgtools.Open(frame).Resize(75, 0).JPEG(goimgtools.JPEGOptions{Quality: 85}).ToFile(small); err != nil {
 		t.Fatal(err)
 	}
 	out, _, err = cli("hash", "-similar", "8", frame, small, other)
@@ -325,27 +325,29 @@ func TestAdjustOptions(t *testing.T) {
 		args []string
 		lib  func(*goimgtools.Image) *goimgtools.Image
 	}{
-		{[]string{"-rotate", "30", "-background", "transparent"}, func(m *goimgtools.Image) *goimgtools.Image { return m.RotateBy(30, color.Transparent) }},
+		{[]string{"-rotate", "30", "-background", "transparent"}, func(m *goimgtools.Image) *goimgtools.Image {
+			return m.Rotate(30, goimgtools.RotateOptions{Background: color.Transparent})
+		}},
 		{[]string{"-rotate", "-90"}, func(m *goimgtools.Image) *goimgtools.Image { return m.Rotate(270) }},
 		{[]string{"-trim", "10", "-extend", "1,2,3,4", "-background", "#ff000080"}, func(m *goimgtools.Image) *goimgtools.Image {
-			return m.Trim(10).Extend(1, 2, 3, 4, color.NRGBA{255, 0, 0, 128})
+			return m.Trim(10).Extend(1, 2, 3, 4, goimgtools.ExtendOptions{Background: color.NRGBA{255, 0, 0, 128}})
 		}},
 		{[]string{"-grayscale", "-modulate", "1.2,0.5,30"}, func(m *goimgtools.Image) *goimgtools.Image { return m.Grayscale().Modulate(1.2, 0.5, 30) }},
 		{[]string{"-sharpen", "1.5,libvips,0.5,3,1.5,15,25"}, func(m *goimgtools.Image) *goimgtools.Image {
-			return m.Sharpen(goimgtools.SharpenOptions{Sigma: 1.5, Method: goimgtools.SharpenLibvips,
+			return m.Sharpen(goimgtools.SharpenOptions{Sigma: 1.5, Method: goimgtools.MethodLibvips,
 				Curve: &goimgtools.SharpenCurve{Flat: 0.5, Jagged: 3, JaggedFrom: 1.5, MaxBrighten: 15, MaxDarken: 25}})
 		}},
 		{[]string{"-resize", "37x37", "-kernel", "lanczos3", "-resize-method", "pillow", "-reducing-gap", "2", "-no-enlarge"}, func(m *goimgtools.Image) *goimgtools.Image {
-			return m.Resize(37, 37, goimgtools.ResizeOptions{Kernel: goimgtools.KernelLanczos3, Method: goimgtools.ResizePillow, ReducingGap: 2, WithoutEnlargement: true})
+			return m.Resize(37, 37, goimgtools.ResizeOptions{Kernel: goimgtools.KernelLanczos3, Method: goimgtools.MethodPillow, ReducingGap: 2, WithoutEnlargement: true})
 		}},
 		{[]string{"-resize", "37x21", "-fit", "fill", "-kernel", "hamming", "-resize-method", "pillow"}, func(m *goimgtools.Image) *goimgtools.Image {
-			return m.Resize(37, 21, goimgtools.ResizeOptions{Fit: goimgtools.FitFill, Kernel: goimgtools.KernelHamming, Method: goimgtools.ResizePillow})
+			return m.Resize(37, 21, goimgtools.ResizeOptions{Fit: goimgtools.FitFill, Kernel: goimgtools.KernelHamming, Method: goimgtools.MethodPillow})
 		}},
 		{[]string{"-resize", "37x21", "-fit", "fill", "-kernel", "lanczos3", "-resize-method", "libvips"}, func(m *goimgtools.Image) *goimgtools.Image {
-			return m.Resize(37, 21, goimgtools.ResizeOptions{Fit: goimgtools.FitFill, Kernel: goimgtools.KernelLanczos3, Method: goimgtools.ResizeLibvips})
+			return m.Resize(37, 21, goimgtools.ResizeOptions{Fit: goimgtools.FitFill, Kernel: goimgtools.KernelLanczos3, Method: goimgtools.MethodLibvips})
 		}},
 		{[]string{"-blur", "3", "-blur-method", "libvips", "-blur-min-amplitude", "0.05"}, func(m *goimgtools.Image) *goimgtools.Image {
-			return m.Blur(3, goimgtools.BlurOptions{Method: goimgtools.BlurLibvips, MinAmplitude: 0.05})
+			return m.Blur(3, goimgtools.BlurOptions{Method: goimgtools.MethodLibvips, MinAmplitude: 0.05})
 		}},
 		{[]string{"-grayscale-linear", "-modulate", "1,1.3,0,-8"}, func(m *goimgtools.Image) *goimgtools.Image {
 			return m.Grayscale(goimgtools.GrayscaleOptions{Linear: true}).Modulate(1, 1.3, 0, goimgtools.ModulateOptions{Lightness: -8})

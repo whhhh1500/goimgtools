@@ -30,7 +30,7 @@ func pngBytes(t *testing.T, m image.Image) []byte {
 // bytes of libjpeg-turbo, checked in internal/jpegstream): a reference for
 // the steps before the encoding, and an input.
 func jpegBytes(m image.Image, q int) []byte {
-	b, err := FromImage(m).JPEG(q).ToBytes()
+	b, err := FromImage(m).JPEG(JPEGOptions{Quality: q}).ToBytes()
 	if err != nil {
 		panic(err)
 	}
@@ -69,7 +69,7 @@ func TestChain(t *testing.T) {
 			Resize(200, 0).
 			Flatten(color.White).
 			Composite(FromBytes(logoPNG).Resize(45, 0), CompositeOptions{Gravity: SouthEast, Left: -7, Top: -5}).
-			JPEG(85).
+			JPEG(JPEGOptions{Quality: 85}).
 			ToBytes()
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
@@ -94,7 +94,7 @@ func TestExtractAndFit(t *testing.T) {
 	m := testutil.Images(613, 457)["nrgba"].(*image.NRGBA)
 	in := pngBytes(t, m)
 
-	got, err := FromBytes(in).Extract(100, 50, 301, 207).JPEG(90).ToBytes()
+	got, err := FromBytes(in).Crop(100, 50, 301, 207).JPEG(JPEGOptions{Quality: 90}).ToBytes()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestExtractAndFit(t *testing.T) {
 	}
 
 	// Cover: 613x457 into 100x100 -> scale to 134x100, crop 17 px each side.
-	got, err = FromBytes(in).Resize(100, 100, ResizeOptions{Fit: FitCover}).JPEG(90).ToBytes()
+	got, err = FromBytes(in).Resize(100, 100, ResizeOptions{Fit: FitCover}).JPEG(JPEGOptions{Quality: 90}).ToBytes()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func TestExtractAndFit(t *testing.T) {
 	}
 	// Without options the image is fitted inside the box, nothing cut off:
 	// 613x457 into 100x100 -> 100x75.
-	got, err = FromBytes(in).Resize(100, 100).JPEG(90).ToBytes()
+	got, err = FromBytes(in).Resize(100, 100).JPEG(JPEGOptions{Quality: 90}).ToBytes()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +181,7 @@ func TestToFileAndErrors(t *testing.T) {
 		t.Fatalf("leftover files: %v", names)
 	}
 	// A limit too small for one strip is reported as ErrMemoryLimit.
-	if err := FromBytes(in).MemoryLimit(1 << 10).JPEG(0).ToWriter(&bytes.Buffer{}); err == nil {
+	if err := FromBytes(in).MemoryLimit(1 << 10).JPEG().ToWriter(&bytes.Buffer{}); err == nil {
 		t.Fatal("tiny memory limit: no error")
 	}
 	if _, err := FromBytes([]byte("hello, not an image")).Metadata(); err == nil {
@@ -198,10 +198,10 @@ func must(b []byte, err error) []byte {
 
 func TestInputLimits(t *testing.T) {
 	in := pngBytes(t, testutil.Images(120, 300)["gray"])
-	if _, err := FromBytes(in).LimitInputPixels(120*300 - 1).JPEG(0).ToBytes(); err == nil {
+	if _, err := FromBytes(in).LimitInputPixels(120*300 - 1).JPEG().ToBytes(); err == nil {
 		t.Error("image above the pixel limit: no error")
 	}
-	if _, err := FromBytes(in).LimitInputPixels(120 * 300).JPEG(0).ToBytes(); err != nil {
+	if _, err := FromBytes(in).LimitInputPixels(120 * 300).JPEG().ToBytes(); err != nil {
 		t.Errorf("image at the pixel limit: %v", err)
 	}
 	// A GIF whose frame is empty decodes with the standard library; here it
@@ -210,7 +210,7 @@ func TestInputLimits(t *testing.T) {
 	if _, err := gif.Decode(bytes.NewReader(empty)); err != nil {
 		t.Fatalf("the empty GIF is not valid for the standard library: %v", err)
 	}
-	if _, err := FromBytes(empty).JPEG(0).ToBytes(); err == nil {
+	if _, err := FromBytes(empty).JPEG().ToBytes(); err == nil {
 		t.Error("empty GIF frame: no error")
 	}
 }
@@ -271,11 +271,11 @@ func TestFastShrinkOnLoad(t *testing.T) {
 			}
 			in := jpegBytes(src, 90)
 			for _, box := range []int{300, 150, 61, 20} { // factors 2, 4, 8 and beyond
-				a, err := FromBytes(in).Resize(box, box, fast).JPEG(95).ToBytes()
+				a, err := FromBytes(in).Resize(box, box, fast).JPEG(JPEGOptions{Quality: 95}).ToBytes()
 				if err != nil {
 					t.Fatal(err)
 				}
-				b, err := FromBytes(in).Resize(box, box, slow).JPEG(95).ToBytes()
+				b, err := FromBytes(in).Resize(box, box, slow).JPEG(JPEGOptions{Quality: 95}).ToBytes()
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -313,11 +313,11 @@ func TestFastShrinkOnLoad(t *testing.T) {
 	in := jpegBytes(smooth(640, 480), 90)
 	same := func(what string, a, b *Image) {
 		t.Helper()
-		x, err := a.JPEG(90).ToBytes()
+		x, err := a.JPEG(JPEGOptions{Quality: 90}).ToBytes()
 		if err != nil {
 			t.Fatal(err)
 		}
-		y, err := b.JPEG(90).ToBytes()
+		y, err := b.JPEG(JPEGOptions{Quality: 90}).ToBytes()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -327,7 +327,7 @@ func TestFastShrinkOnLoad(t *testing.T) {
 	}
 	// Less than a 2× reduction; not the first step; not a JPEG.
 	same("small reduction", FromBytes(in).Resize(400, 400, fast), FromBytes(in).Resize(400, 400, slow))
-	same("after a crop", FromBytes(in).Extract(1, 1, 600, 400).Resize(100, 100, fast), FromBytes(in).Extract(1, 1, 600, 400).Resize(100, 100, slow))
+	same("after a crop", FromBytes(in).Crop(1, 1, 600, 400).Resize(100, 100, fast), FromBytes(in).Crop(1, 1, 600, 400).Resize(100, 100, slow))
 	p := pngBytes(t, smooth(640, 480))
 	same("png input", FromBytes(p).Resize(100, 100, fast), FromBytes(p).Resize(100, 100, slow))
 }

@@ -34,7 +34,7 @@ func picture(w, h int) []byte {
 func Example() {
 	out, err := goimgtools.FromBytes(picture(640, 480)).
 		Resize(320, 0).
-		JPEG(85).
+		JPEG(goimgtools.JPEGOptions{Quality: 85}).
 		ToBytes()
 	if err != nil {
 		fmt.Println(err)
@@ -95,7 +95,7 @@ func ExampleImage_Pipe() {
 	_, err := goimgtools.FromBytes(picture(600, 1200)).
 		Resize(300, 0).
 		Pipe(count).
-		JPEG(80).
+		JPEG(goimgtools.JPEGOptions{Quality: 80}).
 		ToBytes()
 	fmt.Println(err)
 	// Output:
@@ -106,7 +106,7 @@ func ExampleImage_Pipe() {
 // Thumbnail is a group of steps with a name.
 func Thumbnail(size int) func(*goimgtools.Image) *goimgtools.Image {
 	return func(m *goimgtools.Image) *goimgtools.Image {
-		return m.Rotate().Resize(size, size, goimgtools.ResizeOptions{Fit: goimgtools.FitCover})
+		return m.AutoOrient().Resize(size, size, goimgtools.ResizeOptions{Fit: goimgtools.FitCover})
 	}
 }
 
@@ -124,7 +124,7 @@ type Product struct {
 }
 
 func OpenProduct(data []byte, sku string) Product {
-	return Product{goimgtools.FromBytes(data).Rotate(), sku}
+	return Product{goimgtools.FromBytes(data).AutoOrient(), sku}
 }
 
 // Listing adds the shop's steps to the recipe.
@@ -300,7 +300,7 @@ func ExampleRegisterFormat() {
 	// And back: the file is recognised by its content.
 	info, err := goimgtools.FromBytes(ppm).Metadata()
 	fmt.Println(info.Format, info.Width, info.Height, info.HasAlpha, err)
-	_, err = goimgtools.FromBytes(ppm).Rotate(90).JPEG(80).ToBytes()
+	_, err = goimgtools.FromBytes(ppm).Rotate(90).JPEG(goimgtools.JPEGOptions{Quality: 80}).ToBytes()
 	fmt.Println(err)
 	// Output:
 	// "P6\n160 100\n" 48015 bytes
@@ -321,7 +321,7 @@ func ExampleCodecByName() {
 	}
 	goimgtools.RegisterFormat(logged)
 
-	_, err := goimgtools.FromBytes(picture(640, 480)).Resize(100, 0).JPEG(70).ToBytes()
+	_, err := goimgtools.FromBytes(picture(640, 480)).Resize(100, 0).JPEG(goimgtools.JPEGOptions{Quality: 70}).ToBytes()
 	fmt.Println(err)
 	// Output:
 	// writing a (100,75) jpeg at quality 70
@@ -329,11 +329,11 @@ func ExampleCodecByName() {
 }
 
 // A resampling filter of your own.
-func ExampleFilter() {
+func ExampleCustomKernel() {
 	// A box filter: every source pixel under a result pixel counts the same.
-	box := &goimgtools.Filter{Support: 0.5, At: func(t float64) float64 { return 1 }}
+	box := &goimgtools.CustomKernel{Support: 0.5, At: func(t float64) float64 { return 1 }}
 	w, h, err := goimgtools.FromBytes(picture(640, 480)).
-		Resize(64, 0, goimgtools.ResizeOptions{Filter: box}).
+		Resize(64, 0, goimgtools.ResizeOptions{CustomKernel: box}).
 		OutputSize()
 	fmt.Println(w, h, err)
 	// Output: 64 48 <nil>
@@ -448,7 +448,7 @@ func OpenPhoto(data []byte) Photo {
 }
 
 func Example_overriding() {
-	out, err := OpenPhoto(picture(640, 480)).Resize(320, 0).JPEG(85).ToBytes()
+	out, err := OpenPhoto(picture(640, 480)).Resize(320, 0).JPEG(goimgtools.JPEGOptions{Quality: 85}).ToBytes()
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -464,7 +464,7 @@ func ExampleImage_Transform() {
 	page := goimgtools.TransformPerspectiveQuad(112, 80, 95, 610, 520, 640, 498, 70)
 	out, err := goimgtools.FromBytes(picture(640, 720)).
 		Transform(420, 594, page, goimgtools.TransformOptions{Interpolator: goimgtools.InterpolateBicubic}).
-		JPEG(90).
+		JPEG(goimgtools.JPEGOptions{Quality: 90}).
 		ToBytes()
 	if err != nil {
 		fmt.Println(err)

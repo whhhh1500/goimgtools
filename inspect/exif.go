@@ -28,7 +28,7 @@ type Exif struct {
 	Taken    time.Time
 	HasTaken bool
 	// Orientation is how the picture has to be turned to be upright, 1
-	// (as it is) to 8; 0 when the file does not say. Image.Rotate()
+	// (as it is) to 8; 0 when the file does not say. Image.AutoOrient()
 	// applies it.
 	Orientation int
 	// Exposure is the exposure time in seconds (0.004 for 1/250 s),

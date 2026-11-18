@@ -12,7 +12,7 @@
 | 自定义类型，具备 `Image` 的全部方法并增加新方法（相当于继承） | 嵌入 `*goimgtools.Image` |
 | 自定义输入（内存中的图像、计算生成的图像、从其他来源读取的像素） | `FromImage(img)`、`FromSource(open)` |
 | 自定义文件格式；或改写库中某种格式的读取 / 写出 | `RegisterFormat(codec)`、`CodecByName(name)`、`ToFormat(name, 选项)` |
-| 自定义缩放滤镜 | `ResizeOptions{Filter: &goimgtools.Filter{...}}` |
+| 自定义缩放滤镜 | `ResizeOptions{CustomKernel: &goimgtools.CustomKernel{...}}` |
 | 结果不写入文件，而交由调用方代码处理 | `Stream(env)`（像素流）、`ToImage()`（完整的 `image.Image`） |
 | 为自定义操作命名，像内置操作一样按名称调用（`Do`、命令行 `-op`） | `RegisterOperation(def)`、`Do(name, 参数...)`、`Operations()` |
 | 改写内置操作的行为：在每一步前后加入自定义处理，或以自定义实现替换整步（相当于重写方法） | `Around(hook)` |
@@ -111,7 +111,7 @@ type Product struct {
 }
 
 func OpenProduct(path, sku string) Product {
-    return Product{goimgtools.Open(path).Rotate(), sku}
+    return Product{goimgtools.Open(path).AutoOrient(), sku}
 }
 
 // Listing 追加店铺统一的处理步骤
@@ -124,7 +124,7 @@ func (p Product) Listing() Product {
 
 p := OpenProduct("in.jpg", "SKU-0042")
 p.Flatten(color.White)            // Image 自身的方法
-err := p.Listing().JPEG(85).ToFile("out.jpg")
+err := p.Listing().JPEG(goimgtools.JPEGOptions{Quality: 85}).ToFile("out.jpg")
 ```
 
 若只需复用一组步骤而无需新类型，可将其写成函数并通过 `Apply` 调用：
@@ -132,10 +132,10 @@ err := p.Listing().JPEG(85).ToFile("out.jpg")
 ```go
 func Thumbnail(size int) func(*goimgtools.Image) *goimgtools.Image {
     return func(m *goimgtools.Image) *goimgtools.Image {
-        return m.Rotate().Resize(size, size, goimgtools.ResizeOptions{Fit: goimgtools.FitCover})
+        return m.AutoOrient().Resize(size, size, goimgtools.ResizeOptions{Fit: goimgtools.FitCover})
     }
 }
-goimgtools.Open("in.jpg").Apply(Thumbnail(200)).JPEG(80).ToFile("out.jpg")
+goimgtools.Open("in.jpg").Apply(Thumbnail(200)).JPEG().ToFile("out.jpg")
 ```
 
 ## 自定义输入
@@ -163,7 +163,7 @@ goimgtools.RegisterFormat(goimgtools.Codec{
 })
 
 goimgtools.Open("in.jpg").Resize(800, 0).ToFile("out.ppm")
-goimgtools.Open("in.ppm").Rotate(90).JPEG(80).ToFile("out.jpg")
+goimgtools.Open("in.ppm").Rotate(90).JPEG().ToFile("out.jpg")
 ```
 
 可只提供 `Decode`（只读）或只提供 `Encode`（只写）。完整的 PPM 读写实现不足一百行，见 [example_test.go](../../example_test.go)。

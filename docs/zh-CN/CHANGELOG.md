@@ -6,7 +6,21 @@
 
 ### 从 0.1.0 升级
 
-0.1.0 导出的内容没有删除，签名也没有改动（用 `apidiff` 核对；此后每次推送都会与上一发布版本比较）。为 0.1.0 写的代码仍可能遇到的变化：
+本版定下了 API：此后导出的名字只增不改、不删（每次推送都用 `apidiff` 与本版比较）。为此 0.1.0 的几个名字改了：
+
+| 0.1.0 | 现在 |
+|---|---|
+| `JPEG(85)` | `JPEG(JPEGOptions{Quality: 85})`，与 `PNG`、`WebP`、`GIF`、`TIFF` 传设置的方式一致（`JPEG()` 为质量 80） |
+| `JPEG(85, JPEGOptions{Progressive: true})` | `JPEG(JPEGOptions{Quality: 85, Progressive: true})` |
+| `Rotate()` | `AutoOrient()` |
+| `Rotate(90)` | `Rotate(90)`，现在接受任意角度（`float64`，单位为度）与 `RotateOptions` |
+| `Extract(left, top, w, h)` | `Crop(left, top, w, h)` |
+| `ResizeOptions{Filter: &Filter{...}}` | `ResizeOptions{CustomKernel: &CustomKernel{...}}` |
+| `Info.HasProfile` | `Info.HasICC` |
+
+能按 libvips（sharp）或 Pillow 计算的操作共用一个类型 `Method`（`MethodDefault`、`MethodLibvips`、`MethodPillow`），见 `ResizeOptions`、`BlurOptions`、`SharpenOptions`、`RotateOptions` 与 `Convolution`。
+
+为 0.1.0 写的代码仍可能遇到的变化：
 
 - `Animated()` 遇到无法保留的动画（GIF、WebP 或 PNG 动画转 JPEG、BMP 或 TIFF）时返回包装 `errors.ErrUnsupported` 的错误，0.1.0 会静默只写第一帧；输出为 PNG 时写出 APNG。去掉 `Animated()` 即得第一帧。
 - 有损 WebP 解码为 `*image.NRGBA` 条带，不再是 `*image.YCbCr`，以便颜色与 libwebp 一致；`Metadata()` 仍报告 `ycbcr`。对解码结果做类型断言的代码应接受任意 `image.Image`。
@@ -19,7 +33,7 @@
 
 ### 新增
 
-- 图像调整操作：`Grayscale`、`Modulate`、`Blur`、`Sharpen`（轻度锐化或反锐化掩模）、`Extend`、`Trim`、`RotateBy`（任意角度，与 sharp 的 `rotate` 逐字节一致）。
+- 图像调整操作：`Grayscale`、`Modulate`、`Blur`、`Sharpen`（轻度锐化或反锐化掩模）、`Extend`、`Trim`，以及任意角度的 `Rotate`（与 sharp 的 `rotate` 逐字节一致）。
 - `inspect.Stats`、`inspect.Hash`（感知哈希）、`inspect.ReadExif` / `ParseExif`；子命令 `stats`、`hash`、`exif`。`Stats` 还报告 sharp 的 `stats()` 所报告的各项，数值一致到末几位：`Channels`（类型 `ChannelStats`）、`Entropy`、`Sharpness`。
 - 按名称注册操作：`RegisterOperation`、`UnregisterOperation`、`LookupOperation`、`Operations`、`Image.Do`。包裹每一步骤的钩子：`Image.Around`。`ParseColor`。
 - `cli` 包：以库的形式提供命令行（`cli.Main`、`cli.Run`），程序可向其中加入自定义操作；命令行选项 `-op 名字[:参数]` 与子命令 `ops`。
@@ -30,7 +44,7 @@
 - `JPEGOptions.QuantTable`（`QuantTable` 类型，每种选择有具名常量）/ `-jpeg-quant-table`：mozjpeg 的 9 套量化表，编号与其 `-quant-table` 一致；默认 `QuantTableStandard`（0）为 JPEG 标准表。
 - `QuantTableJpegli`（`-jpeg-quant-table 9`）：按 jpegli 的方法生成 JPEG 量化表，不开 `Trellis` 时采用其死区；与 `Progressive`、`Trellis` 同用时，同等 SSIMULACRA2 下比 mozjpeg 默认设置小 15%。
 - `-webp-effort`：命令行可设 WebP 的力度（库里为 `WebPOptions.Effort`）。
-- `GIFOptions.Lossy` / `-gif-lossy`：GIF 有损 LZW 压缩，静态与动画均可（gifsicle `--lossy` 的方法）：照片类动画取 16 时小 18%，取 24 时小 32%。
+- `GIFOptions.Lossy` / `-gif-lossy`：GIF 有损 LZW 压缩，静态与动画均可（gifsicle `--lossy` 的方法）：照片类动画取 16 时小 24%，取 24 时小 39%。
 - GIF 动图：各帧合计超过 256 色但每帧不超过 256 色时，每帧用自己的调色板，逐像素不变（以前会减成一个调色板，既改了像素又让文件变大）；变化的帧在三种写法中取编码最小者，LZW 字典写满后在划算时继续沿用：三段动画上比 gifsicle `-O3` 小 0.2–0.45%。
 - WebP 动画输出：`Animated()` 且输出为 WebP 时，将 GIF 动画写为 WebP 动画（有损或无损），每帧仅存储变化的矩形区域。
 - WebP 动画输入：读取其第一帧（此前作为无法读取的图像拒绝）；使用 `Animated()` 时逐帧处理并写为 GIF 或 WebP 动画：每帧按 libwebp 动画解码器的方式画到画面上（混合或直接覆盖，之后清除其矩形与否），逐像素一致；各帧时长与播放次数随之保留（写为 GIF 时以百分之一秒计，次数按首次之后的重复次数）。`Frames` 可统计 WebP 动画与 PNG 动画（APNG）的帧数，`info` 一并显示。
@@ -40,22 +54,22 @@
 - 有损 WebP 分段量化：各段使用独立的量化级别（移植自 libwebp 的空间噪声整形）。
 - `pipeline.Env.SetHelpers`、`Helpers`、`Parallel`、`Go`：供处理环节将工作分摊至多个核。
 - TIFF 输出：`TIFFLZW` 压缩（libtiff 的写法）与 `TIFFOptions.Predictor`（水平差分，sharp 的默认设置）：一张 2400 万像素照片 LZW 82 → 52MB、Deflate 67 → 45MB；`-tiff-compression lzw`、`-tiff-predictor`。
-- `SharpenOptions.Method` 新增 `SharpenLibvips`，配合 `SharpenOptions.Curve`（`SharpenCurve`、`DefaultSharpenCurve()`）：sharp 带 sigma 的 `sharpen`，只锐化明度（仅在少数像素上相差 1 级）；按名字调用 `sharpen SIGMA,libvips[,FLAT,JAGGED,JAGGED_FROM,MAX_BRIGHTEN,MAX_DARKEN]`，命令行 `-sharpen` 同样写法。
+- `SharpenOptions.Method` 新增 `MethodLibvips`，配合 `SharpenOptions.Curve`（`SharpenCurve`、`DefaultSharpenCurve()`）：sharp 带 sigma 的 `sharpen`，只锐化明度（仅在少数像素上相差 1 级）；按名字调用 `sharpen SIGMA,libvips[,FLAT,JAGGED,JAGGED_FROM,MAX_BRIGHTEN,MAX_DARKEN]`，命令行 `-sharpen` 同样写法。
 - `Affine(a, b, c, d, AffineOptions{...})`：与 sharp 的 `affine` 逐字节一致（`Interpolator` 可选双线性、最近邻、双三次，含透明与不含透明）；按名字调用 `affine A,B,C,D[,BACKGROUND[,IDX,IDY,ODX,ODY]][,bilinear|nearest|bicubic]`。
 - `EnsureAlpha`（与 sharp 的 `ensureAlpha` 逐字节一致）；按名字调用 `ensure-alpha [ALPHA]`。
 - 缩放核 `KernelMKS2013` 与 `KernelMKS2021`（Magic Kernel Sharp，即 sharp 的 `mks2013`、`mks2021`）；命令行 `-kernel mks2013|mks2021`。
 - `Rank`（Pillow 的 `RankFilter`、`MinFilter`、`MaxFilter`）、`Dilate` 与 `Erode`（sharp 的 `dilate`、`erode`），均逐字节一致；按名字调用 `rank SIZE,RANK`、`dilate [WIDTH]`、`erode [WIDTH]`。dilate 与 erode 的耗时几乎不随宽度增长（libvips 随宽度的平方增长）。
-- `BlurOptions`（`Method`：默认 `BlurPillow` 即 Pillow 的算法，或 `BlurLibvips`，与 sharp 的 `blur` 逐字节一致，含透明图像；`MinAmplitude` 即 sharp 的 `minAmplitude`）；按名字调用 `blur SIGMA,libvips[,MIN_AMPLITUDE]`；命令行 `-blur-method`、`-blur-min-amplitude`。高斯核拆成至多 20 个嵌套方框计算，耗时几乎不随 sigma 增长。
+- `BlurOptions`（`Method`：默认 `MethodPillow` 即 Pillow 的算法，或 `MethodLibvips`，与 sharp 的 `blur` 逐字节一致，含透明图像；`MinAmplitude` 即 sharp 的 `minAmplitude`）；按名字调用 `blur SIGMA,libvips[,MIN_AMPLITUDE]`；命令行 `-blur-method`、`-blur-min-amplitude`。高斯核拆成至多 20 个嵌套方框计算，耗时几乎不随 sigma 增长。
 - 仿照 sharp 的选项：`NegateOptions.Alpha`（透明度也取反，sharp 的默认做法）、`ThresholdOptions.PerChannel`（即 sharp 的 `greyscale: false`）、`ModulateOptions.Lightness`（即 sharp 的 `lightness`）与 `GrayscaleOptions.Linear`（即 sharp 的 `greyscale`，逐字节一致）；按名字调用 `negate alpha`、`threshold LEVEL,channels`、`modulate B,S,H,L`、`grayscale linear`；命令行 `-grayscale-linear`，`-modulate` 可加第四个数。
 - XMP：`KeepXmp()` / `-keep-xmp` 在 JPEG、PNG、WebP、TIFF 输出中保留 XMP 数据包；`Info.HasXmp`、`inspect.ReadXmp`；自定义格式可用 `EncodeOptions.Xmp` 与 `pipeline.Meta.Xmp`。读写方式与 sharp 相同（在 sharp 写出的文件上双向核对）。
 - `Trim` 的找边方式与 sharp 的 `trim`（libvips 的 `find_trim`）相同：在 3×3 中值滤波后的图像上找边，噪点与斑点不再妨碍裁剪（像素相同时裁剪范围与 sharp 完全一致）；`TrimOptions` 可指定 `Background`、`LineArt`（不做中值滤波，适用于细线条绘图）与 `Margin`；命令行 `-trim-background`、`-trim-line-art`、`-trim-margin`。
 - `JPEGOptions.ChromaSubsampling`（类型 `ChromaSubsampling`：默认 `Chroma420`、`Chroma422`、`Chroma444`）/ `-jpeg-chroma`：JPEG 输出可保留全部色度或横向一半，普通、优化、渐进与网格量化均支持（即 sharp 的 `chromaSubsampling`）。
 - 可读取 JPEG 压缩的 TIFF 文件（压缩方式 7：libtiff 的写法，libvips 与 sharp 的默认设置），条带与图块、彩色与灰度均支持。
 - 分辨率：`Info.Density`（每英寸像素数，读取自 JFIF、EXIF、pHYs、TIFF 与 BMP），默认保留到输出，`Density(dpi)` / `-density` 可设置；自定义格式可用 `EncodeOptions.Density` 与 `pipeline.Meta.Density`。`info` 会显示它。
-- `ExtendWith`（类型 `ExtendMode`：`ExtendCopy`、`ExtendRepeat`、`ExtendMirror`）/ `-extend-with`：用图像本身扩边，与 sharp 带 `extendWith` 的 `extend` 逐像素一致；`Do("extend")` 在颜色的位置接受 copy、repeat 或 mirror。
-- `Filter`（类型 `ImageFilter`）：Pillow 的内置滤镜（模糊、轮廓、细节、边缘增强、浮雕、找边、锐化、平滑），以及 `Convolution.Method` 的 `ConvolvePillow`：其 `ImageFilter.Kernel`，逐字节一致；按名字调用 `filter NAME` 与 `convolve …,pillow`。
+- `ExtendOptions`（`Background`；`Mode`，类型 `ExtendMode`：`ExtendCopy`、`ExtendRepeat`、`ExtendMirror`）/ `-extend-with`：用图像本身扩边，与 sharp 带 `extendWith` 的 `extend` 逐像素一致；`Do("extend")` 在颜色的位置接受 copy、repeat 或 mirror。
+- `Filter`（类型 `ImageFilter`）：Pillow 的内置滤镜（模糊、轮廓、细节、边缘增强、浮雕、找边、锐化、平滑），以及 `Convolution.Method` 的 `MethodPillow`：其 `ImageFilter.Kernel`，逐字节一致；按名字调用 `filter NAME` 与 `convolve …,pillow`。
 - `BoxBlur(radius)`（`boxblur`）：即 Pillow 的 `ImageFilter.BoxBlur`，逐字节一致，含小数半径。
-- `RotateBy` 的 `RotateOptions`（`Method`：`RotateLibvips` 即 sharp 的，或 `RotatePillow` 即 Pillow 的 `Image.rotate`，逐字节一致；`Interpolator`；`Expand`）；按名字调用 `rotate DEGREES[,BACKGROUND][,pillow][,nearest|bilinear|bicubic][,expand]`。
+- `RotateOptions`（`Background`；`Method`：`MethodLibvips` 即 sharp 的，或 `MethodPillow` 即 Pillow 的 `Image.rotate`，逐字节一致；`Interpolator`；`Expand`）；按名字调用 `rotate DEGREES[,BACKGROUND][,pillow][,nearest|bilinear|bicubic][,expand]`。
 - `ToTiles(path, TileOptions)`：瓦片金字塔，与 sharp 的 `tile`（libvips 的 `dzsave`）相同，JPEG 瓦片及描述文件逐字节一致，带透明的图像也一样：Deep Zoom（`.dzi`）、Google 地图（`TileGoogle`，含 `blank.png`）、IIIF Image API 2 与 3（`TileIIIF`、`TileIIIF3`，含 `info.json`）、Zoomify（`TileZoomify`）；`TileOptions.Depth`（`TileDepth`）、`Background`、`Center`、`SkipBlanks`、`ID` 对应 sharp 的 `depth`、`background`、`centre`、`skipBlanks`、`id`；路径以 `.zip` 结尾时写入 ZIP 压缩包，或用 `ToTilesWriter` 写到任意 writer，同 sharp 的 `zip` 容器；流式处理，瓦片在辅助线程上编码；也可 `ToFile("x.dzi")`，命令行输出名为 `.dzi` 时配合 `-tile-size`、`-tile-overlap`、`-tile-layout`。
 - sharp composite 的 Porter-Duff 混合模式及 add、saturate：`BlendClear` 至 `BlendXor`、`BlendAdd`、`BlendSaturate`（`BlendDestIn` 配遮罩只保留遮罩不透明处的底图）；`-watermark-blend` 也可用。
 - 模块 `github.com/whhhh1500/goimgtools/heic`：用 gen2brain/h265（纯 Go 的 HEVC 编解码器，解码与一致性测试集逐位一致；有 SIMD，`-tags noasm` 时不用，像素相同）读写 HEIC：网格、透明、irot/imir/clap（随后 EXIF 方向设为 1）、EXIF、XMP、色彩配置（nclx 声明 Display P3 时补上 P3 配置）均读出并可写入；`heic.Options{Quality, Effort, Lossless, Chroma444}`，MaxFileSize 按其质量。
@@ -63,13 +77,13 @@
 - TIFF 输出使用 Deflate 或 LZW 时，各条带交给其他核心压缩（`Threads(4)` 及以上），文件不变；6000×4000 的照片用 8 线程写成 Deflate 只需 0.49 秒，原为 1.73 秒。
 - `Curves(points, CurvesOptions)`：色调曲线（经过各点的单调三次样条），作用于全部颜色通道或单个通道；按名字调用 `curves`。
 - 灰度图像变成彩色后（叠加彩色内容、`Tint`）不再保留其灰度色彩配置（彩色像素无法使用）：各通道按配置的曲线转到 sRGB。
-- TIFF 文件的 EXIF：从第一个目录及其指向的 EXIF、GPS 目录读出（于是 `Rotate()` 按 TIFF 的方向转正，同 Pillow 的 `exif_transpose` 与 sharp；`KeepExif`、`inspect.ReadExif` 都能看到），使用 `KeepExif` 时也写到那里；Pillow 读回写入的标签不变。
+- TIFF 文件的 EXIF：从第一个目录及其指向的 EXIF、GPS 目录读出（于是 `AutoOrient()` 按 TIFF 的方向转正，同 Pillow 的 `exif_transpose` 与 sharp；`KeepExif`、`inspect.ReadExif` 都能看到），使用 `KeepExif` 时也写到那里；Pillow 读回写入的标签不变。
 - JPEG 解码在 `Threads(5)` 及以上时，顺序式 JPEG 的反 DCT 交给其他核心，与下一行块的熵解码同时进行；6000×4000 的 JPEG 解码从 172ms 降到 122–142ms（像素不变）。
 - GIF 动画输出：没有任何变化的帧不再写出，而是延长前一帧（最长 655.35 秒），与 WebP、APNG 输出一致。
 - `MaxFileSize` 支持 PNG 与 GIF：选用能满足的最多颜色数（PNG 先试无损）；`-max-size` 同。
 - `Transform(width, height, t, TransformOptions)`：即 Pillow 的 `Image.transform`，逐字节一致，配合 `TransformAffine`、`TransformExtent`、`TransformPerspective` 与 `TransformQuad`，以及 `TransformPerspectiveQuad`（由四个点算出把输出四角映射到这四点的透视变换）；按名字调用 `transform WIDTH,HEIGHT,KIND,NUMBERS...[,INTERPOLATOR][,BACKGROUND]`。
 - Pillow 的 `ImageOps` 与 `ImageEnhance`，逐字节一致：`Posterize`、`Solarize`、`Equalize`、`AutoContrast`（`AutoContrastOptions`）与 `Enhance`（类型 `Enhancement`：`EnhanceColor`、`EnhanceContrast`、`EnhanceBrightness`、`EnhanceSharpness`）；按名字调用 posterize、solarize、equalize、autocontrast、enhance。
-- `ResizeOptions.Method`（类型 `ResizeMethod`）/ `-resize-method`：`ResizeLibvips` 即 sharp 的 `resize`，逐字节一致，涵盖所有核、fit、位置与背景，包括解码时缩小的 JPEG，以及配合 `FastShrinkOnLoad` 时按 libwebp 的方式在解码时缩放的 WebP（在 sharp 上核对了 578 次缩放）；`ResizePillow` 即 Pillow 的 `Image.resize`，逐字节一致（核对了 346 次缩放），各种 fit 即 `ImageOps` 的 `contain`、`cover`、`pad`、`fit`，配合 `ResizeOptions.ReducingGap`（`-reducing-gap`）即其 `reducing_gap` 与 `Image.thumbnail`；默认的 `ResizeDraw` 与以前相同。`Do("resize")` 以第七个参数接受 `draw`、`libvips` 或 `pillow`。`KernelBox` 与 `KernelHamming`（`-kernel box`、`hamming`）：Pillow 的 `BOX` 与 `HAMMING`。
+- `ResizeOptions.Method`（类型 `Method`）/ `-resize-method`：`MethodLibvips` 即 sharp 的 `resize`，逐字节一致，涵盖所有核、fit、位置与背景，包括解码时缩小的 JPEG，以及配合 `FastShrinkOnLoad` 时按 libwebp 的方式在解码时缩放的 WebP（在 sharp 上核对了 578 次缩放）；`MethodPillow` 即 Pillow 的 `Image.resize`，逐字节一致（核对了 346 次缩放），各种 fit 即 `ImageOps` 的 `contain`、`cover`、`pad`、`fit`，配合 `ResizeOptions.ReducingGap`（`-reducing-gap`）即其 `reducing_gap` 与 `Image.thumbnail`；默认的 `MethodDefault` 与以前相同。`Do("resize")` 以第七个参数接受 `draw`、`libvips` 或 `pillow`。`KernelBox` 与 `KernelHamming`（`-kernel box`、`hamming`）：Pillow 的 `BOX` 与 `HAMMING`。
 - `ResizeOptions.LinearLight` / `-linear-light`：在线性光下缩放，同 libvips `thumbnail` 的 `linear`；`Do("resize")` 以第六个参数 `linear` 接受。
 - `ResizeOptions.Position`（`FitCover` 保留的部分、`FitContain` 放置图像的位置）与 `ResizeOptions.Interesting`（类型 `Interesting`：`InterestingEntropy`、`InterestingAttention`，即 sharp 的智能裁剪策略）/ `-position`。`Do("resize")` 以第五个参数接受它们。
 - `Recomb`、`Unflatten`、`ExtractChannel`（类型 `Channel`）、`RemoveAlpha`，仿照 sharp 的 `recomb`、`unflatten`、`extractChannel`、`removeAlpha`（前两者逐字节一致），也可按名称调用：recomb、unflatten、extract-channel、remove-alpha。
@@ -103,10 +117,10 @@
 - 有损 WebP 编码：模式搜索中的 4×4 正变换（参照 libwebp 的 FTransform_SSE2）、逆变换、量化与平方误差，以及分析阶段的系数直方图，改用 AVX2 或 NEON；trellis 把每个系数的两个节点放在寄存器里，到达各节点的路径记为位掩码，并边走边累计该块的比特数；块的比特数求和不再有分支。每个数都与 Go 代码相同，文件不变：6000×4000 的照片以质量 80 单核编码，默认力度 4.4s（原 6.5s），力度 1 为 2.6s（原 4.0s）。
 - `Resize` 默认方法保留 16 位采样：16 位的 PNG、TIFF 缩放为 16 位条带（`*image.RGBA64`、`*image.Gray16`），数值与 `x/image` 的 `Scale` 写入此类目标图相同，并按 16 位写出；此前会截为 8 位。
 - PNG 编码：每行的五种过滤（以及 libpng 启发式据以选择的各项求和）用 AVX2 或 NEON 计算，过滤结果与选择不变：6000×4000 的照片转 PNG（7 级）单核 1.43s，原为 1.73s。
-- arm64 使用 NEON（需 Go 1.27 及以上；`purego` 构建标签可关闭）：所有 AVX2 内核（JPEG 解码与编码、有损 WebP 解码、环路滤波强度搜索、`ResizeLibvips` 的缩小）都有 NEON 版本，每个字节与 Go 代码相同。
+- arm64 使用 NEON（需 Go 1.27 及以上；`purego` 构建标签可关闭）：所有 AVX2 内核（JPEG 解码与编码、有损 WebP 解码、环路滤波强度搜索、`MethodLibvips` 的缩小）都有 NEON 版本，每个字节与 Go 代码相同。
 - 有损 WebP 力度 3 在挑选 4×4 预测模式时不用网格量化，只对选中的模式使用（同 libwebp method 5）：比力度 4（此前两者相同）快 15%，同等 SSIMULACRA2 与 butteraugli 下文件约大 1%（14 张图）。
 - 有损 WebP 编码使用 AVX2（amd64；`purego` 构建标签可关闭）：搜索环路滤波强度时，用解码器的 AVX2 环路滤波处理每个宏块，并以 AVX2 计算各窗口的 SSIM 求和，每个数与 Go 代码相同，文件不变：6000×4000 的照片以质量 80 单核 6.5s，原为 8.3s。
-- 缩放使用 AVX2（amd64；`purego` 构建标签可关闭）：`ResizeLibvips` 的纵向与横向缩小，以及 JPEG 解码时缩小所用 libjpeg 的 4×4 逆 DCT，以汇编执行，每个字节与 Go 代码相同（因而与 sharp 相同）；无透明图像的 NRGBA 条带编码为 JPEG 时与 RGBA 走同一转换。6000×4000 的 JPEG 缩到 1536×1536 以内（Lanczos 3、`FastShrinkOnLoad`）并写成 JPEG：单核 109ms，原为 196ms（sharp：92ms）。
+- 缩放使用 AVX2（amd64；`purego` 构建标签可关闭）：`MethodLibvips` 的纵向与横向缩小，以及 JPEG 解码时缩小所用 libjpeg 的 4×4 逆 DCT，以汇编执行，每个字节与 Go 代码相同（因而与 sharp 相同）；无透明图像的 NRGBA 条带编码为 JPEG 时与 RGBA 走同一转换。6000×4000 的 JPEG 缩到 1536×1536 以内（Lanczos 3、`FastShrinkOnLoad`）并写成 JPEG：单核 109ms，原为 196ms（sharp：92ms）。
 - JPEG 编码使用 AVX2（amd64；`purego` 构建标签可关闭）：RGB 到 YCbCr 转换、色度下采样、正向 DCT 与量化以汇编执行，每个字节与 Go 代码相同；优化霍夫曼表的第一遍改为暂存符号（每个一字节），不再写出用标准表编码、第二遍还需解码的扫描数据。6000×4000 的照片以质量 85 写出：单核 100ms，原为 213ms（libjpeg-turbo 经 Pillow：66ms）；优化霍夫曼表 168ms，原为 388ms（167ms）。
 - JPEG 解码使用 AVX2（amd64；`purego` 构建标签可关闭）：逆 DCT 与颜色转换（连同色度上采样）以汇编执行，参照 libjpeg-turbo 的 SIMD 代码，每个字节与 Go 代码相同：6000×4000 的照片（质量 90）单核解码 99ms（4:2:0）、109ms（4:2:2）、126ms（4:4:4），原为 208、226、250ms，与带 SIMD 的 libjpeg-turbo 相当（经 Pillow：101、110、121ms）。
 - JPEG 解码快 45%，像素不变：熵编码数据一次读 64 位，经 11 位查表把多数系数的值连同其码一起解出，系数边解边反量化，逆 DCT 跳过全零的行（6000×4000 的基线照片单核 98ms，原为 188ms）。启用 `FastShrinkOnLoad` 时由系数直接解出原尺寸 1/2、1/4 或 1/8 的图（同 libjpeg），不再完整解码后求平均，其余缩放直接在 Y、Cb、Cr 平面上以定点进行，不再转成 RGBA：把这张照片缩到 400×400 以内用时 82ms，原为 231ms（libvips 的 `vipsthumbnail`：97ms）；缩到 1536×1536 以内 157ms，原为 320ms（148ms；2 线程 108ms，对方 172ms）。
@@ -144,7 +158,7 @@
 - 对分量采样方式特殊、解码器无法自行缩小的 JPEG（Go 测试文件 121121、211211、221122、222112）使用 `FastShrinkOnLoad` 时报错 “shrink: unsupported pixel type”；现在改为对解码结果再做平均。
 
 - 大图像的压缩 TIFF 只有一个条带，压缩数据超过 50MB 时 libvips（因而 sharp）拒绝读取：现在像素数据超过 1MB 的压缩图像按约 1MB 一条分条带写入。
-- 在把乘法与加法融合为一条指令的处理器上（ARM64，如 Apple 芯片与 AWS Graviton；POWER、s390x、RISC-V、LoongArch），部分结果可能与 x86 相差一级或一个像素：`Linear`、混合模式、带小数权重的 `Convolve`、GIF 与少色 PNG 的调色板、Mitchell 核、按比例定位的水印、`RotateBy` 的尺寸、`Blur` 的方框、文字描边，以及无损 WebP 与 jpegli 编码器所做的选择。现在每个乘积都先取整再相加（与 x86 相同），自动测试会检查编译器在这些处理器上没有融合任何一处。
+- 在把乘法与加法融合为一条指令的处理器上（ARM64，如 Apple 芯片与 AWS Graviton；POWER、s390x、RISC-V、LoongArch），部分结果可能与 x86 相差一级或一个像素：`Linear`、混合模式、带小数权重的 `Convolve`、GIF 与少色 PNG 的调色板、Mitchell 核、按比例定位的水印、`Rotate` 的尺寸、`Blur` 的方框、文字描边，以及无损 WebP 与 jpegli 编码器所做的选择。现在每个乘积都先取整再相加（与 x86 相同），自动测试会检查编译器在这些处理器上没有融合任何一处。
 - 操作中发生 panic 时，处理链的输入可能未被关闭，继续占用内存预算与临时文件。
 - GIF 的 `Frames().LoopCount` 此前为其重复次数，比字段文档所述的播放次数少 1。
 

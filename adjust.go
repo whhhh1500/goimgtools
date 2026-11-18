@@ -14,8 +14,8 @@ import (
 
 // The operations that change how an image looks rather than where its
 // pixels are, and those that change its canvas: Grayscale, Modulate, Blur,
-// Sharpen, Extend, Trim and RotateBy. Like the others they work a few rows
-// at a time, except Trim and RotateBy, which have to see the whole image
+// Sharpen, Extend, Trim and Rotate. Like the others they work a few rows
+// at a time, except Trim and Rotate, which have to see the whole image
 // first and keep it in working storage.
 
 // Grayscale turns the image into shades of grey: the Rec. 601 brightness
@@ -73,8 +73,8 @@ func (m *Image) Modulate(brightness, saturation, hue float64, opts ...ModulateOp
 // Blur blurs the image with a Gaussian of standard deviation sigma pixels,
 // above 0 and at most 1000 (as sharp). By default it is Pillow's
 // GaussianBlur, and for an image without transparency the result is
-// Pillow's to the byte; BlurOptions.Method BlurLibvips makes it sharp's, to
-// the byte. Either way the time it takes hardly grows with sigma, the
+// Pillow's to the byte; BlurOptions.Method MethodLibvips makes it sharp's,
+// to the byte. Either way the time it takes hardly grows with sigma, the
 // memory it takes grows with sigma times the width of the image and goes
 // to a temporary file beyond its share of the limit, and transparent
 // pixels lend no colour to their neighbours.
@@ -84,11 +84,14 @@ func (m *Image) Blur(sigma float64, opts ...BlurOptions) *Image {
 		return m.fail(errors.New("goimgtools: Blur sigma must be above 0 and at most 1000"))
 	}
 	o := first(opts)
+	if o.Method == MethodDefault {
+		o.Method = MethodPillow
+	}
 	switch {
-	case o.Method != BlurPillow && o.Method != BlurLibvips:
-		return m.fail(fmt.Errorf("goimgtools: unknown BlurMethod %d", o.Method))
-	case o.MinAmplitude != 0 && o.Method != BlurLibvips:
-		return m.fail(errors.New("goimgtools: Blur MinAmplitude is for BlurLibvips"))
+	case o.Method != MethodPillow && o.Method != MethodLibvips:
+		return m.fail(fmt.Errorf("goimgtools: unknown Blur Method %d", o.Method))
+	case o.MinAmplitude != 0 && o.Method != MethodLibvips:
+		return m.fail(errors.New("goimgtools: Blur MinAmplitude is for MethodLibvips"))
 	case o.MinAmplitude != 0 && !(o.MinAmplitude >= 0.001 && o.MinAmplitude <= 1):
 		return m.fail(errors.New("goimgtools: Blur MinAmplitude must be 0.001 to 1"))
 	}
@@ -97,33 +100,23 @@ func (m *Image) Blur(sigma float64, opts ...BlurOptions) *Image {
 
 // BlurOptions are the optional settings of Blur.
 type BlurOptions struct {
-	// Method is the way the Gaussian is worked out: BlurPillow, Pillow's
-	// (the default), or BlurLibvips, sharp's.
-	Method BlurMethod
-	// MinAmplitude is where BlurLibvips cuts the Gaussian off: where it
+	// Method is the way the Gaussian is worked out. MethodPillow (the
+	// default) is Pillow's GaussianBlur: three box blurs across and three
+	// down, of the width that comes closest to the Gaussian, each rounded
+	// to 8 bits; for an image without transparency the result is Pillow's
+	// to the byte. MethodLibvips is sharp's blur (libvips' gaussblur at its
+	// default integer precision): the Gaussian itself, its weights
+	// twentieths of its peak rounded and cut off at MinAmplitude, across
+	// and then down, each rounded to 8 bits; the result is sharp's to the
+	// byte, transparency included. It blurs less than MethodPillow at the
+	// same sigma, the mask being cut off at 1.8 sigma by default.
+	Method Method
+	// MinAmplitude is where MethodLibvips cuts the Gaussian off: where it
 	// falls below this fraction of its peak, 0.001 to 1, as sharp's
 	// minAmplitude; 0 means sharp's default, 0.2. Smaller makes the edges
 	// of the blur smoother and it a little slower.
 	MinAmplitude float64
 }
-
-// BlurMethod is a way of working out a Gaussian blur.
-type BlurMethod int
-
-const (
-	// BlurPillow is Pillow's GaussianBlur: three box blurs across and three
-	// down, of the width that comes closest to the Gaussian, each rounded
-	// to 8 bits. For an image without transparency the result is Pillow's
-	// to the byte.
-	BlurPillow BlurMethod = iota
-	// BlurLibvips is sharp's blur (libvips' gaussblur at its default
-	// integer precision): the Gaussian itself, its weights twentieths of
-	// its peak rounded and cut off at MinAmplitude, across and then down,
-	// each rounded to 8 bits. The result is sharp's to the byte,
-	// transparency included. It blurs less than BlurPillow at the same
-	// sigma, the mask being cut off at 1.8 sigma by default.
-	BlurLibvips
-)
 
 // SharpenOptions are the optional settings of Sharpen.
 type SharpenOptions struct {
@@ -139,37 +132,24 @@ type SharpenOptions struct {
 	// that flat areas do not get grainy. The default is 0: every difference
 	// is sharpened. Pillow's UnsharpMask uses 3.
 	Threshold int
-	// Method is the unsharp mask a Sigma makes: SharpenPillow (the
-	// default), Pillow's UnsharpMask, which sharpens red, green and blue
-	// each with Amount and Threshold; or SharpenLibvips, sharp's sharpen
-	// with a sigma, which sharpens the lightness alone (L* of L*a*b*), so
-	// that colours do not shift, by its Curve.
-	Method SharpenMethod
-	// Curve is how SharpenLibvips turns the difference of the lightness
+	// Method is the unsharp mask a Sigma makes. MethodPillow (the default)
+	// is Pillow's UnsharpMask: red, green and blue each sharpened by
+	// Amount where they differ from their blur by more than Threshold.
+	// MethodLibvips is sharp's sharpen with a sigma (libvips' sharpen):
+	// the lightness alone (L* of L*a*b*), so that colours do not shift, by
+	// its Curve; the result is sharp's, within a level on a few pixels
+	// (where sharp's own result depends on the system's C library).
+	Method Method
+	// Curve is how MethodLibvips turns the difference of the lightness
 	// to its blur into the change it makes; nil is sharp's default
 	// (DefaultSharpenCurve()).
 	Curve *SharpenCurve
 }
 
-// SharpenMethod is a way Sharpen sharpens with a Sigma.
-type SharpenMethod int
-
-const (
-	// SharpenPillow is Pillow's UnsharpMask: red, green and blue each
-	// sharpened by Amount where they differ from their blur by more than
-	// Threshold.
-	SharpenPillow SharpenMethod = iota
-	// SharpenLibvips is sharp's sharpen with a sigma (libvips' sharpen):
-	// the lightness alone, by SharpenCurve, colours unchanged. The result
-	// is sharp's, within a level on a few pixels (where sharp's own result
-	// depends on the system's C library).
-	SharpenLibvips
-)
-
-// SharpenCurve is how SharpenLibvips maps the difference of a pixel's
-// lightness to its blur (in L* units, 0 to 100) to the lightness it adds:
-// Flat times the difference up to JaggedFrom either way, Jagged times what
-// lies beyond, at most MaxBrighten and MaxDarken in all. The fields are
+// SharpenCurve is how Sharpen with MethodLibvips maps the difference of a
+// pixel's lightness to its blur (in L* units, 0 to 100) to the lightness it
+// adds: Flat times the difference up to JaggedFrom either way, Jagged times
+// what lies beyond, at most MaxBrighten and MaxDarken in all. The fields are
 // sharp's m1, m2, x1, y2 and y3, each at least 0.
 type SharpenCurve struct {
 	Flat, Jagged, JaggedFrom, MaxBrighten, MaxDarken float64
@@ -186,7 +166,7 @@ func DefaultSharpenCurve() SharpenCurve {
 // smaller. With a Sigma it is an unsharp mask (see SharpenOptions): for an
 // image without transparency the result is that of Pillow's UnsharpMask,
 // to the byte (Amount counts in whole percent, as there); with Method
-// SharpenLibvips, sharp's sharpen with a sigma.
+// MethodLibvips, sharp's sharpen with a sigma.
 func (m *Image) Sharpen(opts ...SharpenOptions) *Image {
 	m.atMostOne("Sharpen", len(opts))
 	o := first(opts)
@@ -202,17 +182,20 @@ func (m *Image) Sharpen(opts ...SharpenOptions) *Image {
 	if o.Threshold < 0 || o.Threshold > 255 {
 		return m.fail(errors.New("goimgtools: Sharpen Threshold must be 0 to 255"))
 	}
+	if o.Method == MethodDefault {
+		o.Method = MethodPillow
+	}
 	switch o.Method {
-	case SharpenPillow:
+	case MethodPillow:
 		if o.Curve != nil {
-			return m.fail(errors.New("goimgtools: Sharpen Curve goes with SharpenLibvips"))
+			return m.fail(errors.New("goimgtools: Sharpen Curve goes with MethodLibvips"))
 		}
 		if o.Sigma > 0 && o.Amount == 0 {
 			o.Amount = 1.5
 		}
-	case SharpenLibvips:
+	case MethodLibvips:
 		if o.Sigma == 0 || o.Amount != 0 || o.Threshold != 0 {
-			return m.fail(errors.New("goimgtools: SharpenLibvips takes a Sigma and a Curve, not Amount and Threshold"))
+			return m.fail(errors.New("goimgtools: Sharpen with MethodLibvips takes a Sigma and a Curve, not Amount and Threshold"))
 		}
 		if o.Curve == nil {
 			c := DefaultSharpenCurve()
@@ -226,52 +209,62 @@ func (m *Image) Sharpen(opts ...SharpenOptions) *Image {
 			}
 		}
 	default:
-		return m.fail(fmt.Errorf("goimgtools: unknown SharpenMethod %d", o.Method))
+		return m.fail(fmt.Errorf("goimgtools: unknown Sharpen Method %d", o.Method))
 	}
 	return m.add(sharpenOp{o})
 }
 
 // Extend adds a border of the given widths (top, right, bottom, left, in
-// pixels, as CSS writes them) in the background colour around the image;
-// nil is black, color.Transparent a transparent border.
-func (m *Image) Extend(top, right, bottom, left int, background color.Color) *Image {
+// pixels, as CSS writes them) around the image: of a colour, black by
+// default, or made from the image itself (see ExtendOptions), as sharp's
+// extend, to the byte.
+func (m *Image) Extend(top, right, bottom, left int, opts ...ExtendOptions) *Image {
+	m.atMostOne("Extend", len(opts))
 	if top < 0 || right < 0 || bottom < 0 || left < 0 {
 		return m.fail(errors.New("goimgtools: Extend takes widths of 0 and more"))
 	}
+	o := first(opts)
+	if o.Mode < ExtendBackground || o.Mode > ExtendMirror {
+		return m.fail(errors.New("goimgtools: unknown ExtendMode"))
+	}
+	if o.Mode != ExtendBackground {
+		return m.add(extendOp{top: top, right: right, bottom: bottom, left: left, with: o.Mode, from: true})
+	}
+	background := o.Background
 	if background == nil {
 		background = color.Black
 	}
 	return m.add(extendOp{top: top, right: right, bottom: bottom, left: left, background: background})
 }
 
-// ExtendMode is how ExtendWith fills a border from the image.
+// ExtendOptions are the optional settings of Extend.
+type ExtendOptions struct {
+	// Background is the colour of the border with ExtendBackground: nil
+	// is black, color.Transparent a transparent border.
+	Background color.Color
+	// Mode is what the border is made of: the Background colour (the
+	// default), or the image itself, as sharp's extendWith copy, repeat
+	// or mirror. A border wider than the image goes on repeating or
+	// mirroring it. A top or bottom border that repeats or mirrors the
+	// image keeps the image in working storage (a temporary file beyond
+	// its share of the limit).
+	Mode ExtendMode
+}
+
+// ExtendMode is what Extend makes a border of.
 type ExtendMode int
 
 const (
+	// ExtendBackground fills the border with the Background colour.
+	ExtendBackground ExtendMode = iota
 	// ExtendCopy repeats the pixels at the edges.
-	ExtendCopy ExtendMode = iota
+	ExtendCopy
 	// ExtendRepeat repeats the image, as tiles.
 	ExtendRepeat
 	// ExtendMirror mirrors the image at its edges (the edge pixel taken
 	// twice), and again further out.
 	ExtendMirror
 )
-
-// ExtendWith adds a border of the given widths (top, right, bottom, left,
-// in pixels) filled from the image itself, as sharp's extend with
-// extendWith copy, repeat or mirror (to the byte): see ExtendMode. A
-// border wider than the image goes on repeating or mirroring it. A top or
-// bottom border that repeats or mirrors the image keeps the image in
-// working storage (a temporary file beyond its share of the limit).
-func (m *Image) ExtendWith(top, right, bottom, left int, how ExtendMode) *Image {
-	if top < 0 || right < 0 || bottom < 0 || left < 0 {
-		return m.fail(errors.New("goimgtools: ExtendWith takes widths of 0 and more"))
-	}
-	if how < ExtendCopy || how > ExtendMirror {
-		return m.fail(errors.New("goimgtools: unknown ExtendMode"))
-	}
-	return m.add(extendOp{top: top, right: right, bottom: bottom, left: left, with: how, from: true})
-}
 
 // TrimOptions are the optional settings of Trim.
 type TrimOptions struct {
@@ -314,36 +307,38 @@ func (m *Image) Trim(threshold float64, opts ...TrimOptions) *Image {
 	return m.add(trimOp{threshold, o})
 }
 
-// RotateBy turns the image clockwise by any number of degrees (negative:
-// anticlockwise), as sharp's rotate, to the byte, with and without
-// transparency: an Affine by the matrix (cos, -sin; sin, cos), its sine
-// and cosine rounded as libvips' are. The canvas is the box around the
-// turned image (each side rounded to the nearest pixel); the corners are
-// the background colour, nil for black, color.Transparent for none. The
-// pixels are interpolated bilinearly (see RotateOptions). A multiple of 90
-// degrees is a plain quarter or half turn instead, exact, as Rotate does it
-// (and sharp).
+// Rotate turns the image clockwise by degrees (negative: anticlockwise).
+// A multiple of 90 degrees is a plain quarter or half turn, exact; when a
+// Resize follows directly, the image is resized first and turned
+// afterwards, with the same result. Any other angle is sharp's rotate, to
+// the byte, with and without transparency: an Affine by the matrix (cos,
+// -sin; sin, cos), its sine and cosine rounded as libvips' are. The canvas
+// is then the box around the turned image (each side rounded to the
+// nearest pixel), its corners RotateOptions.Background, and the pixels are
+// interpolated bilinearly (see RotateOptions).
 //
-// With RotateOptions.Method RotatePillow it is Pillow's Image.rotate (of
-// -degrees, Pillow turning anticlockwise), to the byte: see RotatePillow.
+// With RotateOptions.Method MethodPillow it is Pillow's Image.rotate (of
+// -degrees, Pillow turning anticlockwise), to the byte: see RotateOptions.
 //
-// The whole image is kept in working storage first (a temporary file beyond
-// its share of the limit), as for a quarter turn.
-func (m *Image) RotateBy(degrees float64, background color.Color, opts ...RotateOptions) *Image {
-	m.atMostOne("RotateBy", len(opts))
+// Any turn needs the last rows of the image first: the image is kept in
+// working storage (a temporary file beyond its share of the limit).
+// AutoOrient turns an image upright by its EXIF orientation.
+func (m *Image) Rotate(degrees float64, opts ...RotateOptions) *Image {
+	m.atMostOne("Rotate", len(opts))
 	if math.IsNaN(degrees) || math.IsInf(degrees, 0) {
-		return m.fail(errors.New("goimgtools: RotateBy takes a finite angle"))
+		return m.fail(errors.New("goimgtools: Rotate takes a finite angle"))
 	}
 	o := first(opts)
 	if _, ok := interpolatorNames[o.Interpolator]; !ok {
 		return m.fail(fmt.Errorf("goimgtools: unknown Interpolator %d", o.Interpolator))
 	}
+	background := o.Background
 	switch o.Method {
-	case RotateLibvips:
-	case RotatePillow:
+	case MethodDefault, MethodLibvips:
+	case MethodPillow:
 		return m.add(rotatePillowOp{degrees, background, o})
 	default:
-		return m.fail(fmt.Errorf("goimgtools: unknown RotateMethod %d", o.Method))
+		return m.fail(fmt.Errorf("goimgtools: unknown Rotate Method %d", o.Method))
 	}
 	turn := math.Mod(degrees, 360)
 	if turn < 0 {
@@ -363,39 +358,32 @@ func (m *Image) RotateBy(degrees float64, background color.Color, opts ...Rotate
 	return m.add(rotateAnyOp{degrees, background, o.Interpolator})
 }
 
-// RotateOptions are the optional settings of RotateBy.
+// RotateOptions are the optional settings of Rotate.
 type RotateOptions struct {
-	// Method is whose rotation it is: RotateLibvips, sharp's (the
-	// default), or RotatePillow, Pillow's.
-	Method RotateMethod
+	// Background is the colour of the corners an angle that is not a
+	// multiple of 90 degrees uncovers: nil is black (with MethodPillow:
+	// none, black without transparency), color.Transparent none.
+	Background color.Color
+	// Method is whose rotation it is. MethodLibvips (the default) is
+	// sharp's rotate (libvips' rotate), to the byte. MethodPillow is
+	// Pillow's Image.rotate, to the byte: the turn about the centre, the
+	// source of each pixel worked out in double precision from the sine
+	// and cosine rounded to 15 decimals as Pillow rounds them; nearest in
+	// 16.16 fixed point, bilinear and bicubic (Pillow's, a = -1) dropping
+	// the fraction, an image with transparency worked out with its colours
+	// multiplied by alpha for those two. A half turn, and a quarter turn
+	// of a square image or with Expand, is a plain turn, as Pillow does it.
+	Method Method
 	// Interpolator works out the colours between pixels: bilinear (the
 	// default), nearest or bicubic, each that of the Method. (Pillow's own
 	// default is nearest.)
 	Interpolator Interpolator
-	// Expand, with RotatePillow, makes the canvas hold the whole turned
+	// Expand, with MethodPillow, makes the canvas hold the whole turned
 	// image, as Pillow's expand; without it the canvas keeps the size of
-	// the image and the corners are cut off. RotateLibvips always holds
+	// the image and the corners are cut off. MethodLibvips always holds
 	// the whole image.
 	Expand bool
 }
-
-// RotateMethod is whose rotation RotateBy does.
-type RotateMethod int
-
-const (
-	// RotateLibvips is sharp's rotate (libvips' rotate), to the byte.
-	RotateLibvips RotateMethod = iota
-	// RotatePillow is Pillow's Image.rotate, to the byte: the turn about
-	// the centre, the source of each pixel worked out in double precision
-	// from the sine and cosine rounded to 15 decimals as Pillow rounds
-	// them; nearest in 16.16 fixed point, bilinear and bicubic (Pillow's,
-	// a = -1) dropping the fraction, an image with transparency worked
-	// out with its colours multiplied by alpha for those two. The corners
-	// are the background colour, nil for none (black without
-	// transparency). A half turn, and a quarter turn of a square image or
-	// with Expand, is a plain turn, as Pillow does it.
-	RotatePillow
-)
 
 // ---- the operations ----
 
@@ -451,7 +439,7 @@ func (o blurOp) apply(src pipeline.Source, r *run) (pipeline.Source, error) {
 	if r.sizeOnly {
 		return src, nil
 	}
-	if o.o.Method == BlurLibvips {
+	if o.o.Method == MethodLibvips {
 		return ops.BlurLibvips(src, o.sigma, cmp.Or(o.o.MinAmplitude, ops.MinAmplitude))
 	}
 	return ops.Blur(src, o.sigma)
@@ -463,7 +451,7 @@ func (o sharpenOp) apply(src pipeline.Source, r *run) (pipeline.Source, error) {
 	if r.sizeOnly {
 		return src, nil
 	}
-	if o.o.Method == SharpenLibvips {
+	if o.o.Method == MethodLibvips {
 		c := o.o.Curve
 		return ops.SharpenLab(src, o.o.Sigma, c.Flat, c.Jagged, c.JaggedFrom, c.MaxBrighten, c.MaxDarken)
 	}
@@ -473,7 +461,8 @@ func (o sharpenOp) apply(src pipeline.Source, r *run) (pipeline.Source, error) {
 type extendOp struct {
 	top, right, bottom, left int
 	background               color.Color
-	// from: filled from the image (ExtendWith), as with says.
+	// from: filled from the image (ExtendCopy, ExtendRepeat or
+	// ExtendMirror), as with says.
 	from bool
 	with ExtendMode
 }
@@ -487,7 +476,7 @@ func (o extendOp) apply(src pipeline.Source, r *run) (pipeline.Source, error) {
 		return nil, err
 	}
 	if o.from && !r.sizeOnly {
-		return ops.ExtendWith(src, o.left, o.top, o.right, o.bottom, int(o.with))
+		return ops.ExtendWith(src, o.left, o.top, o.right, o.bottom, int(o.with-ExtendCopy))
 	}
 	bg := o.background
 	if bg == nil {
@@ -570,7 +559,7 @@ var interpolatorNames = map[Interpolator]string{InterpolateBilinear: "bilinear",
 // not their centres.
 //
 // The whole image is kept in working storage first (a temporary file
-// beyond its share of the limit), as for RotateBy.
+// beyond its share of the limit), as for Rotate.
 func (m *Image) Affine(a, b, c, d float64, opts ...AffineOptions) *Image {
 	m.atMostOne("Affine", len(opts))
 	o := first(opts)

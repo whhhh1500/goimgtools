@@ -42,7 +42,7 @@ func ExampleVerify() {
 // What does a compression setting cost?
 func ExampleCompare() {
 	original := picture(320, 240)
-	small, _ := goimgtools.FromBytes(original).JPEG(30).ToBytes()
+	small, _ := goimgtools.FromBytes(original).JPEG(goimgtools.JPEGOptions{Quality: 30}).ToBytes()
 	exact, _ := goimgtools.FromBytes(original).WebP(goimgtools.WebPOptions{Lossless: true}).ToBytes()
 
 	d, err := inspect.Compare(goimgtools.FromBytes(original), goimgtools.FromBytes(small))

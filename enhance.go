@@ -126,7 +126,7 @@ const (
 )
 
 // Filter applies one of Pillow's built-in filters, as im.filter(f) does,
-// to the byte (see ConvolvePillow: the edge pixels stay, and with
+// to the byte (see MethodPillow: the edge pixels stay, and with
 // transparency alpha is filtered too). The memory it takes is a few rows.
 func (m *Image) Filter(f ImageFilter) *Image {
 	if f < FilterBlur || f > FilterSmoothMore {

@@ -15,7 +15,7 @@
 //		Composite(goimgtools.Open("logo.png"), goimgtools.CompositeOptions{
 //			Gravity: goimgtools.SouthEast, Left: -24, Top: -24,
 //		}).
-//		JPEG(85).
+//		JPEG(goimgtools.JPEGOptions{Quality: 85}).
 //		ToFile("out.jpg")
 //
 // Operations run in the order they are chained. Nothing is read until
@@ -35,7 +35,7 @@
 //   - an input of your own: FromImage, FromSource;
 //   - a file format of your own, or one of the package's read or written
 //     differently: RegisterFormat, CodecByName, Image.ToFormat;
-//   - a resampling filter of your own: ResizeOptions.Filter;
+//   - a resampling filter of your own: ResizeOptions.CustomKernel;
 //   - something else done with the result than writing a file:
 //     Image.Stream, Image.ToImage;
 //   - a type of your own with the methods of Image and more: embed *Image.
@@ -89,7 +89,7 @@ var ErrPixelLimit = errors.New("goimgtools: image has too many pixels")
 // chained; they do not make a copy. To make several results from one
 // starting point, Clone it first:
 //
-//	base := goimgtools.Open("in.jpg").Rotate()
+//	base := goimgtools.Open("in.jpg").AutoOrient()
 //	thumb := base.Clone().Resize(200, 0)
 //	large := base.Clone().Resize(1600, 0)
 //
@@ -216,7 +216,7 @@ func (m *Image) pixelLimit() int64 {
 // while the other does the rest; with 3 the encoder gets a core of its own
 // as well; from 4 on, the cores beyond those three are shared by the
 // steps that can split their work: Resize, Blur, Sharpen, Modulate,
-// RotateBy, JPEG encoding and PNG compression. However the work is split,
+// Rotate, JPEG encoding and PNG compression. However the work is split,
 // no more than n of the run's goroutines work at a time. Each extra thread costs a few strips of memory (under 1MB each),
 // counted in the memory limit. The output does not depend on it.
 func (m *Image) Threads(n int) *Image { m.threads = n; return m }

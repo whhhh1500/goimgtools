@@ -95,9 +95,9 @@ func main() {
 			case "trim":
 				im.Trim(10)
 			case "extend":
-				im.Extend(50, 50, 50, 50, color.White)
+				im.Extend(50, 50, 50, 50, goimgtools.ExtendOptions{Background: color.White})
 			case "rotate":
-				im.RotateBy(v, color.White)
+				im.Rotate(v, goimgtools.RotateOptions{Background: color.White})
 			default:
 				check(fmt.Errorf("GOIMG_ADJUST: unknown operation %q", op))
 			}
@@ -112,8 +112,8 @@ func main() {
 			im.Composite(goimgtools.Open(logoPath), goimgtools.CompositeOptions{Gravity: goimgtools.SouthEast, Left: -24, Top: -24})
 		}
 		if lo := strings.ToLower(out); strings.HasSuffix(lo, ".jpg") {
-			jo := goimgtools.JPEGOptions{Optimize: os.Getenv("GOIMG_JPEG") == "opt", Progressive: os.Getenv("GOIMG_JPEG") == "prog"}
-			im.JPEG(85, jo)
+			jo := goimgtools.JPEGOptions{Quality: 85, Optimize: os.Getenv("GOIMG_JPEG") == "opt", Progressive: os.Getenv("GOIMG_JPEG") == "prog"}
+			im.JPEG(jo)
 		} else if strings.HasSuffix(lo, ".png") && os.Getenv("GOIMG_COLORS") != "" {
 			n, _ := strconv.Atoi(os.Getenv("GOIMG_COLORS"))
 			im.PNG(goimgtools.PNGOptions{Colors: n})

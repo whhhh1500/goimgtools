@@ -97,8 +97,8 @@ func TestDecode(t *testing.T) {
 	if err != nil || !ok || x.Make != "TestCam" || x.Orientation != 1 {
 		t.Errorf("EXIF: %+v, %v, %v", x, ok, err)
 	}
-	if m := toPNG(t, goimgtools.FromBytes(in).Rotate()); m.Rect.Dx() != 480 {
-		t.Errorf("Rotate turned an upright image: %v", m.Rect.Size())
+	if m := toPNG(t, goimgtools.FromBytes(in).AutoOrient()); m.Rect.Dx() != 480 {
+		t.Errorf("AutoOrient turned an upright image: %v", m.Rect.Size())
 	}
 	if _, err := goimgtools.FromBytes([]byte("\x00\x00\x00\x18ftypheic\x00\x00\x00\x00broken")).PNG().ToBytes(); err == nil {
 		t.Error("a broken HEIC decoded")

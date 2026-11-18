@@ -100,7 +100,7 @@ func describe(op operation) (string, []string) {
 		return "rotate", []string{"0"}
 	case resizeOp:
 		w := []string{d(o.spec.width), d(o.spec.height), fitNames[o.spec.o.Fit], kernelNames[o.spec.o.Kernel]}
-		lib := o.spec.o.Method != ResizeDraw
+		lib := o.spec.o.Method != MethodDefault
 		if n, ok := interestingNames[o.spec.o.Interesting]; ok {
 			w = append(w, n)
 		} else if n, ok := positionNames[o.spec.o.Position]; ok {
@@ -140,7 +140,7 @@ func describe(op operation) (string, []string) {
 		switch {
 		case o.o.MinAmplitude != 0:
 			return "blur", []string{f(o.sigma), "libvips", f(o.o.MinAmplitude)}
-		case o.o.Method == BlurLibvips:
+		case o.o.Method == MethodLibvips:
 			return "blur", []string{f(o.sigma), "libvips"}
 		}
 		return "blur", []string{f(o.sigma)}
@@ -148,7 +148,7 @@ func describe(op operation) (string, []string) {
 		if o.o.Sigma == 0 {
 			return "sharpen", nil
 		}
-		if c := o.o.Curve; o.o.Method == SharpenLibvips {
+		if c := o.o.Curve; o.o.Method == MethodLibvips {
 			return "sharpen", []string{f(o.o.Sigma), "libvips", f(c.Flat), f(c.Jagged), f(c.JaggedFrom), f(c.MaxBrighten), f(c.MaxDarken)}
 		}
 		return "sharpen", []string{f(o.o.Sigma), f(o.o.Amount), d(o.o.Threshold)}
@@ -228,7 +228,7 @@ var (
 		West: "west", Center: "center", East: "east", SouthWest: "southwest", South: "south", SouthEast: "southeast"}
 	interestingNames = map[Interesting]string{InterestingEntropy: "entropy", InterestingAttention: "attention"}
 	lightNames       = map[bool]string{false: "srgb", true: "linear"}
-	methodNames      = map[ResizeMethod]string{ResizeDraw: "draw", ResizeLibvips: "libvips", ResizePillow: "pillow"}
+	methodNames      = map[Method]string{MethodDefault: "draw", MethodLibvips: "libvips", MethodPillow: "pillow"}
 	extensionNames   = map[ExtendMode]string{ExtendCopy: "copy", ExtendRepeat: "repeat", ExtendMirror: "mirror"}
 )
 
@@ -582,7 +582,7 @@ var builtInOps = map[string]OperationDef{
 			m.Resize(v[0], v[1], o)
 			return nil
 		}},
-	"crop": {Name: "crop", Usage: "LEFT,TOP,WIDTH,HEIGHT", Help: "Extract: cut out a rectangle",
+	"crop": {Name: "crop", Usage: "LEFT,TOP,WIDTH,HEIGHT", Help: "Crop: keep a rectangle",
 		builtIn: func(m *Image, a []string) error {
 			if err := wantArgs(a, 4, 4); err != nil {
 				return err
@@ -591,31 +591,30 @@ var builtInOps = map[string]OperationDef{
 			if err != nil {
 				return err
 			}
-			m.Extract(v[0], v[1], v[2], v[3])
+			m.Crop(v[0], v[1], v[2], v[3])
 			return nil
 		}},
 	"rotate": {Name: "rotate", Usage: "auto|DEGREES[,BACKGROUND][,pillow][,nearest|bilinear|bicubic][,expand]",
-		Help: "Rotate (auto: by the EXIF orientation) or RotateBy, clockwise; pillow: as Pillow's rotate, expand: the canvas holds the whole image",
+		Help: "Rotate clockwise (auto: AutoOrient, by the EXIF orientation); pillow: as Pillow's rotate, expand: the canvas holds the whole image",
 		builtIn: func(m *Image, a []string) error {
 			if err := wantArgs(a, 1, 5); err != nil {
 				return err
 			}
 			if strings.EqualFold(a[0], "auto") && len(a) == 1 {
-				m.Rotate()
+				m.AutoOrient()
 				return nil
 			}
 			v, err := argFloats(a[:1])
 			if err != nil {
 				return err
 			}
-			var bg color.Color
 			var o RotateOptions
 			seen := map[string]bool{}
 			for _, w := range a[1:] {
 				kind := w
 				switch {
 				case w == "pillow":
-					o.Method = RotatePillow
+					o.Method = MethodPillow
 				case w == "expand":
 					o.Expand = true
 				case w == "nearest" || w == "bilinear" || w == "bicubic":
@@ -623,7 +622,7 @@ var builtInOps = map[string]OperationDef{
 					o.Interpolator, _ = pick(interpolatorNames, w, "interpolator")
 				default:
 					kind = "background"
-					if bg, err = ParseColor(w); err != nil {
+					if o.Background, err = ParseColor(w); err != nil {
 						return err
 					}
 				}
@@ -632,7 +631,7 @@ var builtInOps = map[string]OperationDef{
 				}
 				seen[kind] = true
 			}
-			m.RotateBy(v[0], bg, o)
+			m.Rotate(v[0], o)
 			return nil
 		}},
 	"affine": {Name: "affine", Usage: "A,B,C,D[,BACKGROUND[,IDX,IDY,ODX,ODY]][,bilinear|nearest|bicubic]", Help: "Affine: (x, y) moves to (A·x + B·y, C·x + D·y), as sharp's affine",
@@ -758,7 +757,7 @@ var builtInOps = map[string]OperationDef{
 			m.Trim(t, o)
 			return nil
 		}},
-	"extend": {Name: "extend", Usage: "TOP,RIGHT,BOTTOM,LEFT[,COLOR]", Help: "Extend: add a border of COLOR, or (ExtendWith) copy, repeat or mirror for one made of the image",
+	"extend": {Name: "extend", Usage: "TOP,RIGHT,BOTTOM,LEFT[,COLOR]", Help: "Extend: add a border of COLOR, or copy, repeat or mirror for one made of the image",
 		builtIn: func(m *Image, a []string) error {
 			if err := wantArgs(a, 4, 5); err != nil {
 				return err
@@ -767,17 +766,15 @@ var builtInOps = map[string]OperationDef{
 			if err != nil {
 				return err
 			}
-			var bg color.Color
+			var o ExtendOptions
 			if len(a) == 5 {
 				if how, err := pick(extensionNames, a[4], "extension"); err == nil {
-					m.ExtendWith(v[0], v[1], v[2], v[3], how)
-					return nil
-				}
-				if bg, err = ParseColor(a[4]); err != nil {
+					o.Mode = how
+				} else if o.Background, err = ParseColor(a[4]); err != nil {
 					return err
 				}
 			}
-			m.Extend(v[0], v[1], v[2], v[3], bg)
+			m.Extend(v[0], v[1], v[2], v[3], o)
 			return nil
 		}},
 	"grayscale": {Name: "grayscale", Usage: "[linear]", Help: "Grayscale: Rec. 601 brightness (as Pillow), or linear: the luminance of linear light (as sharp)", builtIn: func(m *Image, a []string) error {
@@ -836,7 +833,7 @@ var builtInOps = map[string]OperationDef{
 			}
 			var o BlurOptions
 			if len(a) >= 2 {
-				o.Method = BlurLibvips
+				o.Method = MethodLibvips
 			}
 			if len(v) == 2 {
 				o.MinAmplitude = v[1]
@@ -855,7 +852,7 @@ var builtInOps = map[string]OperationDef{
 				if err != nil {
 					return err
 				}
-				o := SharpenOptions{Sigma: v[0], Method: SharpenLibvips}
+				o := SharpenOptions{Sigma: v[0], Method: MethodLibvips}
 				if len(v) == 6 {
 					o.Curve = &SharpenCurve{Flat: v[1], Jagged: v[2], JaggedFrom: v[3], MaxBrighten: v[4], MaxDarken: v[5]}
 				}

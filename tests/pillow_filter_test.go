@@ -8,7 +8,7 @@ import (
 	. "github.com/whhhh1500/goimgtools"
 )
 
-// TestPillowFilters: Filter and Convolve with ConvolvePillow are Pillow's
+// TestPillowFilters: Filter and Convolve with MethodPillow are Pillow's
 // ImageFilter built-ins and ImageFilter.Kernel, to the byte. The sums are
 // of the pixels of Pillow 12.1.1's im.filter(...) (with transparency alpha
 // is filtered too, as Pillow does).
@@ -72,14 +72,14 @@ func TestPillowFilters(t *testing.T) {
 	if b := must(FromBytes(rgb).Do("filter", "emboss").PNG().ToBytes()); string(a) != string(b) {
 		t.Error("by name: another image")
 	}
-	k := Convolution{Width: 3, Height: 3, Weights: []float64{0, -1, 0, -1, 5, -1, 0, -1, 0}, Scale: 1, Offset: 0.4, Method: ConvolvePillow}
+	k := Convolution{Width: 3, Height: 3, Weights: []float64{0, -1, 0, -1, 5, -1, 0, -1, 0}, Scale: 1, Offset: 0.4, Method: MethodPillow}
 	if b := must(FromBytes(rgb).Convolve(k).PNG().ToBytes()); string(b) != string(must(FromBytes(rgb).Do("convolve", "3", "3", "0", "-1", "0", "-1", "5", "-1", "0", "-1", "0", "1", "0.4", "pillow").PNG().ToBytes())) {
 		t.Error("convolve by name: another image")
 	}
 	for i, m := range []*Image{FromBytes(rgb).Filter(-1), FromBytes(rgb).Filter(10), FromBytes(rgb).Do("filter", "glow"),
-		FromBytes(rgb).Convolve(Convolution{Width: 7, Height: 7, Weights: make([]float64, 49), Method: ConvolvePillow}),
-		FromBytes(rgb).Convolve(Convolution{Width: 3, Height: 5, Weights: make([]float64, 15), Method: ConvolvePillow}),
-		FromBytes(rgb).Convolve(Convolution{Width: 3, Height: 3, Weights: make([]float64, 9), Method: 2})} {
+		FromBytes(rgb).Convolve(Convolution{Width: 7, Height: 7, Weights: make([]float64, 49), Method: MethodPillow}),
+		FromBytes(rgb).Convolve(Convolution{Width: 3, Height: 5, Weights: make([]float64, 15), Method: MethodPillow}),
+		FromBytes(rgb).Convolve(Convolution{Width: 3, Height: 3, Weights: make([]float64, 9), Method: 3})} {
 		if _, err := m.PNG().ToBytes(); err == nil {
 			t.Errorf("bad arguments %d accepted", i)
 		}

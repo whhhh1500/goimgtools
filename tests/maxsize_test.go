@@ -96,8 +96,8 @@ func TestMaxFileSize(t *testing.T) {
 		format func(m *Image, q int) *Image
 		top    int
 	}{
-		{"png to jpeg", inPNG, func(m *Image, q int) *Image { return m.JPEG(q) }, 80},
-		{"jpeg to jpeg", inJPG, func(m *Image, q int) *Image { return m.JPEG(q) }, 80},
+		{"png to jpeg", inPNG, func(m *Image, q int) *Image { return m.JPEG(JPEGOptions{Quality: q}) }, 80},
+		{"jpeg to jpeg", inJPG, func(m *Image, q int) *Image { return m.JPEG(JPEGOptions{Quality: q}) }, 80},
 		{"png to webp", inPNG, func(m *Image, q int) *Image { return m.WebP(WebPOptions{Quality: q}) }, 75},
 	} {
 		// The size at every quality, to know what the right answer is.
@@ -163,8 +163,8 @@ func TestMaxFileSize(t *testing.T) {
 		t.Errorf("files left: %v", names)
 	}
 	// The quality asked for is the ceiling.
-	low, _ := FromBytes(inPNG).JPEG(30).ToBytes()
-	capped, err := FromBytes(inPNG).JPEG(30).MaxFileSize(1 << 30).ToBytes()
+	low, _ := FromBytes(inPNG).JPEG(JPEGOptions{Quality: 30}).ToBytes()
+	capped, err := FromBytes(inPNG).JPEG(JPEGOptions{Quality: 30}).MaxFileSize(1 << 30).ToBytes()
 	if err != nil || !bytes.Equal(low, capped) {
 		t.Errorf("a generous limit changed the output (err %v)", err)
 	}
@@ -217,7 +217,7 @@ func TestMaxFileSize(t *testing.T) {
 	if _, err := FromBytes(inPNG).WebP(WebPOptions{Lossless: true}).MaxFileSize(1000).ToBytes(); err == nil {
 		t.Error("MaxFileSize accepted for lossless WebP")
 	}
-	if _, err := FromBytes(inPNG).JPEG(80).MaxFileSize(0).ToBytes(); err == nil {
+	if _, err := FromBytes(inPNG).JPEG(JPEGOptions{Quality: 80}).MaxFileSize(0).ToBytes(); err == nil {
 		t.Error("MaxFileSize(0) accepted")
 	}
 }

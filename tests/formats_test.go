@@ -158,7 +158,7 @@ func TestFormatsThroughChain(t *testing.T) {
 			got, err := FromBytes(in.Bytes()).Density(0).
 				Resize(200, 200, ResizeOptions{Fit: FitInside}).
 				Flatten(color.White).
-				JPEG(85).ToBytes()
+				JPEG(JPEGOptions{Quality: 85}).ToBytes()
 			if err != nil {
 				t.Fatalf("%s/%s: %v", format, name, err)
 			}

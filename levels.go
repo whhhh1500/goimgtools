@@ -2,6 +2,7 @@ package goimgtools
 
 import (
 	"errors"
+	"fmt"
 	"image/color"
 	"math"
 	"strconv"
@@ -227,27 +228,17 @@ type Convolution struct {
 	Scale float64
 	// Offset is added after.
 	Offset float64
-	// Method is the arithmetic: ConvolveLibvips, the default, or
-	// ConvolvePillow.
-	Method ConvolveMethod
-}
-
-// ConvolveMethod is the arithmetic of Convolve.
-type ConvolveMethod int
-
-const (
-	// ConvolveLibvips is sharp's convolve (libvips' conv), to the byte:
-	// the window reaches past the edges onto copies of the edge pixels,
-	// the sum is rounded, transparency is kept.
-	ConvolveLibvips ConvolveMethod = iota
-	// ConvolvePillow is Pillow's ImageFilter.Kernel, to the byte: a 3 x 3
-	// or 5 x 5 window whose first row of weights falls on the row below
-	// the pixel (Pillow turns the kernel upside down), in single
-	// precision with the fraction dropped; the pixels within half the
-	// window of the edges are kept as they are; with transparency alpha
+	// Method is the arithmetic. MethodLibvips (the default) is sharp's
+	// convolve (libvips' conv), to the byte: the window reaches past the
+	// edges onto copies of the edge pixels, the sum is rounded,
+	// transparency is kept. MethodPillow is Pillow's ImageFilter.Kernel, to
+	// the byte: a 3 x 3 or 5 x 5 window whose first row of weights falls on
+	// the row below the pixel (Pillow turns the kernel upside down), in
+	// single precision with the fraction dropped; the pixels within half
+	// the window of the edges are kept as they are; with transparency alpha
 	// is filtered too, as Pillow does.
-	ConvolvePillow
-)
+	Method Method
+}
 
 // Convolve gives each pixel the weighted sum of the window around it (see
 // Convolution), divided by the scale, plus the offset, rounded and kept
@@ -261,14 +252,17 @@ func (m *Image) Convolve(c Convolution) *Image {
 	if c.Width < 1 || c.Height < 1 || c.Width > ops.MaxWindow || c.Height > ops.MaxWindow || c.Width%2 == 0 || c.Height%2 == 0 {
 		return m.fail(errors.New("goimgtools: Convolve sides must be odd, 1 to 99"))
 	}
+	if c.Method == MethodDefault {
+		c.Method = MethodLibvips
+	}
 	switch c.Method {
-	case ConvolveLibvips:
-	case ConvolvePillow:
+	case MethodLibvips:
+	case MethodPillow:
 		if c.Width != c.Height || (c.Width != 3 && c.Width != 5) {
-			return m.fail(errors.New("goimgtools: ConvolvePillow takes a 3 x 3 or 5 x 5 window"))
+			return m.fail(errors.New("goimgtools: Convolve with MethodPillow takes a 3 x 3 or 5 x 5 window"))
 		}
 	default:
-		return m.fail(errors.New("goimgtools: unknown ConvolveMethod"))
+		return m.fail(fmt.Errorf("goimgtools: unknown Convolve Method %d", c.Method))
 	}
 	if len(c.Weights) != c.Width*c.Height {
 		return m.fail(errors.New("goimgtools: Convolve wants Width x Height weights"))
@@ -417,7 +411,7 @@ func (o convolveOp) apply(src pipeline.Source, r *run) (pipeline.Source, error) 
 	if r.sizeOnly {
 		return src, nil
 	}
-	if o.c.Method == ConvolvePillow {
+	if o.c.Method == MethodPillow {
 		return ops.PillowKernel(src, o.c.Width, o.c.Weights, o.c.Scale, o.c.Offset)
 	}
 	return ops.Convolve(src, o.c.Width, o.c.Height, o.c.Weights, o.c.Scale, o.c.Offset)
@@ -430,7 +424,7 @@ func (o convolveOp) words() []string {
 		w = append(w, f(v))
 	}
 	w = append(w, f(o.c.Scale), f(o.c.Offset))
-	if o.c.Method == ConvolvePillow {
+	if o.c.Method == MethodPillow {
 		w = append(w, "pillow")
 	}
 	return w
@@ -618,7 +612,7 @@ var levelOps = map[string]OperationDef{
 			}
 			c := Convolution{Width: wh[0], Height: wh[1], Weights: v[:n]}
 			if pillow {
-				c.Method = ConvolvePillow
+				c.Method = MethodPillow
 			}
 			if len(v) > n {
 				c.Scale = v[n]

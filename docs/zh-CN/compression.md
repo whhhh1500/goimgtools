@@ -4,7 +4,7 @@
 
 | 目标 | 方法 | 800 万像素真实照片实测 |
 |---|---|---|
-| JPEG 更小，画质不变 | `JPEG(q, JPEGOptions{Optimize: true})`：为该图像单独计算编码表 | 质量 85：983KB → 965KB（减小 1.9%），0.20s，7.3MB |
+| JPEG 更小，画质不变 | `JPEG(JPEGOptions{Quality: q, Optimize: true})`：为该图像单独计算编码表 | 质量 85：983KB → 965KB（减小 1.9%），0.20s，7.3MB |
 | JPEG 进一步减小，画质不变 | `JPEGOptions{Progressive: true}`：渐进式编码（含优化编码表），扫描方案按 mozjpeg 的方法搜索 | 983KB → 905KB（减小 7.9%），0.34s，6.6MB，为加入扫描搜索之前的数据；6000×4000 的内存 RGB 图像质量 85 含扫描搜索单核 0.75s（mozjpeg 经 sharp 的 `optimiseScans`：1.17s）；扫描搜索使渐进文件再小 0.4–7%（18 张照片与截图平均 2.4%，与 `Trellis`、`QuantTable: QuantTableImageMagick` 同用时平均 3.9%），像素不变 |
 | JPEG 同等观感下更小（改变像素） | `JPEGOptions{Trellis: true}`：网格量化（mozjpeg 的方法），可与上述两项同时使用 | 7 张真实照片：同等 SSIM 时减小 2.7–10.6%（平均 6.9%），同等 PSNR 时平均减小 6%；3300 万像素耗时增加 0.4s（单线程） |
 | JPEG 使用 mozjpeg 量化表（改变像素） | `JPEGOptions{QuantTable: QuantTableImageMagick}` / `-jpeg-quant-table 3`：mozjpeg 的默认表（N. Robidoux 为 ImageMagick 设计）；编号 0–8 与 mozjpeg 的 `-quant-table` 一致，默认 0 为 JPEG 标准表 | 18 张真实照片与截图，同等文件大小下：同等 PSNR（RGB）时小 2–15%，同等彩色 SSIM 时小 3–9%，同等亮度 SSIM 时大 0–2%：亮度细节量化更粗、颜色量化更细。JPEG 按原质量重新保存时，0 号表更接近原图（一张图在质量 90：68.3dB 对 49.8dB）。再加 `Progressive` 与 `Trellis` 时，同等 PSNR 下比 mozjpeg 默认设置小 0.7%，同等亮度 SSIM 下小 5.3%（同样 18 张图；mozjpeg 为浏览器所用的 @jsquash/jpeg 1.6.0） |

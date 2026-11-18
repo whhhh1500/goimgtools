@@ -48,11 +48,11 @@ func TestConvert(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, err := goimgtools.Open(in).Extract(10, 20, 500, 400).
+	want, err := goimgtools.Open(in).Crop(10, 20, 500, 400).
 		Resize(200, 200, goimgtools.ResizeOptions{Fit: goimgtools.FitInside, WithoutEnlargement: true}).
 		Flatten(color.White).
 		Composite(goimgtools.Open(logo).Resize(45, 0), goimgtools.CompositeOptions{Gravity: goimgtools.SouthEast, Left: -7, Top: -5}).
-		JPEG(85).ToBytes()
+		JPEG(goimgtools.JPEGOptions{Quality: 85}).ToBytes()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,9 +260,9 @@ func TestNewOptions(t *testing.T) {
 	}
 	out = filepath.Join(dir, "p.jpg")
 	must("-quality", "70", "-jpeg-progressive", in, out)
-	same("progressive jpeg", out, goimgtools.Open(in).JPEG(70, goimgtools.JPEGOptions{Progressive: true}))
+	same("progressive jpeg", out, goimgtools.Open(in).JPEG(goimgtools.JPEGOptions{Quality: 70, Progressive: true}))
 	must("-quality", "70", "-jpeg-optimize", in, out)
-	same("optimized jpeg", out, goimgtools.Open(in).JPEG(70, goimgtools.JPEGOptions{Optimize: true}))
+	same("optimized jpeg", out, goimgtools.Open(in).JPEG(goimgtools.JPEGOptions{Quality: 70, Optimize: true}))
 	out = filepath.Join(dir, "c16.png")
 	must("-png-colors", "16", "-no-dither", in, out)
 	same("png colours", out, goimgtools.Open(in).PNG(goimgtools.PNGOptions{Colors: 16, NoDither: true}))

@@ -18,13 +18,13 @@ API 采用与 [sharp](https://sharp.pixelplumbing.com/) 类似的链式调用：
 
 ```go
 err := goimgtools.Open("in.jpg").
-    Rotate().                              // 按 EXIF 方向校正
+    AutoOrient().                          // 按 EXIF 方向校正
     Resize(1536, 0).                       // 宽 1536，高按比例
     Flatten(color.White).                  // 透明区域铺白底
     Composite(goimgtools.Open("logo.png"), goimgtools.CompositeOptions{
         Gravity: goimgtools.SouthEast, Left: -24, Top: -24, // 右下角，边距 24 像素
     }).
-    JPEG(85).
+    JPEG(goimgtools.JPEGOptions{Quality: 85}).
     ToFile("out.jpg")
 ```
 
@@ -39,19 +39,19 @@ err := goimgtools.Open("in.jpg").
 
 ### 操作
 
+凡是本库能按 libvips（即 sharp）或 Pillow 的算法逐字节算出的操作，其选项都有 `Method`：`MethodDefault`（该操作自己的默认，见下文各项）、`MethodLibvips` 或 `MethodPillow`。`Resize`、`Blur`、`Sharpen`、`Rotate` 与 `Convolve` 都有。
+
 | 方法 | 说明 |
 |---|---|
 | `Resize(w, h, ResizeOptions{...})` | 缩放。`w` 或 `h` 为 0 时按比例计算。默认方法下，16 位采样的图像（PNG、TIFF）缩放后仍为 16 位，数值与 `x/image` 的 `Scale` 写入 16 位目标图相同（`LinearLight` 以及 Pillow、libvips 两种方法按 8 位处理，不在此列） |
-| `Extract(left, top, w, h)` | 裁剪 |
-| `Rotate()` | 按 EXIF 方向自动校正（无方向信息时不作处理） |
-| `Rotate(angle)` | 顺时针旋转，角度为 90 的倍数 |
-| `RotateBy(degrees, background, RotateOptions{Method, Interpolator, Expand})` | 顺时针旋转任意角度（负值为逆时针），画布为旋转后图像的外接框，四角以 `background` 填充（`nil` 为黑色，`color.Transparent` 为透明）；默认双线性插值（`Interpolator` 可选最近邻或双三次）。与 sharp 的 `rotate` 逐字节一致，含透明与不含透明的图像均如此。角度为 90 的倍数时等同于 `Rotate`，不插值。`Method: RotatePillow` 时即 Pillow 的 `Image.rotate(-degrees)`，逐字节一致：除非 `Expand`，画布保持原尺寸，四角为 `background`（`nil` 为透明，不含透明的图像为黑色）；Pillow 自身默认的插值为最近邻。按名字调用 `rotate DEGREES[,BACKGROUND][,pillow][,nearest\|bilinear\|bicubic][,expand]` |
+| `Crop(left, top, w, h)` | 裁剪 |
+| `AutoOrient()` | 按 EXIF 方向自动校正（无方向信息时不作处理） |
+| `Rotate(degrees, RotateOptions{Background, Method, Interpolator, Expand})` | 顺时针旋转任意角度（负值为逆时针）。90 的倍数为精确的直角或半周翻转，不插值。其他角度时画布为旋转后图像的外接框，四角以 `Background` 填充（`nil` 为黑色，`color.Transparent` 为透明）；默认双线性插值（`Interpolator` 可选最近邻或双三次）。与 sharp 的 `rotate` 逐字节一致，含透明与不含透明的图像均如此。`Method: MethodPillow` 时即 Pillow 的 `Image.rotate(-degrees)`，逐字节一致：除非 `Expand`，画布保持原尺寸，四角为 `Background`（`nil` 为透明，不含透明的图像为黑色）；Pillow 自身默认的插值为最近邻。按名字调用 `rotate DEGREES[,BACKGROUND][,pillow][,nearest\|bilinear\|bicubic][,expand]` |
 | `Affine(a, b, c, d, AffineOptions{Background, InputX, InputY, OutputX, OutputY, Interpolator})` | 将每个点 (x, y) 移到 (a·x + b·y, c·x + d·y)：可一次完成旋转、镜像、倾斜与拉伸。画布为移动后图像的外接框；各偏移即 sharp 的 `idx`、`idy`、`odx`、`ody`。使用 `InterpolateBilinear`（默认）、`InterpolateNearest`、`InterpolateBicubic` 时与 sharp 的 `affine` 逐字节一致，含透明与不含透明的图像均如此 |
 | `Transform(width, height, t, TransformOptions{Background, Interpolator})` | 即 Pillow 的 `Image.transform((width, height), method, data)`，逐字节一致：输出的每个像素取 `t` 把其中心映射到的图像上那一点的颜色。`TransformAffine(a, b, c, d, e, f)`：(x, y) 映射到 (a·x + b·y + c, d·x + e·y + f)，矩阵从输出到图像；`TransformExtent(x0, y0, x1, y1)`：把图像的这一矩形拉伸铺满输出；`TransformPerspective(a, …, h)`：透视变换，可把拍斜的页面摆正；`TransformQuad(x0, y0, …, y3)`：把以这四点为角（依次对应输出的左上、左下、右下、右上）的四边形按双线性铺到输出上；`TransformPerspectiveQuad(x0, y0, …, y3)`：同样的四个角，按由它们算出的真正透视变换，给出拍斜页面的四角即可把它摆正（像素与 Pillow 使用其手册中求出的系数时相同）。落在图像外的点取 `Background`（`nil` 为透明，不含透明的图像为黑色）。默认双线性插值（Pillow 自身默认最近邻）。按名字调用 `transform WIDTH,HEIGHT,affine\|extent\|perspective\|quad\|perspective-quad,NUMBERS…[,nearest\|bilinear\|bicubic][,BACKGROUND]` |
 | `Flip()` / `Flop()` | 上下镜像 / 左右镜像 |
 | `Trim(threshold, TrimOptions{Background, LineArt, Margin})` | 去除四周与左上角像素（或 `Background`）同色的边（红、绿、蓝、透明任一通道之差超过 `threshold` 才视为不同；sharp 的默认值 10 可消除 JPEG 噪点）。与 sharp 的 `trim`（libvips 的 `find_trim`）一样，先对图像做 3×3 中值滤波再找边，使边上的灰尘斑点与 JPEG 瑕疵不妨碍裁剪（保留的像素不受滤波影响）；`LineArt` 直接比较原像素，适用于由单像素细线构成的线稿（中值滤波会把细线滤掉）。`Margin` 在找到的范围外保留相应像素。像素相同时裁剪范围与 sharp 完全一致 |
-| `Extend(top, right, bottom, left, background)` | 四周扩边，宽度按 CSS 的上、右、下、左顺序给出 |
-| `ExtendWith(top, right, bottom, left, how)` | 用图像本身扩边：`ExtendCopy` 重复边缘像素，`ExtendRepeat` 平铺重复图像，`ExtendMirror` 镜像（边缘像素出现两次），边框比图像宽时继续重复或镜像。与 sharp 带 `extendWith` 的 `extend` 逐像素一致。顶部或底部边框需要重复或镜像时，图像存入工作存储 |
+| `Extend(top, right, bottom, left, ExtendOptions{Background, Mode})` | 四周扩边，宽度按 CSS 的上、右、下、左顺序给出。默认以颜色 `Background` 填充（`nil` 为黑色，`color.Transparent` 为透明）；`Mode` 改用图像本身扩边：`ExtendCopy` 重复边缘像素，`ExtendRepeat` 平铺重复图像，`ExtendMirror` 镜像（边缘像素出现两次），边框比图像宽时继续重复或镜像。与 sharp 带 `extendWith` 的 `extend` 逐像素一致。顶部或底部边框需要重复或镜像时，图像存入工作存储 |
 | `Grayscale(GrayscaleOptions{Linear})` | 灰度化：Rec. 601 亮度四舍五入至最近的灰阶，与 Pillow 的 `convert("L")` 逐字节一致（JPEG 亦然，其解码结果与 Pillow 相同）。`Linear` 改用线性光的亮度（Rec. 709 权重），与 sharp 的 `greyscale` 逐字节一致：红色与蓝色更暗、绿色更亮。不透明图像输出为单通道灰度文件 |
 | `Modulate(brightness, saturation, hue, ModulateOptions{Lightness})` | 在 LCh 色彩空间中将亮度、饱和度乘以系数，并将色相旋转指定度数（与 sharp 的做法相同）；`Lightness` 随后加到明度上（L\*，0–100），即 sharp 的 `lightness`。每个像素与 sharp 的结果相差不超过 1：`Modulate(1.2, 0.8, 0)` 使亮度提高 20%、色彩略淡 |
 | `Negate(NegateOptions{Alpha})` | 反色：每个颜色取其相反值（255 − 色阶），透明度不变；指定 `Alpha` 时透明度也取反。与 sharp 的 `negate({alpha: false})` 及 `negate()` 逐字节一致 |
@@ -61,7 +61,7 @@ err := goimgtools.Open("in.jpg").
 | `Threshold(level, ThresholdOptions{PerChannel})` | 黑白二值：灰度（按线性光计算，与 sharp 相同）不小于 `level` 的像素变白，其余变黑。不含透明的图像与 sharp 的 `threshold` 逐字节一致，并输出为单通道文件。`PerChannel` 让红、绿、蓝各自取 0 或 255（即 sharp 的 `threshold(level, {greyscale: false})`，逐字节一致） |
 | `Tint(color)` | 着色：按每个像素的亮度赋予该颜色，越接近黑白越淡（sharp 的 `tint`，与其相差不超过 1）：`Tint(color.RGBA{112, 66, 20, 255})` 为褐色调 |
 | `Normalize(NormalizeOptions{Lower, Upper})` | 拉伸明度（L*a*b* 中的 L*），使最暗的 `Lower`% 变黑、最亮的 `100-Upper`% 变白（默认 1 与 99），保持色相与饱和度；即 sharp 的 `normalise`，相差不超过 1（百分位与其完全相同）。需先读完整幅图像并保存在工作区 |
-| `Filter(f)` | Pillow 的内置滤镜，同 `im.filter(f)`，逐字节一致：`FilterBlur`、`FilterContour`、`FilterDetail`、`FilterEdgeEnhance`、`FilterEdgeEnhanceMore`、`FilterEmboss`、`FilterFindEdges`、`FilterSharpen`、`FilterSmooth`、`FilterSmoothMore`。`Convolve` 设 `Method: ConvolvePillow` 即 `ImageFilter.Kernel`（3×3 或 5×5）：用 Pillow 的运算，核上下颠倒，边缘像素保留，带透明的图像与 Pillow 一样连 alpha 一起滤 |
+| `Filter(f)` | Pillow 的内置滤镜，同 `im.filter(f)`，逐字节一致：`FilterBlur`、`FilterContour`、`FilterDetail`、`FilterEdgeEnhance`、`FilterEdgeEnhanceMore`、`FilterEmboss`、`FilterFindEdges`、`FilterSharpen`、`FilterSmooth`、`FilterSmoothMore`。`Convolve` 设 `Method: MethodPillow` 即 `ImageFilter.Kernel`（3×3 或 5×5）：用 Pillow 的运算，核上下颠倒，边缘像素保留，带透明的图像与 Pillow 一样连 alpha 一起滤 |
 | `Enhance(e, factor)` | Pillow 的 `ImageEnhance`，逐字节一致（torchvision 的 `ColorJitter` 与 `adjust_*` 对图像正是用它）：按 `factor` 调整 `EnhanceColor`（饱和度）、`EnhanceContrast`、`EnhanceBrightness` 或 `EnhanceSharpness`，可为任意数，1 不变：每个色阶从退化图像（灰色；平均明度的灰；黑色；经 Pillow `SMOOTH` 平滑的图像）向原图走 `factor` 倍的距离。`EnhanceContrast` 需先读完整幅图像以求平均明度 |
 | `AutoContrast(AutoContrastOptions{CutoffLow, CutoffHigh, Ignore, PreserveTone})` | 把红、绿、蓝各自拉伸到最暗为黑、最亮为白，两端各去掉 `CutoffLow`、`CutoffHigh` 百分比的像素，不计 `Ignore` 中的色阶；`PreserveTone` 按明度拉伸、三个通道共用一张表，颜色不偏。即 Pillow 的 `ImageOps.autocontrast`，逐字节一致。需先读完整幅图像 |
 | `Equalize()` | 均衡各通道的色阶，使其出现次数大致相同：Pillow 的 `ImageOps.equalize`，逐字节一致。需先读完整幅图像 |
@@ -71,11 +71,11 @@ err := goimgtools.Open("in.jpg").
 | `Rank(size, rank)` | 排序滤波：每个像素的每个通道取 size × size 方块（奇数，1–99）中第 rank 小的值（从 0 起）。rank 为 0 即 Pillow 的 `MinFilter`（暗部扩张），size×size−1 即其 `MaxFilter`（亮部扩张）；与 Pillow 的 `RankFilter` 逐字节一致 |
 | `Dilate(width)`、`Erode(width)` | 与 sharp 的 `dilate`、`erode` 逐字节一致：每个通道取 2·width+1 像素方块（1–65536）的按位与（dilate）或按位或（erode）。在黑白图像（如 `Threshold` 的结果）上，dilate 让黑色图形（白底上的文字）扩张 width 像素，erode 让其收缩；其他图像请用 `Rank`。耗时几乎不随 width 增长 |
 | `Convolve(Convolution{Width, Height, Weights, Scale, Offset})` | 自定义卷积核（边长为奇数，最大 99）：窗口加权和除以 `Scale`（默认为权重之和）再加 `Offset`。与 sharp 的 `convolve` 逐字节一致；例如权重 `0,-1,0,-1,5,-1,0,-1,0` 为锐化，`-1,-1,-1,-1,8,-1,-1,-1,-1` 配合 `Scale: 1` 为边缘检测 |
-| `Blur(sigma, BlurOptions{Method, MinAmplitude})` | 高斯模糊，sigma 须大于 0 且不超过 1000 像素。默认（`BlurPillow`）为 Pillow 的 `GaussianBlur`：三次方框模糊，不含透明的图像与 Pillow 逐字节一致。`BlurLibvips` 与 sharp 的 `blur` 逐字节一致（含透明图像）：直接用高斯核，权重为 libvips 的整数权重，在低于峰值的 `MinAmplitude` 处截断（默认 0.2，即 sharp 的 `minAmplitude`，因此同一 sigma 下比 Pillow 模糊得轻）。两种方式的耗时都几乎不随 sigma 变化 |
+| `Blur(sigma, BlurOptions{Method, MinAmplitude})` | 高斯模糊，sigma 须大于 0 且不超过 1000 像素。默认（`MethodPillow`）为 Pillow 的 `GaussianBlur`：三次方框模糊，不含透明的图像与 Pillow 逐字节一致。`MethodLibvips` 与 sharp 的 `blur` 逐字节一致（含透明图像）：直接用高斯核，权重为 libvips 的整数权重，在低于峰值的 `MinAmplitude` 处截断（默认 0.2，即 sharp 的 `minAmplitude`，因此同一 sigma 下比 Pillow 模糊得轻）。两种方式的耗时都几乎不随 sigma 变化 |
 | `BoxBlur(radius)` | 方框模糊：每个像素取其周围边长 2×radius+1 的正方形的均值（radius 可为小数，边缘像素按比例计入），0 至 1000；即 Pillow 的 `ImageFilter.BoxBlur`，不含透明的图像逐字节一致。按名字调用 `boxblur RADIUS` |
 | `Sharpen()` | 轻度锐化（sharp 的 3×3 卷积核），适用于缩小之后 |
 | `Sharpen(SharpenOptions{Sigma, Amount, Threshold})` | 反锐化掩模（Pillow 的 `UnsharpMask`），`Amount` 默认为 1.5 |
-| `Sharpen(SharpenOptions{Sigma, Method: SharpenLibvips, Curve})` | sharp 带 sigma 的 `sharpen`：只锐化明度（L\*a\*b\* 的 L\*），颜色不偏移；`Curve`（`SharpenCurve{Flat, Jagged, JaggedFrom, MaxBrighten, MaxDarken}`，即 sharp 的 m1、m2、x1、y2、y3；nil 为 sharp 的默认值）把与模糊的差映射为改变量。与 sharp 的结果仅在少数像素上相差 1 级 |
+| `Sharpen(SharpenOptions{Sigma, Method: MethodLibvips, Curve})` | sharp 带 sigma 的 `sharpen`：只锐化明度（L\*a\*b\* 的 L\*），颜色不偏移；`Curve`（`SharpenCurve{Flat, Jagged, JaggedFrom, MaxBrighten, MaxDarken}`，即 sharp 的 m1、m2、x1、y2、y3；nil 为 sharp 的默认值）把与模糊的差映射为改变量。与 sharp 的结果仅在少数像素上相差 1 级 |
 | `Flatten(color)` | 去除透明，铺底色，与 sharp 的 `flatten`（libvips）逐字节相同；带透明的图像输出为 JPEG 时同样按此铺黑底，与 sharp 写出的相同 |
 | `Recomb(matrix)` | 按矩阵重组通道：3 行 3 列（或 4 行 4 列，第四行生成透明度），每行给出结果的一个通道，即各通道值乘以该行各数之和，舍去小数。与 sharp 的 `recomb` 逐字节一致；`{{0.393, 0.769, 0.189}, {0.349, 0.686, 0.168}, {0.272, 0.534, 0.131}}` 为褐色调 |
 | `Unflatten()` | 白色像素变为透明（灰度按 sharp 的方式计算为 255 的像素）；在 `Threshold` 之后使用，则达到阈值的像素全部变透明。与 sharp 的 `unflatten` 逐字节一致 |
@@ -93,23 +93,23 @@ err := goimgtools.Open("in.jpg").
 - `Fit`：`FitInside`（默认，等比缩放至框内，不裁剪、不变形）、`FitCover`（填满框后居中裁去多余部分，即 sharp 的默认方式）、`FitContain`（等比缩放至框内，再以 `Background` 补边至恰为 w×h，默认黑色）、`FitOutside`、`FitFill`（拉伸）。
 - `WithoutEnlargement`：禁止放大。
 - `Position`：`FitCover` 保留的部分，以及 `FitContain` 放置图像的位置：默认居中，也可为 `NorthWest` … `SouthEast` 九个方位之一（sharp 的 `position`；居中裁剪的取整方式与 sharp 相同）。
-- `LinearLight`：在线性光下缩放（同 libvips `thumbnail` 的 `linear`）：先把色阶转为线性光再求平均，之后重新编码，因此缩小图像时细小的亮部细节（细线、文字、星空）保持亮度而不会变暗，颜色也按光的方式混合。黑白相间的像素缩小一半后为 188 级（白色一半的光），而不是 128 级。把 2400 万像素的 PNG 缩小到 1500×1000 用时 0.74 秒（不开启为 0.64 秒）。不能与 `ResizeLibvips` 同用。
+- `LinearLight`：在线性光下缩放（同 libvips `thumbnail` 的 `linear`）：先把色阶转为线性光再求平均，之后重新编码，因此缩小图像时细小的亮部细节（细线、文字、星空）保持亮度而不会变暗，颜色也按光的方式混合。黑白相间的像素缩小一半后为 188 级（白色一半的光），而不是 128 级。把 2400 万像素的 PNG 缩小到 1500×1000 用时 0.74 秒（不开启为 0.64 秒）。不能与 `MethodLibvips` 同用。
 - `Interesting`：用于 `FitCover`，按画面内容选择保留的部分，即 sharp 的 `strategy.entropy` / `strategy.attention`（libvips 的 smartcrop）：`InterestingEntropy` 保留细节最多的部分（像素相同时与 libvips 的裁剪完全一致），`InterestingAttention` 保留最引人注意的部分（边缘、肤色与饱和的红色，在按 libvips 方式缩小到 32×32 的图像上评分）。选择期间缩放后的图像保存在内存中。
 - `Kernel`：`KernelCubic`（默认，Catmull-Rom）、`KernelNearest`、`KernelLinear`、`KernelMitchell`、`KernelLanczos2`、`KernelLanczos3`、`KernelMKS2013`、`KernelMKS2021`（Magic Kernel Sharp，即 sharp 的 `mks2013`、`mks2021`）；`KernelBox`、`KernelHamming`（Pillow 的 `BOX` 与 `HAMMING`）。
-- `Filter`：自定义缩放滤镜（`&goimgtools.Filter{Support, At}`），设置后取代 `Kernel`。
-- `FastShrinkOnLoad`：JPEG 解码时先行缩小（见 [JPEG 解码时缩小](performance.md#jpeg-解码时缩小可选)）；无 alpha 的有损 WebP 亦然；配合 `ResizeLibvips` 时所有 WebP 都同 sharp 一样在解码时缩小。
-- `Method`：像素的计算方式。`ResizeDraw`（默认）为每个像素在其自身位置以双精度加权源像素，同 `golang.org/x/image/draw` 的 `Scale`。`ResizeLibvips` 即 sharp 的 `resize`，逐字节一致：按 sharp 的做法对颜色先以 8 位乘上 alpha，再走 libvips 的 `vips_resize`，支持所有 `Kernel`（sharp 默认 `KernelLanczos3`）、`Fit`、`Position`、`Background` 与 `WithoutEnlargement`。与 sharp 一样，写在 `Resize` 之前的转向（带角度的 `Rotate`、`Flip`、`Flop`）先做，EXIF 转向（`Rotate()`）在缩放之后做；JPEG 按 sharp 选择的倍数在解码时缩小，用 libjpeg 的缩放解码：`FastShrinkOnLoad` 即 sharp 的 `fastShrinkOnLoad`（sharp 默认开启；关闭时至少留 2 倍给缩放本身）。开启时 WebP 也在解码时缩放，同 sharp 让 libwebp 所做：按两个方向缩小倍数中较小的一个，每边四舍五入；有损图像的各平面各自从自身尺寸缩放（两边都缩到四分之三以下时跳过环路滤波），无损图像先把颜色乘上 alpha 再缩放；余下的由缩放完成（WebP 解码出来已是所要尺寸时不再缩放）。有损 WebP 缩到三分之一，耗时不到原来的一半。不能与 `LinearLight` 同用。耗时与 `ResizeDraw` 相当（2400 万像素 PNG 缩到 1500×1000，单核 0.62 秒对 0.65 秒）。`ResizePillow` 即 Pillow 的 `Image.resize`，逐字节一致：先横向再纵向，权重为 22 位定点，带透明的图像先把颜色乘上 alpha 再缩放（Pillow 的 `RGBa`）；`KernelCubic`（默认，与 Pillow 相同）即 `BICUBIC`，`KernelLanczos3` 即 `LANCZOS`，`KernelLinear` 即 `BILINEAR`，`KernelBox` 即 `BOX`，`KernelHamming` 即 `HAMMING`，`KernelNearest` 即 `NEAREST`。转向在缩放之前做；配合 `FastShrinkOnLoad` 时，JPEG 按 Pillow 在 `resize(size)` 之前调用 `draft(mode, size)` 的方式在解码时缩小（libjpeg 的缩放解码）。Pillow 对调色板图像总用 `NEAREST`，本库则按所选核缩放其颜色。用 `ResizePillow` 时各种 fit 即 Pillow 的 `ImageOps`：`FitInside` 为 `contain`，`FitOutside` 为 `cover`，`FitContain` 为 `pad`（居中方式取自 `Position`，颜色取自 `Background`），`FitCover` 为 `fit`（取图像中与框同宽高比的部分，按 `Position` 定位，直接缩放到框）；配合 `ReducingGap` 时 `FitInside` 的尺寸按 `Image.thumbnail` 计算（每边取下取整或上取整中更接近原宽高比的一个）。
-- `ReducingGap`（配合 `ResizePillow`）：Pillow 的 `reducing_gap`。缩小超过该倍数的不透明图像先按整数倍做方框平均（`Image.reduce`），至少留该倍数给缩放本身；配合 `FastShrinkOnLoad` 时 JPEG 按框的该倍数在解码时缩小。`Resize(w, h, ResizeOptions{Method: ResizePillow, ReducingGap: 2, WithoutEnlargement: true, FastShrinkOnLoad: true})` 即 `im.thumbnail((w, h))`，逐字节一致。
+- `CustomKernel`：自定义缩放核（`&goimgtools.CustomKernel{Support, At}`），设置后取代 `Kernel`。
+- `FastShrinkOnLoad`：JPEG 解码时先行缩小（见 [JPEG 解码时缩小](performance.md#jpeg-解码时缩小可选)）；无 alpha 的有损 WebP 亦然；配合 `MethodLibvips` 时所有 WebP 都同 sharp 一样在解码时缩小。
+- `Method`：像素的计算方式。`MethodDefault`（默认）为每个像素在其自身位置以双精度加权源像素，同 `golang.org/x/image/draw` 的 `Scale`。`MethodLibvips` 即 sharp 的 `resize`，逐字节一致：按 sharp 的做法对颜色先以 8 位乘上 alpha，再走 libvips 的 `vips_resize`，支持所有 `Kernel`（sharp 默认 `KernelLanczos3`）、`Fit`、`Position`、`Background` 与 `WithoutEnlargement`。与 sharp 一样，写在 `Resize` 之前的转向（`Rotate`、`Flip`、`Flop`）先做，EXIF 转向（`AutoOrient()`）在缩放之后做；JPEG 按 sharp 选择的倍数在解码时缩小，用 libjpeg 的缩放解码：`FastShrinkOnLoad` 即 sharp 的 `fastShrinkOnLoad`（sharp 默认开启；关闭时至少留 2 倍给缩放本身）。开启时 WebP 也在解码时缩放，同 sharp 让 libwebp 所做：按两个方向缩小倍数中较小的一个，每边四舍五入；有损图像的各平面各自从自身尺寸缩放（两边都缩到四分之三以下时跳过环路滤波），无损图像先把颜色乘上 alpha 再缩放；余下的由缩放完成（WebP 解码出来已是所要尺寸时不再缩放）。有损 WebP 缩到三分之一，耗时不到原来的一半。不能与 `LinearLight` 同用。耗时与 `MethodDefault` 相当（2400 万像素 PNG 缩到 1500×1000，单核 0.62 秒对 0.65 秒）。`MethodPillow` 即 Pillow 的 `Image.resize`，逐字节一致：先横向再纵向，权重为 22 位定点，带透明的图像先把颜色乘上 alpha 再缩放（Pillow 的 `RGBa`）；`KernelCubic`（默认，与 Pillow 相同）即 `BICUBIC`，`KernelLanczos3` 即 `LANCZOS`，`KernelLinear` 即 `BILINEAR`，`KernelBox` 即 `BOX`，`KernelHamming` 即 `HAMMING`，`KernelNearest` 即 `NEAREST`。转向在缩放之前做；配合 `FastShrinkOnLoad` 时，JPEG 按 Pillow 在 `resize(size)` 之前调用 `draft(mode, size)` 的方式在解码时缩小（libjpeg 的缩放解码）。Pillow 对调色板图像总用 `NEAREST`，本库则按所选核缩放其颜色。用 `MethodPillow` 时各种 fit 即 Pillow 的 `ImageOps`：`FitInside` 为 `contain`，`FitOutside` 为 `cover`，`FitContain` 为 `pad`（居中方式取自 `Position`，颜色取自 `Background`），`FitCover` 为 `fit`（取图像中与框同宽高比的部分，按 `Position` 定位，直接缩放到框）；配合 `ReducingGap` 时 `FitInside` 的尺寸按 `Image.thumbnail` 计算（每边取下取整或上取整中更接近原宽高比的一个）。
+- `ReducingGap`（配合 `MethodPillow`）：Pillow 的 `reducing_gap`。缩小超过该倍数的不透明图像先按整数倍做方框平均（`Image.reduce`），至少留该倍数给缩放本身；配合 `FastShrinkOnLoad` 时 JPEG 按框的该倍数在解码时缩小。`Resize(w, h, ResizeOptions{Method: MethodPillow, ReducingGap: 2, WithoutEnlargement: true, FastShrinkOnLoad: true})` 即 `im.thumbnail((w, h))`，逐字节一致。
 
 灰度图像缩放后仍为灰度图像（单通道），不会转为彩色。
 
-模糊、锐化、色彩调整与扩边均按行流式处理，仅额外占用少量行的内存（模糊约多占 6×sigma 行，`BlurLibvips` 约 3.6×sigma 行，反锐化掩模再多占 3×sigma 行；超出内存份额时写入临时文件）。`Trim` 与 `RotateBy` 须先读取全图：像素先写入暂存区（超出内存份额时为临时文件），再重新读取；因此链中含 `Trim` 时，`OutputSize` 也须读取一遍像素。带透明通道的图像在模糊、锐化时按预乘透明度计算，透明区域的颜色不会渗入相邻像素。
+模糊、锐化、色彩调整与扩边均按行流式处理，仅额外占用少量行的内存（模糊约多占 6×sigma 行，`MethodLibvips` 约 3.6×sigma 行，反锐化掩模再多占 3×sigma 行；超出内存份额时写入临时文件）。`Trim` 与 `Rotate` 须先读取全图：像素先写入暂存区（超出内存份额时为临时文件），再重新读取；因此链中含 `Trim` 时，`OutputSize` 也须读取一遍像素。带透明通道的图像在模糊、锐化时按预乘透明度计算，透明区域的颜色不会渗入相邻像素。
 
 ### 输出
 
 | 方法 | 说明 |
 |---|---|
-| `JPEG(quality, JPEGOptions{Optimize, Progressive, Trellis, QuantTable, ChromaSubsampling})` | 质量 1–100，0 表示 80。`Optimize`、`Progressive` 在像素不变的前提下减小文件；`Trellis`、`QuantTable`（0–8，编号同 mozjpeg 的 `-quant-table`；或 `QuantTableJpegli`）会改变像素（见[压缩](compression.md)）。`ChromaSubsampling`：`Chroma420`（默认：色度为宽高各一半，同标准库与 libjpeg）、`Chroma422`（宽度一半）或 `Chroma444`（保留全部色度：彩色文字与边缘清晰，文件约大 30%），即 sharp 的 `chromaSubsampling` |
+| `JPEG(JPEGOptions{Quality, Optimize, Progressive, Trellis, QuantTable, ChromaSubsampling})` | 质量 `Quality` 为 1–100，0 表示 80。`Optimize`、`Progressive` 在像素不变的前提下减小文件；`Trellis`、`QuantTable`（0–8，编号同 mozjpeg 的 `-quant-table`；或 `QuantTableJpegli`）会改变像素（见[压缩](compression.md)）。`ChromaSubsampling`：`Chroma420`（默认：色度为宽高各一半，同标准库与 libjpeg）、`Chroma422`（宽度一半）或 `Chroma444`（保留全部色度：彩色文字与边缘清晰，文件约大 30%），即 sharp 的 `chromaSubsampling` |
 | `PNG(PNGOptions{CompressionLevel, Colors, NoDither})` | 压缩级别 1（最快）至 9（最小；8、9 级搜索最小文件，耗时约为 7 级的 10 倍和 20 倍）；`Colors` 将颜色减至最多 256 色（见[压缩](compression.md)） |
 | `WebP(WebPOptions{Quality, Lossless, Effort})` | 有损（质量 1–100，默认 75）或无损；`Effort` 1 最快至 9 最小，默认 5（有损时 5 已用上除透明通道外的全部手段，2 耗时约减半，1 约为三分之一） |
 | `GIF(GIFOptions{Colors, NoDither, FixedPalette})` | 最多 256 色，按图像内容选取；`FixedPalette` 改用标准库的固定调色板 |
@@ -148,7 +148,7 @@ err := goimgtools.Open("in.jpg").
 | `WithContext(ctx)` | `ctx` 取消或超时后中止处理，返回 `ctx.Err()` |
 | `Clone()` | 复制配方，用于从同一起点派生多个结果 |
 
-ICC 色彩配置支持在 JPEG、PNG、WebP、TIFF 中读写；EXIF 支持在 JPEG、PNG、WebP、TIFF 中读写（TIFF 把它放在第一个目录及其标签指向的 EXIF、GPS 目录中：描述图像的标签从那里读出，含方向，也写到那里）；XMP 支持在 JPEG（不超过 64KB 的一个 APP1 段；更大数据包的扩展 XMP 不保留）、PNG（从 iTXt、zTXt 或 tEXt 读取，写为 iTXt）、WebP、TIFF 中读写。GIF、BMP 无法附带色彩配置，转换为这两种格式时依据输入的配置将颜色转换至 sRGB（实测：Display P3 图像不经转换时色差最大为 17.6，肉眼可见偏淡）。`Rotate()` 校正方向后，保留的 EXIF 中的方向改为「正向」。
+ICC 色彩配置支持在 JPEG、PNG、WebP、TIFF 中读写；EXIF 支持在 JPEG、PNG、WebP、TIFF 中读写（TIFF 把它放在第一个目录及其标签指向的 EXIF、GPS 目录中：描述图像的标签从那里读出，含方向，也写到那里）；XMP 支持在 JPEG（不超过 64KB 的一个 APP1 段；更大数据包的扩展 XMP 不保留）、PNG（从 iTXt、zTXt 或 tEXt 读取，写为 iTXt）、WebP、TIFF 中读写。GIF、BMP 无法附带色彩配置，转换为这两种格式时依据输入的配置将颜色转换至 sRGB（实测：Display P3 图像不经转换时色差最大为 17.6，肉眼可见偏淡）。`AutoOrient()` 校正方向后，保留的 EXIF 中的方向改为「正向」。
 
 转换支持以三原色加色调曲线描述的配置（相机、手机、Display P3、Adobe RGB、ProPhoto 均属此类），每个值与 LittleCMS（相对比色，超出 sRGB 的颜色截断）相差不超过 1；查找表类配置（少见，多用于打印机）原样保留，不作转换。
 
@@ -157,7 +157,7 @@ ICC 色彩配置支持在 JPEG、PNG、WebP、TIFF 中读写；EXIF 支持在 JP
 **一个配方，多个结果。** 链上的方法修改的是同一个 `Image` 并返回其自身，不作复制。如需从同一起点生成多个结果，应先调用 `Clone()`：
 
 ```go
-base := goimgtools.Open("in.jpg").Rotate()
+base := goimgtools.Open("in.jpg").AutoOrient()
 thumb := base.Clone().Resize(200, 0)
 large := base.Clone().Resize(1600, 0)
 ```
@@ -194,7 +194,7 @@ func handle(ctx context.Context, in io.Reader, out io.Writer) error {
     case <-ctx.Done():
         return ctx.Err()
     }
-    return goimgtools.FromReader(in).WithContext(ctx).Resize(1600, 1600).JPEG(80).ToWriter(out)
+    return goimgtools.FromReader(in).WithContext(ctx).Resize(1600, 1600).JPEG().ToWriter(out)
 }
 ```
 

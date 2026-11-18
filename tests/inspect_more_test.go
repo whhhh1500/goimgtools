@@ -153,14 +153,14 @@ func TestHash(t *testing.T) {
 	}
 	// And as this library makes it smaller, larger, worse, and marked.
 	for name, m := range map[string]*Image{
-		"jpeg 40":       FromBytes(orig).JPEG(40),
+		"jpeg 40":       FromBytes(orig).JPEG(JPEGOptions{Quality: 40}),
 		"half size":     FromBytes(orig).Resize(75, 0).PNG(),
-		"a fifth":       FromBytes(orig).Resize(30, 0).JPEG(80),
-		"four times":    FromBytes(orig).Resize(600, 0).JPEG(85),
+		"a fifth":       FromBytes(orig).Resize(30, 0).JPEG(JPEGOptions{Quality: 80}),
+		"four times":    FromBytes(orig).Resize(600, 0).JPEG(JPEGOptions{Quality: 85}),
 		"squeezed":      FromBytes(orig).Resize(150, 60, ResizeOptions{Fit: FitFill}).PNG(),
 		"webp":          FromBytes(orig).WebP(WebPOptions{Quality: 60}),
 		"256 colours":   FromBytes(orig).PNG(PNGOptions{Colors: 256}),
-		"a small label": FromBytes(orig).Composite(Text("(c)", TextOptions{Size: 9, Color: color.White}), CompositeOptions{Gravity: SouthEast, Left: -2, Top: -2}).JPEG(85),
+		"a small label": FromBytes(orig).Composite(Text("(c)", TextOptions{Size: 9, Color: color.White}), CompositeOptions{Gravity: SouthEast, Left: -2, Top: -2}).JPEG(JPEGOptions{Quality: 85}),
 	} {
 		file, err := m.ToBytes()
 		if err != nil {
@@ -195,7 +195,7 @@ func TestHash(t *testing.T) {
 	}
 	// A picture stored on its side with an EXIF orientation is the picture
 	// as it is shown.
-	turned, err := FromBytes(orig).Rotate(270).JPEG(90).ToBytes() // what a camera held upright stores
+	turned, err := FromBytes(orig).Rotate(270).JPEG(JPEGOptions{Quality: 90}).ToBytes() // what a camera held upright stores
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -300,7 +300,7 @@ func TestExif(t *testing.T) {
 
 	// Carried into a new file, it reads the same; after Rotate() it says
 	// the picture is upright.
-	kept, err := FromBytes(jp).KeepExif().Resize(12, 0).JPEG(80).ToBytes()
+	kept, err := FromBytes(jp).KeepExif().Resize(12, 0).JPEG(JPEGOptions{Quality: 80}).ToBytes()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -311,12 +311,12 @@ func TestExif(t *testing.T) {
 	if err != nil || !ok || !sameTime || again != first {
 		t.Errorf("after KeepExif: %+v, %v, %v", again, ok, err)
 	}
-	upright, _ := FromBytes(jp).Rotate().KeepExif().JPEG(80).ToBytes()
+	upright, _ := FromBytes(jp).AutoOrient().KeepExif().JPEG(JPEGOptions{Quality: 80}).ToBytes()
 	if again, ok, _ := inspect.ReadExif(FromBytes(upright)); !ok || again.Orientation != 1 || again.Model != first.Model {
 		t.Errorf("after Rotate: %+v", again)
 	}
 	// By default the block is dropped, position and all.
-	plain, _ := FromBytes(jp).JPEG(80).ToBytes()
+	plain, _ := FromBytes(jp).JPEG(JPEGOptions{Quality: 80}).ToBytes()
 	if _, ok, err := inspect.ReadExif(FromBytes(plain)); ok || err != nil {
 		t.Errorf("a file written without KeepExif has EXIF: %v, %v", ok, err)
 	}

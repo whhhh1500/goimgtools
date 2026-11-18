@@ -122,7 +122,7 @@ func TestAnimated(t *testing.T) {
 		t.Fatal(err)
 	}
 	check("rotated", got, func(i int) image.Image { return turnRef(want[i], 6) })
-	got, err = FromBytes(in).Animated().Extract(10, 8, 40, 30).ToBytes()
+	got, err = FromBytes(in).Animated().Crop(10, 8, 40, 30).ToBytes()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestAnimated(t *testing.T) {
 		t.Fatal(err)
 	}
 	sameImage(t, "png of an animation", decodePNG(t, p), want[0])
-	for _, out := range []*Image{FromBytes(in).Animated().TIFF(), FromBytes(in).Animated().JPEG(80), FromReader(bytes.NewReader(in)).Animated().BMP()} {
+	for _, out := range []*Image{FromBytes(in).Animated().TIFF(), FromBytes(in).Animated().JPEG(JPEGOptions{Quality: 80}), FromReader(bytes.NewReader(in)).Animated().BMP()} {
 		if _, err := out.ToBytes(); !errors.Is(err, errors.ErrUnsupported) || errors.Is(err, ErrFormat) {
 			t.Errorf("animation to a still format: %v", err)
 		}

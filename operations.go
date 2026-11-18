@@ -70,8 +70,25 @@ const (
 	KernelHamming
 )
 
+// Method is whose arithmetic an operation follows where this package has
+// more than one: its own default, or that of libvips (and so sharp) or of
+// Pillow, to the byte. Resize, Blur, Sharpen, Rotate and Convolve take one;
+// each says which it has and what its default is.
+type Method int
+
+const (
+	// MethodDefault is the operation's own default.
+	MethodDefault Method = iota
+	// MethodLibvips is libvips' arithmetic, and so sharp's.
+	MethodLibvips
+	// MethodPillow is Pillow's arithmetic.
+	MethodPillow
+)
+
 // ResizeOptions are the optional settings of Resize.
 type ResizeOptions struct {
+	// Fit is how the image is fitted to the width and height asked for
+	// (see Fit); the default is FitInside.
 	Fit Fit
 	// WithoutEnlargement leaves the image at its size when the requested
 	// size would make it larger.
@@ -83,7 +100,7 @@ type ResizeOptions struct {
 	// of the result (as libwebp scales while decoding), leaving less for the
 	// resize itself. It is markedly faster and uses less memory; the pixels
 	// differ slightly from a resize of the full image, the size of the
-	// result does not. With ResizeLibvips it is sharp's fastShrinkOnLoad,
+	// result does not. With MethodLibvips it is sharp's fastShrinkOnLoad,
 	// sizes included, every WebP scaled as sharp has libwebp scale it. It
 	// applies when Resize is the first operation on a JPEG or WebP, and is
 	// ignored otherwise.
@@ -92,9 +109,9 @@ type ResizeOptions struct {
 	Background color.Color
 	// Kernel is the interpolation filter; the default is KernelCubic.
 	Kernel Kernel
-	// Filter, when set, is an interpolation filter of your own, used
+	// CustomKernel, when set, is an interpolation filter of your own, used
 	// instead of Kernel.
-	Filter *Filter
+	CustomKernel *CustomKernel
 	// Position is the part of the image FitCover keeps, and where FitContain
 	// puts the image in its box: the centre by default (DefaultPosition),
 	// or one of the nine positions, NorthWest to SouthEast (as sharp's
@@ -115,13 +132,40 @@ type ResizeOptions struct {
 	// takes a little longer (a 24-megapixel PNG reduced to 1500 x 1000:
 	// 0.74s instead of 0.64s). With FastShrinkOnLoad, the reduction the
 	// decoder makes comes first, on the encoded levels. It is not
-	// available with ResizeLibvips.
+	// available with MethodLibvips.
 	LinearLight bool
-	// Method is the way the pixels are worked out: ResizeDraw, the
-	// default, ResizeLibvips (sharp's resize) or ResizePillow (Pillow's),
-	// to the byte.
-	Method ResizeMethod
-	// ReducingGap, with ResizePillow, is Pillow's reducing_gap: an image
+	// Method is the way the pixels are worked out.
+	//
+	// MethodDefault weights the source for each pixel at its own place, in
+	// double precision, across and down at once: the arithmetic of
+	// golang.org/x/image/draw's Scale, to the byte.
+	//
+	// MethodLibvips is sharp's resize, to the byte: libvips' vips_resize
+	// on the colours multiplied by alpha in 8 bits, as sharp runs it. Down
+	// the columns and then across the rows, each direction that shrinks is
+	// rounded to 8 bits on its own, a reduction by more than 2 first
+	// averaged in boxes of whole pixels, the kernel weighed at 1/64 of a
+	// pixel in 12-bit fixed point; a direction that grows is interpolated
+	// (nearest for KernelNearest, bilinear for KernelLinear, bicubic for
+	// the others and for a CustomKernel). sharp's default kernel is
+	// KernelLanczos3. As sharp, turns written before the Resize (Rotate,
+	// Flip, Flop) are done before it, and AutoOrient after it.
+	//
+	// MethodPillow is Pillow's Image.resize, to the byte, its fits those
+	// of ImageOps (FitInside contain, FitOutside cover, FitContain pad,
+	// FitCover fit) and with ReducingGap Image.thumbnail's: across and
+	// then down, each output pixel weighing the source within the kernel's
+	// reach (scaled when reducing) in double precision, the weights in
+	// 22-bit fixed point, each pass rounded to 8 bits; an image with
+	// transparency resized with its colours multiplied by alpha (Pillow's
+	// RGBa). KernelCubic (the default) is Pillow's BICUBIC, KernelLanczos3
+	// LANCZOS, KernelLinear BILINEAR, KernelBox BOX, KernelHamming HAMMING
+	// and KernelNearest NEAREST. Turns are done before it. With
+	// FastShrinkOnLoad a JPEG is decoded reduced as Pillow's draft does for
+	// the size asked (libjpeg's scaled decoding, by the largest of 8, 4
+	// and 2 that fits), as im.draft(mode, size) before im.resize(size).
+	Method Method
+	// ReducingGap, with MethodPillow, is Pillow's reducing_gap: an image
 	// (without transparency, as in Pillow) reduced by more than that many
 	// times is first reduced by whole factors, averaging boxes of pixels
 	// (Image.reduce), leaving at least that much to the resize, which is
@@ -130,42 +174,6 @@ type ResizeOptions struct {
 	// does, which uses 2. 0, the default, is none; otherwise at least 1.
 	ReducingGap float64
 }
-
-// ResizeMethod is the way Resize works out the pixels.
-type ResizeMethod int
-
-const (
-	// ResizeDraw weights the source for each pixel at its own place, in
-	// double precision, across and down at once: the arithmetic of
-	// golang.org/x/image/draw's Scale, to the byte.
-	ResizeDraw ResizeMethod = iota
-	// ResizeLibvips is sharp's resize, to the byte: libvips' vips_resize
-	// on the colours multiplied by alpha in 8 bits, as sharp runs it. Down
-	// the columns and then across the rows, each direction that shrinks is
-	// rounded to 8 bits on its own, a reduction by more than 2 first
-	// averaged in boxes of whole pixels, the kernel weighed at 1/64 of a
-	// pixel in 12-bit fixed point; a direction that grows is interpolated
-	// (nearest for KernelNearest, bilinear for KernelLinear, bicubic for
-	// the others and for a Filter). sharp's default kernel is
-	// KernelLanczos3. As sharp, turns written before the Resize (Rotate
-	// with an angle, Flip, Flop) are done before it, and the EXIF turn
-	// (Rotate without one) after it.
-	ResizeLibvips
-	// ResizePillow is Pillow's Image.resize, to the byte, its fits those of
-	// ImageOps (FitInside contain, FitOutside cover, FitContain pad,
-	// FitCover fit) and with ReducingGap Image.thumbnail's: across and then
-	// down, each output pixel weighing the source within the kernel's
-	// reach (scaled when reducing) in double precision, the weights in
-	// 22-bit fixed point, each pass rounded to 8 bits; an image with
-	// transparency resized with its colours multiplied by alpha (Pillow's
-	// RGBa). KernelCubic (the default) is Pillow's BICUBIC, KernelLanczos3
-	// LANCZOS, KernelLinear BILINEAR, KernelBox BOX, KernelHamming HAMMING
-	// and KernelNearest NEAREST. Turns are done before it. With
-	// FastShrinkOnLoad a JPEG is decoded reduced as Pillow's draft does
-	// for the size asked (libjpeg's scaled decoding, by the largest of 8,
-	// 4 and 2 that fits), as im.draft(mode, size) before im.resize(size).
-	ResizePillow
-)
 
 // Interesting is how FitCover chooses the part of the image it keeps.
 type Interesting int
@@ -183,10 +191,10 @@ const (
 	InterestingAttention
 )
 
-// Filter is a resampling filter for Resize that this package does not have
-// (ResizeOptions.Filter): the weight a source pixel is given by its
-// distance from the place a result pixel is computed for.
-type Filter struct {
+// CustomKernel is a resampling filter for Resize that this package does
+// not have (ResizeOptions.CustomKernel): the weight a source pixel is given
+// by its distance from the place a result pixel is computed for.
+type CustomKernel struct {
 	// Support is the distance, in source pixels at the scale of the
 	// result, beyond which the weight is zero: 1 for a linear filter, 2
 	// for the cubic ones, 3 for Lanczos3. A larger support is slower.
@@ -395,20 +403,20 @@ func (m *Image) Resize(width, height int, opts ...ResizeOptions) *Image {
 	if err != nil {
 		return m.fail(err)
 	}
-	if o.ReducingGap != 0 && (o.Method != ResizePillow || !(o.ReducingGap >= 1) || math.IsInf(o.ReducingGap, 0)) {
-		return m.fail(errors.New("goimgtools: ReducingGap is at least 1, with ResizePillow"))
+	if o.ReducingGap != 0 && (o.Method != MethodPillow || !(o.ReducingGap >= 1) || math.IsInf(o.ReducingGap, 0)) {
+		return m.fail(errors.New("goimgtools: ReducingGap is at least 1, with MethodPillow"))
 	}
 	z := resizeOp{spec: resizeSpec{width, height, o}, kernel: kernel}
 	switch o.Method {
-	case ResizeDraw:
-	case ResizeLibvips:
+	case MethodDefault:
+	case MethodLibvips:
 		if o.LinearLight {
-			return m.fail(errors.New("goimgtools: LinearLight is not available with ResizeLibvips"))
+			return m.fail(errors.New("goimgtools: LinearLight is not available with MethodLibvips"))
 		}
 		z.vips = vipsKernel(o)
-	case ResizePillow:
+	case MethodPillow:
 		if o.LinearLight {
-			return m.fail(errors.New("goimgtools: LinearLight is not available with ResizePillow"))
+			return m.fail(errors.New("goimgtools: LinearLight is not available with MethodPillow"))
 		}
 		z.pillow = pillowFilter(o, kernel)
 	default:
@@ -417,10 +425,10 @@ func (m *Image) Resize(width, height int, opts ...ResizeOptions) *Image {
 	return m.add(z)
 }
 
-// pillowFilter is the filter of ResizePillow: Pillow's own, or kernel (the
+// pillowFilter is the filter of MethodPillow: Pillow's own, or kernel (the
 // draw kernel of o) at any distance.
 func pillowFilter(o ResizeOptions, kernel *draw.Kernel) resize.PillowFilter {
-	if o.Filter == nil {
+	if o.CustomKernel == nil {
 		switch o.Kernel {
 		case KernelNearest:
 			return resize.PillowNearest
@@ -439,9 +447,9 @@ func pillowFilter(o ResizeOptions, kernel *draw.Kernel) resize.PillowFilter {
 	return resize.PillowFilter{At: resize.Within(kernel.At, kernel.Support), Support: kernel.Support}
 }
 
-// vipsKernel is the kernel of ResizeLibvips (resizeKernel has checked it).
+// vipsKernel is the kernel of MethodLibvips (resizeKernel has checked it).
 func vipsKernel(o ResizeOptions) resize.VipsKernel {
-	if f := o.Filter; f != nil {
+	if f := o.CustomKernel; f != nil {
 		return resize.VipsKernel{Kind: resize.VipsCustom, At: f.At, Support: f.Support}
 	}
 	switch o.Kernel {
@@ -458,7 +466,7 @@ func vipsKernel(o ResizeOptions) resize.VipsKernel {
 }
 
 func resizeKernel(o ResizeOptions) (*draw.Kernel, error) {
-	if f := o.Filter; f != nil {
+	if f := o.CustomKernel; f != nil {
 		if f.At == nil || !(f.Support > 0) || math.IsInf(f.Support, 0) {
 			return nil, errors.New("goimgtools: a resize Filter needs an At function and a positive Support")
 		}
@@ -489,35 +497,16 @@ func resizeKernel(o ResizeOptions) (*draw.Kernel, error) {
 	return nil, errors.New("goimgtools: unknown resize kernel")
 }
 
-// Rotate turns the image clockwise by angle, a multiple of 90 degrees.
-// Without an argument it turns the image upright according to the EXIF
-// orientation the camera recorded (and does nothing when there is none).
-//
-// Anything but a plain left-right mirror needs the last rows of the image
-// first, so the pixels are kept in working storage (a temporary file when
-// they do not fit in the memory limit). When a Resize follows directly, the
-// image is resized first and turned afterwards, with the same result.
-func (m *Image) Rotate(angle ...int) *Image {
-	if len(angle) > 1 {
-		return m.fail(fmt.Errorf("goimgtools: Rotate takes at most one angle, got %d", len(angle)))
-	}
-	if len(angle) == 0 {
-		m.autoOrient = true
-		return m.add(turnOp{auto: true})
-	}
-	var o ops.Orientation
-	switch ((angle[0] % 360) + 360) % 360 {
-	case 0:
-	case 90:
-		o = ops.Rotate90
-	case 180:
-		o = ops.Rotate180
-	case 270:
-		o = ops.Rotate270
-	default:
-		return m.fail(errors.New("goimgtools: Rotate takes a multiple of 90 degrees"))
-	}
-	return m.add(turnOp{o: o})
+// AutoOrient turns the image upright according to the EXIF orientation the
+// camera recorded (and does nothing when there is none); the orientation
+// written with the image is then the upright one. Anything but a plain
+// left-right mirror needs the last rows of the image first, so the pixels
+// are kept in working storage (a temporary file when they do not fit in
+// the memory limit). When a Resize follows directly, the image is resized
+// first and turned afterwards, with the same result.
+func (m *Image) AutoOrient() *Image {
+	m.autoOrient = true
+	return m.add(turnOp{auto: true})
 }
 
 // Flip mirrors the image top to bottom.
@@ -526,9 +515,9 @@ func (m *Image) Flip() *Image { return m.add(turnOp{o: ops.Flip}) }
 // Flop mirrors the image left to right.
 func (m *Image) Flop() *Image { return m.add(turnOp{o: ops.Flop}) }
 
-// Extract crops to the given region (in pixels of the image at this point
-// in the chain).
-func (m *Image) Extract(left, top, width, height int) *Image {
+// Crop keeps the given region (in pixels of the image at this point in the
+// chain).
+func (m *Image) Crop(left, top, width, height int) *Image {
 	return m.add(extractOp{left, top, width, height})
 }
 

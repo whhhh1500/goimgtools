@@ -92,9 +92,11 @@ jobs:
       - run: go test -race -timeout 45m . ./tests ./pipeline ./inspect ./cmd/...
 
   api:
-    # No exported name of the last release may change incompatibly: a
-    # release that does goes up a major version. apidiff (golang.org/x/exp)
-    # compares the exported API of the whole module with the last tag's.
+    # No exported name of the settled API may change incompatibly. That API
+    # is the one of the commit .github/api-base names (the API was settled
+    # after 0.1.0, once), or of the last tag without the file. apidiff
+    # (golang.org/x/exp) compares the exported API of the whole module with
+    # it.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -104,10 +106,11 @@ jobs:
         with:
           go-version: "1.27.x"
       - run: go install golang.org/x/exp/cmd/apidiff@v0.0.0-20261113113407-e3970619a1a4
-      - name: Compare with the last release
+      - name: Compare with the settled API
         run: |
           tag=$(git describe --tags --abbrev=0)
-          echo "last release: $tag"
+          if [ -f .github/api-base ]; then tag=$(tr -d ' \r\n' < .github/api-base); fi
+          echo "settled API: $tag"
           git worktree add -q "$RUNNER_TEMP/old" "$tag"
           (cd "$RUNNER_TEMP/old" && apidiff -m -w "$RUNNER_TEMP/old.api" github.com/whhhh1500/goimgtools)
           apidiff -m -w "$RUNNER_TEMP/new.api" github.com/whhhh1500/goimgtools

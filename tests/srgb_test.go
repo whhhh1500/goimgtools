@@ -78,12 +78,12 @@ func TestToSRGB(t *testing.T) {
 		t.Fatal(err)
 	}
 	within("ToSRGB PNG", decodePNG(t, p), want, 1)
-	if info, err := FromBytes(p).Metadata(); err != nil || info.HasProfile {
+	if info, err := FromBytes(p).Metadata(); err != nil || info.HasICC {
 		t.Errorf("ToSRGB PNG: profile still there (%v)", err)
 	}
 	// Without it, PNG keeps the profile and the values.
 	k, _ := FromBytes(in).PNG().ToBytes()
-	if info, _ := FromBytes(k).Metadata(); !info.HasProfile {
+	if info, _ := FromBytes(k).Metadata(); !info.HasICC {
 		t.Error("PNG lost its profile")
 	}
 	within("PNG with its profile", decodePNG(t, k), raw, 0)

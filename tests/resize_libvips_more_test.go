@@ -14,11 +14,11 @@ import (
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
-// TestResizeLibvipsOptions: by name the same; what ResizeLibvips does not
+// TestResizeLibvipsOptions: by name the same; what MethodLibvips does not
 // take is refused; the steps say the method.
 func TestResizeLibvipsOptions(t *testing.T) {
 	rgb := sourcePNG(t, "pillow/source.png")
-	a := must(FromBytes(rgb).Resize(60, 41, ResizeOptions{Fit: FitFill, Kernel: KernelLanczos3, Method: ResizeLibvips}).PNG().ToBytes())
+	a := must(FromBytes(rgb).Resize(60, 41, ResizeOptions{Fit: FitFill, Kernel: KernelLanczos3, Method: MethodLibvips}).PNG().ToBytes())
 	b := must(FromBytes(rgb).Do("resize", "60", "41", "fill", "lanczos3", "center", "srgb", "libvips").PNG().ToBytes())
 	if !bytes.Equal(a, b) {
 		t.Error("by name: another image")
@@ -28,17 +28,17 @@ func TestResizeLibvipsOptions(t *testing.T) {
 		steps = append(steps, step)
 		return run(in)
 	}
-	c := must(FromBytes(rgb).Around(seen).Resize(60, 41, ResizeOptions{Fit: FitFill, Kernel: KernelLanczos3, Method: ResizeLibvips}).PNG().ToBytes())
+	c := must(FromBytes(rgb).Around(seen).Resize(60, 41, ResizeOptions{Fit: FitFill, Kernel: KernelLanczos3, Method: MethodLibvips}).PNG().ToBytes())
 	if len(steps) != 1 || len(steps[0].Args) != 7 || steps[0].Args[6] != "libvips" || !bytes.Equal(a, c) {
 		t.Errorf("steps: %+v", steps)
 	}
-	p := must(FromBytes(rgb).Resize(60, 41, ResizeOptions{Fit: FitFill, Kernel: KernelHamming, Method: ResizePillow}).PNG().ToBytes())
+	p := must(FromBytes(rgb).Resize(60, 41, ResizeOptions{Fit: FitFill, Kernel: KernelHamming, Method: MethodPillow}).PNG().ToBytes())
 	if q := must(FromBytes(rgb).Do("resize", "60", "41", "fill", "hamming", "center", "srgb", "pillow").PNG().ToBytes()); !bytes.Equal(p, q) {
 		t.Error("pillow by name: another image")
 	}
 	// Box and Hamming with every method.
 	for _, k := range []Kernel{KernelBox, KernelHamming} {
-		for _, m := range []ResizeMethod{ResizeDraw, ResizeLibvips, ResizePillow} {
+		for _, m := range []Method{MethodDefault, MethodLibvips, MethodPillow} {
 			for _, sz := range [][2]int{{40, 30}, {400, 300}} {
 				g := decodePNG(t, must(FromBytes(rgb).Resize(sz[0], sz[1], ResizeOptions{Fit: FitFill, Kernel: k, Method: m}).PNG().ToBytes()))
 				if b := g.Bounds(); b.Dx() != sz[0] || b.Dy() != sz[1] {
@@ -47,7 +47,7 @@ func TestResizeLibvipsOptions(t *testing.T) {
 			}
 		}
 	}
-	for _, o := range []ResizeOptions{{Method: 3}, {Method: -1}, {Method: ResizeLibvips, LinearLight: true}, {Method: ResizePillow, LinearLight: true}, {Kernel: 10}} {
+	for _, o := range []ResizeOptions{{Method: 3}, {Method: -1}, {Method: MethodLibvips, LinearLight: true}, {Method: MethodPillow, LinearLight: true}, {Kernel: 10}} {
 		if _, err := FromBytes(rgb).Resize(60, 41, o).PNG().ToBytes(); err == nil {
 			t.Errorf("Resize(%+v) accepted", o)
 		}
@@ -56,22 +56,22 @@ func TestResizeLibvipsOptions(t *testing.T) {
 		t.Error("an unknown method word accepted")
 	}
 	// A filter of one's own, and the extremes: no panic, the sizes asked.
-	own := &Filter{Support: 1.5, At: func(x float64) float64 { return max(0, 1.5-max(x, -x)) }}
+	own := &CustomKernel{Support: 1.5, At: func(x float64) float64 { return max(0, 1.5-max(x, -x)) }}
 	for _, c := range []struct {
 		w, h int
 		o    ResizeOptions
 	}{
-		{40, 30, ResizeOptions{Fit: FitFill, Filter: own, Method: ResizePillow}},
-		{400, 300, ResizeOptions{Fit: FitFill, Filter: own, Method: ResizePillow}},
-		{1, 1, ResizeOptions{Fit: FitFill, Kernel: KernelMKS2021, Method: ResizePillow}},
-		{40, 30, ResizeOptions{Fit: FitFill, Filter: own}},
-		{400, 300, ResizeOptions{Fit: FitFill, Filter: own}},
+		{40, 30, ResizeOptions{Fit: FitFill, CustomKernel: own, Method: MethodPillow}},
+		{400, 300, ResizeOptions{Fit: FitFill, CustomKernel: own, Method: MethodPillow}},
+		{1, 1, ResizeOptions{Fit: FitFill, Kernel: KernelMKS2021, Method: MethodPillow}},
+		{40, 30, ResizeOptions{Fit: FitFill, CustomKernel: own}},
+		{400, 300, ResizeOptions{Fit: FitFill, CustomKernel: own}},
 		{1, 1, ResizeOptions{Fit: FitFill, Kernel: KernelMKS2021}},
 		{1, 500, ResizeOptions{Fit: FitFill, Kernel: KernelLanczos3}},
 		{3000, 1, ResizeOptions{Fit: FitFill, Kernel: KernelNearest}},
 	} {
-		if c.o.Method == ResizeDraw {
-			c.o.Method = ResizeLibvips
+		if c.o.Method == MethodDefault {
+			c.o.Method = MethodLibvips
 		}
 		m := decodePNG(t, must(FromBytes(rgb).Resize(c.w, c.h, c.o).PNG().ToBytes()))
 		if b := m.Bounds(); b.Dx() != c.w || b.Dy() != c.h {
@@ -79,11 +79,11 @@ func TestResizeLibvipsOptions(t *testing.T) {
 		}
 	}
 	// A grey image stays grey.
-	if g := decodePNG(t, must(FromBytes(sourcePNG(t, "pillow/gray.png")).Resize(60, 41, ResizeOptions{Fit: FitFill, Method: ResizeLibvips}).PNG().ToBytes())); g.ColorModel() != color.GrayModel {
+	if g := decodePNG(t, must(FromBytes(sourcePNG(t, "pillow/gray.png")).Resize(60, 41, ResizeOptions{Fit: FitFill, Method: MethodLibvips}).PNG().ToBytes())); g.ColorModel() != color.GrayModel {
 		t.Errorf("grey: %T", g)
 	}
 	// A memory limit far below the image: an error or the same image.
-	small, err := FromBytes(rgb).MemoryLimit(16<<10).Resize(60, 41, ResizeOptions{Fit: FitFill, Kernel: KernelLanczos3, Method: ResizeLibvips}).PNG().ToBytes()
+	small, err := FromBytes(rgb).MemoryLimit(16<<10).Resize(60, 41, ResizeOptions{Fit: FitFill, Kernel: KernelLanczos3, Method: MethodLibvips}).PNG().ToBytes()
 	if err == nil && !bytes.Equal(small, a) {
 		t.Error("in little memory: another image")
 	}
@@ -95,7 +95,7 @@ func TestResizeLibvipsOptions(t *testing.T) {
 func TestExtendTranslucent(t *testing.T) {
 	src := testutil.Images(37, 23)["nrgba"]
 	bg := color.NRGBA{200, 10, 90, 99}
-	got := decodePNG(t, must(FromImage(src).Extend(3, 4, 5, 6, bg).PNG().ToBytes()))
+	got := decodePNG(t, must(FromImage(src).Extend(3, 4, 5, 6, ExtendOptions{Background: bg}).PNG().ToBytes()))
 	n := toNRGBA(got)
 	s := toNRGBA(src)
 	for y := 0; y < 23; y++ {
@@ -118,7 +118,7 @@ func TestFastShrinkUnusualSampling(t *testing.T) {
 	if err != nil {
 		t.Skip(err)
 	}
-	for _, m := range []ResizeMethod{ResizeDraw, ResizeLibvips} {
+	for _, m := range []Method{MethodDefault, MethodLibvips} {
 		out, err := FromBytes(data).Resize(30, 0, ResizeOptions{FastShrinkOnLoad: true, Method: m}).PNG().ToBytes()
 		if err != nil {
 			t.Fatalf("method %d: %v", m, err)
@@ -211,7 +211,7 @@ func TestResizeLibvipsWebP(t *testing.T) {
 		{"pillow/median-rgba-source.png", 200, 103, ResizeOptions{Kernel: KernelLanczos3, Fit: FitContain, Background: color.NRGBA{10, 200, 30, 128}}, "b8ab8a3f9da388af"},
 		{"pillow/median-rgba-source.png", 150, 0, ResizeOptions{Kernel: KernelLanczos3, Fit: FitContain, Background: color.NRGBA{10, 200, 30, 128}}, "04598fdf7ccb5e43"},
 	} {
-		c.o.Method = ResizeLibvips
+		c.o.Method = MethodLibvips
 		for _, threads := range []int{1, 3} {
 			out, err := FromBytes(sourcePNG(t, c.in)).Threads(threads).Resize(c.w, c.h, c.o).PNG().ToBytes()
 			if err != nil {
@@ -235,10 +235,10 @@ func TestOutputSizePreShrunk(t *testing.T) {
 		src.Pix[i] = uint8(i * 7)
 	}
 	for format, in := range map[string][]byte{
-		"jpeg": must(FromImage(src).JPEG(90).ToBytes()),
+		"jpeg": must(FromImage(src).JPEG(JPEGOptions{Quality: 90}).ToBytes()),
 		"webp": must(FromImage(src).WebP().ToBytes()),
 	} {
-		for _, m := range []ResizeMethod{ResizeDraw, ResizeLibvips, ResizePillow} {
+		for _, m := range []Method{MethodDefault, MethodLibvips, MethodPillow} {
 			for _, fast := range []bool{false, true} {
 				for _, sz := range [][2]int{{100, 0}, {61, 0}, {0, 83}, {250, 250}} {
 					o := ResizeOptions{Method: m, FastShrinkOnLoad: fast}

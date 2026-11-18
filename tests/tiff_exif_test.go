@@ -31,7 +31,7 @@ func TestTIFFExif(t *testing.T) {
 		if err != nil || info.Orientation != c.orientation || !info.HasExif {
 			t.Errorf("%s: %+v, %v", c.name, info, err)
 		}
-		out := must(FromBytes(in).Rotate().PNG().ToBytes())
+		out := must(FromBytes(in).AutoOrient().PNG().ToBytes())
 		m := decodePNG(t, out)
 		if m.Bounds().Dx() != c.w || m.Bounds().Dy() != c.h || rgbaSum(t, m) != c.sum {
 			t.Errorf("%s: upright %v, %s; Pillow's %dx%d, %s", c.name, m.Bounds().Size(), rgbaSum(t, m), c.w, c.h, c.sum)
@@ -40,7 +40,7 @@ func TestTIFFExif(t *testing.T) {
 		if err != nil || !ok || x.Make != "TestMake" || x.Model != "TestModel" || x.Artist != "Someone" || x.Orientation != c.orientation {
 			t.Errorf("%s: ReadExif %+v, %v, %v", c.name, x, ok, err)
 		}
-		jpg := must(FromBytes(in).Rotate().KeepExif().JPEG(90).ToBytes())
+		jpg := must(FromBytes(in).AutoOrient().KeepExif().JPEG(JPEGOptions{Quality: 90}).ToBytes())
 		x, ok, err = inspect.ReadExif(FromBytes(jpg))
 		if err != nil || !ok || x.Make != "TestMake" || x.Orientation > 1 {
 			t.Errorf("%s: EXIF kept in a JPEG %+v, %v, %v", c.name, x, ok, err)
@@ -60,7 +60,7 @@ func TestTIFFExif(t *testing.T) {
 	for _, rotate := range []bool{false, true} {
 		m := FromBytes(jpg).KeepExif()
 		if rotate {
-			m.Rotate()
+			m.AutoOrient()
 		}
 		tif := must(m.TIFF().ToBytes())
 		got, ok, err := inspect.ReadExif(FromBytes(tif))

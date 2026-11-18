@@ -58,7 +58,7 @@ func describe(file string) fileInfo {
 	out.Format, out.Width, out.Height = m.Format, m.Width, m.Height
 	out.Megapixels = float64(m.Width) * float64(m.Height) / 1e6
 	out.Color, out.Bits, out.Alpha = m.Color, m.Bits, m.HasAlpha
-	out.Orientation, out.ICC, out.Exif, out.Density = m.Orientation, m.HasProfile, m.HasExif, m.Density
+	out.Orientation, out.ICC, out.Exif, out.Density = m.Orientation, m.HasICC, m.HasExif, m.Density
 	out.Xmp = m.HasXmp
 	out.Frames = 1
 	if st, err := os.Stat(file); err == nil {

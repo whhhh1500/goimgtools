@@ -158,7 +158,7 @@ func TestText(t *testing.T) {
 	}
 
 	// It is an input like any other: a chain applies, and it can be an overlay.
-	turned, err := Text("Hello", builtin).Rotate(90).Resize(0, 100).JPEG(90).ToBytes()
+	turned, err := Text("Hello", builtin).Rotate(90).Resize(0, 100).JPEG(JPEGOptions{Quality: 90}).ToBytes()
 	if err != nil {
 		t.Fatal(err)
 	}

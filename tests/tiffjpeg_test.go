@@ -144,13 +144,13 @@ func TestTIFFJPEG(t *testing.T) {
 		var want []image.Image
 		var tables []byte
 		for y := 0; y < 50; y += rows {
-			part := FromImage(c.img).Extract(0, y, 77, min(rows, 50-y))
-			j := must(part.JPEG(80).ToBytes())
+			part := FromImage(c.img).Crop(0, y, 77, min(rows, 50-y))
+			j := must(part.JPEG(JPEGOptions{Quality: 80}).ToBytes())
 			if c.shared {
 				tables, j = splitTables(t, j)
 			}
 			strips = append(strips, j)
-			want = append(want, decodeOurs(t, must(part.JPEG(80).ToBytes())))
+			want = append(want, decodeOurs(t, must(part.JPEG(JPEGOptions{Quality: 80}).ToBytes())))
 		}
 		if !c.shared {
 			tables = nil
@@ -205,7 +205,7 @@ func TestTIFFJPEG(t *testing.T) {
 		}
 	}
 	// Other images than grey and colour are not taken for JPEG.
-	if _, err := FromBytes(bytes.Replace(jpegTIFF(8, 8, 8, true, [][]byte{must(FromImage(gray).Extract(0, 0, 8, 8).JPEG(80).ToBytes())}, nil),
+	if _, err := FromBytes(bytes.Replace(jpegTIFF(8, 8, 8, true, [][]byte{must(FromImage(gray).Crop(0, 0, 8, 8).JPEG(JPEGOptions{Quality: 80}).ToBytes())}, nil),
 		[]byte{0x06, 0x01, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01}, []byte{0x06, 0x01, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00, 0x03}, 1)).ToImage(); err == nil {
 		t.Error("a paletted JPEG TIFF: no error")
 	}

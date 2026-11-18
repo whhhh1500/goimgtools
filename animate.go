@@ -915,7 +915,7 @@ func (m *Image) writeFixedFrames(w io.Writer, next func() (pipeline.Source, int,
 }
 
 // originAtZero moves a source whose bounds do not start at (0, 0) (after
-// Extract) to the origin, where a frame covering the whole picture belongs.
+// Crop) to the origin, where a frame covering the whole picture belongs.
 type originAtZero struct{ pipeline.Source }
 
 func (o originAtZero) Env() *pipeline.Env { return pipeline.EnvOf(o.Source) }

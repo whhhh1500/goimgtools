@@ -22,7 +22,7 @@ goimgtools 是纯 Go 实现的流式图像处理库与命令行工具。图像�
 - **图像操作**：缩放（8 种插值核、5 种适配模式）、裁剪、任意角度旋转、仿射、透视与四边形变换、翻转、去边与扩边、铺底色、灰度化、色彩调整、反色、线性色阶、伽马、二值化、着色、明度拉伸、自动对比度、直方图均衡、色调分离、曝光反转、Pillow 的四种增强（色彩、对比度、亮度、锐度）与内置滤镜（浮雕、轮廓、找边、边缘增强等）、局部对比度增强（CLAHE）、高斯模糊与方框模糊、锐化（含反锐化掩模）、中值与排序滤波、膨胀与腐蚀、自定义卷积核、通道重组（recomb）、白色转透明（unflatten）、通道提取、智能裁剪（熵、注意力）；图片与文字水印（九宫格定位、按比例缩放、旋转、平铺、不透明度）；文字渲染（逐字字体回退、描边、阴影）。
 - **格式**：JPEG、PNG、WebP（有损、无损）、GIF、BMP、TIFF 的读写；GIF、WebP 与 PNG 动画（APNG）可输出为 GIF、WebP 或 PNG 动画；默认保留 ICC 色彩配置（矩阵、查找表与灰度配置；CMYK 图像按其配置转换为 sRGB），可转换至 sRGB；保留或设置分辨率（DPI）；EXIF 与 XMP 可选保留。
 - **压缩**：JPEG 霍夫曼表优化、按 mozjpeg 方法搜索扫描方案的渐进式编码、网格量化，以及 mozjpeg 或 jpegli 的量化表（用 jpegli 的表时，14 张图上同等 SSIMULACRA2 下比 mozjpeg 默认设置小 15%）；PNG 自适应调色板减色，以及无损 PNG 8–9 级：每行滤波逐一试过（oxipng 的 Brute），并用 libdeflate「接近最优解析」的移植压缩、像 zopfli 那样按代价分块（17 张图上比 oxipng `-o max` 小 0.9%，耗时约为其五分之一，与 ECT `-9` 相差 0.3% 以内）；有损 WebP 空间噪声整形、sharp YUV、网格量化、按测量选取环路滤波强度、色度误差扩散（14 张图上，同等 SSIMULACRA2 下比 libwebp 默认设置小 6.6%，比其最好设置小 1.3%），无损 WebP 按穿过像素的最便宜路径选匹配（17 张图上比 libwebp 最慢的设置小 5.3%，耗时约为其七分之一）；按目标文件大小自动选择质量；GIF 与 WebP 动画帧间差分存储、GIF 有损 LZW（照片类 GIF 动画转有损 WebP：同等 PSNR 下比 libwebp 动画编码器小 33%）。
-- **与 Pillow、sharp 相同的像素**：JPEG 解码结果与 libjpeg-turbo 相同，编码也与 libjpeg-turbo 相同（即 sharp 与 Pillow 写出的字节），许多操作与 Pillow 或 sharp 的结果逐字节一致：缩放（`ResizeLibvips` 同 sharp，含解码时缩小的 JPEG 与 WebP；`ResizePillow` 同 Pillow，含 `thumbnail`）、Pillow 的 ImageOps、ImageEnhance 与 ImageFilter（含 `BoxBlur`）、模糊（两种算法）、瓦片金字塔（sharp 的 `tile`：Deep Zoom、Google 地图、IIIF、Zoomify）、任意角度旋转（同 sharp 或同 Pillow）、仿射变换（同 sharp，或 Pillow 的 `transform`，含透视）、去边、灰度化、二值化、反色、线性色阶、通道重组、白色转透明、中值与排序滤波、膨胀与腐蚀、卷积、CLAHE、加透明通道等（见[一致性与对比](docs/zh-CN/compatibility.md)）。
+- **与 Pillow、sharp 相同的像素**：JPEG 解码结果与 libjpeg-turbo 相同，编码也与 libjpeg-turbo 相同（即 sharp 与 Pillow 写出的字节），许多操作与 Pillow 或 sharp 的结果逐字节一致：缩放（`MethodLibvips` 同 sharp，含解码时缩小的 JPEG 与 WebP；`MethodPillow` 同 Pillow，含 `thumbnail`）、Pillow 的 ImageOps、ImageEnhance 与 ImageFilter（含 `BoxBlur`）、模糊（两种算法）、瓦片金字塔（sharp 的 `tile`：Deep Zoom、Google 地图、IIIF、Zoomify）、任意角度旋转（同 sharp 或同 Pillow）、仿射变换（同 sharp，或 Pillow 的 `transform`，含透视）、去边、灰度化、二值化、反色、线性色阶、通道重组、白色转透明、中值与排序滤波、膨胀与腐蚀、卷积、CLAHE、加透明通道等（见[一致性与对比](docs/zh-CN/compatibility.md)）。
 - **并行**：`Threads(n)` 启用多核处理，输出与单线程逐字节一致。
 - **健壮性**：运行期 panic 转为错误返回；输入与输出像素数设有上限；支持 `context` 取消；持续进行模糊测试。
 - **可扩展**：支持自定义操作、输入源、文件格式与插值滤镜；按名称注册操作；通过钩子改写内置行为；可构建包含自定义操作的命令行程序。
@@ -48,13 +48,13 @@ API 采用与 [sharp](https://sharp.pixelplumbing.com/) 类似的链式调用：
 
 ```go
 err := goimgtools.Open("in.jpg").
-    Rotate().                              // 按 EXIF 方向校正
+    AutoOrient().                          // 按 EXIF 方向校正
     Resize(1536, 0).                       // 宽 1536，高按比例
     Flatten(color.White).                  // 透明区域铺白底
     Composite(goimgtools.Open("logo.png"), goimgtools.CompositeOptions{
         Gravity: goimgtools.SouthEast, Left: -24, Top: -24, // 右下角，边距 24 像素
     }).
-    JPEG(85).
+    JPEG(goimgtools.JPEGOptions{Quality: 85}).
     ToFile("out.jpg")
 ```
 
@@ -108,7 +108,7 @@ goimgtools batch -resize 1920x1920 -no-enlarge -quality 80 -format jpeg in_dir o
 
 ## 版本
 
-自 0.1.0 起，各版本只增加 API：已导出的内容不删除、不改名、不改签名，每次推送都用 `apidiff` 与上一个发布版本核对。输出可能因更准确而变化（如 JPEG 文件改为 libjpeg-turbo 的字节），此类变化列在[变更记录](docs/zh-CN/CHANGELOG.md)的“升级”一节。必须破坏 API 的版本将升主版本号。
+API 在 0.1.0 之后定型过一次（当时改了几个名字，见[变更记录](docs/zh-CN/CHANGELOG.md)的“从 0.1.0 升级”）。此后各版本只增加 API：已导出的内容不删除、不改名、不改签名，每次推送都用 `apidiff` 核对。输出可能因更准确而变化（如 JPEG 文件改为 libjpeg-turbo 的字节），此类变化列在[变更记录](docs/zh-CN/CHANGELOG.md)的“升级”一节。必须破坏 API 的版本将升主版本号。
 
 ## 参与贡献
 

@@ -7,7 +7,7 @@ import (
 	. "github.com/whhhh1500/goimgtools"
 )
 
-// TestPillowThumbnail: ResizePillow with ReducingGap is Pillow's
+// TestPillowThumbnail: MethodPillow with ReducingGap is Pillow's
 // Image.thumbnail (FitInside, WithoutEnlargement, FastShrinkOnLoad: the
 // size by the nearest aspect ratio, a JPEG drafted for twice the box, the
 // box of the reduced image, Image.reduce first) and Image.resize with
@@ -56,7 +56,7 @@ func TestPillowThumbnail(t *testing.T) {
 		{"pillow/gray.png", "gap", 13, 50, KernelLanczos3, 2.0, "34ec0bdd593ee479"},
 		{"pillow/gray.png", "gap", 70, 9, KernelLinear, 3.0, "4b843ebbf5075409"},
 	} {
-		o := ResizeOptions{Kernel: c.k, Method: ResizePillow, ReducingGap: c.gap, Fit: FitFill}
+		o := ResizeOptions{Kernel: c.k, Method: MethodPillow, ReducingGap: c.gap, Fit: FitFill}
 		if c.mode == "thumb" {
 			o.Fit, o.WithoutEnlargement, o.FastShrinkOnLoad = FitInside, true, true
 		}
@@ -73,26 +73,26 @@ func TestPillowThumbnail(t *testing.T) {
 		}
 	}
 	rgb := sourcePNG(t, "pillow/source.png")
-	for _, o := range []ResizeOptions{{ReducingGap: 2}, {ReducingGap: 0.5, Method: ResizePillow}, {ReducingGap: -1, Method: ResizePillow},
-		{ReducingGap: 2, Method: ResizeLibvips}} {
+	for _, o := range []ResizeOptions{{ReducingGap: 2}, {ReducingGap: 0.5, Method: MethodPillow}, {ReducingGap: -1, Method: MethodPillow},
+		{ReducingGap: 2, Method: MethodLibvips}} {
 		if _, err := FromBytes(rgb).Resize(60, 41, o).PNG().ToBytes(); err == nil {
 			t.Errorf("Resize(%+v) accepted", o)
 		}
 	}
-	a := must(FromBytes(rgb).Resize(30, 20, ResizeOptions{Fit: FitFill, Method: ResizePillow, ReducingGap: 1.5}).PNG().ToBytes())
+	a := must(FromBytes(rgb).Resize(30, 20, ResizeOptions{Fit: FitFill, Method: MethodPillow, ReducingGap: 1.5}).PNG().ToBytes())
 	if b := must(FromBytes(rgb).Do("resize", "30", "20", "fill", "cubic", "center", "srgb", "pillow", "1.5").PNG().ToBytes()); string(a) != string(b) {
 		t.Error("by name: another image")
 	}
 	// A side of 0 follows the other; a box the image fits in leaves it.
 	for _, c := range []struct{ w, h, ww, wh int }{{61, 0, 61, 42}, {0, 50, 73, 50}, {500, 500, 150, 103}} {
-		m := decodePNG(t, must(FromBytes(rgb).Resize(c.w, c.h, ResizeOptions{Method: ResizePillow, ReducingGap: 2, WithoutEnlargement: true}).PNG().ToBytes()))
+		m := decodePNG(t, must(FromBytes(rgb).Resize(c.w, c.h, ResizeOptions{Method: MethodPillow, ReducingGap: 2, WithoutEnlargement: true}).PNG().ToBytes()))
 		if b := m.Bounds(); b.Dx() != c.ww || b.Dy() != c.wh {
 			t.Errorf("%dx%d: %v, want %dx%d", c.w, c.h, b, c.ww, c.wh)
 		}
 	}
 }
 
-// TestPillowFits: with ResizePillow the fits are Pillow's ImageOps:
+// TestPillowFits: with MethodPillow the fits are Pillow's ImageOps:
 // FitInside contain, FitOutside cover, FitContain pad (with its centering
 // and background) and FitCover fit (the part of the box's aspect ratio
 // resized), to the byte. The sums are of Pillow 12.1.1's pixels.
@@ -138,7 +138,7 @@ func TestPillowFits(t *testing.T) {
 		{"pillow/median-rgba-source.png", 157, 99, KernelCubic, FitContain, North, "281d3e16dca2291d"},
 		{"pillow/median-rgba-source.png", 157, 99, KernelCubic, FitCover, North, "97b73f77c3d20ab2"},
 	} {
-		o := ResizeOptions{Kernel: c.k, Method: ResizePillow, Fit: c.fit, Position: c.pos, Background: color.NRGBA{10, 200, 30, 255}}
+		o := ResizeOptions{Kernel: c.k, Method: MethodPillow, Fit: c.fit, Position: c.pos, Background: color.NRGBA{10, 200, 30, 255}}
 		out, err := FromBytes(sourcePNG(t, c.in)).Resize(c.w, c.h, o).PNG().ToBytes()
 		if err != nil {
 			t.Errorf("%s %dx%d: %v", c.in, c.w, c.h, err)

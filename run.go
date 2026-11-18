@@ -42,7 +42,7 @@ type Info struct {
 	// file does not say. Rotate() without arguments undoes it. From 5 on,
 	// the upright image has Width and Height exchanged.
 	Orientation int
-	HasProfile  bool // an ICC colour profile is embedded
+	HasICC      bool // an ICC colour profile is embedded
 	HasExif     bool
 	// HasXmp reports whether the file carries an XMP packet (KeepXmp).
 	HasXmp bool
@@ -146,18 +146,18 @@ func (m *Image) buildFrom(env *pipeline.Env, top bool, f *input, format string, 
 	r := &run{exifOrient: pipeline.ExifOrientation(meta.Exif), sizeOnly: sizeOnly, maxPixels: m.outputLimit(), hooks: m.hooks}
 	// A JPEG that the chain starts by reducing to half its size or less
 	// can be made smaller while it is decoded, when the resize allows it.
-	// Also when only the size is wanted: with ResizeLibvips the size of
+	// Also when only the size is wanted: with MethodLibvips the size of
 	// the result depends on it. Nothing is decoded yet.
 	var pre preShrunk
 	if format == "jpeg" {
 		// With hooks the steps are done as written: only a resize that
 		// comes first can have the decoder's help.
-		if z, turn, ok := firstResize(m.chain, r); ok && (z.spec.o.FastShrinkOnLoad || z.spec.o.Method == ResizeLibvips) && (len(m.hooks) == 0 || turn == ops.Upright && len(m.chain) > 0 && isResize(m.chain[0])) {
+		if z, turn, ok := firstResize(m.chain, r); ok && (z.spec.o.FastShrinkOnLoad || z.spec.o.Method == MethodLibvips) && (len(m.hooks) == 0 || turn == ops.Upright && len(m.chain) > 0 && isResize(m.chain[0])) {
 			var k int
 			switch {
-			case z.spec.o.Method == ResizePillow:
+			case z.spec.o.Method == MethodPillow:
 				k = pillowDraft(src, z.spec, turn)
-			case z.spec.o.Method != ResizeLibvips:
+			case z.spec.o.Method != MethodLibvips:
 				k = shrinkFactor(src, z.spec, turn)
 			case autoTurns(m.chain[:firstResizeAt(m.chain, r)]):
 				// sharp reduces a JPEG as it decodes it unless it turns
@@ -169,7 +169,7 @@ func (m *Image) buildFrom(env *pipeline.Env, top bool, f *input, format string, 
 				// The decoder reduces the blocks as it decodes them;
 				// failing that, the decoded pixels are averaged.
 				shrunk := false
-				if z.spec.o.Method == ResizeLibvips || z.spec.o.Method == ResizePillow {
+				if z.spec.o.Method == MethodLibvips || z.spec.o.Method == MethodPillow {
 					// libvips' decoder, and Pillow's, is libjpeg: its
 					// scaled decoding.
 					j, ok := src.(interface{ ShrinkOnLoadLibjpeg(k int) bool })
@@ -178,7 +178,7 @@ func (m *Image) buildFrom(env *pipeline.Env, top bool, f *input, format string, 
 					shrunk = j.ShrinkOnLoad(k)
 				}
 				if shrunk {
-					if z.spec.o.Method == ResizeDraw {
+					if z.spec.o.Method == MethodDefault {
 						// The resize scales the planes as they are
 						// decoded.
 						if j, ok := src.(interface{ KeepYCbCr() }); ok {
@@ -212,12 +212,12 @@ func (m *Image) buildFrom(env *pipeline.Env, top bool, f *input, format string, 
 			j, can := src.(interface{ ScaleOnLoad(w, h int) bool })
 			switch {
 			case !can:
-			case z.spec.o.Method == ResizeLibvips && autoTurns(m.chain[:firstResizeAt(m.chain, r)]):
+			case z.spec.o.Method == MethodLibvips && autoTurns(m.chain[:firstResizeAt(m.chain, r)]):
 				// As sharp (see vipsWebPScale).
 				if w, h := vipsWebPScale(src, z.spec, turn); w > 0 {
 					j.ScaleOnLoad(w, h)
 				}
-			case z.spec.o.Method == ResizeDraw && !z.spec.o.LinearLight && pipeline.IsOpaque(src):
+			case z.spec.o.Method == MethodDefault && !z.spec.o.LinearLight && pipeline.IsOpaque(src):
 				// Only a lossy WebP without alpha: libwebp scales the
 				// colours of one with alpha without weighing them by it,
 				// and decoding a lossless one takes most of the time.
@@ -316,7 +316,7 @@ func (m *Image) Metadata() (info Info, err error) {
 	}
 	kind, bits := colorOf(model)
 	return Info{Format: format, Width: b.Dx(), Height: b.Dy(), HasAlpha: !pipeline.IsOpaque(src), Color: kind, Bits: bits,
-		Orientation: pipeline.ExifOrientation(meta.Exif), HasProfile: len(meta.ICC) > 0, HasExif: len(meta.Exif) > 0,
+		Orientation: pipeline.ExifOrientation(meta.Exif), HasICC: len(meta.ICC) > 0, HasExif: len(meta.Exif) > 0,
 		HasXmp: len(meta.Xmp) > 0, Density: meta.Density}, nil
 }
 

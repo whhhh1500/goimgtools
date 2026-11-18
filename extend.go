@@ -108,11 +108,11 @@ func (c customOp) apply(src pipeline.Source, _ *run) (pipeline.Source, error) {
 //	// Thumbnail is the house style for small pictures.
 //	func Thumbnail(size int) func(*goimgtools.Image) *goimgtools.Image {
 //		return func(m *goimgtools.Image) *goimgtools.Image {
-//			return m.Rotate().Resize(size, size, goimgtools.ResizeOptions{Fit: goimgtools.FitCover})
+//			return m.AutoOrient().Resize(size, size, goimgtools.ResizeOptions{Fit: goimgtools.FitCover})
 //		}
 //	}
 //
-//	goimgtools.Open("in.jpg").Apply(Thumbnail(200)).JPEG(80).ToFile("out.jpg")
+//	goimgtools.Open("in.jpg").Apply(Thumbnail(200)).JPEG().ToFile("out.jpg")
 //
 // A step returns the Image to go on with: normally the one it was given,
 // as every method of Image does.

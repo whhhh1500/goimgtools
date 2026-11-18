@@ -128,7 +128,7 @@ func (d *decoded) ShrinkOnLoad(k int) bool {
 }
 
 // ShrinkOnLoadLibjpeg is ShrinkOnLoad as libjpeg does it (for
-// ResizeLibvips).
+// MethodLibvips).
 func (d *decoded) ShrinkOnLoadLibjpeg(k int) bool {
 	j, is := d.Source.(interface{ ShrinkOnLoadLibjpeg(k int) bool })
 	return is && j.ShrinkOnLoadLibjpeg(k)

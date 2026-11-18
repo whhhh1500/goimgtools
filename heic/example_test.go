@@ -12,7 +12,7 @@ import (
 func Example() {
 	out, err := goimgtools.Open("testdata/test_exif.heic").
 		Resize(1600, 1600, goimgtools.ResizeOptions{Fit: goimgtools.FitInside, WithoutEnlargement: true}).
-		JPEG(85).
+		JPEG(goimgtools.JPEGOptions{Quality: 85}).
 		ToBytes()
 	if err != nil {
 		fmt.Println(err)

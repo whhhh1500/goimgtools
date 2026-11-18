@@ -6,7 +6,7 @@ import (
 	. "github.com/whhhh1500/goimgtools"
 )
 
-// TestResizePillow: ResizePillow is Pillow's Image.resize, to the byte. The
+// TestResizePillow: MethodPillow is Pillow's Image.resize, to the byte. The
 // sums are of the pixels of Pillow 12.1.1's im.resize((width, height),
 // filter), after im.transpose(ROTATE_270) for a turn first and after
 // im.draft(im.mode, (width, height)) for a JPEG decoded reduced: every
@@ -82,7 +82,7 @@ func TestResizePillow(t *testing.T) {
 			if c.pre == "rotate90" {
 				m.Rotate(90)
 			}
-			o := ResizeOptions{Fit: FitFill, Kernel: c.k, Method: ResizePillow, FastShrinkOnLoad: c.pre == "draft"}
+			o := ResizeOptions{Fit: FitFill, Kernel: c.k, Method: MethodPillow, FastShrinkOnLoad: c.pre == "draft"}
 			out, err := m.Resize(c.w, c.h, o).PNG().ToBytes()
 			if err != nil {
 				t.Errorf("%s %s %dx%d %v: %v", c.in, c.pre, c.w, c.h, c.k, err)

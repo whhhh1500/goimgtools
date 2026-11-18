@@ -22,7 +22,7 @@ English | [中文](README.zh-CN.md)
 - **Operations**: resize (8 interpolation kernels, 5 fit modes), crop, rotation by any angle, affine, perspective and quadrilateral transforms, flip, trim and extend, flatten, grayscale, colour modulation, negate, linear levels, gamma, threshold, tint, normalize, auto contrast, equalize, posterize, solarize, Pillow's enhancements (colour, contrast, brightness, sharpness) and built-in filters (emboss, contour, find edges, edge enhance…), local contrast (CLAHE), Gaussian and box blur, sharpening (including unsharp masking), median and rank filters, dilate and erode, custom convolution kernels, channel mixing (recomb), unflatten, channel extraction, smart crops (entropy, attention); image and text watermarks (nine-point positioning, proportional scaling, rotation, tiling, opacity); text rendering (per-character font fallback, stroke, shadow).
 - **Formats**: reading and writing JPEG, PNG, WebP (lossy and lossless), GIF, BMP and TIFF; animated GIF, WebP and PNG (APNG) to animated GIF, WebP or PNG; ICC colour profiles (matrix, lookup-table and grey; CMYK images are converted to sRGB through theirs) are preserved by default or converted to sRGB; the resolution (DPI) is preserved or set; EXIF and XMP are optionally preserved.
 - **Compression**: JPEG Huffman table optimization, progressive encoding with mozjpeg's scan search, trellis quantization, and the quantization tables of mozjpeg or of jpegli (with jpegli's, 15% smaller than mozjpeg's defaults at equal SSIMULACRA2 on 14 images); PNG colour reduction with an adaptive palette, and lossless PNG levels 8–9 that try every row filter (oxipng's Brute) and compress with a port of libdeflate's near-optimal parsing, split into blocks by cost as zopfli does (on 17 images 0.9% smaller than oxipng `-o max` in a fifth of its time, and within 0.3% of ECT `-9`); lossy WebP with spatial noise shaping, sharp YUV, trellis quantization, measured loop filter levels and chroma error diffusion (on 14 images 6.6% smaller than libwebp's default settings at equal SSIMULACRA2, and 1.3% smaller than its best settings), and lossless WebP whose matches follow the cheapest path through the pixels (5.3% smaller than libwebp's slowest setting on 17 images, in a seventh of its time); quality selection for a target file size; inter-frame differencing for animated GIF and WebP, lossy LZW for GIF (a photographic animated GIF as lossy WebP: 33% smaller than with libwebp's animation encoder at equal PSNR).
-- **Pillow's and sharp's pixels**: JPEG files decode to libjpeg-turbo's pixels and are written as libjpeg-turbo writes them (sharp's and Pillow's bytes), and many operations give Pillow's or sharp's results to the byte: resize (`ResizeLibvips` as sharp, JPEGs and WebPs shrunk on load included; `ResizePillow` as Pillow, `thumbnail` included), Pillow's ImageOps, ImageEnhance and ImageFilter (`BoxBlur` included), blur (either way), tile pyramids (sharp's `tile`: Deep Zoom, Google Maps, IIIF, Zoomify), rotation by any angle (as sharp or as Pillow), affine transforms (as sharp, or Pillow's `transform`, perspective included), trim, grayscale, threshold, negate, linear, recomb, unflatten, median, rank filters, dilate and erode, convolution, CLAHE, ensure-alpha, among others (see [Compatibility](docs/compatibility.md)).
+- **Pillow's and sharp's pixels**: JPEG files decode to libjpeg-turbo's pixels and are written as libjpeg-turbo writes them (sharp's and Pillow's bytes), and many operations give Pillow's or sharp's results to the byte: resize (`MethodLibvips` as sharp, JPEGs and WebPs shrunk on load included; `MethodPillow` as Pillow, `thumbnail` included), Pillow's ImageOps, ImageEnhance and ImageFilter (`BoxBlur` included), blur (either way), tile pyramids (sharp's `tile`: Deep Zoom, Google Maps, IIIF, Zoomify), rotation by any angle (as sharp or as Pillow), affine transforms (as sharp, or Pillow's `transform`, perspective included), trim, grayscale, threshold, negate, linear, recomb, unflatten, median, rank filters, dilate and erode, convolution, CLAHE, ensure-alpha, among others (see [Compatibility](docs/compatibility.md)).
 - **Parallelism**: `Threads(n)` enables multi-core processing, with output byte-for-byte identical to a single thread.
 - **Robustness**: panics during a run are returned as errors; input and output pixel counts are bounded; `context` cancellation is supported; continuously fuzz-tested.
 - **Extensibility**: custom operations, input sources, file formats and interpolation filters; operations registered by name; hooks that modify built-in behaviour; command-line programs that include custom operations.
@@ -48,13 +48,13 @@ The API uses method chaining similar to [sharp](https://sharp.pixelplumbing.com/
 
 ```go
 err := goimgtools.Open("in.jpg").
-    Rotate().                              // correct orientation from EXIF
+    AutoOrient().                          // correct orientation from EXIF
     Resize(1536, 0).                       // width 1536, height proportional
     Flatten(color.White).                  // white background for transparent areas
     Composite(goimgtools.Open("logo.png"), goimgtools.CompositeOptions{
         Gravity: goimgtools.SouthEast, Left: -24, Top: -24, // bottom right, 24-pixel margin
     }).
-    JPEG(85).
+    JPEG(goimgtools.JPEGOptions{Quality: 85}).
     ToFile("out.jpg")
 ```
 
@@ -108,7 +108,7 @@ Staged data is kept in memory up to 1/8 of the memory limit (8MB by default); be
 
 ## Versioning
 
-From 0.1.0 on, releases only add to the API: nothing exported is removed, renamed or changed in its signature, which every push checks against the last release with `apidiff`. Output may change where it becomes more faithful (as JPEG files becoming libjpeg-turbo's); such changes are listed under "Upgrading" in the [changelog](docs/CHANGELOG.md). A release that has to break the API would be a new major version.
+The API was settled once, after 0.1.0 (a few names changed then: see "Upgrading from 0.1.0" in the [changelog](docs/CHANGELOG.md)). From then on, releases only add to it: nothing exported is removed, renamed or changed in its signature, which every push checks with `apidiff`. Output may change where it becomes more faithful (as JPEG files becoming libjpeg-turbo's); such changes are listed under "Upgrading" in the [changelog](docs/CHANGELOG.md). A release that has to break the API would be a new major version.
 
 ## Contributing
 
