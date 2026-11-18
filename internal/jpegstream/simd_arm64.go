@@ -2,6 +2,8 @@
 
 package jpegstream
 
+import "unsafe"
+
 // useSIMD selects the NEON versions of the inverse DCT and of the
 // conversions of colour, which give the same bytes as the Go code. NEON is
 // part of every arm64 processor; the purego build tag leaves them out, and
@@ -33,9 +35,14 @@ func rgbaBlockSIMD(pix *byte, stride int, y, cb, cr *block)
 func scaleSIMD(dst *block, src *[4]block)
 
 // nonzeros returns the mask of the nonzero values of zz: bit k is set when
-// zz[k] != 0.
-func nonzeros(zz *qblock) uint64 { return nonzerosGo(zz) }
+// zz[k] != 0 (acMaskAsm with nothing dropped).
+func nonzeros(zz *qblock) uint64 { return acMaskAsm((*byte)(unsafe.Pointer(&zz[0])), 0) }
 
-const acMaskSIMD = false
+// acMaskSIMD selects acMaskAsm, acFirst's mask with NEON.
+const acMaskSIMD = true
 
-func acMaskAsm(w *byte, al uint) uint64 { panic("unreachable") }
+// acMaskAsm returns the coefficients of the block at w (64 int16, as
+// stored) that are not zero once |c| >> al: bit k for coefficient k.
+//
+//go:noescape
+func acMaskAsm(w *byte, al uint) uint64
