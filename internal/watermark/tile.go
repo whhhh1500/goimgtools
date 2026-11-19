@@ -175,7 +175,64 @@ func tile(p *patterns, payload []byte, k Key) []float64 {
 		t[i] *= scale
 	}
 	evenEnergy(t)
+	evenLow(t)
 	return t
+}
+
+// evenLow evens what remains of the tile's coarser structure, which the eye
+// sees most of: each chip is multiplied by the fourth root of the mean
+// power, over the 5 x 5 chips around it, of the tile's mean over 3 x 3
+// chips, relative to the whole tile's, and the tile scaled back to unit
+// power. After evenEnergy a few places a tile apart still held its largest
+// distance by butteraugli in several of the 24 Kodak photographs, where the
+// tile's coarser part was 6 times as strong as on average. (Measured with 3
+// keys on the 24 Kodak photographs after the 18 attacks made with Pillow,
+// as visible by SSIMULACRA2: 1215 readings of 1296 against 1215,
+// butteraugli 1.86 against 1.92; on the 5 pictures of the first set after
+// the 22 attacks made with this package, as strong, 280 of 330 against 280
+// and the screen mark 295 against 294, less visible by both measures.
+// Rejected: the square root (butteraugli 3.6), the 3/8 power (1213
+// readings, butteraugli 1.90), the low part alone scaled, its power over
+// 3 x 3 or 7 x 7 chips and its mean over 5 x 5 (less gain).)
+func evenLow(t []float64) {
+	box := func(v []float64, r int) []float64 {
+		o := make([]float64, len(v))
+		n := float64((2*r + 1) * (2*r + 1))
+		for y := range N {
+			for x := range N {
+				var s float64
+				for dy := -r; dy <= r; dy++ {
+					row := v[mod(y+dy, N)*N:][:N]
+					for dx := -r; dx <= r; dx++ {
+						s += row[mod(x+dx, N)]
+					}
+				}
+				o[y*N+x] = s / n
+			}
+		}
+		return o
+	}
+	low := box(t, 1)
+	for i, v := range low {
+		low[i] = float64(v * v)
+	}
+	e := box(low, 2)
+	var mean float64
+	for _, v := range e {
+		mean += v
+	}
+	mean /= N * N
+	var power float64
+	for i, s := range e {
+		if s > 0 {
+			t[i] *= math.Sqrt(math.Sqrt(mean / s))
+		}
+		power += float64(t[i] * t[i])
+	}
+	scale := 1 / math.Sqrt(power/(N*N))
+	for i := range t {
+		t[i] *= scale
+	}
 }
 
 // evenEnergy divides each chip of the tile (N x N, repeating) by the root

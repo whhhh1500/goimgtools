@@ -32,7 +32,9 @@ const (
 // photographs after the 18 attacks made with Pillow: 1236 readings of 1296
 // against 1234, SSIMULACRA2 77.8 against 77.9, butteraugli 2.57 against
 // 2.81; as strong as before, 1230, crops to 40% 51 against 55: the
-// reference loses 0.4 dB of its share.)
+// reference loses 0.4 dB of its share.) Evened at the coarser scale too
+// (evenLow), they are 3% higher again (0.9945703125 and 3.97828125,
+// 1.8772875 and 7.50915 before).
 // (Measured for Blind: chips of at least 2.5 or 3 pixels, which JPEG and
 // WebP keep better, leave small pictures too few tiles and read less
 // over all. As visible by SSIMULACRA2, less where flat and more where busy
@@ -45,8 +47,8 @@ const (
 var kinds = [...]struct {
 	density, minChip, flat, busy float64
 }{
-	Blind:  {density: 4, minChip: 2, flat: 0.9945703125, busy: 3.97828125},
-	Screen: {density: 4, minChip: 3, flat: 1.8772875, busy: 7.50915},
+	Blind:  {density: 4, minChip: 2, flat: 1.024407421875, busy: 4.0976296875},
+	Screen: {density: 4, minChip: 3, flat: 1.933606125, busy: 7.7344245},
 }
 
 // Options are the settings of a mark.
