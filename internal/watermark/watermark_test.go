@@ -261,6 +261,31 @@ func TestDetectParallel(t *testing.T) {
 	}
 }
 
+// TestSmallCrop: a crop of a small picture smaller than a tile, saved as
+// JPEG 90, is read with the tiling a crop keeps (which the spectrum shows
+// too little of to find it), and not with another key.
+func TestSmallCrop(t *testing.T) {
+	marked := mark(t, testutil.Natural(512, 384, 1), []byte("user-1234"), "secret", Options{})
+	crop := image.NewNRGBA(image.Rect(0, 0, 128, 96))
+	draw.Draw(crop, crop.Rect, marked, image.Pt(100, 90), draw.Src)
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, crop, &jpeg.Options{Quality: 90}); err != nil {
+		t.Fatal(err)
+	}
+	dec, err := jpeg.Decode(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	draw.Draw(crop, crop.Rect, dec, dec.Bounds().Min, draw.Src)
+	l, w, h := luma(crop)
+	if got, ok := Detect(l, w, h, NewKey("secret"), nil); !ok || string(got) != "user-1234" {
+		t.Errorf("read %q, %v", got, ok)
+	}
+	if got, ok := Detect(l, w, h, NewKey("other"), nil); ok {
+		t.Errorf("read %q with another key", got)
+	}
+}
+
 // TestLocalWhiten: whitened block by block, a busy half and a flat half
 // with a little noise come out alike without a floor, and the flat half
 // far quieter with one; shared out, the same.

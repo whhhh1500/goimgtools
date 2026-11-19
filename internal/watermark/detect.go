@@ -211,8 +211,50 @@ func Detect(lum []float64, w, h int, k Key, par Parallel) ([]byte, bool) {
 	if payload, ok := quickly(within(corners, 4), 0); ok {
 		return payload, true
 	}
+	// Last, in a picture of fewer than three tiles along its shorter side,
+	// where the spectrum hardly shows the tiling, the tilings a crop of a
+	// small picture keeps: the tile of each smallest chip (see
+	// nativePeriods), not turned. (Measured with 3 keys on the 24 Kodak
+	// photographs marked at Strength 0.75 and cropped to 40% and 25% of
+	// each side: 115 of 144 against 104; crops of 136 x 100 and 128 x 96,
+	// under a tile, of 4 pictures of 512 x 384 at Strength 0.75 and 1, as
+	// they are and after JPEG 90, 48 of 48 against 22. With other keys,
+	// none of 864 attacked photographs; reading the 24 photographs
+	// unmarked took 2% longer.)
+	var native []float64
+	for _, p := range nativePeriods {
+		if float64(min(w, h)) < 3*p {
+			native = append(native, p)
+		}
+	}
+	got := make([][]byte, len(native))
+	par(len(native), func(j int) {
+		dd, p := d.worker(), native[j]
+		m, z := dd.align(mat2{{1 / p, 0}, {0, 1 / p}})
+		if z < 4.5 {
+			return
+		}
+		payload, ok := dd.decode(m)
+		if !ok {
+			m2, _ := dd.optimize(m)
+			payload, ok = dd.decode(m2)
+		}
+		if ok {
+			got[j] = payload
+		}
+	})
+	for _, payload := range got {
+		if payload != nil {
+			return payload, true
+		}
+	}
 	return nil, false
 }
+
+// nativePeriods are the tile's sides, in pixels, with the smallest chips
+// a mark is made with: of a pixel (Blind on a small busy picture, see
+// smallSide), and each kind's minChip.
+var nativePeriods = [...]float64{N, N * kinds[Blind].minChip, N * kinds[Screen].minChip}
 
 // byZ sorts v by score, best first, ties kept in order.
 func byZ[T any](v []T, z func(T) float64) {

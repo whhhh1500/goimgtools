@@ -20,10 +20,11 @@ import (
 // needed.
 //
 // The picture may have been saved again, resized, cropped (it must keep
-// about two of the mark's repeats each way), turned by any angle, made
-// lighter or darker, screenshotted, and, for WatermarkScreen, photographed
-// off a screen: the mark's own reference tells its size and angle, and
-// where its tiles start, region by region for a photograph's perspective.
+// about two of the mark's repeats each way, a small picture's fewer),
+// turned by any angle, made lighter or darker, screenshotted, and, for
+// WatermarkScreen, photographed off a screen: the mark's own reference
+// tells its size and angle, and where its tiles start, region by region
+// for a photograph's perspective.
 // Crop a photograph to the screen first for the best chance.
 //
 // A picture larger than 1024 pixels on its shorter side (or 2048 on its
