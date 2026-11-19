@@ -675,6 +675,18 @@ func tukey(n int) []float64 {
 	return t
 }
 
+// searchClip is the most one of the reference's frequencies adds to a
+// tiling's score in search, in medians of the spectrum: a photograph of a
+// screen has a few very strong peaks (its moiré), which a tiling that
+// meets them would otherwise score higher by than the mark's own, middling
+// at every frequency. (Measured with 3 keys on the 24 Kodak photographs
+// marked at Strength 0.75, after the 18 attacks made with Pillow: 1262
+// readings of 1296 against 1257 without, photographed off a screen 67
+// against 62, the rest the same; on 5 other pictures after 13 attacks 166
+// against 162. At most 5, 8 and 12: 1262, 1261 and 1261, 164, 163 and
+// 163; 3 read 168 of the 5 pictures, but 2 fails some of them untouched.)
+const searchClip = 4
+
 // candidate is a size and angle of the tiling.
 type candidate struct {
 	z, period, angle, flip float64
@@ -687,6 +699,7 @@ type candidate struct {
 // over 3 x 3 bins, read 4 more marks of 330 with the 22 attacks on 5
 // pictures with 3 keys, the screen mark 5 more, but 3 fewer of the 24 Kodak
 // photographs of a screen made with Pillow, whose peaks spread more.)
+// Each frequency counts at most searchClip.
 func (d *detector) search() []candidate {
 	maxK := 0.0
 	for _, f := range d.p.ref {
@@ -720,7 +733,7 @@ func (d *detector) search() []candidate {
 					ky, kx := flip*float64(f[0]), float64(f[1])
 					fy := (float64(c*ky) + float64(s*kx)) / p
 					fx := (float64(c*kx) - float64(s*ky)) / p
-					v += sample(d.magMax, d.wp, d.hp, fy, fx)
+					v += min(sample(d.magMax, d.wp, d.hp, fy, fx), searchClip)
 				}
 				sc[pi*na+ai] = v
 			}
