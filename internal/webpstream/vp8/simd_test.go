@@ -151,6 +151,7 @@ func TestIDCTSIMD(t *testing.T) {
 	}
 	rng := rand.New(rand.NewPCG(9, 10))
 	var want, got Decoder
+	want.rm, got.rm = &want.one, &got.one
 	for i := range 200000 {
 		for k := 0; k < 16; k++ {
 			var v int16
@@ -166,19 +167,19 @@ func TestIDCTSIMD(t *testing.T) {
 					v = int16(rng.IntN(200) - 100)
 				}
 			}
-			want.coeff[16+k] = v
+			want.one.coeff[16+k] = v
 		}
 		for y := range want.ybr {
 			for x := range want.ybr[y] {
 				want.ybr[y][x] = uint8(rng.IntN(256))
 			}
 		}
-		got.coeff, got.ybr = want.coeff, want.ybr
+		got.one.coeff, got.ybr = want.one.coeff, want.ybr
 		y, x := 1+rng.IntN(len(want.ybr)-4), rng.IntN(len(want.ybr[0])-3)
 		want.inverseDCT4Go(y, x, 16)
 		got.inverseDCT4(y, x, 16)
 		if got.ybr != want.ybr {
-			t.Fatalf("case %d at %d,%d: %v", i, y, x, want.coeff[16:32])
+			t.Fatalf("case %d at %d,%d: %v", i, y, x, want.one.coeff[16:32])
 		}
 	}
 }
@@ -192,8 +193,9 @@ func TestDCSIMD(t *testing.T) {
 	}
 	rng := rand.New(rand.NewPCG(11, 12))
 	var want, got Decoder
+	want.rm, got.rm = &want.one, &got.one
 	add := func(y, x, coeffBase int) {
-		dc := (int32(want.coeff[coeffBase]) + 4) >> 3
+		dc := (int32(want.one.coeff[coeffBase]) + 4) >> 3
 		for j := 0; j < 4; j++ {
 			for i := 0; i < 4; i++ {
 				want.ybr[y+j][x+i] = clip8(int32(want.ybr[y+j][x+i]) + dc)
@@ -201,19 +203,19 @@ func TestDCSIMD(t *testing.T) {
 		}
 	}
 	for i := range 200000 {
-		for k := range want.coeff {
+		for k := range want.one.coeff {
 			v := int16(rng.IntN(65536) - 32768)
 			if i%4 < 2 {
 				v = int16(rng.IntN(4200) - 2100)
 			}
-			want.coeff[k] = v
+			want.one.coeff[k] = v
 		}
 		for y := range want.ybr {
 			for x := range want.ybr[y] {
 				want.ybr[y][x] = uint8(rng.IntN(256))
 			}
 		}
-		got.coeff, got.ybr = want.coeff, want.ybr
+		got.one.coeff, got.ybr = want.one.coeff, want.ybr
 		if i%2 == 0 {
 			y, x, cb := 1+rng.IntN(len(want.ybr)-4), rng.IntN(len(want.ybr[0])-3), 16*rng.IntN(24)
 			add(y, x, cb)

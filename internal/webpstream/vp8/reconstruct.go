@@ -77,6 +77,23 @@ const (
 	whtCoeffBase = 1*16*16 + 2*8*8
 )
 
+// mbInfo is what parsing a macroblock gives its reconstruction: the
+// coefficients (and those of the WHT, already spread into the luma blocks'
+// DCs), the predictor modes, which blocks have coefficients, the segment and
+// whether inner loop filtering is skipped. The parser writes d.pm and the
+// reconstruction reads d.rm: the same one when a row is decoded on one
+// goroutine, a row's own when the next row is parsed while it is
+// reconstructed (see SetAsync).
+type mbInfo struct {
+	coeff              [1*16*16 + 2*8*8 + 1*4*4]int16
+	nzDCMask, nzACMask uint32
+	usePredY16         bool // The libwebp C code calls this !is_i4x4_.
+	predY16, predC8    uint8
+	predY4             [4][4]uint8
+	segment            int
+	skip               bool
+}
+
 const (
 	ybrYX = 8
 	ybrYY = 1
@@ -206,7 +223,7 @@ var (
 // above have non-zero coefficients.
 // quant are the DC/AC quantization factors.
 // skipFirstCoeff is whether the DC coefficient has already been parsed.
-// coeffBase is the base index of d.coeff to write to.
+// coeffBase is the base index of d.pm.coeff to write to.
 //
 // The partition's reader is held in local variables, and the bits read
 // most (whether there is a coefficient, whether it is zero, whether it is
@@ -214,7 +231,7 @@ var (
 // block ends there (the frame fails: see inputErr).
 func (d *Decoder) parseResiduals4(r *partition, plane int, context uint8, quant [2]uint16, skipFirstCoeff bool, coeffBase int) uint8 {
 	if parseAsm {
-		n := parseBlockAsm(r, &d.tokenProb[plane], (*[16]int16)(d.coeff[coeffBase:coeffBase+16]), int(btou(skipFirstCoeff)), int(context), uint32(quant[0])|uint32(quant[1])<<16)
+		n := parseBlockAsm(r, &d.tokenProb[plane], (*[16]int16)(d.pm.coeff[coeffBase:coeffBase+16]), int(btou(skipFirstCoeff)), int(context), uint32(quant[0])|uint32(quant[1])<<16)
 		if n != asmTooNear {
 			return n
 		}
@@ -296,7 +313,7 @@ func (d *Decoder) parseResiduals4Go(r *partition, plane int, context uint8, quan
 			}
 		}
 		c, value, nb, rng = signedOf(value, nb, rng, c)
-		d.coeff[coeffBase+int(z)] = int16(c)
+		d.pm.coeff[coeffBase+int(z)] = int16(c)
 		if n == 16 {
 			break
 		}
@@ -359,7 +376,7 @@ func (d *Decoder) parseResiduals(mbx, mby int) (skip bool) {
 	quant := &d.quant[d.segment]
 
 	// Parse the DC coefficient of each 4x4 luma region.
-	if d.usePredY16 {
+	if d.pm.usePredY16 {
 		n := d.parseResiduals4(partition, planeY2, d.leftMB.nzY16+d.upMB[mbx].nzY16, quant.y2, false, whtCoeffBase)
 		nz := btou(n > 0)
 		d.leftMB.nzY16 = nz
@@ -368,9 +385,9 @@ func (d *Decoder) parseResiduals(mbx, mby int) (skip bool) {
 			d.inverseWHT16()
 		} else {
 			// Only the DC: the transform gives each block the same.
-			dc := int16((int32(d.coeff[whtCoeffBase]) + 3) >> 3)
+			dc := int16((int32(d.pm.coeff[whtCoeffBase]) + 3) >> 3)
 			for i := 0; i < 256; i += 16 {
-				d.coeff[i] = dc
+				d.pm.coeff[i] = dc
 			}
 		}
 		plane = planeY1WithY2
@@ -387,15 +404,15 @@ func (d *Decoder) parseResiduals(mbx, mby int) (skip bool) {
 	// it has one besides the DC, by the DC alone when that is not 0.
 	lnz := unpack[d.leftMB.nzMask&0x0f]
 	unz := unpack[d.upMB[mbx].nzMask&0x0f]
-	first := btou(d.usePredY16)
+	first := btou(d.pm.usePredY16)
 	for y := 0; y < 4; y++ {
 		nz := lnz[y]
 		for x := 0; x < 4; x++ {
-			n := d.parseResiduals4(partition, plane, nz+unz[x], quant.y1, d.usePredY16, coeffBase)
+			n := d.parseResiduals4(partition, plane, nz+unz[x], quant.y1, d.pm.usePredY16, coeffBase)
 			nz = btou(n > first)
 			unz[x] = nz
 			nzAC[x] = btou(n > 1)
-			nzDC[x] = btou(d.coeff[coeffBase] != 0)
+			nzDC[x] = btou(d.pm.coeff[coeffBase] != 0)
 			coeffBase += 16
 		}
 		lnz[y] = nz
@@ -416,7 +433,7 @@ func (d *Decoder) parseResiduals(mbx, mby int) (skip bool) {
 				nz = btou(n > 0)
 				unz[x+c] = nz
 				nzAC[y*2+x] = btou(n > 1)
-				nzDC[y*2+x] = btou(d.coeff[coeffBase] != 0)
+				nzDC[y*2+x] = btou(d.pm.coeff[coeffBase] != 0)
 				coeffBase += 16
 			}
 			lnz[y+c] = nz
@@ -430,8 +447,8 @@ func (d *Decoder) parseResiduals(mbx, mby int) (skip bool) {
 	// Save decoder state.
 	d.leftMB.nzMask = uint8(lnzMask)
 	d.upMB[mbx].nzMask = uint8(unzMask)
-	d.nzDCMask = nzDCMask
-	d.nzACMask = nzACMask
+	d.pm.nzDCMask = nzDCMask
+	d.pm.nzACMask = nzACMask
 
 	// Section 15.1 of the spec says that "Steps 2 and 4 [of the loop filter]
 	// are skipped... [if] there is no DCT coefficient coded for the whole
@@ -442,8 +459,8 @@ func (d *Decoder) parseResiduals(mbx, mby int) (skip bool) {
 // reconstructMacroblock applies the predictor functions and adds the inverse-
 // DCT transformed residuals to recover the YCbCr data.
 func (d *Decoder) reconstructMacroblock(mbx, mby int) {
-	if d.usePredY16 {
-		p := checkTopLeftPred(mbx, mby, d.predY16)
+	if d.rm.usePredY16 {
+		p := checkTopLeftPred(mbx, mby, d.rm.predY16)
 		predFunc16[p](d, 1, 8)
 		for j := 0; j < 4; j++ {
 			for i := 0; i < 4; i++ {
@@ -451,9 +468,9 @@ func (d *Decoder) reconstructMacroblock(mbx, mby int) {
 				y := 4*j + 1
 				x := 4*i + 8
 				mask := uint32(1) << uint(n)
-				if d.nzACMask&mask != 0 {
+				if d.rm.nzACMask&mask != 0 {
 					d.inverseDCT4(y, x, 16*n)
-				} else if d.nzDCMask&mask != 0 {
+				} else if d.rm.nzDCMask&mask != 0 {
 					d.inverseDCT4DCOnly(y, x, 16*n)
 				}
 			}
@@ -464,35 +481,35 @@ func (d *Decoder) reconstructMacroblock(mbx, mby int) {
 				n := 4*j + i
 				y := 4*j + 1
 				x := 4*i + 8
-				predFunc4[d.predY4[j][i]](d, y, x)
+				predFunc4[d.rm.predY4[j][i]](d, y, x)
 				mask := uint32(1) << uint(n)
-				if d.nzACMask&mask != 0 {
+				if d.rm.nzACMask&mask != 0 {
 					d.inverseDCT4(y, x, 16*n)
-				} else if d.nzDCMask&mask != 0 {
+				} else if d.rm.nzDCMask&mask != 0 {
 					d.inverseDCT4DCOnly(y, x, 16*n)
 				}
 			}
 		}
 	}
-	p := checkTopLeftPred(mbx, mby, d.predC8)
+	p := checkTopLeftPred(mbx, mby, d.rm.predC8)
 	predFunc8[p](d, ybrBY, ybrBX)
-	if d.nzACMask&0x0f0000 != 0 {
+	if d.rm.nzACMask&0x0f0000 != 0 {
 		d.inverseDCT8(ybrBY, ybrBX, bCoeffBase)
-	} else if d.nzDCMask&0x0f0000 != 0 {
+	} else if d.rm.nzDCMask&0x0f0000 != 0 {
 		d.inverseDCT8DCOnly(ybrBY, ybrBX, bCoeffBase)
 	}
 	predFunc8[p](d, ybrRY, ybrRX)
-	if d.nzACMask&0xf00000 != 0 {
+	if d.rm.nzACMask&0xf00000 != 0 {
 		d.inverseDCT8(ybrRY, ybrRX, rCoeffBase)
-	} else if d.nzDCMask&0xf00000 != 0 {
+	} else if d.rm.nzDCMask&0xf00000 != 0 {
 		d.inverseDCT8DCOnly(ybrRY, ybrRX, rCoeffBase)
 	}
 }
 
-// reconstruct reconstructs one macroblock into macroblock row slot of the
-// band buffer and returns whether inner loop filtering should be skipped for
-// it.
-func (d *Decoder) reconstruct(mbx, mby, slot int) (skip bool) {
+// parseMB parses one macroblock into d.pm: its segment, whether it is
+// skipped, its predictor modes and its residuals.
+func (d *Decoder) parseMB(mbx, mby int) {
+	m := d.pm
 	if d.segmentHeader.updateMap {
 		if !d.fp.readBit(d.segmentHeader.prob[0]) {
 			d.segment = int(d.fp.readUint(d.segmentHeader.prob[1], 1))
@@ -500,17 +517,15 @@ func (d *Decoder) reconstruct(mbx, mby, slot int) (skip bool) {
 			d.segment = int(d.fp.readUint(d.segmentHeader.prob[2], 1)) + 2
 		}
 	}
+	m.segment = d.segment
+	skip := false
 	if d.useSkipProb {
 		skip = d.fp.readBit(d.skipProb)
 	}
-	// Prepare the workspace.
-	for i := range d.coeff {
-		d.coeff[i] = 0
-	}
-	d.prepareYBR(mbx, mby)
+	clear(m.coeff[:])
 	// Parse the predictor modes.
-	d.usePredY16 = d.fp.readBit(145)
-	if d.usePredY16 {
+	m.usePredY16 = d.fp.readBit(145)
+	if m.usePredY16 {
 		d.parsePredModeY16(mbx)
 	} else {
 		d.parsePredModeY4(mbx)
@@ -520,15 +535,22 @@ func (d *Decoder) reconstruct(mbx, mby, slot int) (skip bool) {
 	if !skip {
 		skip = d.parseResiduals(mbx, mby)
 	} else {
-		if d.usePredY16 {
+		if m.usePredY16 {
 			d.leftMB.nzY16 = 0
 			d.upMB[mbx].nzY16 = 0
 		}
 		d.leftMB.nzMask = 0
 		d.upMB[mbx].nzMask = 0
-		d.nzDCMask = 0
-		d.nzACMask = 0
+		m.nzDCMask = 0
+		m.nzACMask = 0
 	}
+	m.skip = skip
+}
+
+// reconstructMB reconstructs the macroblock parsed into d.rm into
+// macroblock row slot of the band buffer.
+func (d *Decoder) reconstructMB(mbx, mby, slot int) {
+	d.prepareYBR(mbx, mby)
 	// Reconstruct the YCbCr data and copy it to the image.
 	d.reconstructMacroblock(mbx, mby)
 	for i, y := (slot*d.img.YStride+mbx)*16, 0; y < 16; i, y = i+d.img.YStride, y+1 {
@@ -543,5 +565,4 @@ func (d *Decoder) reconstruct(mbx, mby, slot int) (skip bool) {
 	copy(d.topY[16*mbx:16*mbx+16], d.ybr[ybrYY+15][ybrYX:ybrYX+16])
 	copy(d.topCb[8*mbx:8*mbx+8], d.ybr[ybrBY+7][ybrBX:ybrBX+8])
 	copy(d.topCr[8*mbx:8*mbx+8], d.ybr[ybrRY+7][ybrRX:ybrRX+8])
-	return skip
 }

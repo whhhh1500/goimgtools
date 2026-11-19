@@ -450,19 +450,19 @@ func (s *source) startLossy() error {
 	// A strip is whole macroblock rows: about 256KB of them, at least one.
 	bandMB := max(pipeline.StripRows(int64(mbw)*24, h)/16, 1)
 	if s.env.Helpers() > 0 {
-		// The loop filter of each row runs while the next is decoded
-		// (vp8.SetAsync), but a strip waits for the filter of its last
-		// row: with more rows to a strip, less of the filtering waits.
+		// Each row is reconstructed and filtered while the next is parsed
+		// (vp8.SetAsync), but a strip waits for its last row: with more
+		// rows to a strip, less of the work waits.
 		bandMB = max(bandMB, min(8, (h+15)/16))
 	}
 	if testBandRows > 0 {
 		bandMB = max(testBandRows/16, 1)
 	}
-	if err := s.reserve(s.vd.BufferBytes(bandMB), "webp macroblock rows"); err != nil {
-		return err
-	}
 	if s.env.Helpers() > 0 {
 		s.vd.SetAsync(s.env.Go)
+	}
+	if err := s.reserve(s.vd.BufferBytes(bandMB), "webp macroblock rows"); err != nil {
+		return err
 	}
 	if err := s.vd.Start(bandMB); err != nil {
 		return err
@@ -636,6 +636,10 @@ func (s *source) Close() error {
 		return nil
 	}
 	s.closed = true
+	if s.vd != nil {
+		// A band may be being decoded in the background (vp8.SetAsync).
+		s.vd.Wait()
+	}
 	var err error
 	if s.ld != nil {
 		err = s.ld.Close()

@@ -21,7 +21,7 @@ func (z *Decoder) inverseDCT4(y, x, coeffBase int) {
 	if useSIMD {
 		_ = z.ybr[y+3][x+3]
 		p := &z.ybr[y][x]
-		idctAddAsm((*[16]int16)(z.coeff[coeffBase:coeffBase+16]), p, len(z.ybr[0]), p, len(z.ybr[0]))
+		idctAddAsm((*[16]int16)(z.rm.coeff[coeffBase:coeffBase+16]), p, len(z.ybr[0]), p, len(z.ybr[0]))
 		return
 	}
 	z.inverseDCT4Go(y, x, coeffBase)
@@ -34,10 +34,10 @@ func (z *Decoder) inverseDCT4Go(y, x, coeffBase int) {
 	)
 	var m [4][4]int32
 	for i := 0; i < 4; i++ {
-		a := int32(z.coeff[coeffBase+0]) + int32(z.coeff[coeffBase+8])
-		b := int32(z.coeff[coeffBase+0]) - int32(z.coeff[coeffBase+8])
-		c := (int32(z.coeff[coeffBase+4])*c2)>>16 - (int32(z.coeff[coeffBase+12])*c1)>>16
-		d := (int32(z.coeff[coeffBase+4])*c1)>>16 + (int32(z.coeff[coeffBase+12])*c2)>>16
+		a := int32(z.rm.coeff[coeffBase+0]) + int32(z.rm.coeff[coeffBase+8])
+		b := int32(z.rm.coeff[coeffBase+0]) - int32(z.rm.coeff[coeffBase+8])
+		c := (int32(z.rm.coeff[coeffBase+4])*c2)>>16 - (int32(z.rm.coeff[coeffBase+12])*c1)>>16
+		d := (int32(z.rm.coeff[coeffBase+4])*c1)>>16 + (int32(z.rm.coeff[coeffBase+12])*c2)>>16
 		m[i][0] = a + d
 		m[i][1] = b + c
 		m[i][2] = b - c
@@ -58,7 +58,7 @@ func (z *Decoder) inverseDCT4Go(y, x, coeffBase int) {
 }
 
 func (z *Decoder) inverseDCT4DCOnly(y, x, coeffBase int) {
-	dc := (int32(z.coeff[coeffBase+0]) + 4) >> 3
+	dc := (int32(z.rm.coeff[coeffBase+0]) + 4) >> 3
 	if useSIMD {
 		_ = z.ybr[y+3][x+3]
 		dcAddAsm(&z.ybr[y][x], len(z.ybr[0]), int(dc))
@@ -81,7 +81,7 @@ func (z *Decoder) inverseDCT8(y, x, coeffBase int) {
 func (z *Decoder) inverseDCT8DCOnly(y, x, coeffBase int) {
 	if useSIMD {
 		_ = z.ybr[y+7][x+7]
-		dc := z.coeff[coeffBase : coeffBase+49]
+		dc := z.rm.coeff[coeffBase : coeffBase+49]
 		dcAdd8Asm(&z.ybr[y][x], len(z.ybr[0]), int((int32(dc[0])+4)>>3), int((int32(dc[16])+4)>>3), int((int32(dc[32])+4)>>3), int((int32(dc[48])+4)>>3))
 		return
 	}
@@ -94,10 +94,10 @@ func (z *Decoder) inverseDCT8DCOnly(y, x, coeffBase int) {
 func (d *Decoder) inverseWHT16() {
 	var m [16]int32
 	for i := 0; i < 4; i++ {
-		a0 := int32(d.coeff[384+0+i]) + int32(d.coeff[384+12+i])
-		a1 := int32(d.coeff[384+4+i]) + int32(d.coeff[384+8+i])
-		a2 := int32(d.coeff[384+4+i]) - int32(d.coeff[384+8+i])
-		a3 := int32(d.coeff[384+0+i]) - int32(d.coeff[384+12+i])
+		a0 := int32(d.pm.coeff[384+0+i]) + int32(d.pm.coeff[384+12+i])
+		a1 := int32(d.pm.coeff[384+4+i]) + int32(d.pm.coeff[384+8+i])
+		a2 := int32(d.pm.coeff[384+4+i]) - int32(d.pm.coeff[384+8+i])
+		a3 := int32(d.pm.coeff[384+0+i]) - int32(d.pm.coeff[384+12+i])
 		m[0+i] = a0 + a1
 		m[8+i] = a0 - a1
 		m[4+i] = a3 + a2
@@ -110,10 +110,10 @@ func (d *Decoder) inverseWHT16() {
 		a1 := m[1+i*4] + m[2+i*4]
 		a2 := m[1+i*4] - m[2+i*4]
 		a3 := dc - m[3+i*4]
-		d.coeff[out+0] = int16((a0 + a1) >> 3)
-		d.coeff[out+16] = int16((a3 + a2) >> 3)
-		d.coeff[out+32] = int16((a0 - a1) >> 3)
-		d.coeff[out+48] = int16((a3 - a2) >> 3)
+		d.pm.coeff[out+0] = int16((a0 + a1) >> 3)
+		d.pm.coeff[out+16] = int16((a3 + a2) >> 3)
+		d.pm.coeff[out+32] = int16((a0 - a1) >> 3)
+		d.pm.coeff[out+48] = int16((a3 - a2) >> 3)
 		out += 64
 	}
 }

@@ -7,6 +7,7 @@
 ### 变更
 
 - 不再依赖 `github.com/klauspost/compress`，依赖只剩 `golang.org/x/image`、`x/text` 与 `x/sys`。Go 1.27 及以上版本中，1 至 6 级下超过一块的 PNG 数据改由 Go 1.27 的 `compress/flate` 压缩，它已复制进本库（`internal/gflate`），另加了带字典复位的方法，并在小端处理器上按字读取（与 `klauspost/compress` 的做法相同）。字节与 0.2.0 相同（Go 1.26 下也相同，那里仍和以前一样每块用它自己的 `compress/flate` 压缩）；速度与原来相当：6000×4000 的图存 6 级，单核 720ms 对 707ms，四核 276ms 对 268ms。PNG 中压缩的文字与 ICC 配置文件改由 `compress/zlib` 解压。
+- 有损 WebP 解码在 `Threads(4)` 及以上时分摊工作，与 libwebp 的多线程解码器相同：使用上一段宏块行的同时解码下一段，解析下一行的同时重建并滤波这一行；像素不变。6000×4000、质量 80 的 WebP 用 `MethodLibvips` 在解码时缩到 1536 以内：五线程 0.21s，原为 0.27s，与 sharp 一样快（0.21s；它的 libwebp 在第二个线程上解码）。
 
 ## 0.2.0（2026-11-20）
 

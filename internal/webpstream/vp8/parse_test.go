@@ -18,6 +18,7 @@ func TestParseAsm(t *testing.T) {
 	rng := rand.New(rand.NewPCG(3, 4))
 	data := make([]byte, 1200)
 	var d Decoder
+	d.pm = &d.one
 	var cats [8]int
 	runs, nearRuns := 0, 0
 	for range 300000 {
@@ -58,17 +59,17 @@ func TestParseAsm(t *testing.T) {
 		}
 
 		q := p
-		clear(d.coeff[:16])
+		clear(d.pm.coeff[:16])
 		nzGo := d.parseResiduals4Go(&q, plane, uint8(ctx), quant, first == 1, 0)
-		want := [16]int16(d.coeff[:16])
+		want := [16]int16(d.pm.coeff[:16])
 		if q.unexpectedEOF {
 			t.Fatal("ran out of input")
 		}
 
-		clear(d.coeff[:16])
+		clear(d.pm.coeff[:16])
 		a := p
-		nz := parseBlockAsm(&a, &d.tokenProb[plane], (*[16]int16)(d.coeff[:16]), first, ctx, uint32(quant[0])|uint32(quant[1])<<16)
-		got := [16]int16(d.coeff[:16])
+		nz := parseBlockAsm(&a, &d.tokenProb[plane], (*[16]int16)(d.pm.coeff[:16]), first, ctx, uint32(quant[0])|uint32(quant[1])<<16)
+		got := [16]int16(d.pm.coeff[:16])
 		if near {
 			// Too near the end of the window: nothing read.
 			if nz != asmTooNear || got != [16]int16{} || a.value != p.value || a.bits != p.bits || a.rangeM1 != p.rangeM1 || a.r != p.r {

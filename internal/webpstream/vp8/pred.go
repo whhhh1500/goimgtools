@@ -24,18 +24,18 @@ func (d *Decoder) parsePredModeY16(mbx int) {
 		d.upMB[mbx].pred[i] = p
 		d.leftMB.pred[i] = p
 	}
-	d.predY16 = p
+	d.pm.predY16 = p
 }
 
 func (d *Decoder) parsePredModeC8() {
 	if !d.fp.readBit(142) {
-		d.predC8 = predDC
+		d.pm.predC8 = predDC
 	} else if !d.fp.readBit(114) {
-		d.predC8 = predVE
+		d.pm.predC8 = predVE
 	} else if !d.fp.readBit(183) {
-		d.predC8 = predHE
+		d.pm.predC8 = predHE
 	} else {
-		d.predC8 = predTM
+		d.pm.predC8 = predTM
 	}
 }
 
@@ -67,7 +67,7 @@ func (d *Decoder) parsePredModeY4(mbx int) {
 			} else {
 				p = predHU
 			}
-			d.predY4[j][i] = p
+			d.pm.predY4[j][i] = p
 			d.upMB[mbx].pred[i] = p
 		}
 		d.leftMB.pred[j] = p

@@ -85,9 +85,10 @@ func TestToRGB(t *testing.T) {
 	}
 }
 
-// TestSameWithHelpers: with helpers (the loop filter of a row run while
-// the next is decoded, the conversion to RGB shared out) the pixels are
-// the same as without, in strips of any height.
+// TestSameWithHelpers: with helpers (a lossy image's next band decoded
+// while the last is used and each row reconstructed while the next is
+// parsed, the conversion to RGB shared out) the pixels are the same as
+// without, in strips of any height, decoded whole and scaled on load.
 func TestSameWithHelpers(t *testing.T) {
 	paths := []string{"../../tests/testdata/webp/odd.lossy.webp", "../../tests/testdata/webp/odd-alpha.lossy.webp", "../../tests/testdata/sharp/resize-lossy.webp"}
 	if dir := testutil.XImageTestdata(); dir != "" {
@@ -114,6 +115,30 @@ func TestSameWithHelpers(t *testing.T) {
 		}
 		return m.(*image.NRGBA).Pix
 	}
+	// scaled decodes at a third of the size (the loop filter skipped, see
+	// ScaleOnLoad).
+	scaled := func(data []byte, helpers int) []byte {
+		setBandRows(t, 16)
+		env := pipeline.NewEnv(0, t.TempDir())
+		env.SetHelpers(helpers)
+		src, err := Open(bytes.NewReader(data), int64(len(data)), env)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b := src.Bounds()
+		if !src.(*source).ScaleOnLoad(max(1, b.Dx()/3), max(1, b.Dy()/3)) {
+			t.Fatal("not scaled")
+		}
+		m, err := pipeline.Collect(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		src.Close()
+		if env.Budget.Used() != 0 {
+			t.Errorf("%d bytes still reserved", env.Budget.Used())
+		}
+		return m.(*image.NRGBA).Pix
+	}
 	for _, p := range paths {
 		data, err := os.ReadFile(p)
 		if err != nil {
@@ -125,6 +150,12 @@ func TestSameWithHelpers(t *testing.T) {
 				if got := decode(data, h, rows); !bytes.Equal(got, want) {
 					t.Errorf("%s, %d helpers, strips of %d rows: other pixels", filepath.Base(p), h, rows)
 				}
+			}
+		}
+		want = scaled(data, 0)
+		for _, h := range []int{1, 3} {
+			if got := scaled(data, h); !bytes.Equal(got, want) {
+				t.Errorf("%s, %d helpers, scaled on load: other pixels", filepath.Base(p), h)
 			}
 		}
 	}
