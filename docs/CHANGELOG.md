@@ -8,6 +8,7 @@ English | [中文](zh-CN/CHANGELOG.md)
 
 - No dependency on `github.com/klauspost/compress`: the dependencies are `golang.org/x/image`, `x/text` and `x/sys` only. With Go 1.27 or later, PNG data of more than one block, at levels 1 to 6, is compressed by Go 1.27's `compress/flate`, copied into the package (`internal/gflate`, with a method to reset it with a dictionary and, on little-endian processors, word loads as `klauspost/compress` makes them): the same bytes as 0.2.0 (with Go 1.26 too, which compresses every block with its own `compress/flate` as before), at about the same speed (a picture of 6000×4000 at level 6, 720ms against 707ms on one core, 276ms against 268ms on four). Compressed text and ICC profiles in PNG files are read by `compress/zlib`.
 - Lossy WebP decoding shares its work out with `Threads(4)` and above, as libwebp's threaded decoder: the next band of macroblock rows is decoded while the last one is used, and each row is reconstructed and filtered while the next is parsed; the pixels are the same. A 6000×4000 WebP (quality 80) shrunk on load to fit 1536 with `MethodLibvips`: 0.21s on five threads against 0.27s, as fast as sharp (0.21s; its libwebp decodes on a second thread).
+- Colour reduction (GIF, PNG with a palette) shares its k-means passes out with `Threads(4)` and above; the result is the same. The 24 Kodak photographs to GIF: 2.0s on six threads against 3.0s; a 6000×4000 JPEG shrunk to 1536 and written as GIF, 0.38s against 0.56s.
 
 ## 0.2.0 (2026-11-20)
 

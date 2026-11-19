@@ -362,7 +362,7 @@ func (q *quantized) load() (image.Image, error) {
 		} else {
 			pts, opaque = exactPoints(bins, e)
 		}
-		cent, solid = centres(pts, opaque, k)
+		cent, solid = centres(pts, opaque, k, q.env.Parallel, q.env.Helpers()+1)
 	}
 	// The histogram is not needed any more; what follows gets its room.
 	bins, e = nil, nil
@@ -404,9 +404,11 @@ func (q *quantized) load() (image.Image, error) {
 }
 
 const (
-	polishPasses = 3
-	polishPixels = 2 << 20 // about how many pixels a pass looks at
-	polishPrior  = 16      // weight of the centre a pass starts from
+	polishPasses  = 3
+	polishPixels  = 2 << 20 // about how many pixels a pass looks at
+	polishPrior   = 16      // weight of the centre a pass starts from
+	polishWorkers = 8       // at most, with helpers
+	polishBatch   = 32      // rows read at a time to share out
 )
 
 // polish moves the centres, which were fitted to the histogram bins, closer
@@ -414,43 +416,73 @@ const (
 // of them for an image of up to two megapixels, evenly spaced ones
 // otherwise. The bins are 4 to 16 levels wide, and an image of a few close
 // shades (a soft gradient) has palette colours closer together than that.
+//
+// With helpers, the rows are read polishBatch at a time and shared out
+// among workers, each with its own searchers and sums: a pixel's centre is
+// the nearest whoever finds it, and the sums, of integers, are exact in any
+// order, so the centres are the same however many there are.
 func (q *quantized) polish(cent [][4]float64, solid int) error {
 	if len(cent) == 0 {
 		return nil
 	}
 	w, h := q.bounds.Dx(), q.bounds.Dy()
 	step := max(1, (w*h+polishPixels-1)/polishPixels)
+	workers := 1
+	if q.env.Helpers() > 0 {
+		workers = min(q.env.Helpers()+1, polishWorkers, (h+step-1)/step)
+	}
+	batch := 1
+	bufs := [][]byte{q.row}
+	if workers > 1 {
+		batch = polishBatch
+		if err := q.reserve(int64(batch)*int64(len(q.row)), "quantizer rows"); err != nil {
+			// No room for the rows: one at a time, on this goroutine.
+			workers, batch = 1, 1
+		} else {
+			bufs = make([][]byte, batch)
+			for i := range bufs {
+				bufs[i] = make([]byte, len(q.row))
+			}
+		}
+	}
 	ic := make([][4]int32, len(cent))
-	wt := make([]float64, len(cent))
-	sum := make([][4]float64, len(cent))
+	wt := make([][]float64, workers)
+	sum := make([][][4]float64, workers)
+	for r := range workers {
+		wt[r], sum[r] = make([]float64, len(cent)), make([][4]float64, len(cent))
+	}
+	rest := make([]*searcher, workers)
+	first := make([]*searcher, workers)
 	for pass := 0; pass < polishPasses; pass++ {
 		for i := range cent {
 			for c := 0; c < 4; c++ {
 				ic[i][c] = int32(cent[i][c] + 0.5)
 			}
 		}
-		clear(wt)
-		clear(sum)
 		// Opaque pixels go to the first solid centres, the others to the
 		// rest (see centres).
-		rest := newSearcher(ic[solid:], q.env.Budget)
-		first := rest
-		if solid > 0 {
-			first = newSearcher(ic[:solid], q.env.Budget)
+		for r := range workers {
+			clear(wt[r])
+			clear(sum[r])
+			rest[r] = newSearcher(ic[solid:], q.env.Budget)
+			first[r] = rest[r]
+			if solid > 0 {
+				first[r] = newSearcher(ic[:solid], q.env.Budget)
+			}
 		}
 		done := func() {
-			rest.release()
-			first.release()
-		}
-		for y := step / 2; y < h; y += step {
-			if _, err := q.spill.ReadAt(q.row, int64(y)*int64(len(q.row))); err != nil {
-				done()
-				return err
+			for r := range workers {
+				rest[r].release()
+				first[r].release()
 			}
+		}
+		// row adds the pixels of a stored row to worker r's sums.
+		row := func(r int, px []byte) {
+			wt, sum, rest, first := wt[r], sum[r], rest[r], first[r]
 			prev, pi := uint32(0), -1
 			var t [4]int32
-			for i := 0; i < len(q.row); i += 4 {
-				p := q.row[i : i+4 : i+4]
+			for i := 0; i < len(px); i += 4 {
+				p := px[i : i+4 : i+4]
 				if p[3] == 0 {
 					continue
 				}
@@ -463,7 +495,7 @@ func (q *quantized) polish(cent [][4]float64, solid int) error {
 						pi = solid + rest.nearest(t[0], t[1], t[2], t[3])
 					}
 				}
-				n := float64(smoothWeight(q.row, i))
+				n := float64(smoothWeight(px, i))
 				wt[pi] += n
 				a := &sum[pi]
 				a[0] += float64(n * float64(t[0]))
@@ -472,10 +504,39 @@ func (q *quantized) polish(cent [][4]float64, solid int) error {
 				a[3] += float64(n * float64(t[3]))
 			}
 		}
+		for y := step / 2; y < h; {
+			nb := 0
+			for ; nb < batch && y < h; y += step {
+				if _, err := q.spill.ReadAt(bufs[nb], int64(y)*int64(len(q.row))); err != nil {
+					done()
+					return err
+				}
+				nb++
+			}
+			if workers == 1 {
+				for j := range nb {
+					row(0, bufs[j])
+				}
+				continue
+			}
+			q.env.Parallel(workers, func(r int) {
+				for j := r; j < nb; j += workers {
+					row(r, bufs[j])
+				}
+			})
+		}
 		done()
+		for r := 1; r < workers; r++ {
+			for i := range cent {
+				wt[0][i] += wt[r][i]
+				for c := 0; c < 4; c++ {
+					sum[0][i][c] += sum[r][i][c]
+				}
+			}
+		}
 		for i := range cent {
 			for c := 0; c < 4; c++ {
-				cent[i][c] = (sum[i][c] + float64(polishPrior*cent[i][c])) / (wt[i] + polishPrior)
+				cent[i][c] = (sum[0][i][c] + float64(polishPrior*cent[i][c])) / (wt[0][i] + polishPrior)
 			}
 		}
 	}

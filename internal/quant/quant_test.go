@@ -3,6 +3,7 @@ package quant
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -722,5 +723,66 @@ func TestFrameRows(t *testing.T) {
 	}
 	if _, err := Quantize(pipeline.FromImage(tall, pipeline.NewEnv(0, "")), &Options{FrameRows: -1}); err == nil {
 		t.Error("FrameRows -1 accepted")
+	}
+}
+
+// TestSameWithHelpers: with helpers (k-means over the histogram and over
+// the pixels shared out among workers) the palette and the indexes are the
+// same as without, opaque or not, dithered or not, also when the limit
+// leaves no room to read rows ahead.
+func TestSameWithHelpers(t *testing.T) {
+	w, h := 640, 480
+	opaque := image.NewRGBA(image.Rect(0, 0, w, h))
+	alpha := image.NewNRGBA(image.Rect(0, 0, w, h))
+	r := rand.New(rand.NewSource(5))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			n := uint8(r.Intn(40))
+			c := color.RGBA{uint8(x*255/w) + n, uint8(y*255/h) + n, uint8((x*y)/97) + n, 255}
+			opaque.SetRGBA(x, y, c)
+			alpha.SetNRGBA(x, y, color.NRGBA{c.R, c.G, c.B, uint8(x * 300 / w)})
+		}
+	}
+	run := func(m image.Image, helpers int, limit int64, noDither bool) ([]byte, color.Palette) {
+		env := pipeline.NewEnv(limit, t.TempDir())
+		env.SetHelpers(helpers)
+		q, err := Quantize(testutil.ChoppedEnv(m, 32, env), &Options{NoDither: noDither})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var pix []byte
+		var pal color.Palette
+		for {
+			s, err := q.Next()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			p := s.(*image.Paletted)
+			pal = p.Palette
+			for y := p.Rect.Min.Y; y < p.Rect.Max.Y; y++ {
+				pix = append(pix, p.Pix[p.PixOffset(p.Rect.Min.X, y):][:p.Rect.Dx()]...)
+			}
+		}
+		q.Close()
+		if u := env.Budget.Used(); u != 0 {
+			t.Errorf("%d bytes still reserved", u)
+		}
+		return pix, pal
+	}
+	for name, m := range map[string]image.Image{"opaque": opaque, "alpha": alpha} {
+		for _, noDither := range []bool{false, true} {
+			want, wantPal := run(m, 0, 0, noDither)
+			for _, helpers := range []int{1, 3} {
+				for _, limit := range []int64{0, 3 << 20} {
+					got, pal := run(m, helpers, limit, noDither)
+					if !bytes.Equal(got, want) || fmt.Sprint(pal) != fmt.Sprint(wantPal) {
+						t.Errorf("%s, dither %v, %d helpers, limit %d: other result", name, !noDither, helpers, limit)
+					}
+				}
+			}
+		}
 	}
 }

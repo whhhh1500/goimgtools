@@ -130,57 +130,83 @@ const kmeansPasses = 16
 
 // refine moves the centres with k-means over the points: every point goes
 // to its nearest centre, every centre to the mean of its points. It returns
-// the centres that still have points.
-func refine(pts []bin, cent [][4]float64) [][4]float64 {
+// the centres that still have points. par shares each pass out among
+// workers (pipeline.Env's Parallel; nil: one): each takes a run of the
+// points, sums its own (the sums of integers, exact in any order) and the
+// sums are added after; a point's centre does not depend on where its run
+// starts, so the centres are the same however many there are.
+func refine(pts []bin, cent [][4]float64, par func(n int, fn func(i int)), workers int) [][4]float64 {
 	k := len(cent)
 	if k == 0 {
 		return cent
 	}
+	workers = max(1, min(workers, len(pts)/refineRun))
 	ic := make([][4]int32, k)
-	w := make([]float64, k)
-	sum := make([][4]float64, k)
+	w := make([][]float64, workers)
+	sum := make([][][4]float64, workers)
+	for i := range w {
+		w[i], sum[i] = make([]float64, k), make([][4]float64, k)
+	}
 	for pass := 0; pass < kmeansPasses; pass++ {
 		for i := range cent {
 			for c := 0; c < 4; c++ {
 				ic[i][c] = int32(cent[i][c] + 0.5)
 			}
 		}
-		clear(w)
-		clear(sum)
-		last := 0
-		for i := range pts {
-			p := &pts[i]
-			v0, v1, v2, v3 := p.v[0], p.v[1], p.v[2], p.v[3]
-			q := &ic[last]
-			best := sq(v0-q[0]) + sq(v1-q[1]) + sq(v2-q[2]) + sq(v3-q[3])
-			bi := last
-			for j := range ic {
-				q := &ic[j]
-				d := sq(v0-q[0]) + sq(v1-q[1])
-				if d > best {
-					continue
+		run := func(r int) {
+			w, sum := w[r], sum[r]
+			clear(w)
+			clear(sum)
+			last := 0
+			for i := r * len(pts) / workers; i < (r+1)*len(pts)/workers; i++ {
+				p := &pts[i]
+				v0, v1, v2, v3 := p.v[0], p.v[1], p.v[2], p.v[3]
+				q := &ic[last]
+				best := sq(v0-q[0]) + sq(v1-q[1]) + sq(v2-q[2]) + sq(v3-q[3])
+				bi := last
+				for j := range ic {
+					q := &ic[j]
+					d := sq(v0-q[0]) + sq(v1-q[1])
+					if d > best {
+						continue
+					}
+					d += sq(v2-q[2]) + sq(v3-q[3])
+					if d < best || (d == best && j < bi) {
+						best, bi = d, j
+					}
 				}
-				d += sq(v2-q[2]) + sq(v3-q[3])
-				if d < best || (d == best && j < bi) {
-					best, bi = d, j
+				last = bi
+				n := float64(p.n)
+				w[bi] += n
+				s := &sum[bi]
+				s[0] += float64(n * float64(v0))
+				s[1] += float64(n * float64(v1))
+				s[2] += float64(n * float64(v2))
+				s[3] += float64(n * float64(v3))
+			}
+		}
+		if workers == 1 || par == nil {
+			for r := range workers {
+				run(r)
+			}
+		} else {
+			par(workers, run)
+		}
+		for r := 1; r < workers; r++ {
+			for i := range k {
+				w[0][i] += w[r][i]
+				for c := 0; c < 4; c++ {
+					sum[0][i][c] += sum[r][i][c]
 				}
 			}
-			last = bi
-			n := float64(p.n)
-			w[bi] += n
-			s := &sum[bi]
-			s[0] += float64(n * float64(v0))
-			s[1] += float64(n * float64(v1))
-			s[2] += float64(n * float64(v2))
-			s[3] += float64(n * float64(v3))
 		}
 		moved := 0.0
 		for i := range cent {
-			if w[i] == 0 {
+			if w[0][i] == 0 {
 				continue
 			}
 			for c := 0; c < 4; c++ {
-				v := sum[i][c] / w[i]
+				v := sum[0][i][c] / w[0][i]
 				moved = max(moved, v-cent[i][c], cent[i][c]-v)
 				cent[i][c] = v
 			}
@@ -191,12 +217,15 @@ func refine(pts []bin, cent [][4]float64) [][4]float64 {
 	}
 	out := cent[:0]
 	for i := range cent {
-		if w[i] != 0 {
+		if w[0][i] != 0 {
 			out = append(out, cent[i])
 		}
 	}
 	return out
 }
+
+// refineRun is the fewest points a worker of refine takes.
+const refineRun = 4096
 
 func sq(d int32) int32 { return d * d }
 
@@ -232,7 +261,7 @@ func toNRGBA(c [4]float64) color.NRGBA {
 // translucent points are clustered apart: the first solid of the centres
 // returned belong to the opaque pixels alone. With solid == 0 all centres
 // serve all pixels.
-func centres(pts []bin, opaque, k int) (cent [][4]float64, solid int) {
+func centres(pts []bin, opaque, k int, par func(n int, fn func(i int)), workers int) (cent [][4]float64, solid int) {
 	if len(pts) == 0 || k <= 0 {
 		return nil, 0
 	}
@@ -240,8 +269,8 @@ func centres(pts []bin, opaque, k int) (cent [][4]float64, solid int) {
 		opaque = 0 // one colour for everything
 	}
 	cent, solid = medianCut(pts, opaque, k)
-	a := refine(pts[:opaque], cent[:solid:solid])
-	b := refine(pts[opaque:], cent[solid:])
+	a := refine(pts[:opaque], cent[:solid:solid], par, workers)
+	b := refine(pts[opaque:], cent[solid:], par, workers)
 	return append(a, b...), len(a)
 }
 
