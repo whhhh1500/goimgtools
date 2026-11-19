@@ -24,7 +24,8 @@ const (
 // SSIMULACRA2 as it was before the sync pattern and the payload were tilted
 // to the higher frequencies (0.84375 and 3.375, 1.665 and 6.66; see
 // shapeWeight), which those were with the tile of 40% reference (0.75 and
-// 3, 1.5 and 6; see wRef).
+// 3, 1.5 and 6; see wRef). The reference moved up to 12 to 21 cycles
+// (refMin) left the blind mark about as visible and the screen mark less.
 // (Measured for Blind: chips of at least 2.5 or 3 pixels, which JPEG and
 // WebP keep better, leave small pictures too few tiles and read less
 // over all. As visible by SSIMULACRA2, less where flat and more where busy

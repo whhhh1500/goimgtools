@@ -139,7 +139,7 @@ func TestSameOnEveryProcessor(t *testing.T) {
 		{"webp lossless", func() ([]byte, error) { return clear.Clone().WebP(WebPOptions{Lossless: true}).ToBytes() }, "9d7241e10fec8b83"},
 		{"invisible watermark", func() ([]byte, error) {
 			return photo.Clone().InvisibleWatermark([]byte("mark"), InvisibleWatermarkOptions{Key: "k", Kind: WatermarkScreen, Strength: 1.3}).BMP().ToBytes()
-		}, "3870d4ed3987472b"},
+		}, "e852422f5c6ed49b"},
 		// Transparency: sharp YUV of the colours, the transparent area
 		// made flat, the alpha plane coded by the lossless encoder.
 		{"webp alpha", func() ([]byte, error) { return clear.Clone().WebP(WebPOptions{Quality: 70}).ToBytes() }, "bd4f113e1fb01ed1"},

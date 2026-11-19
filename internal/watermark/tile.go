@@ -23,12 +23,17 @@ const (
 	// read 239 marks of 330 against 217 (JPEG 30 12 against 8, WebP 60 9
 	// against 5); the screen mark, as visible, 277 against 274. With 16
 	// sinusoids (nRef), 8 to 20 cycles read 229 and 238 with two sets of
-	// keys against 245 and 240. (With 15%
+	// keys against 245 and 240; 12 to 21 (with the sync pattern and the
+	// payload weighed by shapeWeight), as visible, about as many (279
+	// against 280), and the screen mark less visible and more (295 against
+	// 290). Above 21 cycles a picture reduced to a third, whose chips were
+	// 2 pixels, puts the reference past the Nyquist frequency: 12 to 24
+	// read none of the 24 Kodak photographs reduced so. (With 15%
 	// for the reference the photographs of a screen were lost: 220. With
 	// the reference at a half or a quarter where the picture is flat,
 	// where it shows most, and the whole stronger to be as visible: 219,
 	// 200, and a mostly white screenshot was not found at all.)
-	refMin, refMax    = 10, 20
+	refMin, refMax    = 12, 21
 	wRef, wSync, wPay = 0.5, 0.447, 0.742
 )
 
