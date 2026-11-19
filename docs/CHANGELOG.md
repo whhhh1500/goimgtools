@@ -2,7 +2,7 @@ English | [中文](zh-CN/CHANGELOG.md)
 
 # Changelog
 
-## Unreleased
+## 0.2.0 (2026-11-20)
 
 ### Upgrading from 0.1.0
 

@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/gen2brain/avif v0.6.0
-	github.com/whhhh1500/goimgtools v0.1.1-0.20261117143504-31d3c5802c36
+	github.com/whhhh1500/goimgtools v0.2.0
 )
 
 require (
