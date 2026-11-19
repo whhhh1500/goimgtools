@@ -152,6 +152,20 @@ func (m *Marker) NewRow() func(y int, win [][]uint8, dst []uint8) {
 
 const nvfTheta = 75.0 / 400.0 // the noise visibility function's theta
 
+// shiftTexture is the variance of the picture around a place (levels
+// squared) at which a place near white or black is moved away from the end
+// by three quarters of what the mark needs; flat, by all of it, busy, by
+// half. Moved alike, the bright parts of a photograph darkened with their
+// texture, which butteraugli found first in 5 of the 24 Kodak photographs.
+// (Measured with 3 keys on the 24 Kodak photographs after the 18 attacks
+// made with Pillow, at Strength 0.75: butteraugli 1.78 against 1.86,
+// SSIMULACRA2 84.1 against 84.0, 1217 readings of 1296 against 1218; on the
+// 5 pictures of the first set after the 22 attacks made with this package,
+// 281 of 330 against 280, the screen mark 295 against 296 and less visible,
+// SSIMULACRA2 52.8 against 51.4. Every place moved by half lost the mostly
+// white screenshot after JPEG 70: 275 against 280.)
+const shiftTexture = 4.0
+
 func (m *Marker) row(s *rowScratch, y int, win [][]uint8, dst []uint8) {
 	w, r := m.w, m.r
 	// Down each column of the window: luma, its square, the darkest and
@@ -188,9 +202,12 @@ func (m *Marker) row(s *rowScratch, y int, win [][]uint8, dst []uint8) {
 		nvf := 1 / (1 + float64(nvfTheta*v))
 		amp := float64(m.busy*(1-nvf)) + float64(m.flat*nvf)
 		// Near white or black the mark cannot go both ways: the place is
-		// moved away from the end by what it needs, at most amp.
+		// moved away from the end by what it needs, at most amp; where the
+		// picture has texture (a sky's clouds), by about half of that (see
+		// shiftTexture).
 		mlo, mhi := lo/n, hi/n
-		shift := max(0, amp-mlo) - max(0, amp-(255-mhi))
+		share := 0.5 + 0.5/(1+float64(v/shiftTexture))
+		shift := float64(share * (max(0, amp-mlo) - max(0, amp-(255-mhi))))
 		room := min(mlo+shift, 255-(mhi+shift))
 		amp = min(amp, max(room, 0)+0.3)
 		// The field: bilinear between the chips' centres.
