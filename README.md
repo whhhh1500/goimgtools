@@ -110,7 +110,7 @@ Staged data is kept in memory up to 1/8 of the memory limit (8MB by default); be
 
 ## Versioning
 
-The API was settled once, after 0.1.0 (a few names changed then: see "Upgrading from 0.1.0" in the [changelog](docs/CHANGELOG.md)). From then on, releases only add to it: nothing exported is removed, renamed or changed in its signature, which every push checks with `apidiff`. Output may change where it becomes more faithful (as JPEG files becoming libjpeg-turbo's); such changes are listed under "Upgrading" in the [changelog](docs/CHANGELOG.md). A release that has to break the API would be a new major version.
+The API was settled once, after 0.1.0 (a few names changed then: see "Upgrading from 0.1.0" in the [changelog](docs/CHANGELOG.md)). From then on, releases only add to it: nothing exported is removed, renamed or changed in its signature, which every push checks with `apidiff`; the basic API's signatures, the fields of its options and results and the values of its constants are also fixed at compile time by `tests/api_lock_test.go`. Output may change where it becomes more faithful (as JPEG files becoming libjpeg-turbo's); such changes are listed under "Upgrading" in the [changelog](docs/CHANGELOG.md). A release that has to break the API would be a new major version.
 
 ## Contributing
 
