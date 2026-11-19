@@ -91,6 +91,7 @@ blind_watermark 无法从尺寸或角度变过的图像中读出水印：它的 
 | TrustMark `P` | 50.0 dB | 86.3 | 3.7 | 5 / 4 / 3 / 0 | 4 | 0 | 0 | 0 | 0 |
 | [HiDDeN](https://github.com/ando-khachatryan/HiDDeN)（2018） | 31.2 dB | −4.0 | 13.0 | 2 / 3 / 2 / 3 | 1 | 0 | 0 | 0 | 0 |
 | [MBRS](https://github.com/jzyustc/MBRS)（2021） | 46.6 dB | 75.5 | 6.4 | 5 / 5 / 5 / 5 | 3 | 0 | 0 | 0 | 0 |
+| [CIN](https://github.com/rmpku/CIN)（2022） | 45.7 dB | 67.0 | 9.3 | 5 / 5 / 4 / 3 | 4 | 0 | 0 | 0 | 0 |
 | [Watermark Anything](https://github.com/facebookresearch/watermark-anything)（Meta，`wam_mit`） | 40.2 dB | 68.6 | 2.2 | 5 / 5 / 3 / 3 | 3 | 2 | 1 | 4 | 2 |
 | [Video Seal](https://github.com/facebookresearch/videoseal) 1.0（Meta，2024） | 48.4 dB | 83.3 | 2.2 | 4 / 4 / 2 / 2 | 2 | 0 | 0 | 2 | 1 |
 | [PixelSeal](https://github.com/facebookresearch/videoseal)（Meta，2025） | 48.1 dB | 85.1 | 2.1 | 5 / 5 / 4 / 3 | 1 | 2 | 5 | 5 | 3 |
@@ -113,16 +114,17 @@ invisible-watermark 在未受任何处理的 5 张图上只能读回 4 张（`dw
 | TrustMark `P` | 49.4 dB | 87.4 | 2.6 | 24 / 19 / 1 / 0 | 11 | 0 / 0 | 0 / 0 | 0 | 0 |
 | HiDDeN | 30.4 dB | −5.7 | 9.9 | 7 / 4 / 4 / 2 | 3 | 0 / 0 | 0 / 0 | 0 | 0 |
 | MBRS | 45.8 dB | 76.7 | 5.5 | 24 / 24 / 23 / 22 | 20 | 0 / 0 | 0 / 0 | 0 | 0 |
+| CIN | 45.4 dB | 72.0 | 6.2 | 24 / 24 / 23 / 12 | 19 | 0 / 0 | 0 / 0 | 0 | 0 |
 | WAM | 38.9 dB | 71.6 | 1.5 | 24 / 24 / 24 / 10 | 14 | 22 / 0 | 10 / 0 | 23 | 22 |
 | Video Seal 1.0 | 45.3 dB | 80.8 | 1.9 | 24 / 24 / 23 / 20 | 21 | 0 / 0 | 1 / 0 | 20 | 11 |
 | PixelSeal | 46.3 dB | 83.9 | 1.8 | 24 / 24 / 23 / 22 | 22 | 0 / 0 | 24 / 0 | 24 | 12 |
 | ChunkySeal | 45.1 dB | 80.1 | 1.7 | 23 / 18 / 11 / 7 | 4 | 0 / 0 | 23 / 0 | 0 | 0 |
 
-其余攻击（缩小一半、缩到 70% 再存 JPEG 80、调暗、加对比度、噪声、截图）本库水印取默认设置时与 TrustMark、MBRS、WAM、Video Seal、PixelSeal 都读出 23 或 24 张（TrustMark `P` 加对比度后为 22 张；ChunkySeal 缩到 70% 再存 JPEG 80 后为 13 张）；blind_watermark 与 invisible-watermark 缩小一半后一张也读不出。在这些照片上，本库盲水印取默认设置时对图像的改变远小于 TrustMark `Q`（SSIMULACRA2 77.9 对 54.7，butteraugli 2.8 对 9.5），JPEG 与 WebP 之后读出的张数却不比它少（JPEG 30 与 WebP 60 为 24 与 24 张，它为 22 与 24 张）；按 butteraugli 可见度与本库相当的 TrustMark `P`，JPEG 50 时只读出 1 张。把盲水印调到按 SSIMULACRA2 与 TrustMark `P` 一样淡（`Strength: 0.6`，87.5 对 87.4，按 butteraugli 则更不明显，1.7 对 2.6）时，不处理与 JPEG 90 之后少一张（23 对 24），更狠的 JPEG 之后更多（质量 70、50、30 为 23、23、18，它为 19、1、0），WebP 60 之后更多（14 对 11），所有几何攻击之后也更多，而 TrustMark `P` 一张也读不出；其余攻击之后略少（20 至 24 对 22 至 24）。纹理丰富的照片容易藏住水印；第一组图中以白色为主的截图和那张又宽又矮的照片更难。
+其余攻击（缩小一半、缩到 70% 再存 JPEG 80、调暗、加对比度、噪声、截图）本库水印取默认设置时与 TrustMark、MBRS、CIN、WAM、Video Seal、PixelSeal 都读出 23 或 24 张（TrustMark `P` 加对比度后为 22 张；缩到 70% 再存 JPEG 80 后 CIN 为 22 张、ChunkySeal 为 13 张）；blind_watermark 与 invisible-watermark 缩小一半后一张也读不出。在这些照片上，本库盲水印取默认设置时对图像的改变远小于 TrustMark `Q`（SSIMULACRA2 77.9 对 54.7，butteraugli 2.8 对 9.5），JPEG 与 WebP 之后读出的张数却不比它少（JPEG 30 与 WebP 60 为 24 与 24 张，它为 22 与 24 张）；按 butteraugli 可见度与本库相当的 TrustMark `P`，JPEG 50 时只读出 1 张。把盲水印调到按 SSIMULACRA2 与 TrustMark `P` 一样淡（`Strength: 0.6`，87.5 对 87.4，按 butteraugli 则更不明显，1.7 对 2.6）时，不处理与 JPEG 90 之后少一张（23 对 24），更狠的 JPEG 之后更多（质量 70、50、30 为 23、23、18，它为 19、1、0），WebP 60 之后更多（14 对 11），所有几何攻击之后也更多，而 TrustMark `P` 一张也读不出；其余攻击之后略少（20 至 24 对 22 至 24）。纹理丰富的照片容易藏住水印；第一组图中以白色为主的截图和那张又宽又矮的照片更难。
 
 Meta 的 PixelSeal（2025 年 12 月）被其作者称为在鲁棒性与不可见性的权衡上处于已知最前沿，对重新压缩的承受力几乎与 TrustMark `Q` 相当，而对图像的改变小得多（SSIMULACRA2 83.9 对 54.7）。按 SSIMULACRA2 与它一样明显时（`Strength: 0.75`：84.1 对 83.9；butteraugli 2.1 对 1.8），本库盲水印在各档 JPEG（24 / 24 / 24 / 24 对 24 / 24 / 23 / 22）、WebP 70 至 90（23、24、24、24 对 22、22、24、24）、缩小一半、透视与其余攻击之后读出的都不比它少，缩到 70% 再存 JPEG 80 与旋转 3° 之后各少一张（23 对 24），WebP 60 之后少两张（20 对 22）；裁剪之后更多（15 与 5 对 0），旋转 30° 之后更多（22 对 0），对着屏幕拍照之后也更多（19 对 12）：432 次中读出 391 次，它为 342 次。调到按两种指标都比 PixelSeal 更淡时（`Strength: 0.63`：SSIMULACRA2 86.8 对 83.9，butteraugli 1.77 对 1.78），总共仍读出更多，367 次对 342 次，只是 JPEG 30 与 WebP 60 之后较少（18 与 16 对 22 与 22）。在第一组图上，按 SSIMULACRA2 可见度相当（86.0 对 85.1）、按 butteraugli 更明显（2.8 对 2.1）时，90 次中读出 76 次，它为 65 次。能在图像局部找出水印的 WAM，裁到 40% 后多数能读出（24 张中 22 张），但旋转 30° 后一张也读不出，JPEG 30 与 WebP 60 之后也较少（10 与 14 张）。PixelSeal 的前身 Video Seal 1.0 在第一组图上不处理也只读出 5 张中的 4 张，各项攻击之后都不比 PixelSeal 多。为多带四倍字节而设计的 ChunkySeal 更经不起处理：JPEG 50 与 30 之后 Kodak 照片只读出 11 与 7 张，WebP 60 之后 4 张。它们都是要用 PyTorch 运行的神经网络，权重下载分别为 0.2 GB（Video Seal）、0.4 GB（WAM）、1.2 GB（PixelSeal）与 13 GB（ChunkySeal）；本库的水印除本库外什么都不需要。
 
-研究中常用作对照的 MBRS 与 HiDDeN 按 Video Seal 的评测方式运行（MBRS 带 256 位，与 PixelSeal 一样把 9 个字节放三遍；HiDDeN 带 48 位，放前 6 个字节）。它们同样直接读取整幅图像，裁剪、旋转、透视、对着屏幕拍照之后一张也读不出。MBRS 是唯一把第一组图各档 JPEG 全部读出的（5 / 5 / 5 / 5，本库盲水印为 5 / 5 / 4 / 4），但对图像的改变更大（SSIMULACRA2 75.5 对 79.9，butteraugli 6.4 对 4.0；在 Kodak 照片上为 76.7 与 5.5 对 77.9 与 2.8，JPEG 30 与 WebP 60 之后反而较少，22 与 20 对 24 与 24）。HiDDeN 按其作者模型的设置对图像改变大得多，未经处理的 Kodak 照片 24 张中只读出 10 张。（CIN 的模型只能在 GPU 上运行，未列入。）
+研究中常用作对照的 MBRS、CIN 与 HiDDeN 按 Video Seal 的评测方式运行（MBRS 带 256 位，与 PixelSeal 一样把 9 个字节放三遍；CIN 带 30 位、HiDDeN 带 48 位，放前几个字节）。它们同样直接读取整幅图像，裁剪、旋转、透视、对着屏幕拍照之后一张也读不出。MBRS 是唯一把第一组图各档 JPEG 全部读出的（5 / 5 / 5 / 5，本库盲水印为 5 / 5 / 4 / 4），但对图像的改变更大（SSIMULACRA2 75.5 对 79.9，butteraugli 6.4 对 4.0；在 Kodak 照片上为 76.7 与 5.5 对 77.9 与 2.8，JPEG 30 与 WebP 60 之后反而较少，22 与 20 对 24 与 24）。HiDDeN 按其作者模型的设置对图像改变大得多，未经处理的 Kodak 照片 24 张中只读出 10 张。CIN 比 MBRS 更明显（第一组图上 SSIMULACRA2 67.0，butteraugli 9.3），JPEG 30 之后读出的比本库盲水印默认设置时少（Kodak 照片 12 张对 24 张）。
 
 用本库自己的操作做的日常处理，盲水印取默认设置时全部读出（上面 5 张图各 3 个密钥共 15 次，以及 Kodak 24 张）：放大 1.5 倍、转灰度、饱和度减半、色相转 60°、连续三次 JPEG 80、减到 256 色、锐化、伽马 0.8、3 × 3 中值、模糊 1、自动拉伸色阶、旋转 90°、镜像、放大两倍再存 JPEG 80、长边缩到 1080 再存 JPEG 85。更重的处理读出得少些（15 次与 24 张中）：模糊 2 为 13 与 22；5 × 5 中值为 15 与 22；连续三次 JPEG 50 为 12 与 24；取中间一半放大回原尺寸为 12 与 21；缩到三分之一为 13 与 21（Kodak 的照片变成 256 × 170，水印的细节已比一个像素还小）。
 
