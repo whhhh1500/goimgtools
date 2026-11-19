@@ -33,6 +33,9 @@ func Detect(lum []float64, w, h int, k Key, par Parallel) ([]byte, bool) {
 	// scratch.
 	d := &detector{k: k, p: p, w: w, h: h, par: par}
 	par = d.parallel
+	// The whole picture's residual first: the windows below take theirs
+	// from it.
+	d.residual(lum)
 	// The tiling is looked for in the whole picture and in its middle,
 	// half as wide and high: in a photograph, perspective changes the
 	// tile's size and angle across the picture, which spreads the
@@ -49,17 +52,13 @@ func Detect(lum []float64, w, h int, k Key, par Parallel) ([]byte, bool) {
 		searched := make([][]found, len(at))
 		if cw >= 128 && ch >= 128 {
 			par(len(at), func(i int) {
-				win := make([]float64, cw*ch)
-				for y := range ch {
-					copy(win[y*cw:], lum[(y+at[i][1])*w+at[i][0]:][:cw])
-				}
 				dw := &detector{k: k, p: p, w: cw, h: ch, par: d.par}
-				dw.prepare(win)
+				dw.prepare(d.window(at[i][1], at[i][0], ch, cw))
 				for _, c := range dw.search() {
 					searched[i] = append(searched[i], found{c, dw})
 				}
 				// Only its spectrum is wanted from here on (polish, lsq).
-				dw.r, dw.magMax = nil, nil
+				dw.magMax = nil
 			})
 		}
 		var all []found
@@ -72,7 +71,7 @@ func Detect(lum []float64, w, h int, k Key, par Parallel) ([]byte, bool) {
 	var whole, middle []found
 	par(2, func(i int) {
 		if i == 0 {
-			d.prepare(lum)
+			d.prepare(d.r)
 			for _, c := range d.search() {
 				whole = append(whole, found{c, d})
 			}
@@ -188,7 +187,7 @@ func Detect(lum []float64, w, h int, k Key, par Parallel) ([]byte, bool) {
 			// 1184 when read only with the sync pattern 0.5 higher.)
 			m2, _ := dd.optimize(t.m)
 			slow[j].payload, slow[j].read = dd.decode(m2)
-		} else if mp, ok := dd.perspective(lum, t.B); ok {
+		} else if mp, ok := dd.perspective(t.B); ok {
 			if m3, z3 := dd.optimize(dd.orient(mp)); z3 >= 4.5 {
 				slow[j].payload, slow[j].read = dd.decode(m3)
 			}
@@ -271,50 +270,31 @@ func (d *detector) worker() *detector {
 	return &c
 }
 
-// evenRadius is the radius of the window prepare evens the picture out
+// evenRadius is the radius of the window evenOut evens the picture out
 // over, evenFloor the share of the median of its local sizes added to each
-// one, and whitenRadius the radius of the bins whiten divides the spectrum
-// by. A small window with little of a floor lets the flat parts of a
-// damaged copy count fully, and a smoother spectrum keeps the reference's
-// peaks standing out. (Measured with the 22 attacks on 5 pictures with 3
-// keys, against 8, 1 and 3: 271 marks of 330 read against 244, with 3
-// other keys 271 against 243, the screen mark 288 against 279. Floors of
-// 0.125 and 0.5: 273 and 264; with whitenRadius 3, windows of 2, 4, 8 and
-// 16: 264, 263, 259 and 239; with a window of 4, whitenRadius 5, 10 and
-// 15: 271, 257 and 240. On the 24 Kodak photographs, not used to choose
-// them, after 18 attacks: 400 readings of 432 against 393, crops to 40%
-// 18 against 14; the blind mark at Strength 0.6 320 against 289.)
+// one, and whitenRadius the radius of the bins spectrum divides the
+// spectrum by. A small window with little of a floor lets the flat parts
+// of a damaged copy count fully, and a smoother spectrum keeps the
+// reference's peaks standing out. (Measured with the picture whitened as a
+// whole, with the 22 attacks on 5 pictures with 3 keys, against 8, 1 and
+// 3: 271 marks of 330 read against 244, with 3 other keys 271 against 243,
+// the screen mark 288 against 279. Floors of 0.125 and 0.5: 273 and 264;
+// with whitenRadius 3, windows of 2, 4, 8 and 16: 264, 263, 259 and 239;
+// with a window of 4, whitenRadius 5, 10 and 15: 271, 257 and 240. On the
+// 24 Kodak photographs, not used to choose them, after 18 attacks: 400
+// readings of 432 against 393, crops to 40% 18 against 14; the blind mark
+// at Strength 0.6 320 against 289. Whitened block by block, windows of 2
+// to 8 and floors of 0.125 to 0.5 kept the payload's SNR within 0.2 dB.)
 const (
 	evenRadius   = 3
 	evenFloor    = 0.25
 	whitenRadius = 7
 )
 
-// prepare whitens the picture (its spectrum flattened), evens out its
-// parts (each place over the size of the picture around it, so that flat
-// areas, where the whitened picture is mostly the mark, count as much as
-// busy ones), and whitens it again.
-func (d *detector) prepare(lum []float64) {
-	r1, _ := d.whiten(lum)
-	sq := make([]float64, len(r1))
-	for i, v := range r1 {
-		sq[i] = v * v
-	}
-	loc := boxClamp(sq, d.w, d.h, evenRadius)
-	for i, v := range loc {
-		loc[i] = math.Sqrt(v)
-	}
-	med := median(loc)
-	for i := range r1 {
-		// Nothing to even out where the picture is flat all round.
-		if s := loc[i] + float64(evenFloor*med); s > 0 {
-			r1[i] /= s
-		} else {
-			r1[i] = 0
-		}
-	}
-	var mag []float32
-	d.r, mag = d.whiten(r1)
+// prepare works out the spectrum the tiling is looked for in: that of the
+// residual (see residual), whitened.
+func (d *detector) prepare(r []float64) {
+	mag := d.spectrum(r)
 	if m := float32(median(mag)); m > 0 {
 		for i := range mag {
 			mag[i] /= m
@@ -325,9 +305,290 @@ func (d *detector) prepare(lum []float64) {
 	d.magBox = boxWrap3(mag, d.wp, d.hp)
 }
 
-// whiten returns y with its spectrum divided by the spectrum's local mean
-// magnitude, and the magnitude of the whitened spectrum (hp x wp).
-func (d *detector) whiten(y []float64) ([]float64, []float32) {
+// residual works out what the tiles are folded from (r), and the spectrum
+// is taken of: the picture whitened block by block (localWhiten), evened
+// out, and whitened block by block again. A photograph's texture runs
+// different ways in different places, which a block's own spectrum takes
+// out and the whole picture's does not; a photograph of a screen's moiré,
+// strong at a few frequencies, it takes down to the rest. (Measured with
+// 3 keys on the 24 Kodak photographs marked at Strength 0.75, after the 18
+// attacks made with Pillow: 1246 readings of 1296 against 1217 with the
+// picture whitened as a whole, cropped to 25% 42 against 30, to 40% 62
+// against 51, WebP 60 72 against 67, made 70% and JPEG 80 72 against 71;
+// on 5 other pictures, among them a screenshot and a photograph mostly of
+// a smooth background, after 13 attacks, 159 against 154, none fewer. With
+// the mapping found, blocks of 16, 64 and 128 kept less of the payload, as
+// did the picture whitened as a whole first. The spectrum of the picture
+// whitened as a whole, with the tiles folded from this, read 1239 and 155.)
+func (d *detector) residual(lum []float64) {
+	r := d.localWhiten(lum, localFloorFirst)
+	d.evenOut(r)
+	d.r = d.localWhiten(r, localFloorSecond)
+}
+
+// window is the residual of the h x w window at (y, x), as the whole
+// picture's: block by block, it is the window's own but near its edges.
+func (d *detector) window(y, x, h, w int) []float64 {
+	o := make([]float64, w*h)
+	for j := range h {
+		copy(o[j*w:], d.r[(y+j)*d.w+x:][:w])
+	}
+	return o
+}
+
+// evenOut divides each place by the size of the picture around it, so
+// that flat areas, where the whitened picture is mostly the mark, count as
+// much as busy ones.
+func (d *detector) evenOut(r []float64) {
+	loc := make([]float32, len(r))
+	for i, v := range r {
+		loc[i] = float32(v * v)
+	}
+	boxClampInPlace(loc, d.w, d.h, evenRadius)
+	for i, v := range loc {
+		loc[i] = float32(math.Sqrt(float64(v)))
+	}
+	med := median(loc)
+	for i := range r {
+		// Nothing to even out where the picture is flat all round.
+		if s := float64(loc[i]) + float64(evenFloor*med); s > 0 {
+			r[i] /= s
+		} else {
+			r[i] = 0
+		}
+	}
+}
+
+// localBlock is the side of the blocks localWhiten works on (a power of
+// two), and localFloorFirst and localFloorSecond its floor in residual's
+// first pass and second. Without a floor a flat part's little noise, all
+// that JPEG 30 leaves of a smooth background, is made as loud as the rest;
+// too much of one, and the blocks are whitened alike. (Measured as in
+// residual, with the spectrum of the picture whitened as a whole: floors
+// of 0, 0.25, 2, 4 and 8 in both passes read 156, 157, 154, 153 and 154 of
+// the 5 pictures and 1236, 1239, 1240, 1237 and 1231 of the Kodak
+// photographs, all with fewer after JPEG 30 or WebP 60 than the picture
+// whitened as a whole; 0.5 and 4, 1 and 8, 2 and 4 and 0.5 and 8 156,
+// 155, 154 and 154 and 1239 to 1240, none fewer. With the spectrum of
+// this, 0.25 and 1 read 165 and 1254, but one fewer after JPEG 30 and
+// after WebP 60; 0.5 and 2 163 and 1250, the same.)
+const (
+	localBlock       = 32
+	localFloorFirst  = 1.0
+	localFloorSecond = 4.0
+)
+
+// localWhiten returns y whitened block by block: blocks of localBlock,
+// overlapping by half, each windowed by a sine on the way in and again on
+// the way out (the products sum to one), its mean taken out and its
+// spectrum divided by its own mean magnitude over 3 x 3 bins plus floor
+// times that mean over the blocks (Welch's method, over every other row of
+// them); the picture mirrored past its edges. Two blocks side by side go
+// through one complex transform, as its real and imaginary parts. Rows of
+// blocks two apart do not overlap: the even ones, then the odd ones, are
+// added in, so the sum is the same however the work is shared out.
+func (d *detector) localWhiten(y []float64, floor float64) []float64 {
+	w, h := d.w, d.h
+	const bs, hop, n = localBlock, localBlock / 2, localBlock * localBlock
+	var win [bs]float64
+	for i := range win {
+		win[i] = math.Sin(float64(math.Pi*(float64(i)+0.5)) / bs)
+	}
+	plan := newFFTPlan(bs)
+	rows, cols := (h+hop-1)/hop+1, (w+hop-1)/hop+1
+	type scratch struct {
+		a        []complex64
+		col      []complex64
+		blk      [2][n]float32
+		sm       [2][n]float32
+		mag, tmp [n]float32
+	}
+	newScratch := func() *scratch {
+		return &scratch{a: make([]complex64, n), col: make([]complex64, bs)}
+	}
+	// load transforms blocks c and c+1 of the row of blocks from by (none
+	// past the last), their means out, windowed, and leaves in s.sm their
+	// smoothed magnitudes: the two spectra, each twice its size, are X[f] =
+	// Z[f] + conj(Z[-f]) and Y[f] = -i (Z[f] - conj(Z[-f])).
+	load := func(s *scratch, by, c int) {
+		for p := range 2 {
+			if c+p == cols {
+				clear(s.blk[p][:])
+				continue
+			}
+			bx := (c+p)*hop - hop
+			var mean float64
+			for j := range bs {
+				src := y[mirror(by+j, h)*w:][:w]
+				for i := range bs {
+					v := src[mirror(bx+i, w)]
+					s.blk[p][j*bs+i] = float32(v)
+					mean += v
+				}
+			}
+			mean = float64(mean / n)
+			for j := range bs {
+				for i := range bs {
+					v := float64(s.blk[p][j*bs+i]) - mean
+					s.blk[p][j*bs+i] = float32(float64(float64(v*win[j]) * win[i]))
+				}
+			}
+		}
+		for i := range s.a {
+			s.a[i] = complex(s.blk[0][i], s.blk[1][i])
+		}
+		fft32(s.a, s.col, plan, false)
+		for p := range 2 {
+			for f := range s.a {
+				g := (bs-f/bs)%bs*bs + (bs-f%bs)%bs
+				zr, zi, gr, gi := real(s.a[f]), imag(s.a[f]), real(s.a[g]), imag(s.a[g])
+				re, im := zr+gr, zi-gi
+				if p == 1 {
+					re, im = zi+gi, gr-zr
+				}
+				s.mag[f] = float32(math.Sqrt(float64(float32(re*re) + float32(im*im))))
+			}
+			box3Wrap(&s.sm[p], &s.mag, &s.tmp)
+		}
+	}
+	// The mean of the smoothed magnitudes, over the even rows of blocks
+	// (Welch's method), summed row by row and then in order.
+	var base [n]float32
+	if floor > 0 {
+		half := (rows + 1) / 2
+		sums := make([][n]float64, half)
+		counts := make([]int, half)
+		d.parallel(half, func(k int) {
+			s := newScratch()
+			for c := 0; c < cols; c += 2 {
+				load(s, 2*k*hop-hop, c)
+				for p := range min(2, cols-c) {
+					for f, v := range s.sm[p] {
+						sums[k][f] += float64(v)
+					}
+					counts[k]++
+				}
+			}
+		})
+		var total [n]float64
+		cnt := 0
+		for k := range half {
+			for f, v := range sums[k] {
+				total[f] += v
+			}
+			cnt += counts[k]
+		}
+		for f := range base {
+			base[f] = float32(float64(floor*total[f]) / float64(cnt))
+		}
+	}
+	out := make([]float64, w*h)
+	for parity := range 2 {
+		d.parallel((rows-parity+1)/2, func(k int) {
+			by := (2*k+parity)*hop - hop
+			s := newScratch()
+			a := s.a
+			for c := 0; c < cols; c += 2 {
+				load(s, by, c)
+				// Each divided by its own (the division keeps each one's
+				// symmetry, so they come back apart), as X + i Y.
+				for f := range a {
+					g := (bs-f/bs)%bs*bs + (bs-f%bs)%bs
+					zr, zi, gr, gi := real(a[f]), imag(a[f]), real(a[g]), imag(a[g])
+					sx, sy := s.sm[0][f]+base[f]+1e-9, s.sm[1][f]+base[f]+1e-9
+					xr, xi, yr, yi := (zr+gr)/sx, (zi-gi)/sx, (zi+gi)/sy, (gr-zr)/sy
+					s.blk[0][f], s.blk[1][f] = xr-yi, xi+yr
+				}
+				for f := range a {
+					a[f] = complex(s.blk[0][f], s.blk[1][f])
+				}
+				a[0] = 0
+				fft32(a, s.col, plan, true)
+				for p := range 2 {
+					if c+p == cols {
+						continue
+					}
+					bx := (c+p)*hop - hop
+					for j := range bs {
+						yy := by + j
+						if yy < 0 || yy >= h {
+							continue
+						}
+						row := out[yy*w:][:w]
+						for i := range bs {
+							if xx := bx + i; xx >= 0 && xx < w {
+								v := real(a[j*bs+i])
+								if p == 1 {
+									v = imag(a[j*bs+i])
+								}
+								row[xx] += float64(float64(float64(v)*win[j]) * win[i])
+							}
+						}
+					}
+				}
+			}
+		})
+	}
+	return out
+}
+
+// fft32 is the 2-D DFT of a localBlock x localBlock array, in place, by
+// plan (of localBlock), the columns through col; inverse without the 1/n.
+func fft32(a, col []complex64, plan *fftPlan, inverse bool) {
+	const bs = localBlock
+	for y := range bs {
+		plan.transform(a[y*bs:], inverse)
+	}
+	for x := range bs {
+		for y := range bs {
+			col[y] = a[y*bs+x]
+		}
+		plan.transform(col, inverse)
+		for y := range bs {
+			a[y*bs+x] = col[y]
+		}
+	}
+}
+
+// box3Wrap is the mean of v over 3 x 3 around each place of a localBlock x
+// localBlock array, wrapping round, by way of tmp.
+func box3Wrap(dst, v, tmp *[localBlock * localBlock]float32) {
+	const bs = localBlock
+	for y := range bs {
+		r := v[y*bs:][:bs]
+		t := tmp[y*bs:][:bs]
+		t[0] = r[bs-1] + r[0] + r[1]
+		for x := 1; x < bs-1; x++ {
+			t[x] = r[x-1] + r[x] + r[x+1]
+		}
+		t[bs-1] = r[bs-2] + r[bs-1] + r[0]
+	}
+	for y := range bs {
+		u, m, l := tmp[(y+bs-1)%bs*bs:][:bs], tmp[y*bs:][:bs], tmp[(y+1)%bs*bs:][:bs]
+		o := dst[y*bs:][:bs]
+		for x := range bs {
+			o[x] = (u[x] + m[x] + l[x]) / 9
+		}
+	}
+}
+
+// mirror brings i into [0, n) by reflecting it at the ends (n > 0).
+func mirror(i, n int) int {
+	for i < 0 || i >= n {
+		if i < 0 {
+			i = -i - 1
+		}
+		if i >= n {
+			i = 2*n - 1 - i
+		}
+	}
+	return i
+}
+
+// spectrum returns the magnitude of y's spectrum (hp x wp, y windowed and
+// padded to powers of two) over its mean around each frequency, 15 x 15
+// (whitened).
+func (d *detector) spectrum(y []float64) []float32 {
 	w, h := d.w, d.h
 	d.hp, d.wp = pow2(h), pow2(w)
 	var mean float64
@@ -348,22 +609,13 @@ func (d *detector) whiten(y []float64) ([]float64, []float32) {
 		re, im := real(v), imag(v)
 		white[i] = float32(math.Sqrt(float64(float32(re*re) + float32(im*im))))
 	}
+	a = nil
 	sm := boxWrap(white, d.wp, d.hp, whitenRadius)
-	for i := range a {
-		s := sm[i] + 1e-9
-		a[i] = complex(real(a[i])/s, imag(a[i])/s)
-		white[i] /= s
+	for i := range white {
+		white[i] /= sm[i] + 1e-9
 	}
-	sm = nil
-	a[0], white[0] = 0, 0
-	fft2Par(a, d.hp, d.wp, true, d.par)
-	r := make([]float64, w*h)
-	for j := range h {
-		for i := range w {
-			r[j*w+i] = float64(real(a[j*d.wp+i]))
-		}
-	}
-	return r, white
+	white[0] = 0
+	return white
 }
 
 // tukey is a window that is flat but for 5% at each end.

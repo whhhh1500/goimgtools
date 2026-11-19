@@ -261,6 +261,61 @@ func TestDetectParallel(t *testing.T) {
 	}
 }
 
+// TestLocalWhiten: whitened block by block, a busy half and a flat half
+// with a little noise come out alike without a floor, and the flat half
+// far quieter with one; shared out, the same.
+func TestLocalWhiten(t *testing.T) {
+	const w, h = 160, 96
+	y := make([]float64, w*h)
+	r := uint32(1)
+	for i := range y {
+		r = r*1664525 + 1013904223
+		n := float64(r>>24) - 127.5
+		if i%w < w/2 {
+			y[i] = 128 + n/256 // flat, noise of under a level
+		} else {
+			y[i] = 128 + n/2.5 // busy
+		}
+	}
+	quiet := func(o []float64) float64 {
+		var a, b float64
+		for i, v := range o {
+			// Away from the halves' border, which blocks there see both.
+			if x := i % w; x < w/2-32 {
+				a += v * v
+			} else if x >= w/2+32 {
+				b += v * v
+			}
+		}
+		return math.Sqrt(a / b)
+	}
+	d := &detector{w: w, h: h}
+	if q := quiet(d.localWhiten(y, 0)); q < 0.5 {
+		t.Errorf("without a floor, the flat half %.2f of the busy one", q)
+	}
+	want := d.localWhiten(y, localFloorFirst)
+	if q := quiet(want); q > 0.1 {
+		t.Errorf("with a floor, the flat half %.2f of the busy one", q)
+	}
+	d.par = func(n int, fn func(i int)) {
+		var wg sync.WaitGroup
+		for i := range n {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				fn(i)
+			}()
+		}
+		wg.Wait()
+	}
+	got := d.localWhiten(y, localFloorFirst)
+	for i := range got {
+		if got[i] != want[i] {
+			t.Fatalf("shared out, %v at %d against %v", got[i], i, want[i])
+		}
+	}
+}
+
 // TestTexture: a flat picture's texture is 0, a checkerboard of 0 and 90's
 // (the luma's deviation over every 3 x 3 window, 4 of one and 5 of the
 // other) about 44.7; a small busy picture's blind mark gets chips of a

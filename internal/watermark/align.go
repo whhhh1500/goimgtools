@@ -140,9 +140,13 @@ func (d *detector) foldWeighed(m *mapping) ([]float64, []float64) {
 		}
 	}
 	// Each class's gain g (the mean of its places is g times what is known,
-	// plus the payload and noise) and noise per place v: weight g / v.
-	var weight [classes]float64
-	found := false
+	// plus the payload and noise) and noise per place v: weight g / v. Each
+	// v has a hundredth of their mean added, so that a class of next to
+	// nothing (the black a turn leaves, which the residual keeps at nothing)
+	// cannot weigh far more than the rest and scatter each sample's sum.
+	// (On a photograph turned by 30° and cropped, the payload's SNR -37 dB
+	// without, 3.3 dB with; on the attacks measured otherwise the same.)
+	var gain, noise, weight [classes]float64
 	for c := range classes {
 		s, n := sum[c*nn:][:nn], cnt[c*nn:][:nn]
 		var mk, kk float64
@@ -165,8 +169,16 @@ func (d *detector) foldWeighed(m *mapping) ([]float64, []float64) {
 				used++
 			}
 		}
-		v /= float64(used)
-		if g > 0 && v > 0 {
+		gain[c], noise[c] = g, v/float64(used)
+	}
+	var floor float64
+	for _, v := range noise {
+		floor += v
+	}
+	floor = float64(floor / (100 * classes))
+	found := false
+	for c := range classes {
+		if g, v := gain[c], noise[c]+floor; g > 0 && v > 0 {
 			weight[c] = g / v
 			found = true
 		}

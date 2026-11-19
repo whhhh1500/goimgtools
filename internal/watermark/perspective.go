@@ -8,7 +8,7 @@ import "math"
 // tile covers changes as the cube of the projective denominator, so the
 // sizes give its two perspective terms; the linear terms are B's. The
 // tiles' start is left to the sync pattern.
-func (d *detector) perspective(lum []float64, B mat2) (mapping, bool) {
+func (d *detector) perspective(B mat2) (mapping, bool) {
 	w, h := d.w, d.h
 	cw, ch := w/2, h/2
 	if cw < 128 || ch < 128 {
@@ -26,12 +26,8 @@ func (d *detector) perspective(lum []float64, B mat2) (mapping, bool) {
 	var each [4][3]float64
 	d.parallel(len(windows), func(i int) {
 		o := windows[i]
-		win := make([]float64, cw*ch)
-		for y := range ch {
-			copy(win[y*cw:], lum[(y+o[0])*w+o[1]:][:cw])
-		}
 		dw := &detector{k: d.k, p: d.p, w: cw, h: ch, par: d.par}
-		dw.prepare(win)
+		dw.prepare(d.window(o[0], o[1], ch, cw))
 		Bw := dw.polishFrom(B)
 		Bl, ok := dw.lsq(Bw)
 		if !ok {
