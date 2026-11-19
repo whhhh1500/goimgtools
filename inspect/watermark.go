@@ -58,15 +58,22 @@ func ReadWatermark(img *goimgtools.Image, key string) ([]byte, bool, error) {
 	b := src.Bounds()
 	lw, lh := b.Dx(), b.Dy()
 	env := pipeline.EnvOf(src)
-	colour := src.ColorModel() != color.GrayModel && src.ColorModel() != color.Gray16Model
 	need := int64(8) * int64(lw) * int64(lh)
-	if colour {
-		need *= 2
-	}
 	if err := env.Budget.Reserve(need, "the brightness of the picture (ReadWatermark)"); err != nil {
 		return nil, false, err
 	}
 	defer env.Budget.Release(need)
+	// The colour is kept for the second reading (below) where the limit
+	// leaves room for it; otherwise the brightness is read once, as it
+	// would be from a grey picture.
+	colour := src.ColorModel() != color.GrayModel && src.ColorModel() != color.Gray16Model
+	if colour {
+		if env.Budget.Reserve(need, "the colour of the picture (ReadWatermark)") == nil {
+			defer env.Budget.Release(need)
+		} else {
+			colour = false
+		}
+	}
 	l := make([]float64, lw*lh)
 	var cb, cr []float32
 	if colour {

@@ -331,3 +331,77 @@ func TestNewMarker(t *testing.T) {
 		}
 	}
 }
+
+// TestCleanChroma: a grey mark over a colourful texture whose brightness
+// follows its colour; cleaned, the texture left in the brightness is less
+// and the mark is kept. A grey picture is left as it is.
+func TestCleanChroma(t *testing.T) {
+	const w, h = 300, 200
+	l := make([]float64, w*h)
+	cb, cr := make([]float32, w*h), make([]float32, w*h)
+	mk := make([]float64, w*h)
+	r := uint32(7)
+	next := func() float64 {
+		r = r*1664525 + 1013904223
+		return float64(r>>8)/float64(1<<24) - 0.5
+	}
+	for i := range l {
+		red, blue := 40*next(), 40*next()
+		grey := 5 * next()
+		mk[i] = 4 * next()
+		v := 128 + float64(0.299*red) + float64(0.114*blue) + grey
+		l[i] = v + mk[i]
+		cb[i], cr[i] = float32(128+blue-v), float32(128+red-v)
+	}
+	dot := func(a, b []float64) float64 { // of a less its mean with b
+		var s, mean float64
+		for _, v := range a {
+			mean += v
+		}
+		mean /= float64(len(a))
+		for i := range a {
+			s += float64((a[i] - mean) * b[i])
+		}
+		return s
+	}
+	resid := func(v []float64) float64 {
+		var s, mean float64
+		for i := range v {
+			mean += v[i] - mk[i]
+		}
+		mean /= float64(len(v))
+		for i := range v {
+			d := v[i] - mk[i] - mean
+			s += float64(d * d)
+		}
+		return s
+	}
+	before, mBefore := resid(l), dot(l, mk)
+	c := append([]float64(nil), l...)
+	if !CleanChroma(c, cb, cr, w, h) {
+		t.Fatal("a colourful picture not cleaned")
+	}
+	after, mAfter := resid(c), dot(c, mk)
+	if !(after < 0.8*before) {
+		t.Errorf("texture left %.3g of %.3g", after, before)
+	}
+	if !(mAfter > 0.9*mBefore) {
+		t.Errorf("mark %.3g of %.3g", mAfter, mBefore)
+	}
+	for i := range cb {
+		cb[i], cr[i] = 0, 0
+	}
+	g := append([]float64(nil), l...)
+	if CleanChroma(g, cb, cr, w, h) || !slicesEqual(g, l) {
+		t.Error("a grey picture was changed")
+	}
+}
+
+func slicesEqual(a, b []float64) bool {
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return len(a) == len(b)
+}
