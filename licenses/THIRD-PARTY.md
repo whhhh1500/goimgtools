@@ -23,6 +23,7 @@ rows at a time instead of on a whole image; the pixel arithmetic is theirs.
 | `internal/webpstream`, `internal/webpstream/vp8`, `internal/webpstream/vp8l` | `golang.org/x/image/webp`, `vp8`, `vp8l` |
 | `internal/resize/resize.go` (weights and per-pixel arithmetic) | `golang.org/x/image/draw` |
 | `internal/vp8enc/tables.go` (tables fixed by the VP8 format) | `golang.org/x/image/vp8` |
+| `internal/gflate` (the compressor, as it is; `ResetDict` and the loads of `load_store_unsafe.go` added) | `compress/flate` of Go 1.27 |
 
 ## Independent JPEG Group's library and libjpeg-turbo
 

@@ -16,10 +16,10 @@ package pngstream
 
 import (
 	"bytes"
+	"compress/zlib"
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/klauspost/compress/zlib"
 	"hash"
 	"hash/crc32"
 	"image"

@@ -7,9 +7,8 @@ import (
 	"hash/adler32"
 	"io"
 
-	kflate "github.com/klauspost/compress/flate"
-
 	"github.com/whhhh1500/goimgtools/internal/deflate"
+	"github.com/whhhh1500/goimgtools/internal/gflate"
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
@@ -20,11 +19,11 @@ import (
 // block but the last ends with a sync flush, the last is final). The
 // checksum is over all the data, in order.
 //
-// Up to level 6 the blocks are compressed with compress/flate; with Go
-// 1.27 or later, data of more than one block is compressed with
-// klauspost/compress's flate instead, which writes the same bytes and whose
-// writer takes a new dictionary when it is reset: compress/flate's has to
-// be made anew for each block, about 0.9MB of garbage per 256KB of data.
+// Up to level 6 the blocks are compressed with compress/flate; data of
+// more than one block with Go 1.27's compress/flate (internal/gflate, the
+// same with every Go version), whose writer takes a new dictionary when it
+// is reset: compress/flate's has to be made anew for each block, about
+// 0.9MB of garbage per 256KB of data (at level 6, 16% more time).
 // Level 7 uses libdeflate's lazy parsing (internal/deflate, its level 7;
 // see lazyLevel), the same with every Go version. Levels 8 and 9 use the
 // near-optimal parsing of libdeflate, with the settings of its levels 10
@@ -48,12 +47,12 @@ type zBlocks struct {
 	held  int64 // reserved from the budget
 
 	// Without helpers, up to level 7: the compressor of the current block,
-	// and klauspost's, reset for each block, when there is more than one.
+	// and gflate's, reset for each block, when there is more than one.
 	fw    flateWriter
-	kw    *kflate.Writer
-	multi bool // the data takes more than one block, for klauspost's flate
+	kw    *gflate.Writer
+	multi bool // the data takes more than one block, for gflate
 	// With helpers, up to level 7: the compressors not in use.
-	kws chan *kflate.Writer
+	kws chan *gflate.Writer
 
 	// Otherwise.
 	ways int
@@ -154,16 +153,7 @@ type zBlock struct {
 	wait   func()
 }
 
-// kLevel is klauspost's level for compress/flate's: its default is level 5,
-// compress/flate's is 6.
-func kLevel(level int) int {
-	if level == flate.DefaultCompression {
-		return 6
-	}
-	return level
-}
-
-// flateWriter is a deflate compressor: compress/flate's or klauspost's.
+// flateWriter is a deflate compressor: compress/flate's or gflate's.
 type flateWriter interface {
 	io.WriteCloser
 	Flush() error
@@ -184,7 +174,7 @@ func (r recorder) Write(p []byte) (int, error) {
 
 // newZBlocks starts the zlib stream of total bytes of data.
 func newZBlocks(w io.Writer, level int, env *pipeline.Env, total int64) (*zBlocks, error) {
-	z := &zBlocks{w: w, env: env, level: level, sum: adler32.New(), ways: env.Helpers() + 1, multi: kflateSame && total > zBlockBytes,
+	z := &zBlocks{w: w, env: env, level: level, sum: adler32.New(), ways: env.Helpers() + 1, multi: total > zBlockBytes,
 		blk: int(max(1, min(total, zBlockBytes)))}
 	if p, ok := nearLevels[level]; ok {
 		z.near = &p
@@ -195,7 +185,7 @@ func newZBlocks(w io.Writer, level int, env *pipeline.Env, total int64) (*zBlock
 		z.near = &p
 		z.comps = make(chan *deflate.Compressor, z.ways)
 	} else if z.multi {
-		z.kws = make(chan *kflate.Writer, z.ways+1)
+		z.kws = make(chan *gflate.Writer, z.ways+1)
 	}
 	if err := env.Budget.Reserve(zWindow, "png compression window"); err != nil {
 		return nil, err
@@ -206,7 +196,7 @@ func newZBlocks(w io.Writer, level int, env *pipeline.Env, total int64) (*zBlock
 	}
 	if z.ways == 1 && z.near == nil {
 		if z.multi {
-			kw, err := kflate.NewWriter(z.w, kLevel(level))
+			kw, err := gflate.NewWriter(z.w, level)
 			if err != nil {
 				return z, err
 			}
@@ -416,12 +406,12 @@ func (z *zBlocks) compressBlock(out io.Writer, dict, data []byte, level int, las
 		}
 		fw = w
 	} else {
-		var kw *kflate.Writer
+		var kw *gflate.Writer
 		select {
 		case kw = <-z.kws:
 			kw.ResetDict(out, dict)
 		default:
-			w, err := kflate.NewWriterDict(out, kLevel(level), dict)
+			w, err := gflate.NewWriterDict(out, level, dict)
 			if err != nil {
 				return err
 			}

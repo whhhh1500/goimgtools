@@ -2,6 +2,12 @@ English | [中文](zh-CN/CHANGELOG.md)
 
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- No dependency on `github.com/klauspost/compress`: the dependencies are `golang.org/x/image`, `x/text` and `x/sys` only. PNG data of more than one block, at levels 1 to 6, is compressed by Go 1.27's `compress/flate`, copied into the package (`internal/gflate`, with a method to reset it with a dictionary and, on little-endian processors, word loads as `klauspost/compress` makes them): the same bytes as 0.2.0 with Go 1.27, and now with Go 1.26 too; at about the same speed (a picture of 6000×4000 at level 6, 720ms against 707ms on one core, 276ms against 268ms on four). Compressed text and ICC profiles in PNG files are read by `compress/zlib`.
+
 ## 0.2.0 (2026-11-20)
 
 ### Upgrading from 0.1.0
