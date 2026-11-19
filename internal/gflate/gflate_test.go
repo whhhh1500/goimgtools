@@ -13,13 +13,14 @@ import (
 	"testing"
 )
 
-// TestSameAsStdlib: every level writes what compress/flate writes, with
-// and without a dictionary, closed and flushed.
+// TestSameAsStdlib: the levels zBlocks uses (to 6) write what compress/flate
+// writes, with and without a dictionary, closed and flushed. (Copied from
+// Go 1.27.1; later releases of Go 1.27 changed levels 7 to 9 only.)
 func TestSameAsStdlib(t *testing.T) {
 	for si, data := range samples() {
 		dict := data[:32<<10]
 		body := data[32<<10:]
-		for level := -2; level <= 9; level++ {
+		for level := -2; level <= 6; level++ {
 			for _, d := range [][]byte{nil, dict} {
 				var a, b bytes.Buffer
 				wa, err := flate.NewWriterDict(&a, level, d)

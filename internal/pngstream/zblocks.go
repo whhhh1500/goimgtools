@@ -19,11 +19,12 @@ import (
 // block but the last ends with a sync flush, the last is final). The
 // checksum is over all the data, in order.
 //
-// Up to level 6 the blocks are compressed with compress/flate; data of
-// more than one block with Go 1.27's compress/flate (internal/gflate, the
-// same with every Go version), whose writer takes a new dictionary when it
-// is reset: compress/flate's has to be made anew for each block, about
-// 0.9MB of garbage per 256KB of data (at level 6, 16% more time).
+// Up to level 6 the blocks are compressed with compress/flate; with Go
+// 1.27 or later, data of more than one block with internal/gflate, Go
+// 1.27's compress/flate, which writes the same bytes and whose writer takes
+// a new dictionary when it is reset: compress/flate's has to be made anew
+// for each block, about 0.9MB of garbage per 256KB of data (at level 6, 16%
+// more time).
 // Level 7 uses libdeflate's lazy parsing (internal/deflate, its level 7;
 // see lazyLevel), the same with every Go version. Levels 8 and 9 use the
 // near-optimal parsing of libdeflate, with the settings of its levels 10
@@ -174,7 +175,7 @@ func (r recorder) Write(p []byte) (int, error) {
 
 // newZBlocks starts the zlib stream of total bytes of data.
 func newZBlocks(w io.Writer, level int, env *pipeline.Env, total int64) (*zBlocks, error) {
-	z := &zBlocks{w: w, env: env, level: level, sum: adler32.New(), ways: env.Helpers() + 1, multi: total > zBlockBytes,
+	z := &zBlocks{w: w, env: env, level: level, sum: adler32.New(), ways: env.Helpers() + 1, multi: gflateSame && total > zBlockBytes,
 		blk: int(max(1, min(total, zBlockBytes)))}
 	if p, ok := nearLevels[level]; ok {
 		z.near = &p
