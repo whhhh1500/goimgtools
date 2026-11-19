@@ -174,7 +174,63 @@ func tile(p *patterns, payload []byte, k Key) []float64 {
 	for i := range t {
 		t[i] *= scale
 	}
+	evenEnergy(t)
 	return t
+}
+
+// evenEnergy divides each chip of the tile (N x N, repeating) by the root
+// of the mean power of the 3 x 3 chips around it, over the whole tile's,
+// and scales the tile back to unit power. Where the chips of the reference,
+// the sync pattern and the payload happen to add up the tile is stronger
+// than elsewhere, the same in every copy of it, and those places are what
+// butteraugli finds first: its largest distance fell on them, a few spots
+// a tile apart, in most of the 24 Kodak photographs. Evened, the mark is
+// as strong and less visible. (Measured with 3 keys, with the amplitudes
+// as they were before (see kinds): on the 24 Kodak photographs after the
+// 18 attacks made with Pillow, at Strength 0.75 butteraugli 1.88 against
+// 2.10 and SSIMULACRA2 84.45 against 84.07; at 0.77, still less visible
+// (83.98, 1.92), 1190 readings of 1296 against 1188 at 0.75. On the 5
+// pictures of the first set after the 22 attacks made with this package,
+// 280 of 330 against 280, butteraugli 3.27 against 4.00. The reference and
+// the sync pattern lose 0.4 dB of their share, the payload none. Rejected:
+// evening twice or 4 times (butteraugli 1.86 and 1.82, but 1186
+// readings), over 5 x 5 to 9 x 9 chips (less gain), only where the tile
+// is stronger (less gain), keeping the reference's and the sync pattern's
+// shares (1233 readings at the default against 1236 with the amplitudes
+// raised), the reference's phases chosen for an even sum (no gain), the
+// noise visibility function rising later with the picture's texture (as
+// visible, fewer crops to 25% read) and the mark less moved away from
+// white and black (a mostly white screenshot lost after JPEG 70: 275 of
+// 330).)
+func evenEnergy(t []float64) {
+	e := make([]float64, N*N)
+	var mean float64
+	for y := range N {
+		for x := range N {
+			var s float64
+			for dy := -1; dy <= 1; dy++ {
+				row := t[mod(y+dy, N)*N:][:N]
+				for dx := -1; dx <= 1; dx++ {
+					v := row[mod(x+dx, N)]
+					s += float64(v * v)
+				}
+			}
+			e[y*N+x] = s
+			mean += s
+		}
+	}
+	mean /= N * N
+	var power float64
+	for i, s := range e {
+		if s > 0 {
+			t[i] *= math.Sqrt(mean / s)
+		}
+		power += float64(t[i] * t[i])
+	}
+	scale := 1 / math.Sqrt(power/(N*N))
+	for i := range t {
+		t[i] *= scale
+	}
 }
 
 func abs(v int) int {
