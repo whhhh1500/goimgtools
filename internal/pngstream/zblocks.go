@@ -89,6 +89,7 @@ type zBlocks struct {
 	pend    byte
 	pendN   int
 	pending []*zBlock
+	prepaid bool // the first compressor is reserved already
 }
 
 const (
@@ -233,7 +234,8 @@ func withSplit(p deflate.Params, noSkip bool, passes int) deflate.Params {
 // nearBytes is the memory levels 8 to 10 take beyond what level 7 takes
 // without helpers, for images of the width: a compressor, and a block
 // gathered for it (for each helper too, when the limit allows; see
-// compressor), and the search of the rows' filters (see bruteFilter).
+// compressor), the search of the rows' filters (see bruteFilter) and the
+// data chunk (see idatChunker), at most.
 func nearBytes(level, width int) int64 {
 	var comp int64
 	block := int64(zBlockBytes)
@@ -246,8 +248,12 @@ func nearBytes(level, width int) int64 {
 		return 0
 	}
 	row := 1 + 8*width // at most
-	return comp + zWindow + 2*block + zOutSlack + bruteBytes(row, level >= zopfliLevel) + int64(trialBytes+row) +
-		nearEstimatorBytes - estimatorBytes + int64(2*estWindowNear+trialBytes+row)
+	lanes := 0
+	if level >= zopfliLevel {
+		lanes = nTrial
+	}
+	return comp + zWindow + 2*block + zOutSlack + idatBytes + bruteBytes(row, level >= zopfliLevel) +
+		trialNeed(row, segmentBytes(level), true, lanes) - trialNeed(row, trialBytes, false, 0)
 }
 
 func withBlocks(p deflate.Params, blockLen int) deflate.Params {
@@ -260,7 +266,7 @@ func withBlocks(p deflate.Params, blockLen int) deflate.Params {
 // made: written out again in those sizes, the bytes are grouped into IDAT
 // chunks as they are when the compressor writes to the output itself,
 // without helpers (the buffer that makes the chunks passes a large write
-// on whole).
+// on whole). From level 8 the chunks are of a fixed size (see idatChunker).
 type zBlock struct {
 	buf    []byte // the dictionary, then the data
 	dict   int    // the length of the dictionary
@@ -318,6 +324,15 @@ func newZBlocks(w io.Writer, level int, env *pipeline.Env, total int64) (*zBlock
 		return nil, err
 	}
 	z.held = zWindow
+	if level == zopfliLevel {
+		// The first compressor is reserved at once, before the rest of the
+		// encoder (and the blocks waiting for it) take the room it needs.
+		if err := env.Budget.Reserve(z.compBytes, "png compressor"); err != nil {
+			return z, err
+		}
+		z.held += z.compBytes
+		z.prepaid = true
+	}
 	if _, err := z.w.Write(z.header()); err != nil {
 		return z, err
 	}
@@ -469,7 +484,11 @@ func (z *zBlocks) ahead() int64 {
 	if z.newComp == nil {
 		return 0
 	}
-	return z.compBytes + 2*int64(zWindow+2*z.blk+zOutSlack)
+	n := 2 * int64(zWindow+2*z.blk+zOutSlack)
+	if !z.prepaid {
+		n += z.compBytes
+	}
+	return n
 }
 
 // tryCompressor returns a free compressor, or a new one if the memory limit
@@ -479,6 +498,10 @@ func (z *zBlocks) tryCompressor() blockCompressor {
 	case c := <-z.comps:
 		return c
 	default:
+	}
+	if z.made == 0 && z.prepaid {
+		z.made++
+		return z.newComp()
 	}
 	if z.made < z.ways && z.env.Budget.Reserve(z.compBytes, "png compressor") == nil {
 		z.held += z.compBytes
@@ -530,6 +553,10 @@ func (z *zBlocks) compressor() (blockCompressor, error) {
 	case c := <-z.comps:
 		return c, nil
 	default:
+	}
+	if z.made == 0 && z.prepaid {
+		z.made++
+		return z.newComp(), nil
 	}
 	if z.made < z.ways {
 		need := z.compBytes

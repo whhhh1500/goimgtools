@@ -132,6 +132,63 @@ func TestLevel10(t *testing.T) {
 	}
 }
 
+// TestIDATChunks: from level 8 the zlib stream is in IDAT chunks of
+// idatBytes, the last shorter (a stream of up to that in one), the same
+// with helpers; the budget is given back.
+func TestIDATChunks(t *testing.T) {
+	noise := image.NewNRGBA(image.Rect(0, 0, 800, 400)) // more than idatBytes compressed
+	seed := uint32(1)
+	for i := range noise.Pix {
+		seed = seed*1664525 + 1013904223
+		noise.Pix[i] = byte(seed >> 24)
+	}
+	for _, c := range []struct {
+		name   string
+		m      image.Image
+		chunks int
+	}{{"natural", testutil.Natural(160, 120, 3), 1}, {"noise", noise, 2}} {
+		var want []byte
+		for _, helpers := range []int{0, 3} {
+			env := pipeline.NewEnv(0, t.TempDir())
+			env.SetHelpers(helpers)
+			var buf bytes.Buffer
+			if err := Encode(&buf, testutil.ChoppedEnv(c.m, 64, env), &Options{Level: 8}); err != nil {
+				t.Fatalf("%s, %d helpers: %v", c.name, helpers, err)
+			}
+			if u := env.Budget.Used(); u != 0 {
+				t.Errorf("%s, %d helpers: %d bytes still reserved", c.name, helpers, u)
+			}
+			if helpers > 0 {
+				if !bytes.Equal(buf.Bytes(), want) {
+					t.Errorf("%s, %d helpers: another file", c.name, helpers)
+				}
+				continue
+			}
+			want = buf.Bytes()
+			var sizes []int
+			file := buf.Bytes()
+			for p := 8; p+8 <= len(file); {
+				n := int(binary.BigEndian.Uint32(file[p:]))
+				if string(file[p+4:p+8]) == "IDAT" {
+					sizes = append(sizes, n)
+				}
+				p += 12 + n
+			}
+			if len(sizes) != c.chunks {
+				t.Fatalf("%s: IDAT chunks of %v bytes, want %d", c.name, sizes, c.chunks)
+			}
+			for _, n := range sizes[:len(sizes)-1] {
+				if n != idatBytes {
+					t.Errorf("%s: IDAT chunks of %v bytes, want %d but the last", c.name, sizes, idatBytes)
+				}
+			}
+			if _, err := png.Decode(bytes.NewReader(file)); err != nil {
+				t.Errorf("%s: %v", c.name, err)
+			}
+		}
+	}
+}
+
 // TestLevel10Small: a small image at level 10 has the pixels it has at
 // level 9, for every pixel type, and a photograph-like one is not larger.
 // (On some of the synthetic test images level 10 is the larger, by up to

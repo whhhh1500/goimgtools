@@ -342,31 +342,39 @@ func filterGo(cr *[nFilter][]byte, pr []byte, bpp int) int {
 	return filter
 }
 
-func (e *encoder) writeImage(w io.Writer, cb int, level int) error {
-	bitsPerPixel := 0
-
+// cbBits is the bits of a pixel of the colour type and depth.
+func cbBits(cb int) int {
 	switch cb {
-	case cbG8:
-		bitsPerPixel = 8
+	case cbG8, cbP8:
+		return 8
 	case cbTC8:
-		bitsPerPixel = 24
-	case cbP8:
-		bitsPerPixel = 8
+		return 24
 	case cbP4:
-		bitsPerPixel = 4
+		return 4
 	case cbP2:
-		bitsPerPixel = 2
+		return 2
 	case cbP1:
-		bitsPerPixel = 1
+		return 1
 	case cbTCA8:
-		bitsPerPixel = 32
+		return 32
 	case cbTC16:
-		bitsPerPixel = 48
+		return 48
 	case cbTCA16:
-		bitsPerPixel = 64
+		return 64
 	case cbG16:
-		bitsPerPixel = 16
+		return 16
 	}
+	return 0
+}
+
+// rowBytes is the bytes of a row of the image, its filter type byte
+// included.
+func (e *encoder) rowBytes(cb int) int {
+	return 1 + (cbBits(cb)*e.bounds.Dx()+7)/8
+}
+
+func (e *encoder) writeImage(w io.Writer, cb int, level int) error {
+	bitsPerPixel := cbBits(cb)
 
 	// cr[*] and pr are the bytes for the current and previous row.
 	// cr[0] is unfiltered (or equivalently, filtered with the ftNone filter).
@@ -374,7 +382,7 @@ func (e *encoder) writeImage(w io.Writer, cb int, level int) error {
 	// other PNG filter types. These buffers are allocated once and re-used for each row.
 	// The +1 is for the per-row filter type, which is at cr[*][0].
 	b := e.bounds
-	sz := 1 + (bitsPerPixel*b.Dx()+7)/8
+	sz := e.rowBytes(cb)
 	for i := range e.cr {
 		if cap(e.cr[i]) < sz {
 			e.cr[i] = make([]uint8, sz)
@@ -418,11 +426,11 @@ func (e *encoder) writeImage(w io.Writer, cb int, level int) error {
 		defer brute.release()
 	}
 	if filtering && level >= 7 && !testNoTrial {
-		var real *deflate.Compressor
+		var reals []*deflate.Compressor
 		if brute != nil {
-			real = brute.real
+			reals = brute.reals
 		}
-		if trial, err = newFilterTrial(e.env, sz, brute != nil, real); err != nil {
+		if trial, err = newFilterTrial(e.env, sz, segmentBytes(level), brute != nil, reals); err != nil {
 			return err
 		}
 		defer trial.release()
@@ -639,9 +647,67 @@ func (e *encoder) writeImage(w io.Writer, cb int, level int) error {
 	return zw.Close()
 }
 
+// idatBytes is the most of the zlib stream levels 8 to 10 write in one IDAT
+// chunk: a stream of up to that is one chunk, as ECT and oxipng write it,
+// and APNG frames are written in chunks of the same size (see
+// chunkWriter.data). Up to level 7 the chunks are of 32KB, as png.Encode
+// writes them, or of the size of the compressor's larger writes. Each chunk
+// takes 12 bytes: on the 17 test images level 9 is 0.023% smaller with
+// chunks of 1MB, level 10 0.007%.
+const idatBytes = 1 << 20
+
+// idatChunker writes the zlib stream in IDAT chunks of cap(buf) bytes, the
+// last shorter: where the chunks end depends on the stream alone.
+type idatChunker struct {
+	e   *encoder
+	buf []byte
+}
+
+func (c *idatChunker) Write(p []byte) (int, error) {
+	n := len(p)
+	for len(p) > 0 && c.e.err == nil {
+		if len(c.buf) == cap(c.buf) {
+			c.flush()
+		}
+		k := copy(c.buf[len(c.buf):cap(c.buf)], p)
+		c.buf, p = c.buf[:len(c.buf)+k], p[k:]
+	}
+	if c.e.err != nil {
+		return 0, c.e.err
+	}
+	return n, nil
+}
+
+func (c *idatChunker) flush() {
+	if len(c.buf) > 0 {
+		c.e.writeChunk(c.buf, "IDAT")
+		c.buf = c.buf[:0]
+	}
+}
+
 // Write the actual image data to one or more IDAT chunks.
 func (e *encoder) writeIDATs() {
 	if e.err != nil {
+		return
+	}
+	if e.level >= 8 {
+		// The chunk is made no longer than the stream can be: the data,
+		// and stored blocks' 5 bytes in every 64KB, the zlib header and
+		// checksum.
+		raw := int64(e.bounds.Dy()) * int64(e.rowBytes(e.cb))
+		n := min(idatBytes, raw+raw/1024+64)
+		if e.err = e.env.Budget.Reserve(n, "png data chunk"); e.err != nil {
+			return
+		}
+		defer e.env.Budget.Release(n)
+		c := &idatChunker{e: e, buf: make([]byte, 0, n)}
+		if err := e.writeImage(c, e.cb, e.level); err != nil {
+			if e.err == nil {
+				e.err = err
+			}
+			return
+		}
+		c.flush()
 		return
 	}
 	if e.bw == nil {

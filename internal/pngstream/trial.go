@@ -30,11 +30,12 @@ import (
 // back as deflate does, into the segment chosen before too, which the
 // compressor has before it (0.05% smaller files).
 //
-// A segment is whole rows, about trialBytes of them, and every choice
-// depends on the pixels alone, in integer arithmetic: the file is the same
-// for any number of helpers, any memory limit and on every processor. The
-// estimate is deflate's in miniature (see estimate): it chooses as the
-// real compressor would and needs little memory.
+// A segment is whole rows, about trialBytes of them (trialBytes10 at level
+// 10, where the versions are compressed rather than estimated), and every
+// choice depends on the pixels alone, in integer arithmetic: the file is
+// the same for any number of helpers, any memory limit and on every
+// processor. The estimate is deflate's in miniature (see estimate): it
+// chooses as the real compressor would and needs little memory.
 type filterTrial struct {
 	env      *pipeline.Env
 	ctx      []byte // from level 8: the end of the segment chosen before
@@ -43,8 +44,15 @@ type filterTrial struct {
 	filtered []byte // the segment as the rows filtered themselves
 	brute    []byte // the segment as bruteFilter filtered it, from level 8
 	est      *estimator
-	real     *deflate.Compressor // at level 10, Brute's: the segments are compressed rather than estimated
-	realOut  []byte
+	size     int // the data of a segment, about (see segmentBytes)
+	// At level 10, Brute's compressors (see bruteFilter.reals): the three
+	// versions of a segment are compressed rather than estimated, each
+	// after the context, on helpers at the same time when there are
+	// compressors for them; their inputs, outputs and costs.
+	reals    []*deflate.Compressor
+	ins      [nTrial][]byte
+	outs     [][]byte
+	costs    [nTrial]int64
 	skip     int // segments to take filtered without a trial
 	streak   int // clear wins of filtering in a row
 	reserved int64
@@ -56,39 +64,69 @@ var testNoTrial bool
 const (
 	trialBytes   = 32 << 10
 	trialSkipMax = 32
+	// trialBytes10 is a segment at level 10, compressed rather than
+	// estimated: longer segments keep the rows unfiltered (or filtered)
+	// over longer stretches. Against 32KB the 17 test images are 0.005%
+	// smaller with 64KB, 0.010% with 128KB, 0.012% with 256KB, 0.007% with
+	// 1MB (a picture of text 0.6% smaller with 256KB).
+	trialBytes10 = 256 << 10
+	nTrial       = 3 // the versions of a segment tried from level 8
 )
 
-// newFilterTrial makes room for segments of rows of rowBytes, and for
-// Brute's version of them when brute is set; with real (at level 10, the
-// compressor with which Brute scores the rows), the three versions of a
-// segment are compressed to choose between them rather than estimated
-// (17 images 0.012% smaller, in about the same time).
-func newFilterTrial(env *pipeline.Env, rowBytes int, brute bool, real *deflate.Compressor) (*filterTrial, error) {
-	seg := trialBytes + rowBytes
-	ways := int64(2)
-	if brute {
-		ways = 3
+// segmentBytes is the data of a segment at the level.
+func segmentBytes(level int) int {
+	if level >= zopfliLevel {
+		return trialBytes10
 	}
-	need := ways*int64(seg) + estimatorBytes
-	if brute {
-		need = ways*int64(seg) + nearEstimatorBytes + int64(estWindowNear+estWindowNear+seg)
+	return trialBytes
+}
+
+// trialNeed is the memory of a filterTrial (see newFilterTrial), with
+// lanes compressors for the versions of a segment.
+func trialNeed(rowBytes, size int, brute bool, lanes int) int64 {
+	seg := size + rowBytes
+	if !brute {
+		return 2*int64(seg) + estimatorBytes
 	}
-	if real != nil {
-		need += int64(seg + seg/8 + 1<<10)
+	need := nTrial*int64(seg) + estWindowNear // the versions and the context
+	if lanes == 0 {
+		return need + nearEstimatorBytes + int64(estWindowNear+seg)
 	}
+	return need + nTrial*int64(estWindowNear+seg) + int64(lanes)*int64(seg+seg/8+1<<10)
+}
+
+// newFilterTrial makes room for segments of about size bytes of rows of
+// rowBytes, and for Brute's version of them when brute is set; with reals
+// (at level 10, the compressors with which Brute scores the rows), the
+// three versions of a segment are compressed to choose between them rather
+// than estimated (17 images 0.012% smaller, in about the same time).
+func newFilterTrial(env *pipeline.Env, rowBytes, size int, brute bool, reals []*deflate.Compressor) (*filterTrial, error) {
+	seg := size + rowBytes
+	lanes := min(len(reals), nTrial)
+	need := trialNeed(rowBytes, size, brute, lanes)
 	if err := env.Budget.Reserve(need, "png filter trial"); err != nil {
 		return nil, err
 	}
-	t := &filterTrial{env: env, none: make([]byte, 0, seg), filtered: make([]byte, 0, seg), est: newEstimator(estHashBits, estWindow), reserved: need}
-	if brute {
-		t.brute = make([]byte, 0, seg)
+	t := &filterTrial{env: env, size: size, none: make([]byte, 0, seg), filtered: make([]byte, 0, seg), reserved: need}
+	switch {
+	case !brute:
+		t.est = newEstimator(estHashBits, estWindow)
+	case lanes == 0:
 		t.est = newEstimator(estHashBitsNear, estWindowNear)
-		t.ctx = make([]byte, 0, estWindowNear)
 		t.buf = make([]byte, 0, estWindowNear+seg)
 	}
-	if real != nil {
-		t.real = real
-		t.realOut = make([]byte, 0, seg+seg/8+1<<10)
+	if brute {
+		t.brute = make([]byte, 0, seg)
+		t.ctx = make([]byte, 0, estWindowNear)
+	}
+	if lanes > 0 {
+		t.reals = reals[:lanes]
+		for i := range t.ins {
+			t.ins[i] = make([]byte, 0, estWindowNear+seg)
+		}
+		for range lanes {
+			t.outs = append(t.outs, make([]byte, 0, seg+seg/8+1<<10))
+		}
 	}
 	return t, nil
 }
@@ -107,7 +145,7 @@ func (t *filterTrial) add(none, filtered, brute []byte, w io.Writer) error {
 	if t.brute != nil {
 		t.brute = append(t.brute, brute...)
 	}
-	if len(t.none) >= trialBytes {
+	if len(t.none) >= t.size {
 		return t.flush(w)
 	}
 	return nil
@@ -121,23 +159,23 @@ func (t *filterTrial) flush(w io.Writer) error {
 	}
 	seg := t.filtered
 	if t.brute != nil {
-		est := func(p []byte, first bool) int64 {
-			t.buf = append(append(t.buf[:0], t.ctx...), p...)
-			if t.real != nil {
-				// The three share the context as their dictionary.
-				var bits int
-				t.realOut, bits = t.real.CompressShared(t.realOut[:0], t.buf, len(t.ctx), true, first)
-				return int64(8*len(t.realOut) - 8 + bits)
+		cands := [nTrial][]byte{t.filtered, t.brute, t.none}
+		if t.reals != nil {
+			t.compressAll(cands)
+		} else {
+			for i, p := range cands {
+				t.buf = append(append(t.buf[:0], t.ctx...), p...)
+				t.costs[i] = t.est.estimateAfter(t.buf, len(t.ctx))
 			}
-			return t.est.estimateAfter(t.buf, len(t.ctx))
 		}
-		best := est(t.filtered, true)
-		if b := est(t.brute, false); b < best {
-			best, seg = b, t.brute
+		// The first of the smallest, in that order.
+		best := 0
+		for i := 1; i < nTrial; i++ {
+			if t.costs[i] < t.costs[best] {
+				best = i
+			}
 		}
-		if n := est(t.none, false); n < best {
-			seg = t.none
-		}
+		seg = cands[best]
 		keep := min(len(seg), estWindowNear)
 		t.ctx = append(t.ctx[:0], seg[len(seg)-keep:]...)
 	} else if t.skip > 0 {
@@ -162,6 +200,39 @@ func (t *filterTrial) flush(w io.Writer) error {
 		t.brute = t.brute[:0]
 	}
 	return err
+}
+
+// compressAll sets the costs of the versions of a segment: each compressed
+// after the context, which they share as their dictionary (entered once,
+// with the first version after it), on helpers at the same time when there
+// are compressors for them. The costs are the same either way. The versions
+// differ from the end of the context on, and the matchfinder looks ahead
+// into the first while it enters the context's last bytes (see
+// deflate.SharedAfter): the costs of the others are near, not exactly, what
+// compressing each alone would give. They only choose; what is written is
+// compressed afresh.
+func (t *filterTrial) compressAll(cands [nTrial][]byte) {
+	for i, p := range cands {
+		t.ins[i] = append(append(t.ins[i][:0], t.ctx...), p...)
+	}
+	start := len(t.ctx)
+	t.reals[0].EnterShared(t.ins[0], start)
+	for _, r := range t.reals[1:] {
+		r.TakeShared(t.reals[0])
+	}
+	lanes := len(t.reals)
+	score := func(k int) {
+		for i := k; i < nTrial; i += lanes {
+			var bits int
+			t.outs[k], bits = t.reals[k].CompressShared(t.outs[k][:0], t.ins[i], start, true, false)
+			t.costs[i] = int64(8*len(t.outs[k]) - 8 + bits)
+		}
+	}
+	if lanes > 1 {
+		t.env.Parallel(lanes, score)
+	} else {
+		score(0)
+	}
 }
 
 // estimator estimates how many bits deflate makes of a stretch of data:
