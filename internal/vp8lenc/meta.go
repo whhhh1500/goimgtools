@@ -63,6 +63,13 @@ type grouper struct {
 	blkAt  []uint32
 	blkLen []uint16
 	dec    []uint32
+	// With par, the replays from the kept symbols choose on several cores
+	// (workers at most at once): choice and decs (a dec for each) are
+	// theirs.
+	par     func(n int, fn func(int))
+	workers int
+	choice  []uint16
+	decs    chan []uint32
 }
 
 // blkChunk is the number of words in a chunk of blks; a block's (two for
@@ -266,10 +273,14 @@ func (g *grouper) flushRows(next int) {
 // for counts above 15 a second one, stand for at least one occurrence).
 // A chunk is started when a block's words do not fit in the last one,
 // which leaves fewer than blkMaxWords unused.
-func keepMem(width, height int, hbits uint, words int64) int64 {
+func keepMem(width, height int, hbits uint, words int64, workers int) int64 {
 	blocks := int64((width+1<<hbits-1)>>hbits) * int64((height+1<<hbits-1)>>hbits)
 	c, n := keepChunks(words)
-	return blocks*6 + int64(n)*int64(c)*2 + blkMaxWords*2
+	m := blocks*6 + int64(n)*int64(c)*2 + blkMaxWords*2
+	if workers > 1 {
+		m += blocks*2 + int64(workers)*blkMaxWords*2 // see grouper.par
+	}
+	return m
 }
 
 // keepChunks is the size of the chunks for words, blkChunk or for fewer
@@ -317,37 +328,62 @@ func (g *grouper) stored() bool { return g.keep && !g.binning }
 // rerun is a replay (after beginReplay) from the symbols the first one
 // kept: every block goes to the group whose codes are cheapest for it, as
 // in flushRows.
+//
+// With par, the blocks choose their groups on several cores (each choice
+// depends on the block and the cost tables only), the groups are then
+// filled one block after the other.
 func (g *grouper) rerun() {
-	for b := 0; b < g.tw*g.th; b++ {
+	nb := g.tw * g.th
+	if g.par != nil && nb >= 2*rerunPart {
+		if cap(g.choice) < nb {
+			g.choice = make([]uint16, nb)
+		}
+		choice := g.choice[:nb]
+		parts := (nb + rerunPart - 1) / rerunPart
+		if g.decs == nil {
+			g.decs = make(chan []uint32, g.workers)
+			for range g.workers {
+				g.decs <- make([]uint32, 0, cap(g.dec))
+			}
+		}
+		g.par(parts, func(k int) {
+			dec := <-g.decs
+			defer func() { g.decs <- dec }()
+			for b := k * rerunPart; b < min(nb, (k+1)*rerunPart); b++ {
+				if g.blkLen[b] == 0 {
+					choice[b] = noGroup
+					continue
+				}
+				var ents []uint32
+				ents, dec = g.decode(b, dec)
+				choice[b] = uint16(g.cheapest(ents))
+			}
+		})
+		for b, c := range choice {
+			if c == noGroup {
+				g.assign[b] = g.last
+				continue
+			}
+			var ents []uint32
+			ents, g.dec = g.decode(b, g.dec)
+			hist := g.groups[c].hist
+			for _, e := range ents {
+				hist[e>>16] += e & 0xffff
+			}
+			g.last = c
+			g.assign[b] = c
+		}
+		g.curRow = g.th
+		return
+	}
+	for b := 0; b < nb; b++ {
 		if g.blkLen[b] == 0 {
 			g.assign[b] = g.last
 			continue
 		}
-		at := g.blkAt[b]
-		ents := g.dec[:0]
-		words := g.blks[at>>16][at&0xffff:][:g.blkLen[b]]
-		for i := 0; i < len(words); i++ {
-			s, k := words[i]&0xfff, words[i]>>12
-			if k == 0 {
-				i++
-				k = words[i]
-			}
-			ents = append(ents, uint32(s)<<16|uint32(k))
-		}
-		best, bestCost := -1, uint64(math.MaxUint64)
-		for i, gr := range g.groups {
-			if gr.cost == nil {
-				continue
-			}
-			var c uint64
-			cost := gr.cost
-			for _, e := range ents {
-				c += uint64(e&0xffff) * uint64(cost[e>>16])
-			}
-			if c < bestCost || best < 0 {
-				best, bestCost = i, c
-			}
-		}
+		var ents []uint32
+		ents, g.dec = g.decode(b, g.dec)
+		best := g.cheapest(ents)
 		hist := g.groups[best].hist
 		for _, e := range ents {
 			hist[e>>16] += e & 0xffff
@@ -356,6 +392,44 @@ func (g *grouper) rerun() {
 		g.assign[b] = g.last
 	}
 	g.curRow = g.th
+}
+
+// rerunPart is how many blocks a core takes at a time in rerun.
+const rerunPart = 512
+
+// decode is block b's symbols (symbol<<16 | count), in buf.
+func (g *grouper) decode(b int, buf []uint32) (ents, grown []uint32) {
+	at := g.blkAt[b]
+	ents = buf[:0]
+	words := g.blks[at>>16][at&0xffff:][:g.blkLen[b]]
+	for i := 0; i < len(words); i++ {
+		s, k := words[i]&0xfff, words[i]>>12
+		if k == 0 {
+			i++
+			k = words[i]
+		}
+		ents = append(ents, uint32(s)<<16|uint32(k))
+	}
+	return ents, ents
+}
+
+// cheapest is the first of the groups whose codes cost the least for ents.
+func (g *grouper) cheapest(ents []uint32) int {
+	best, bestCost := -1, uint64(math.MaxUint64)
+	for i, gr := range g.groups {
+		if gr.cost == nil {
+			continue
+		}
+		var c uint64
+		cost := gr.cost
+		for _, e := range ents {
+			c += uint64(e&0xffff) * uint64(cost[e>>16])
+		}
+		if c < bestCost || best < 0 {
+			best, bestCost = i, c
+		}
+	}
+	return best
 }
 
 // endReplay closes a replay. It reports the number of groups in use.

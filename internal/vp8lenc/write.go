@@ -260,7 +260,8 @@ func (e *encoder) groupBy(p *plan, w *walker, hbits uint, want int, done map[[2]
 	// than the budget counts for it, so the process may peak a little
 	// higher; the sixteenth bounds that.
 	words := 4*st.nLit + 2*st.nCopy
-	km := keepMem(f.sw, f.h, hbits, words)
+	workers := e.env.Helpers() + 1
+	km := keepMem(f.sw, f.h, hbits, words, workers)
 	b := e.env.Budget
 	keep := !e.replay && km <= min(b.Peak()-b.Used(), e.avail()/2, b.Limit()/16) &&
 		e.reserve(km, "webp Huffman groups") == nil
@@ -268,6 +269,9 @@ func (e *encoder) groupBy(p *plan, w *walker, hbits uint, want int, done map[[2]
 		defer e.unreserve(km)
 	}
 	g := newGrouper(f.sw, f.h, hbits, cacheBits, want, f.tok.lit1, e.gs, keep, words)
+	if keep && workers > 1 {
+		g.par, g.workers = e.env.Parallel, workers
+	}
 	size := f.tokens.Size()
 	replay := func() error {
 		if g.stored() {

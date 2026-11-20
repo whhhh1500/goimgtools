@@ -106,7 +106,7 @@ func TestKeepMem(t *testing.T) {
 		for _, ch := range g.blks {
 			used += int64(cap(ch)) * 2
 		}
-		if most := keepMem(c.w, c.h, c.hbits, words); used > most {
+		if most := keepMem(c.w, c.h, c.hbits, words, 1); used > most {
 			t.Errorf("%+v: %d bytes, keepMem %d", c, used, most)
 		}
 	}
