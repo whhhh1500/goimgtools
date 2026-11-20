@@ -273,7 +273,7 @@ func nearBytes(level, width int) int64 {
 }
 
 func withFine(p deflate.Params) deflate.Params {
-	p.FineSplit = true
+	p.FineSplit, p.MoreCodes = true, true
 	return p
 }
 

@@ -93,6 +93,9 @@ type Params struct {
 	// block further where the statistics of its symbols change, and into as
 	// many parts as that saves bits (see fineSplits).
 	FineSplit bool
+	// MoreCodes (not in libdeflate) writes a dynamic block with the smallest
+	// of more codes and ways of writing its header (see moreCodes).
+	MoreCodes bool
 
 	// MaxInput, when set, is the most data (beyond the dictionary) that a
 	// call to Compress is given: the lazy parsing's record of a block is

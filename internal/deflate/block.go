@@ -113,7 +113,9 @@ func (c *Compressor) flushBlock(block []byte, onlyLiterals, isFinal bool) {
 	pc := &c.precode
 	f := &c.freqs
 	dynamicCost := dynamicBits(f, &c.codes, pc)
-	if c.p.SplitByCost {
+	if c.p.MoreCodes {
+		dynamicCost = c.moreCodes(f)
+	} else if c.p.SplitByCost {
 		// Beyond libdeflate, as zopfli does (TryOptimizeHuffmanForRle):
 		// counts evened out along runs make code lengths whose header
 		// codes smaller, which can pay for the data coding a little worse;

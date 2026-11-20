@@ -398,13 +398,14 @@ type PNGOptions struct {
 	// data is compressed with a port of libdeflate's near-optimal parsing
 	// (its levels 10 and 12), its blocks split where it saves bits, as
 	// zopfli splits them, and further where their symbols' statistics
-	// change, its symbols priced at their entropy, as zopfli prices them.
-	// On six screenshots and photographs the files are 9 to 15% (8) and 10
-	// to 21% (9) smaller than at level 7; level 9 is 0.9% smaller than
-	// oxipng -o max and 0.17% larger than ECT -9. Level 8
-	// takes 5 to 20 times as long as level 7 on one core, level 9 18 to 65
-	// times (oxipng -o max about 6 times as long as level 9, ECT -9 about
-	// 25 times). They take about 4MB (level 8) and 6.5MB (level 9) more
+	// change, its symbols priced at their entropy, as zopfli prices them,
+	// each block written with the smallest of more codes and ways of
+	// writing its header, as ECT writes them. On six screenshots and
+	// photographs the files are 9 to 15% (8) and 10 to 21% (9) smaller than
+	// at level 7; level 9 is 0.9% smaller than oxipng -o max and 0.16%
+	// larger than ECT -9. Level 8 takes 5 to 20 times as long as level 7 on
+	// one core, level 9 18 to 65 times (oxipng -o max about 6 times as long
+	// as level 9, ECT -9 about 25 times). They take about 4MB (level 8) and 6.5MB (level 9) more
 	// memory per thread, and up to 1MB for the image data, which from level
 	// 8 is written in chunks of 1MB (one for up to that, as ECT and oxipng
 	// write it) rather than 32KB; they give the same file with every Go
@@ -423,8 +424,8 @@ type PNGOptions struct {
 	// block by level 9's compressor instead where that is smaller; a
 	// palette is written in the order its colours first appear, as ECT
 	// writes it, without the colours no pixel uses. On the same 17 images
-	// it is 0.40% smaller than level 9 and 0.23% smaller than ECT -9
-	// (smaller on 15 of them), in 443s with 8 threads against level 9's
+	// it is 0.39% smaller than level 9 and 0.23% smaller than ECT -9
+	// (smaller on 15 of them), in 438s with 8 threads against level 9's
 	// 31.5s (ECT: 606s on 6 cores). Its compressor takes about 50MB for
 	// each thread compressing: with the default memory limit it compresses
 	// on one thread, with a limit of 480MB on 8.

@@ -366,3 +366,43 @@ func TestFineSplit(t *testing.T) {
 	}
 	t.Logf("%d bytes with FineSplit, %d without", len(got), len(want))
 }
+
+// TestMoreCodes: the codeword lengths coded with all three run codes are
+// coded as libdeflate codes them; with MoreCodes the data comes back, no
+// larger, on the samples.
+func TestMoreCodes(t *testing.T) {
+	rng := rand.New(rand.NewPCG(9, 10))
+	for range 200 {
+		lens := make([]uint8, 257+rng.IntN(32)+1+rng.IntN(30))
+		for i := range lens {
+			if rng.IntN(3) > 0 {
+				lens[i] = uint8(rng.IntN(16))
+			}
+			if rng.IntN(5) == 0 && i > 0 {
+				lens[i] = lens[i-1]
+			}
+		}
+		var f1, f2 [numPrecodeSyms]uint32
+		var i1, i2 [numLitlenSyms + numOffsetSyms]uint32
+		n1 := computePrecodeItems(lens, &f1, i1[:])
+		n2 := precodeItemsWay(lens, &f2, i2[:], use16|use17|use18)
+		if n1 != n2 || f1 != f2 || i1 != i2 {
+			t.Fatalf("lengths %v: coded otherwise than libdeflate codes them", lens)
+		}
+	}
+	p := Level12
+	p.NoSkip, p.SplitByCost, p.SplitPasses, p.BlockLen, p.CachePerBlock = true, true, 2, 128<<10, 3
+	more := p
+	more.MoreCodes = true
+	for name, data := range samples() {
+		want := New(p).Compress(nil, data, 0, true)
+		got := New(more).Compress(nil, data, 0, true)
+		back, err := io.ReadAll(flate.NewReader(bytes.NewReader(got)))
+		if err != nil || !bytes.Equal(back, data) {
+			t.Fatalf("%s: does not inflate to the data (%v)", name, err)
+		}
+		if len(got) > len(want) {
+			t.Errorf("%s: %d bytes with MoreCodes, %d without", name, len(got), len(want))
+		}
+	}
+}

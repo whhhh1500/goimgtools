@@ -33,9 +33,9 @@ func idatData(t *testing.T, file []byte) []byte {
 
 // TestLevel10: at level 10 the image data is the filtered rows in blocks,
 // each compressed after the 32KB before it by a tenCompressor (on the
-// helpers, when there are any), joined bit by bit; the pixels come back;
-// the file is the same with helpers and with the memory limit only just
-// enough, and the budget is given back.
+// helpers, when there are any), joined bit by bit, a stored block's data
+// on a byte; the pixels come back; the file is the same with helpers and
+// with the memory limit only just enough, and the budget is given back.
 func TestLevel10(t *testing.T) {
 	// One run of the optimal parse, and blocks of 50000 bytes: the joining
 	// of the blocks does not depend on either, which take the time.
@@ -44,9 +44,25 @@ func TestLevel10(t *testing.T) {
 	zopfliBlock = 50000
 	// More than two blocks of data: a gradient with some noise, flat
 	// stretches, a translucent band (so that the rows are RGBA) and noise,
-	// which is stored, in the second block (which starts in a byte).
+	// which is stored, in the second block. The first block is to end in a
+	// byte, for the stored block to come after bits pending: of the flat
+	// colours tried, the first with which it does.
 	w := 400
 	h := 2*zopfliBlock/(1+4*w) + 5
+	for blue := byte(221); ; blue++ {
+		if blue == 241 {
+			t.Fatal("no stored block after bits pending")
+		}
+		if level10Case(t, w, h, blue) {
+			break
+		}
+	}
+}
+
+// level10Case is TestLevel10 with the flat colour's blue; it tells whether
+// a stored block came after bits pending (and then checks the file with
+// helpers and the memory limit too).
+func level10Case(t *testing.T, w, h int, blue byte) bool {
 	m := image.NewNRGBA(image.Rect(0, 0, w, h))
 	seed := uint32(7)
 	for y := 0; y < h; y++ {
@@ -57,7 +73,7 @@ func TestLevel10(t *testing.T) {
 			case y >= 33 && y < 62:
 				binary.LittleEndian.PutUint32(p, seed)
 			case y < h/3 && x < w/2:
-				copy(p, []byte{200, 210, 221, 255})
+				copy(p, []byte{200, 210, blue, 255})
 			case y > h/2 && y < h/2+20:
 				copy(p, []byte{byte(x), byte(y), 90, 128})
 			default:
@@ -70,22 +86,22 @@ func TestLevel10(t *testing.T) {
 		env.SetHelpers(helpers)
 		var buf bytes.Buffer
 		if err := Encode(&buf, testutil.ChoppedEnv(m, 64, env), &Options{Level: 10}); err != nil {
-			t.Fatalf("limit %d, %d helpers: %v", limit, helpers, err)
+			t.Fatalf("blue %d, limit %d, %d helpers: %v", blue, limit, helpers, err)
 		}
 		if u := env.Budget.Used(); u != 0 {
-			t.Errorf("limit %d, %d helpers: %d bytes still reserved", limit, helpers, u)
+			t.Errorf("blue %d, limit %d, %d helpers: %d bytes still reserved", blue, limit, helpers, u)
 		}
 		return buf.Bytes()
 	}
 	want := encode(0, 0)
 	got, err := png.Decode(bytes.NewReader(want))
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("blue %d: %v", blue, err)
 	}
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
 			if g, e := color.NRGBAModel.Convert(got.At(x, y)), m.At(x, y); g != e {
-				t.Fatalf("pixel (%d,%d) %v, want %v", x, y, g, e)
+				t.Fatalf("blue %d: pixel (%d,%d) %v, want %v", blue, x, y, g, e)
 			}
 		}
 	}
@@ -135,20 +151,20 @@ func TestLevel10(t *testing.T) {
 		want10 = append(want10, pend)
 	}
 	if !bytes.Equal(z[2:len(z)-4], want10) {
-		t.Error("the data is not the blocks compressed one after the other")
+		t.Errorf("blue %d: the data is not the blocks compressed one after the other", blue)
 	}
 	if shifted == 0 {
-		t.Error("no stored block after bits pending")
+		return false
 	}
-
 	for _, c := range []struct {
 		limit   int64
 		helpers int
 	}{{0, 2}, {nearBytes(10, w) + 4<<20, 3}} {
 		if got := encode(c.limit, c.helpers); !bytes.Equal(got, want) {
-			t.Errorf("limit %d, %d helpers: another file", c.limit, c.helpers)
+			t.Errorf("blue %d, limit %d, %d helpers: another file", blue, c.limit, c.helpers)
 		}
 	}
+	return true
 }
 
 // TestIDATChunks: from level 8 the zlib stream is in IDAT chunks of

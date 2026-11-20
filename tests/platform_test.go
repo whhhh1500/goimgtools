@@ -117,13 +117,13 @@ func TestSameOnEveryProcessor(t *testing.T) {
 		}, "418404b13eac9f66"},
 		{"png text level 8", func() ([]byte, error) {
 			return FromImage(textLike(320, 200)).PNG(PNGOptions{CompressionLevel: 8}).ToBytes()
-		}, "e47f67cef1a4891b"},
+		}, "d357dc37a756f138"},
 		{"png level 9", func() ([]byte, error) {
 			return photo.Clone().PNG(PNGOptions{CompressionLevel: 9}).ToBytes()
-		}, "61817650c4bc5347"},
+		}, "cf4bd56ab990a358"},
 		{"png level 10", func() ([]byte, error) {
 			return photo.Clone().Resize(150, 0).PNG(PNGOptions{CompressionLevel: 10}).ToBytes()
-		}, "3be84bf0a11ea364"},
+		}, "60bda50b4ab91abe"},
 		{"gif lossy", func() ([]byte, error) { return photo.Clone().GIF(GIFOptions{Lossy: 24}).ToBytes() }, "7fcd09eb9c1eea96"},
 		{"jpeg jpegli tables", func() ([]byte, error) {
 			return photo.Clone().JPEG(JPEGOptions{Quality: 77, QuantTable: QuantTableJpegli, Progressive: true}).ToBytes()
