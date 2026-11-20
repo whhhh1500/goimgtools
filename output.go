@@ -354,8 +354,8 @@ const (
 	// 0.58 to 0.59 of a step from zero (the dead zone of jpegli), not 0.5.
 	//
 	// On 14 photographs and game artwork, together with Progressive and
-	// Trellis, the files are 15% smaller than mozjpeg's defaults at equal
-	// SSIMULACRA2 and 12% at equal butteraugli (jpegli itself, at 4:2:0:
+	// Trellis, the files are 16% smaller than mozjpeg's defaults at equal
+	// SSIMULACRA2 and 13% at equal butteraugli (jpegli itself, at 4:2:0:
 	// 13% and 12%). The quality means about what it means for the
 	// standard tables: jpegli maps it to a distance meant to look alike.
 	QuantTableJpegli
