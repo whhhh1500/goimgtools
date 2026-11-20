@@ -43,7 +43,8 @@ func TestLevel10(t *testing.T) {
 	zopfliOptions.NumIterations = 1
 	zopfliBlock = 50000
 	// More than two blocks of data: a gradient with some noise, flat
-	// stretches and a translucent band (so that the rows are RGBA).
+	// stretches, a translucent band (so that the rows are RGBA) and noise,
+	// which is stored, in the second block (which starts in a byte).
 	w := 400
 	h := 2*zopfliBlock/(1+4*w) + 5
 	m := image.NewNRGBA(image.Rect(0, 0, w, h))
@@ -53,8 +54,10 @@ func TestLevel10(t *testing.T) {
 			seed = seed*1664525 + 1013904223
 			p := m.Pix[y*m.Stride+4*x:]
 			switch {
+			case y >= 33 && y < 62:
+				binary.LittleEndian.PutUint32(p, seed)
 			case y < h/3 && x < w/2:
-				copy(p, []byte{200, 210, 220, 255})
+				copy(p, []byte{200, 210, 221, 255})
 			case y > h/2 && y < h/2+20:
 				copy(p, []byte{byte(x), byte(y), 90, 128})
 			default:
@@ -103,12 +106,25 @@ func TestLevel10(t *testing.T) {
 	tc := newTenCompressor(zopfliBlock, nil, 1)
 	var want10 []byte
 	var pend byte
-	pendN := 0
+	pendN, shifted := 0, 0
 	for s := 0; s < len(rows); s += zopfliBlock {
 		e := min(len(rows), s+zopfliBlock)
 		from := max(0, s-zWindow)
-		blk, bits := tc.CompressBits(nil, rows[from:e], s-from, e == len(rows))
-		for i := 0; i < 8*(len(blk)-1)+bits; i++ {
+		blk, bits, stored := tc.CompressBits(nil, rows[from:e], s-from, e == len(rows))
+		if stored >= 0 && pendN != 0 {
+			shifted++
+		}
+		n := 8*(len(blk)-1) + bits
+		for i := 0; i < n; i++ {
+			if stored >= 0 && i == stored+3 {
+				// The stored block's data starts on a byte.
+				if pendN != 0 {
+					want10, pend, pendN = append(want10, pend), 0, 0
+				}
+				if i = (i + 7) &^ 7; i == n {
+					break
+				}
+			}
 			pend |= (blk[i/8] >> (i % 8) & 1) << pendN
 			if pendN++; pendN == 8 {
 				want10, pend, pendN = append(want10, pend), 0, 0
@@ -120,6 +136,9 @@ func TestLevel10(t *testing.T) {
 	}
 	if !bytes.Equal(z[2:len(z)-4], want10) {
 		t.Error("the data is not the blocks compressed one after the other")
+	}
+	if shifted == 0 {
+		t.Error("no stored block after bits pending")
 	}
 
 	for _, c := range []struct {
@@ -237,9 +256,9 @@ func TestTenCompressor(t *testing.T) {
 	c := newTenCompressor(len(rows), nil, 1)
 	for _, data := range [][]byte{rows, bytes.Repeat([]byte("abcdefgh"), 3000)} {
 		for _, final := range []bool{true, false} {
-			got, bits := c.CompressBits(nil, data, 0, final)
-			z, zbits := zopfli.New(zopfliOptions, len(data)).CompressBits(nil, data, 0, final)
-			d, dbits := deflate.New(nearLevels[9]).CompressBits(nil, data, 0, final)
+			got, bits, _ := c.CompressBits(nil, data, 0, final)
+			z, zbits, _ := zopfli.New(zopfliOptions, len(data)).CompressBits(nil, data, 0, final)
+			d, dbits, _ := deflate.New(nearLevels[9]).CompressBits(nil, data, 0, final)
 			want, wbits := z, zbits
 			if 8*len(d)+dbits < 8*len(z)+zbits {
 				want, wbits = d, dbits

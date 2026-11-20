@@ -310,7 +310,7 @@ func (b *bruteFilter) chooseReal(cur, prev []byte, bpp int) []byte {
 			if share {
 				b.realOuts[k], bits = r.CompressShared(b.realOuts[k][:0], input(k, f), start, true, false)
 			} else {
-				b.realOuts[k], bits = r.CompressBits(b.realOuts[k][:0], input(k, f), start, true)
+				b.realOuts[k], bits, _ = r.CompressBits(b.realOuts[k][:0], input(k, f), start, true)
 			}
 			b.costs[f] = 8*len(b.realOuts[k]) - 8 + bits
 		}

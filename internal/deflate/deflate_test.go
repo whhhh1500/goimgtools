@@ -300,3 +300,39 @@ func TestEnterShared(t *testing.T) {
 		}
 	}
 }
+
+// TestCompressBitsStored: CompressBits says at which bit of its output the
+// first stored block starts (its header there, of type 0), -1 when there is
+// none; the output inflates either way.
+func TestCompressBitsStored(t *testing.T) {
+	text := bytes.Repeat([]byte("a line of some text, "), 1500)
+	rng := rand.New(rand.NewPCG(3, 4))
+	var noise []byte
+	for range 40000 {
+		noise = append(noise, byte(rng.Uint32()))
+	}
+	for _, c := range []struct {
+		name   string
+		data   []byte
+		stored bool
+	}{{"text", text, false}, {"noise", noise, true}} {
+		out, bits, stored := New(Level10).CompressBits([]byte{0xAA}, c.data, 0, true)
+		out = out[1:]
+		if (stored >= 0) != c.stored {
+			t.Errorf("%s: stored %d", c.name, stored)
+		}
+		if stored >= 0 {
+			bit := func(i int) byte { return out[i/8] >> (i % 8) & 1 }
+			if bit(stored+1) != 0 || bit(stored+2) != 0 {
+				t.Errorf("%s: no stored block at bit %d", c.name, stored)
+			}
+		}
+		if bits < 1 || bits > 8 {
+			t.Errorf("%s: %d bits", c.name, bits)
+		}
+		back, err := io.ReadAll(flate.NewReader(bytes.NewReader(out)))
+		if err != nil || !bytes.Equal(back, c.data) {
+			t.Errorf("%s: does not inflate (%v)", c.name, err)
+		}
+	}
+}

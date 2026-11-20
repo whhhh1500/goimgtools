@@ -86,7 +86,7 @@ func (c *Compressor) grow(n int) {
 // and more blocks can follow (a sync flush). The blocks are those Zopfli's
 // ZopfliDeflatePart writes for the data.
 func (c *Compressor) Compress(dst, in []byte, start int, final bool) []byte {
-	out, _ := c.compress(dst, in, start, final, true)
+	out, _, _ := c.compress(dst, in, start, final, true)
 	return out
 }
 
@@ -94,12 +94,17 @@ func (c *Compressor) Compress(dst, in []byte, start int, final bool) []byte {
 // they end, and bits says how many bits of the last byte they take (1 to
 // 8; the rest are zeros). Blocks compressed this way one after the other,
 // each joined to the bits before, are the bytes ZopfliDeflate writes when
-// each is a master block of it.
-func (c *Compressor) CompressBits(dst, in []byte, start int, final bool) (out []byte, bits int) {
+// each is a master block of it. stored is the bit of the output (after dst)
+// at which its first stored block starts, -1 if it has none: that block's
+// data starts on a byte, wherever its header ends (Zopfli writes all its
+// master blocks into one stream), so that joined to bits before it, the
+// blocks up to its header move by those bits, its padding changes, and
+// what follows it stays as it is.
+func (c *Compressor) CompressBits(dst, in []byte, start int, final bool) (out []byte, bits, stored int) {
 	return c.compress(dst, in, start, final, false)
 }
 
-func (c *Compressor) compress(dst, in []byte, start int, final, flush bool) ([]byte, int) {
+func (c *Compressor) compress(dst, in []byte, start int, final, flush bool) ([]byte, int, int) {
 	if start > windowSize {
 		in, start = in[start-windowSize:], windowSize
 	}
@@ -111,10 +116,14 @@ func (c *Compressor) compress(dst, in []byte, start int, final, flush bool) ([]b
 	if !final && flush {
 		addNonCompressedBlock(false, nil, 0, 0, w)
 	}
-	if w.bp == 0 {
-		return w.out, 8
+	stored := w.stored - 1 - 8*len(dst)
+	if w.stored == 0 {
+		stored = -1
 	}
-	return w.out, int(w.bp)
+	if w.bp == 0 {
+		return w.out, 8, stored
+	}
+	return w.out, int(w.bp), stored
 }
 
 // MasterBlock is the length of Zopfli's master blocks: ZopfliDeflate
@@ -159,6 +168,9 @@ func addNonCompressedBlock(final bool, data []byte, inStart, inEnd int, w *bitWr
 		b := uint32(0)
 		if final && currentFinal {
 			b = 1
+		}
+		if w.stored == 0 {
+			w.stored = 1 + w.bit()
 		}
 		w.addBit(b)
 		w.addBit(0)

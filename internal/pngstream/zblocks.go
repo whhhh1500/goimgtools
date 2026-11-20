@@ -191,14 +191,14 @@ func (w *envWorkers) Reserve(n int64) bool {
 func (w *envWorkers) Release(n int64) { w.env.Budget.Release(n) }
 
 // CompressBits compresses as zopfli.Compressor.CompressBits does.
-func (t *tenCompressor) CompressBits(dst, in []byte, start int, final bool) ([]byte, int) {
-	out, bits := t.z.CompressBits(dst, in, start, final)
-	alt, altBits := t.d.CompressBits(t.alt[:0], in, start, final)
+func (t *tenCompressor) CompressBits(dst, in []byte, start int, final bool) ([]byte, int, int) {
+	out, bits, stored := t.z.CompressBits(dst, in, start, final)
+	alt, altBits, altStored := t.d.CompressBits(t.alt[:0], in, start, final)
 	t.alt = alt
 	if 8*len(alt)+altBits < 8*(len(out)-len(dst))+bits {
-		return append(out[:len(dst)], alt...), altBits
+		return append(out[:len(dst)], alt...), altBits, altStored
 	}
-	return out, bits
+	return out, bits, stored
 }
 
 // Compress compresses as zopfli.Compressor.Compress does.
@@ -273,6 +273,7 @@ type zBlock struct {
 	out    []byte
 	writes []int
 	bits   int // at level 10: the bits of out's last byte that are the block's
+	stored int // and the bit of out at which its first stored block starts, -1 for none
 	last   bool
 	err    error
 	wait   func()
@@ -530,7 +531,7 @@ func (z *zBlocks) dispatch(force bool) error {
 		comps, tc := z.comps, c.(*tenCompressor)
 		fn := func() {
 			defer func() { comps <- c }()
-			b.out, b.bits = tc.CompressBits(b.out, b.buf, b.dict, b.last)
+			b.out, b.bits, b.stored = tc.CompressBits(b.out, b.buf, b.dict, b.last)
 		}
 		if wait, ok := z.env.TryGo(fn); ok {
 			b.wait = wait
@@ -602,7 +603,7 @@ func (z *zBlocks) send() error {
 		b.wait = z.env.Go(func() {
 			defer func() { comps <- c }()
 			if tc, ok := c.(*tenCompressor); ok {
-				b.out, b.bits = tc.CompressBits(b.out, b.buf, b.dict, b.last)
+				b.out, b.bits, b.stored = tc.CompressBits(b.out, b.buf, b.dict, b.last)
 				return
 			}
 			b.out = c.Compress(b.out, b.buf, b.dict, b.last)
@@ -704,14 +705,36 @@ func (z *zBlocks) drain() error {
 }
 
 // writeBits writes out a block of level 10 after the bits before it: its
-// bytes shifted by the pendN bits pending, the bits left over pending.
+// bytes shifted by the pendN bits pending, the bits left over pending. A
+// stored block's data starts on a byte wherever its header ends (Zopfli
+// writes its master blocks into one stream): when the block has one, only
+// the bytes up to the end of the first one's header are shifted, its
+// padding made to fit, and what follows written as it is.
 func (z *zBlocks) writeBits(b *zBlock) error {
 	out := b.out
 	if len(out) == 0 {
 		return nil
 	}
 	s := z.pendN
-	if s != 0 {
+	total := s + 8*(len(out)-1) + b.bits
+	if s != 0 && b.stored >= 0 {
+		head := b.stored + 3       // the bits up to the end of the stored block's header
+		n := (head + 7) / 8        // its length starts at out[n]
+		keep := (head + s + 7) / 8 // and at that of the result
+		if keep > n {
+			out = append(out, 0) // within zOutSlack
+			copy(out[n+1:], out[n:])
+		}
+		carry := z.pend
+		for i, v := range out[:n] {
+			out[i] = carry | v<<s
+			carry = v >> (8 - s)
+		}
+		if keep > n {
+			out[n] = carry
+		} // else what is carried is the padding's zeros
+		total = 8*(len(out)-1) + b.bits
+	} else if s != 0 {
 		carry := z.pend
 		for i, v := range out {
 			out[i] = carry | v<<s
@@ -719,7 +742,6 @@ func (z *zBlocks) writeBits(b *zBlock) error {
 		}
 		out = append(out, carry) // within zOutSlack
 	}
-	total := s + 8*(len(b.out)-1) + b.bits
 	whole := total / 8
 	z.pendN = total % 8
 	if z.pendN != 0 {

@@ -4,9 +4,10 @@ import "encoding/binary"
 
 // bitWriter writes bits least significant first.
 type bitWriter struct {
-	out   []byte
-	buf   uint64
-	count uint
+	out    []byte
+	buf    uint64
+	count  uint
+	stored int // 1 + the bit of out at which the first stored block starts; 0 for none
 }
 
 // add writes the n low bits of bits (n <= 32; the bits above must be 0).
@@ -158,6 +159,9 @@ func (c *Compressor) flushBlock(block []byte, onlyLiterals, isFinal bool) {
 			last := uint32(0)
 			if k == len(block) {
 				last = final
+			}
+			if w.stored == 0 {
+				w.stored = 1 + 8*len(w.out) + int(w.count)
 			}
 			w.add(last, 3)
 			w.align()

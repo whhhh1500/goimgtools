@@ -293,7 +293,7 @@ var offsetSlotFull = func() *[windowSize + 1]uint8 {
 // the blocks end with an empty stored block, so that the output ends on a
 // byte and more blocks can follow (a sync flush).
 func (c *Compressor) Compress(dst, in []byte, start int, final bool) []byte {
-	out, _ := c.compressTo(dst, in, start, final, true)
+	out, _, _ := c.compressTo(dst, in, start, final, true)
 	return out
 }
 
@@ -319,7 +319,7 @@ func (c *Compressor) CompressShared(dst, in []byte, start int, final, first bool
 		d.valid = false
 	}
 	d.save, d.use = ok && first, ok && !first && d.valid
-	out, bits = c.compressTo(dst, in, start, final, true)
+	out, bits, _ = c.compressTo(dst, in, start, final, true)
 	d.save, d.use = false, false
 	return out, bits
 }
@@ -367,12 +367,17 @@ func (c *Compressor) TakeShared(src *Compressor) {
 // they end, and bits says how many bits of the last byte they take (1 to
 // 8; the rest are zeros), so that blocks compressed after them can be
 // joined to them bit by bit. With nothing to compress and final not set,
-// nothing is appended.
-func (c *Compressor) CompressBits(dst, in []byte, start int, final bool) (out []byte, bits int) {
+// nothing is appended. stored is the bit of the output (after dst) at
+// which its first stored block starts, -1 if it has none: that block's
+// data starts on a byte, wherever its header ends, so that joined to bits
+// before it, the blocks up to its header move by those bits, its padding
+// changes, and what follows it stays as it is.
+func (c *Compressor) CompressBits(dst, in []byte, start int, final bool) (out []byte, bits, stored int) {
 	return c.compressTo(dst, in, start, final, false)
 }
 
-func (c *Compressor) compressTo(dst, in []byte, start int, final, flush bool) ([]byte, int) {
+func (c *Compressor) compressTo(dst, in []byte, start int, final, flush bool) ([]byte, int, int) {
+	base := len(dst)
 	c.w = bitWriter{out: dst}
 	if start == len(in) {
 		if final {
@@ -399,10 +404,14 @@ func (c *Compressor) compressTo(dst, in []byte, start int, final, flush bool) ([
 	if r := c.w.count % 8; r != 0 {
 		bits = int(r)
 	}
+	stored := c.w.stored - 1 - 8*base
+	if c.w.stored == 0 {
+		stored = -1
+	}
 	c.w.align()
 	out := c.w.out
 	c.w = bitWriter{}
-	return out, bits
+	return out, bits, stored
 }
 
 // precode is the header of a dynamic block: the code of the code lengths

@@ -139,9 +139,25 @@ func TestBytes(t *testing.T) {
 
 // TestCompressBits: blocks compressed with CompressBits, each after the
 // data before, and joined bit by bit are the stream of DeflateBlocks with
-// master blocks of their length.
+// master blocks of their length; a stored block's data starts on a byte of
+// the stream (its header is padded there), and it is found where
+// CompressBits says.
 func TestCompressBits(t *testing.T) {
-	for name, data := range testInputs() {
+	inputs := testInputs()
+	// Text with noise in between, which is stored, after blocks that end
+	// anywhere in a byte.
+	var mixed []byte
+	seed := uint32(5)
+	for k := 0; k < 4; k++ {
+		mixed = append(mixed, bytes.Repeat([]byte(fmt.Sprintf("row %d of some text, ", k)), 300+97*k)...)
+		for i := 0; i < 9000+1234*k; i++ {
+			seed = seed*1664525 + 1013904223
+			mixed = append(mixed, byte(seed>>24))
+		}
+	}
+	inputs["text and noise"] = mixed
+	shifted := 0 // stored blocks after bits pending
+	for name, data := range inputs {
 		for _, part := range []int{7000, 40000} {
 			c := New(DefaultOptions(), part)
 			var out []byte
@@ -149,12 +165,31 @@ func TestCompressBits(t *testing.T) {
 			pendN := 0
 			for s := 0; s < len(data); s += part {
 				e := min(len(data), s+part)
-				blk, bits := c.CompressBits(nil, data[:e], s, e == len(data))
+				blk, bits, stored := c.CompressBits(nil, data[:e], s, e == len(data))
 				if len(blk) == 0 {
 					continue
 				}
+				if stored >= 0 {
+					bit := func(i int) byte { return blk[i/8] >> (i % 8) & 1 }
+					if bit(stored+1) != 0 || bit(stored+2) != 0 {
+						t.Errorf("%s in blocks of %d: no stored block at bit %d", name, part, stored)
+					}
+					if pendN != 0 {
+						shifted++
+					}
+				}
 				// The block's bits after the pendN pending ones.
-				for i := 0; i < 8*(len(blk)-1)+bits; i++ {
+				n := 8*(len(blk)-1) + bits
+				for i := 0; i < n; i++ {
+					if stored >= 0 && i == stored+3 {
+						// The stored block's data starts on a byte.
+						if pendN != 0 {
+							out, pend, pendN = append(out, pend), 0, 0
+						}
+						if i = (i + 7) &^ 7; i == n {
+							break
+						}
+					}
 					pend |= (blk[i/8] >> (i % 8) & 1) << pendN
 					if pendN++; pendN == 8 {
 						out, pend, pendN = append(out, pend), 0, 0
@@ -168,6 +203,9 @@ func TestCompressBits(t *testing.T) {
 				t.Errorf("%s in blocks of %d: joined, not the stream of DeflateBlocks", name, part)
 			}
 		}
+	}
+	if shifted == 0 {
+		t.Error("no stored block was joined after bits pending")
 	}
 }
 

@@ -5,8 +5,17 @@ package zopfli
 
 // bitWriter appends bits to out; bp is the bit position in the last byte.
 type bitWriter struct {
-	out []byte
-	bp  uint8
+	out    []byte
+	bp     uint8
+	stored int // 1 + the bit of out at which the first stored block starts; 0 for none
+}
+
+// bit is the position of the next bit to be written.
+func (w *bitWriter) bit() int {
+	if w.bp == 0 {
+		return 8 * len(w.out)
+	}
+	return 8*(len(w.out)-1) + int(w.bp)
 }
 
 func (w *bitWriter) addBit(bit uint32) {
