@@ -415,8 +415,8 @@ type PNGOptions struct {
 	// where that is smaller; a palette is written in the order its colours
 	// first appear, as ECT writes it, without the colours no pixel uses. On the same 17 images it is 0.26% smaller than
 	// level 9 and 0.053% smaller than ECT -9 (smaller on 12 of them), in
-	// 691s with 8 threads against level 9's 31.5s (ECT: 606s on 6 cores).
-	// Its compressor takes about 51MB for each thread compressing: with the
+	// 422s with 8 threads against level 9's 31.5s (ECT: 606s on 6 cores).
+	// Its compressor takes about 50MB for each thread compressing: with the
 	// default memory limit it compresses on one thread, with a limit of
 	// 480MB on 8.
 	CompressionLevel int

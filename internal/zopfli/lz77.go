@@ -52,6 +52,12 @@ func (s *blockState) tryFromCache(pos int, limit *int, sublen []uint16) (dist, l
 		}
 		*limit = int(s.lmc.length[lp])
 	}
+	if available && sublen == nil && *limit >= minMatch && *limit < int(s.lmc.length[lp]) && s.lmc.at[lp] != 0 {
+		// A match shorter than the longest (as the path takes it): the
+		// first one at least that long, which a search up to that length
+		// would find. (Zopfli searches.)
+		return s.lmc.distFor(lp, *limit), uint16(*limit), true
+	}
 	return 0, 0, false
 }
 

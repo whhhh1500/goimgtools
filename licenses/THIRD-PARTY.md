@@ -172,7 +172,12 @@ for the longest data it is given, rather than as it goes, and keeps less
 of it for each byte: the parse of each run of the optimal parse is
 counted rather than kept, the best run made again at the end; the
 symbols of a parse are found again from its lengths and distances; the
-match cache holds 7 lengths a position rather than 8. It adds
+match cache keeps all the lengths of a position, one position after the
+other, rather than 8 in a slot of each, so that a position is searched
+only once (in the first run of the optimal parse) where Zopfli searches
+again at the positions with more each time; and the costs of the lengths
+and distances are looked up once a run rather than for each length of
+each match, and added in Zopfli's order. It adds
 compressing a block after a dictionary with its bits left open, so that
 blocks compressed on several cores join into zopfli's stream.
 

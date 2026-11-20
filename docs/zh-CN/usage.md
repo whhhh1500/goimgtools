@@ -111,7 +111,7 @@ err := goimgtools.Open("in.jpg").
 | 方法 | 说明 |
 |---|---|
 | `JPEG(JPEGOptions{Quality, Optimize, Progressive, Trellis, QuantTable, ChromaSubsampling})` | 质量 `Quality` 为 1–100，0 表示 80。`Optimize`、`Progressive` 在像素不变的前提下减小文件；`Trellis`、`QuantTable`（0–8，编号同 mozjpeg 的 `-quant-table`；或 `QuantTableJpegli`）会改变像素（见[压缩](compression.md)）。`ChromaSubsampling`：`Chroma420`（默认：色度为宽高各一半，同标准库与 libjpeg）、`Chroma422`（宽度一半）或 `Chroma444`（保留全部色度：彩色文字与边缘清晰，文件约大 30%），即 sharp 的 `chromaSubsampling` |
-| `PNG(PNGOptions{CompressionLevel, Colors, NoDither})` | 压缩级别 1（最快）至 10（最小；8、9 级搜索最小文件，单核耗时分别为 7 级的 5–20 倍和 18–65 倍；10 级用 Zopfli 压缩，8 线程时耗时约为 9 级的 22 倍）；`Colors` 将颜色减至最多 256 色（见[压缩](compression.md)） |
+| `PNG(PNGOptions{CompressionLevel, Colors, NoDither})` | 压缩级别 1（最快）至 10（最小；8、9 级搜索最小文件，单核耗时分别为 7 级的 5–20 倍和 18–65 倍；10 级用 Zopfli 压缩，8 线程时耗时约为 9 级的 13 倍）；`Colors` 将颜色减至最多 256 色（见[压缩](compression.md)） |
 | `WebP(WebPOptions{Quality, Lossless, Effort})` | 有损（质量 1–100，默认 75）或无损；`Effort` 1 最快至 9 最小，默认 5（有损时 5 已用上除透明通道外的全部手段，2 耗时约减半，1 约为三分之一） |
 | `GIF(GIFOptions{Colors, NoDither, FixedPalette})` | 最多 256 色，按图像内容选取；`FixedPalette` 改用标准库的固定调色板 |
 | `BMP()` | |
@@ -140,7 +140,7 @@ err := goimgtools.Open("in.jpg").
 | `StripICC()` | 丢弃 ICC 色彩配置。默认保留，否则广色域照片会出现偏色 |
 | `Density(dpi)` | 在输出中记录每英寸 `dpi` 个像素的分辨率（1–65535）：JPEG 的 JFIF 段、PNG 的 pHYs 块、TIFF 的分辨率标签、BMP 的文件头，以及保留的 EXIF 块中的分辨率字段（WebP 与 GIF 没有专门的位置）。默认保留输入的分辨率，缩放后也保留，与 libvips 和 sharp 相同；`Density(0)` 表示不记录 |
 | `ToSRGB()` | 依据输入的色彩配置（原色与色调曲线，或查找表）将颜色转换至 sRGB，输出不再附带配置：在忽略色彩配置的程序中颜色同样正确，文件也略小。转换为 GIF、BMP（无法附带配置）时自动执行。CMYK 图像（JPEG、TIFF）解码时总会经其色彩配置转为 sRGB，与 sharp 相同；不带配置的按 libvips 的 CMYK 配置转换，同 sharp |
-| `MemoryLimit(bytes)` | 工作内存上限，默认 64MB。默认级别的 PNG 输出，其压缩器约占其中 2MB（小图更少），8、9 级分别占 3MB 与 5.6MB，10 级每个压缩线程约 51MB（默认上限下只用一个线程压缩），6 级及以下很少 |
+| `MemoryLimit(bytes)` | 工作内存上限，默认 64MB。默认级别的 PNG 输出，其压缩器约占其中 2MB（小图更少），8、9 级分别占 3MB 与 5.6MB，10 级每个压缩线程约 50MB（默认上限下只用一个线程压缩），6 级及以下很少 |
 | `Threads(n)` | 单次处理最多使用的核数，默认 1，最大为 CPU 核数（见 [CPU 与线程](performance.md#cpu-与线程)） |
 | `SetDefaultThreads(n)` | 全程序的默认线程数（供未调用 `Threads` 的处理使用），无需在每个调用处重复设置 |
 | `TempDir(dir)` | 临时文件目录，默认为系统临时目录 |

@@ -138,6 +138,12 @@ type squeezer struct {
 	path    []uint32 // in costs' room
 	h       *hash
 	sublen  [259]uint16
+
+	// For the cost model of a run: each length's extra bits and the cost of
+	// its symbol.
+	lenBits  [maxMatch + 1]int
+	lenBitsF [maxMatch + 1]float64
+	lenCost  [maxMatch + 1]float64
 }
 
 // squeezerBytes is the memory of a squeezer for blocks of up to n bytes.
@@ -147,10 +153,24 @@ func makeSqueezer(n int, h *hash) squeezer {
 	return squeezer{lengths: make([]uint16, n+1), costs: make([]uint32, n+1), h: h}
 }
 
-func (q *squeezer) bestLengths(s *blockState, data []byte, inStart, inEnd int, cm costModel) float64 {
+// bestLengths finds the cheapest way to every byte of data[inStart:inEnd]
+// under the cost model of stats (nil: the fixed code's), and returns the
+// cost of the whole. Zopfli calls the cost model for every length of every
+// match; here a length's part of the cost is looked up once a run, and a
+// distance's once for the lengths it serves, then added in Zopfli's
+// order: the same costs.
+func (q *squeezer) bestLengths(s *blockState, data []byte, inStart, inEnd int, stats *symbolStats) float64 {
 	blockSize := inEnd - inStart
 	if inStart == inEnd {
 		return 0
+	}
+	var cm costModel = costFixed
+	if stats != nil {
+		cm = stats.cost
+		for k := minMatch; k <= maxMatch; k++ {
+			q.lenBits[k], q.lenCost[k] = lengthExtraBits(k), stats.llSymbols[lengthSymbol(k)]
+			q.lenBitsF[k] = float64(q.lenBits[k])
+		}
 	}
 	windowStart := 0
 	if inStart > windowSize {
@@ -186,7 +206,13 @@ func (q *squeezer) bestLengths(s *blockState, data []byte, inStart, inEnd int, c
 				h.update(data, i, inEnd)
 			}
 		}
-		_, leng := s.findLongestMatch(h, data, i, inEnd, maxMatch, sublen)
+		seg := s.stored(i)
+		var leng uint16
+		if seg != nil {
+			leng = uint16(seg[len(seg)-3]) + 3
+		} else {
+			_, leng = s.findLongestMatch(h, data, i, inEnd, maxMatch, sublen)
+		}
 		if i+1 <= inEnd {
 			if c := cm(int(data[i]), 0) + cost(j); c < cost(j+1) {
 				costs[j+1] = math.Float32bits(float32(c))
@@ -194,12 +220,54 @@ func (q *squeezer) bestLengths(s *blockState, data []byte, inStart, inEnd int, c
 			}
 		}
 		kEnd := min(int(leng), inEnd-i)
-		minCostJ := minCost + cost(j)
+		costJ := cost(j)
+		minCostJ := minCost + costJ
+		if stats == nil {
+			for k := 3; k <= kEnd; k++ {
+				if cost(j+k) <= minCostJ {
+					continue
+				}
+				if c := cm(k, int(sublen[k])) + costJ; c < cost(j+k) {
+					costs[j+k] = math.Float32bits(float32(c))
+					lengths[j+k] = uint16(k)
+				}
+			}
+			continue
+		}
+		if seg != nil {
+			// The lengths as the cache keeps them: for each, the distance
+			// of the lengths up to it.
+			k := 3
+			for e := 0; e < len(seg) && k <= kEnd; e += 3 {
+				hi := min(int(seg[e])+3, kEnd)
+				d := int(seg[e+1]) | int(seg[e+2])<<8
+				dBits, dCost := float64(distExtraBits(d)), stats.dSymbols[distSymbol(d)]
+				for ; k <= hi; k++ {
+					ck := float64(math.Float32frombits(costs[j+k]))
+					if ck <= minCostJ {
+						continue
+					}
+					// As stats.cost adds them (the bits are whole numbers:
+					// their sum is the same either way), then the cost so far.
+					if c := q.lenBitsF[k] + dBits + q.lenCost[k] + dCost + costJ; c < ck {
+						costs[j+k] = math.Float32bits(float32(c))
+						lengths[j+k] = uint16(k)
+					}
+				}
+			}
+			continue
+		}
+		lastD, dBits, dCost := -1, 0, 0.0
 		for k := 3; k <= kEnd; k++ {
-			if cost(j+k) <= minCostJ {
+			ck := cost(j + k)
+			if ck <= minCostJ {
 				continue
 			}
-			if c := cm(k, int(sublen[k])) + cost(j); c < cost(j+k) {
+			if d := int(sublen[k]); d != lastD {
+				lastD, dBits, dCost = d, distExtraBits(d), stats.dSymbols[distSymbol(d)]
+			}
+			// As stats.cost adds them, then the cost so far.
+			if c := float64(q.lenBits[k]+dBits) + q.lenCost[k] + dCost + costJ; c < ck {
 				costs[j+k] = math.Float32bits(float32(c))
 				lengths[j+k] = uint16(k)
 			}
@@ -262,8 +330,8 @@ func followPath[L uint16 | uint32](s *blockState, h *hash, data []byte, inStart,
 
 // run is a run of the optimal parse under the cost model, its items given
 // to sink; the path stays in q.path until the next run.
-func (q *squeezer) run(s *blockState, data []byte, inStart, inEnd int, cm costModel, sink parseSink) float64 {
-	cost := q.bestLengths(s, data, inStart, inEnd, cm)
+func (q *squeezer) run(s *blockState, data []byte, inStart, inEnd int, stats *symbolStats, sink parseSink) float64 {
+	cost := q.bestLengths(s, data, inStart, inEnd, stats)
 	q.traceBackwards(inEnd - inStart)
 	followPath(s, q.h, data, inStart, inEnd, q.path, sink)
 	return cost
@@ -287,7 +355,7 @@ func (w *worker) lz77Optimal(s *blockState, data []byte, inStart, inEnd, numIter
 	last := -1 // the run whose parse is the best, if it is the last made
 	for i := 0; i < numIterations; i++ {
 		counts = symbolCounts{}
-		q.run(s, data, inStart, inEnd, stats.cost, &counts)
+		q.run(s, data, inStart, inEnd, &stats, &counts)
 		cost := dynamicBlockSize(&counts)
 		last = -1
 		if cost < bestCost {
@@ -311,7 +379,7 @@ func (w *worker) lz77Optimal(s *blockState, data []byte, inStart, inEnd, numIter
 	}
 	if numIterations > 0 {
 		if last < 0 {
-			q.bestLengths(s, data, inStart, inEnd, bestStats.cost)
+			q.bestLengths(s, data, inStart, inEnd, &bestStats)
 			q.traceBackwards(inEnd - inStart)
 		}
 		followPath(s, q.h, data, inStart, inEnd, q.path, store)
@@ -322,5 +390,5 @@ func (w *worker) lz77Optimal(s *blockState, data []byte, inStart, inEnd, numIter
 // sink, and its path stays in c.q.path.
 func (w *worker) lz77OptimalFixed(s *blockState, data []byte, inStart, inEnd int, sink parseSink) {
 	s.blockStart, s.blockEnd = inStart, inEnd
-	w.q.run(s, data, inStart, inEnd, costFixed, sink)
+	w.q.run(s, data, inStart, inEnd, nil, sink)
 }

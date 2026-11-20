@@ -34,7 +34,7 @@ type Compressor struct {
 const hashBytes = 2*65536*4 + 2*windowSize*2 + 2*windowSize*4 + windowSize*2
 
 // Bytes is the memory a Compressor takes for data of up to maxInput bytes
-// (beyond the dictionary): about 44 bytes for each, and 1MB. It is made
+// (beyond the dictionary): about 43 bytes for each, and 1MB. It is made
 // whole at once, for the worst case (Zopfli makes it as it goes, for the
 // parts the data is split into and the items of their parse: 27MB at the
 // peak on 1MB of a photograph).

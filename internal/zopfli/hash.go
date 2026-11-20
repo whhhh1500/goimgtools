@@ -13,7 +13,6 @@ const (
 	windowMask   = windowSize - 1
 	masterBlock  = 1000000
 	largeFloat   = 1e30
-	cacheLength  = 7 // Zopfli's is 8: the same bytes, in 5% more time on photographs (4: 2.3 times the time), 3 bytes less a byte of data
 	maxChainHits = 8192
 	hashShift    = 5
 	hashMask     = 32767
