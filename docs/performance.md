@@ -94,10 +94,10 @@ The JPEG written here is 5% smaller (120,406 bytes against 127,034, libjpeg-turb
 
 | Operation | Output file | Peak memory | Time |
 |---|---|---|---|
-| Without shrinking, to JPEG (quality 85) | 5.9MB | 6.0MB | 0.16s |
-| Without shrinking, to PNG | 42.2MB | 9.2MB | 1.52s (sharp, one thread, with adaptive filtering: 42.6MB in 1.39s; at its default, without: 66.2MB in 1.12s) |
-| Without shrinking, to lossy WebP (quality 75) | 3.2MB | 20.3MB | 4.62s (1.15s with 8 threads; effort 1: 1.54s, 0.38s) |
-| Without shrinking, to lossless WebP | 28.9MB | 25.6MB | 4.79s (4.49s with 8 threads) |
+| Without shrinking, to JPEG (quality 85) | 5.9MB | 7.2MB | 0.15s |
+| Without shrinking, to PNG | 42.2MB | 11.6MB | 1.64s (sharp, one thread, with adaptive filtering: 42.6MB in 1.39s; at its default, without: 66.2MB in 1.12s) |
+| Without shrinking, to lossy WebP (quality 75) | 3.2MB | 19.9MB | 3.80s (0.98s with 8 threads; effort 1: 1.49s, 0.41s) |
+| Without shrinking, to lossless WebP | 28.9MB | 26.2MB | 4.71s (3.93s with 8 threads) |
 | Without shrinking, to BMP | 72MB | 6.7MB | 0.15s |
 | Without shrinking, to TIFF (uncompressed) | 96MB | 6.4MB | 0.10s |
 | Rotate 90°, without shrinking | 6.0MB | 12.4MB | 0.73s |
