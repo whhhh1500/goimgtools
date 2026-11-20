@@ -109,8 +109,9 @@ func TestSameOnEveryProcessor(t *testing.T) {
 		{"jpeg trellis", func() ([]byte, error) {
 			return photo.Clone().JPEG(JPEGOptions{Quality: 77, Optimize: true, Trellis: true}).ToBytes()
 		}, "8b4c90a04ea104ff"},
-		// Levels 7 to 9 have a compressor of their own: one checksum for
-		// every Go version.
+		// Levels 7 to 10 have a compressor of their own: one checksum for
+		// every Go version (level 10's Zopfli takes its logarithms with its own
+		// function, as math.Log may be fused on some processors).
 		{"png text level 7", func() ([]byte, error) {
 			return FromImage(textLike(320, 200)).PNG(PNGOptions{CompressionLevel: 7}).ToBytes()
 		}, "418404b13eac9f66"},
@@ -120,6 +121,9 @@ func TestSameOnEveryProcessor(t *testing.T) {
 		{"png level 9", func() ([]byte, error) {
 			return photo.Clone().PNG(PNGOptions{CompressionLevel: 9}).ToBytes()
 		}, "61817650c4bc5347"},
+		{"png level 10", func() ([]byte, error) {
+			return photo.Clone().Resize(150, 0).PNG(PNGOptions{CompressionLevel: 10}).ToBytes()
+		}, "3be84bf0a11ea364"},
 		{"gif lossy", func() ([]byte, error) { return photo.Clone().GIF(GIFOptions{Lossy: 24}).ToBytes() }, "7fcd09eb9c1eea96"},
 		{"jpeg jpegli tables", func() ([]byte, error) {
 			return photo.Clone().JPEG(JPEGOptions{Quality: 77, QuantTable: QuantTableJpegli, Progressive: true}).ToBytes()

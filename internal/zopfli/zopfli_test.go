@@ -265,11 +265,12 @@ func TestWorkers(t *testing.T) {
 	}
 }
 
-// TestMoreOptions: with Ultra, MoreCodes and no limit on the blocks the
-// data comes back, and is no larger than Zopfli makes it on these inputs.
+// TestMoreOptions: with Ultra, MoreCodes, FineSplit and no limit on the
+// blocks the data comes back, and is no larger than Zopfli makes it on
+// these inputs.
 func TestMoreOptions(t *testing.T) {
 	more := DefaultOptions()
-	more.Ultra, more.MoreCodes, more.BlockSplittingMax = true, true, 0
+	more.Ultra, more.MoreCodes, more.FineSplit, more.BlockSplittingMax = true, true, true, 0
 	for name, data := range testInputs() {
 		got := Deflate(nil, more, data)
 		back, err := io.ReadAll(flate.NewReader(bytes.NewReader(got)))
@@ -305,5 +306,64 @@ func TestBrotliEven(t *testing.T) {
 		if !slices.Equal(got, c.want) {
 			t.Errorf("%v: %v, want %v", c.in, got, c.want)
 		}
+	}
+}
+
+// TestFineSplit: a stretch unlike the data before it, at its end, as an
+// icon's transparent rows are, is split off by fineSplit, to blocks
+// estimated smaller; fineSplit keeps the points it is given, and adds only
+// what makes the estimate smaller; with FineSplit the data comes back, no
+// larger.
+func TestFineSplit(t *testing.T) {
+	var data []byte
+	rng := rand.New(rand.NewPCG(7, 8))
+	for len(data) < 60000 {
+		data = append(data, fmt.Sprintf("%d,%d;", rng.IntN(1000), rng.IntN(50))...)
+	}
+	edge := len(data)
+	data = append(data, bytes.Repeat([]byte{0, 0, 0, 0, 9, 0, 0, 0}, 750)...)
+	opts := DefaultOptions()
+	c := New(opts, len(data))
+	s := &c.whole
+	s.reset(data)
+	c.own.blockState(&c.opts, 0, len(data), false).greedy(data, 0, len(data), s, c.own.h)
+	near := func(split []int) bool {
+		for _, at := range split {
+			if p := s.byteRange(0, at); p > edge-64 && p < edge+64 {
+				return true
+			}
+		}
+		return false
+	}
+	cost := func(split []int) float64 {
+		bounds := append(append([]int{0}, split...), s.size())
+		total := 0.0
+		for i := 0; i+1 < len(bounds); i++ {
+			total += calculateBlockSizeAutoType(s, bounds[i], bounds[i+1])
+		}
+		return total
+	}
+	if fs := fineSplit(s, nil); !near(fs) || cost(fs) >= cost(nil) {
+		t.Errorf("fineSplit %v (%.0f bits, %.0f unsplit): no split near byte %d", fs, cost(fs), cost(nil), edge)
+	}
+	zs := c.blockSplitLZ77(s, 0)
+	fs := fineSplit(s, zs)
+	for _, at := range zs {
+		if !slices.Contains(fs, at) {
+			t.Errorf("fineSplit %v leaves out %d of %v", fs, at, zs)
+		}
+	}
+	if cost(fs) > cost(zs) {
+		t.Errorf("fineSplit %v estimated %.0f bits, Zopfli's %v %.0f", fs, cost(fs), zs, cost(zs))
+	}
+	fine := opts
+	fine.FineSplit = true
+	got, want := Deflate(nil, fine, data), Deflate(nil, opts, data)
+	back, err := io.ReadAll(flate.NewReader(bytes.NewReader(got)))
+	if err != nil || !bytes.Equal(back, data) {
+		t.Fatalf("does not inflate to the data (%v)", err)
+	}
+	if len(got) > len(want) {
+		t.Errorf("%d bytes, %d without FineSplit", len(got), len(want))
 	}
 }

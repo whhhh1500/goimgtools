@@ -129,7 +129,7 @@ const MaxLevel = zopfliLevel
 // smaller on the filtered rows of the 17, in about the same time).
 const zopfliLevel = 10
 
-var zopfliOptions = zopfli.Options{NumIterations: 60, BlockSplitting: true, Ultra: true, MoreCodes: true}
+var zopfliOptions = zopfli.Options{NumIterations: 60, BlockSplitting: true, Ultra: true, MoreCodes: true, FineSplit: true}
 
 // zopfliBlock is the data of a block at level 10 (a variable for tests).
 var zopfliBlock = zopfli.MasterBlock

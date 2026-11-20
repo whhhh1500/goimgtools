@@ -1,7 +1,5 @@
 package zopfli
 
-import "math"
-
 // lengthsToSymbols gives the canonical code of each symbol from its code
 // length (tree.c).
 func lengthsToSymbols(lengths []uint32, maxBits uint32, symbols []uint32) {
@@ -38,15 +36,15 @@ func calculateEntropy(count []uint64, bitLengths []float64) {
 	}
 	var log2sum float64
 	if sum == 0 {
-		log2sum = float64(math.Log(float64(len(count))) * kInvLog2)
+		log2sum = float64(zlog(float64(len(count))) * kInvLog2)
 	} else {
-		log2sum = float64(math.Log(float64(sum)) * kInvLog2)
+		log2sum = float64(zlog(float64(sum)) * kInvLog2)
 	}
 	for i, c := range count {
 		if c == 0 {
 			bitLengths[i] = log2sum
 		} else {
-			bitLengths[i] = log2sum - float64(math.Log(float64(c))*kInvLog2)
+			bitLengths[i] = log2sum - float64(zlog(float64(c))*kInvLog2)
 		}
 		if bitLengths[i] < 0 && bitLengths[i] > -1e-5 {
 			bitLengths[i] = 0

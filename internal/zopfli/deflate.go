@@ -18,6 +18,9 @@ type Options struct {
 	// limited to 14 bits down to 9 while that is smaller; and its header
 	// in the smallest of 32 ways rather than 8.
 	MoreCodes bool
+	// FineSplit (not in Zopfli) splits each block further after the optimal
+	// parse, where its symbols' statistics change (see fineSplit).
+	FineSplit bool
 }
 
 // DefaultOptions are Zopfli's defaults.
@@ -341,6 +344,9 @@ func (c *Compressor) deflatePart(btype int, final bool, data []byte, inStart, in
 		if totalCost2 < totalCost {
 			split = split2
 		}
+	}
+	if opts.FineSplit && opts.BlockSplitting {
+		split = fineSplit(lz77, split)
 	}
 	npoints = len(split)
 	for i := 0; i <= npoints; i++ {

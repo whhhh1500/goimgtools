@@ -415,16 +415,17 @@ type PNGOptions struct {
 	// the data is compressed with a port of Zopfli (60 runs of its optimal
 	// parse, with ECT's additions: runs priced by the code lengths after
 	// them, the codes and header of each block chosen among more, short
-	// matches written as literals where that is smaller; its master blocks
-	// of 1MB on threads of their own, joined into one stream), each block
-	// by level 9's compressor instead where that is smaller; a palette is
-	// written in the order its colours first appear, as ECT writes it,
-	// without the colours no pixel uses. On the same 17 images it is 0.28%
-	// smaller than level 9 and 0.094% smaller than ECT -9 (smaller on 14 of
-	// them), in 400s with 8 threads against level 9's 31.5s (ECT: 606s on 6
-	// cores). Its compressor takes about 50MB for each thread compressing:
-	// with the default memory limit it compresses on one thread, with a
-	// limit of 480MB on 8.
+	// matches written as literals where that is smaller; each block split
+	// further after the parse where its symbols' statistics change; its
+	// master blocks of 1MB on threads of their own, joined into one
+	// stream), each block by level 9's compressor instead where that is
+	// smaller; a palette is written in the order its colours first appear,
+	// as ECT writes it, without the colours no pixel uses. On the same 17
+	// images it is 0.39% smaller than level 9 and 0.20% smaller than ECT -9
+	// (smaller on 15 of them), in 408s with 8 threads against level 9's
+	// 31.5s (ECT: 606s on 6 cores). Its compressor takes about 50MB for each
+	// thread compressing: with the default memory limit it compresses on
+	// one thread, with a limit of 480MB on 8.
 	CompressionLevel int
 	// Colors, 2 to 256, reduces the image to that many colours, chosen for
 	// this image, and writes a paletted PNG. This is how PNG files are made
