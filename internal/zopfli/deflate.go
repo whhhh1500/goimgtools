@@ -18,8 +18,10 @@ type Options struct {
 	// limited to 14 bits down to 9 while that is smaller; and its header
 	// in the smallest of 32 ways rather than 8.
 	MoreCodes bool
-	// FineSplit (not in Zopfli) splits each block further after the optimal
-	// parse, where its symbols' statistics change (see fineSplit).
+	// FineSplit (not in Zopfli) splits the data further where its symbols'
+	// statistics change (see fineSplit): before the optimal parse, on the
+	// greedy parse Zopfli splits by, so that the parts are parsed each with
+	// its own statistics, and after it.
 	FineSplit bool
 }
 

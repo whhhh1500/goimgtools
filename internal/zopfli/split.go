@@ -286,6 +286,11 @@ func (c *Compressor) blockSplit(data []byte, inStart, inEnd, maxBlocks int) []in
 	bs := c.own.blockState(&c.opts, inStart, inEnd, false)
 	bs.greedy(data, inStart, inEnd, store, c.own.h)
 	lzSplit := c.blockSplitLZ77(store, maxBlocks)
+	if c.opts.FineSplit {
+		// The parts are parsed each with its own statistics: split as finely
+		// on the greedy parse as after the optimal one (see deflatePart).
+		lzSplit = fineSplit(store, lzSplit)
+	}
 	var split []int
 	pos := inStart
 	if len(lzSplit) > 0 {
