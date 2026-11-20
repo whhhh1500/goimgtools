@@ -49,10 +49,9 @@ type Options struct {
 	// blocks suit simple images, an alpha plane, whose predictor modes
 	// cost more than they save in small blocks.
 	PredictorBits int
-	// FastParse leaves out the optimal parse of the default effort and
-	// above (the matches are then chosen one after the other, as below
-	// the default effort): several times faster on large images, for
-	// files a few percent larger.
+	// FastParse leaves out the optimal parse of effort 4 and above (the
+	// matches are then chosen one after the other, as below it): several
+	// times faster on large images, for files a few percent larger.
 	FastParse bool
 }
 
@@ -95,8 +94,14 @@ var (
 	modesAll  = []uint8{1, 2, 11, 12, 13, 7, 5, 10, 9, 8, 6, 3, 4, 0}
 )
 
+// optimalEffort is the least effort with the optimal parse: at effort 4 it
+// makes screenshots, drawings and game artwork up to 12% smaller (5% in
+// all, against 0.2% for photographs), in 2.6 times the time, 59% of that
+// of the default effort.
+const optimalEffort = 4
+
 func paramsFor(effort int) params {
-	p := params{lazy: effort >= 3, variants: 5, dropRatio: 1.15, optimal: effort >= DefaultEffort, optimalRaw: effort >= DefaultEffort,
+	p := params{lazy: effort >= 3, variants: 5, dropRatio: 1.15, optimal: effort >= optimalEffort, optimalRaw: effort >= optimalEffort,
 		cross: effort >= DefaultEffort, regroup: effort >= DefaultEffort, rleAlt: effort >= DefaultEffort}
 	switch {
 	case effort <= 1:

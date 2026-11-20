@@ -170,8 +170,9 @@ type WebPOptions struct {
 	// planes of more than 4 megapixels get the optimal parse too. Lossless
 	// output gets more at every level: on photographs 3 takes a quarter of
 	// the time of 5 for files 1% larger, and 1 an eighth for 4%;
-	// screenshots and drawings gain more from 5 (7% over 3) and little
-	// above it (0.3% at 7).
+	// screenshots and drawings gain more from 4, which has the optimal
+	// parse (6% over 3, in 3.5 times its time); 5 adds 0.6%, in 1.7 times
+	// the time of 4, and 7 another 0.3%.
 	Effort int
 }
 

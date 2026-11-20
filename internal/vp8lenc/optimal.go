@@ -17,9 +17,9 @@ import "math"
 // say. The rest is written for this package: a backward pass over a
 // stretch at a time, as the pixels stream through the window.
 //
-// From the default effort it is used for every variant: those with the
-// predictor and with the colour table (photographs, palette images) and
-// the others (screenshots: 1 to 3.5% smaller). Searching at every pixel
+// From effort 4 it is used for every variant: those with the predictor and
+// with the colour table (photographs, palette images) and the others
+// (screenshots: 1 to 3.5% smaller). Searching at every pixel
 // would go through every long repeat of a screenshot again and again; the
 // tokenizer remembers where the matches at each distance end (matchAt),
 // which makes that cheap, and in a run of equal pixels (the flat areas of
