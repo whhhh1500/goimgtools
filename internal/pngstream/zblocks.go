@@ -111,8 +111,8 @@ const (
 // the symbols at their entropy, as zopfli does, makes level 8 another
 // 0.07% smaller and level 9 0.18% (17 images; 9 takes 18% longer).
 var nearLevels = map[int]deflate.Params{
-	8: withSplit(withBlocks(deflate.Level10, 128<<10), false, 1),
-	9: withSplit(withBlocks(deflate.Level12, zBlockBytes), true, 2),
+	8: withFine(withSplit(withBlocks(deflate.Level10, 128<<10), false, 1)),
+	9: withFine(withSplit(withBlocks(deflate.Level12, zBlockBytes), true, 2)),
 }
 
 // DefaultLevel is the compression level used when none is given.
@@ -254,6 +254,11 @@ func nearBytes(level, width int) int64 {
 	}
 	return comp + zWindow + 2*block + zOutSlack + idatBytes + bruteBytes(row, level >= zopfliLevel) +
 		trialNeed(row, segmentBytes(level), true, lanes) - trialNeed(row, trialBytes, false, 0)
+}
+
+func withFine(p deflate.Params) deflate.Params {
+	p.FineSplit = true
+	return p
 }
 
 func withBlocks(p deflate.Params, blockLen int) deflate.Params {

@@ -89,6 +89,10 @@ type Params struct {
 	SplitByCost  bool
 	SplitPasses  int
 	EntropyCosts bool
+	// FineSplit (with SplitByCost; not in libdeflate or zopfli) splits a
+	// block further where the statistics of its symbols change, and into as
+	// many parts as that saves bits (see fineSplits).
+	FineSplit bool
 
 	// MaxInput, when set, is the most data (beyond the dictionary) that a
 	// call to Compress is given: the lazy parsing's record of a block is
@@ -111,8 +115,9 @@ func (p Params) Bytes() int64 {
 	if p.Lazy != 0 {
 		return hcBytes + 4*int64(p.lazyItems()) + int64(unsafe.Sizeof(Compressor{}))
 	}
+	parts := int64(p.maxParts())
 	return matchfinderBytes + 4*int64(p.cacheLength()) + 4*int64(maxBlock+maxMatch+1) + 4*int64(maxBlock) + int64(unsafe.Sizeof(Compressor{})) +
-		maxSplitBlocks*int64(unsafe.Sizeof(codes{})) + 3*8*(maxSplitBlocks+1)
+		parts*int64(unsafe.Sizeof(partLens{})) + 3*8*(parts+1)
 }
 
 // lazyItems is the length of the lazy parsing's record of a block: one
@@ -122,6 +127,14 @@ func (p Params) lazyItems() int {
 		return min(p.maxBlockLength(), p.MaxInput)
 	}
 	return p.maxBlockLength()
+}
+
+// maxParts is the most parts a block is split into.
+func (p Params) maxParts() int {
+	if p.FineSplit {
+		return p.maxBlockLength()/minSplitBlock + 1
+	}
+	return maxSplitBlocks
 }
 
 func (p Params) maxBlockLength() int {
@@ -145,6 +158,12 @@ type codes struct {
 	offsetCodewords [numOffsetSyms]uint32
 	litlenLens      [numLitlenSyms]uint8
 	offsetLens      [numOffsetSyms]uint8
+}
+
+// partLens are the lengths of a code's codewords.
+type partLens struct {
+	litlen [numLitlenSyms]uint8
+	offset [numOffsetSyms]uint8
 }
 
 type freqs struct {
@@ -195,10 +214,10 @@ type Compressor struct {
 	w bitWriter
 
 	// Splitting by cost (see split.go).
-	partCodes []codes // maxSplitBlocks of them
-	bounds    []int
-	ends      []int
-	done      []bool
+	partLens []partLens // the codes each part of a split block starts from, maxParts of them
+	bounds   []int
+	ends     []int
+	done     []bool
 
 	// The matchfinder after a dictionary, for CompressShared.
 	shared *sharedDict
@@ -233,13 +252,13 @@ func New(p Params) *Compressor {
 	return &Compressor{
 		p:         p,
 		mf:        new(btMatchfinder),
-		partCodes: make([]codes, maxSplitBlocks),
+		partLens:  make([]partLens, p.maxParts()),
 		cache:     make([]lzMatch, p.cacheLength()),
 		costToEnd: make([]uint32, maxBlock+maxMatch+1),
 		items:     make([]uint32, maxBlock),
-		bounds:    make([]int, 0, maxSplitBlocks+1),
-		ends:      make([]int, 0, maxSplitBlocks+1),
-		done:      make([]bool, 0, maxSplitBlocks+1),
+		bounds:    make([]int, 0, p.maxParts()+1),
+		ends:      make([]int, 0, p.maxParts()+1),
+		done:      make([]bool, 0, p.maxParts()+1),
 	}
 }
 

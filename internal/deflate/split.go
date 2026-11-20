@@ -32,11 +32,13 @@ func (c *Compressor) splitAndFlush(block []byte, cacheEnd int, isFirst, isFinal 
 	}
 	// The codes each part starts from, from the whole parse, before the
 	// parts overwrite it.
-	starts := c.partCodes[:len(bounds)-1]
+	starts := c.partLens[:len(bounds)-1]
 	for k := range starts {
 		var f freqs
+		var cd codes
 		c.rangeFreqs(bounds[k], bounds[k+1], &f)
-		makeCodes(&f, &starts[k])
+		makeCodes(&f, &cd)
+		starts[k] = partLens{cd.litlenLens, cd.offsetLens}
 	}
 	// Where the matches of each part end in the cache.
 	ends := c.ends[:len(bounds)]
@@ -52,7 +54,7 @@ func (c *Compressor) splitAndFlush(block []byte, cacheEnd int, isFirst, isFinal 
 	for k := range starts {
 		part := block[bounds[k]:bounds[k+1]]
 		ol := c.optimizeBlock(part, ends[k+1], func() {
-			c.setCostsFromCodes(&starts[k].litlenLens, &starts[k].offsetLens)
+			c.setCostsFromCodes(&starts[k].litlen, &starts[k].offset)
 		})
 		c.flushBlock(part, ol, isFinal && k == len(starts)-1)
 		onlyLiterals = ol
@@ -107,8 +109,14 @@ func (c *Compressor) nextItem(a, p, n int) int {
 func (c *Compressor) rangeCost(a, b int) uint32 {
 	var f freqs
 	extra := c.rangeFreqs(a, b, &f)
+	return freqsCost(&f, extra, b-a)
+}
+
+// freqsCost is rangeCost of n bytes whose symbols are f, with the extra
+// bits.
+func freqsCost(f *freqs, extra uint32, n int) uint32 {
 	var cd codes
-	makeCodes(&f, &cd)
+	makeCodes(f, &cd)
 	dynamic := 3 + headerBits(&cd) + extra
 	static := 3 + extra
 	for sym, k := range f.litlen {
@@ -119,7 +127,7 @@ func (c *Compressor) rangeCost(a, b int) uint32 {
 		dynamic += k * uint32(cd.offsetLens[sym])
 		static += k * 5
 	}
-	stored := uint32(3 + 7 + 32 + 40*((b-a+0xffff-1)/0xffff-1) + 8*(b-a))
+	stored := uint32(3 + 7 + 32 + 40*((n+0xffff-1)/0xffff-1) + 8*n)
 	return min(dynamic, static, stored)
 }
 
@@ -162,7 +170,7 @@ func headerBits(cd *codes) uint32 {
 func (c *Compressor) findSplits(n int) []int {
 	bounds := append(c.bounds[:0], 0, n)
 	done := append(c.done[:0], false) // by part
-	for len(bounds)-1 < maxSplitBlocks {
+	for len(bounds)-1 < c.p.maxParts() {
 		k := -1
 		for i := range done {
 			if !done[i] && (k < 0 || bounds[i+1]-bounds[i] > bounds[k+1]-bounds[k]) {
@@ -184,6 +192,9 @@ func (c *Compressor) findSplits(n int) []int {
 		}
 		bounds = slices.Insert(bounds, k+1, p)
 		done = slices.Insert(done, k+1, false)
+	}
+	if c.p.FineSplit {
+		bounds = c.fineSplits(bounds)
 	}
 	c.bounds, c.done = bounds, done
 	return bounds

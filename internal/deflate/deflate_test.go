@@ -336,3 +336,33 @@ func TestCompressBitsStored(t *testing.T) {
 		}
 	}
 }
+
+// TestFineSplit: data that alternates between two kinds every few
+// kilobytes, which splitting in two does not make smaller, is split into
+// its stretches with FineSplit, and smaller; it inflates back.
+func TestFineSplit(t *testing.T) {
+	rng := rand.New(rand.NewPCG(5, 6))
+	var data []byte
+	for len(data) < 250000 {
+		for range 2000 {
+			data = append(data, byte(rng.IntN(64)))
+		}
+		for range 8000 {
+			data = append(data, byte(128+rng.IntN(128)))
+		}
+	}
+	p := Level12
+	p.NoSkip, p.SplitByCost, p.SplitPasses, p.BlockLen, p.CachePerBlock = true, true, 2, 256<<10, 3
+	fine := p
+	fine.FineSplit = true
+	want := New(p).Compress(nil, data, 0, true)
+	got := New(fine).Compress(nil, data, 0, true)
+	back, err := io.ReadAll(flate.NewReader(bytes.NewReader(got)))
+	if err != nil || !bytes.Equal(back, data) {
+		t.Fatalf("does not inflate to the data (%v)", err)
+	}
+	if len(got) >= len(want) {
+		t.Errorf("%d bytes with FineSplit, %d without", len(got), len(want))
+	}
+	t.Logf("%d bytes with FineSplit, %d without", len(got), len(want))
+}
