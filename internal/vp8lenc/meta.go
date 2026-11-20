@@ -2,6 +2,7 @@ package vp8lenc
 
 import (
 	"math"
+	"slices"
 )
 
 // Huffman groups. One set of prefix codes for a whole image is a compromise
@@ -18,9 +19,18 @@ import (
 //  2. Further replays move every block to the group whose codes are
 //     cheapest for it and rebuild the groups from their new members, the
 //     way k-means does.
+//  3. Groups whose codes cost more than they save are joined (merge.go),
+//     and if any were, one more replay lets every block choose again
+//     among the groups left, as libwebp's remapping does after its
+//     combining; the groups are then joined again where that pays.
 //
 // The histograms of the last replay are exactly those of the symbols each
 // group will code, so the size of the result is known before it is written.
+//
+// What a block holds does not change from one replay to the next, only the
+// group it goes to: the first replay keeps every block's symbols and their
+// counts, when the budget has room, and the replays after it go through
+// those (rerun) instead of the tokens, to the same result.
 
 // grouper is a symSink that collects block histograms and clusters them.
 type grouper struct {
@@ -40,7 +50,24 @@ type grouper struct {
 	last    uint16   // group of the previous block with symbols
 	binning bool     // first replay: sort blocks by their own entropy
 	binMax  float64  // bits per token that map to the last group
+
+	// With keep, the symbols of every block, kept by the first replay in
+	// chunks of blkChunk words: block b's are
+	// blks[blkAt[b]>>16][blkAt[b]&0xffff:][:blkLen[b]], each a word of
+	// count<<12 | symbol, or for a count above 15 the symbol and then the
+	// count. dec is a block's, decoded (symbol<<16 | count).
+	keep   bool
+	chunk  int // words in a chunk: blkChunk, or fewer for a small image
+	chunks int // chunks at most, as keepMem counts them
+	blks   [][]uint16
+	blkAt  []uint32
+	blkLen []uint16
+	dec    []uint32
 }
+
+// blkChunk is the number of words in a chunk of blks; a block's (two for
+// each symbol of the five alphabets at most) fit in one.
+const blkChunk = 1 << 16
 
 const noGroup = 0xffff
 
@@ -65,7 +92,9 @@ type grouperScratch struct {
 	costs   [][]uint16
 }
 
-func newGrouper(width, height int, hbits uint, cacheBits uint, ngroups int, lit1 bool, sc *grouperScratch) *grouper {
+// With keep, the first replay keeps the blocks' symbols, of which there
+// are words at most (see keepMem).
+func newGrouper(width, height int, hbits uint, cacheBits uint, ngroups int, lit1 bool, sc *grouperScratch, keep bool, words int64) *grouper {
 	g := &grouper{hbits: hbits, binning: true, last: noGroup}
 	g.tw, g.th = (width+1<<hbits-1)>>hbits, (height+1<<hbits-1)>>hbits
 	g.green = numLiteral + numLength
@@ -88,6 +117,11 @@ func newGrouper(width, height int, hbits uint, cacheBits uint, ngroups int, lit1
 		g.touched[i] = g.touched[i][:0]
 	}
 	g.assign = make([]uint16, g.tw*g.th) // kept by the split chosen
+	if keep && g.alpha <= blkMaxWords/2 {
+		g.keep = true
+		g.chunk, g.chunks = keepChunks(words)
+		g.blkAt, g.blkLen = make([]uint32, g.tw*g.th), make([]uint16, g.tw*g.th)
+	}
 	for i := 0; i < ngroups; i++ {
 		if i == len(sc.hists) {
 			sc.hists, sc.costs = append(sc.hists, nil), append(sc.costs, nil)
@@ -117,7 +151,7 @@ func grouperMem(width, height int, hbits uint, cacheBits uint, ngroups int) int6
 	if cacheBits != 0 {
 		a += 1 << cacheBits
 	}
-	return tw*a*4 + tw*th*2 + int64(ngroups)*a*6
+	return tw*a*4 + tw*th*2 + int64(ngroups)*a*6 + mergeMem(ngroups, a)
 }
 
 func (g *grouper) add(x, y int, sym int) {
@@ -177,6 +211,9 @@ func (g *grouper) selfBits(counts []uint16, syms []uint16) (bits float64, n int)
 // long copies) take the group of the block before them, which costs the
 // entropy image least.
 func (g *grouper) flushRows(next int) {
+	if g.curRow >= g.th {
+		return // rerun
+	}
 	for t := 0; t < g.tw; t++ {
 		syms := g.touched[t]
 		if len(syms) == 0 {
@@ -184,6 +221,9 @@ func (g *grouper) flushRows(next int) {
 			continue
 		}
 		counts := g.row[t*g.alpha : (t+1)*g.alpha]
+		if g.binning && g.keep {
+			g.keepBlock(g.curRow*g.tw+t, counts, syms)
+		}
 		best := -1
 		if g.binning {
 			bits, n := g.selfBits(counts, syms)
@@ -219,6 +259,103 @@ func (g *grouper) flushRows(next int) {
 		}
 	}
 	g.curRow = next
+}
+
+// keepMem is the most memory a grouper given keep takes for the symbols
+// of its blocks, of which there are words at most (a symbol's word, and
+// for counts above 15 a second one, stand for at least one occurrence).
+// A chunk is started when a block's words do not fit in the last one,
+// which leaves fewer than blkMaxWords unused.
+func keepMem(width, height int, hbits uint, words int64) int64 {
+	blocks := int64((width+1<<hbits-1)>>hbits) * int64((height+1<<hbits-1)>>hbits)
+	c, n := keepChunks(words)
+	return blocks*6 + int64(n)*int64(c)*2 + blkMaxWords*2
+}
+
+// keepChunks is the size of the chunks for words, blkChunk or for fewer
+// words one chunk that holds them all, and how many there can be.
+func keepChunks(words int64) (size, n int) {
+	words = max(words, 1)
+	c := min(words+blkMaxWords, blkChunk)
+	return int(c), int((words + c - blkMaxWords - 1) / (c - blkMaxWords))
+}
+
+// blkMaxWords is the most words a block's symbols take: two for each
+// symbol, with the five alphabets (keep is refused for larger ones).
+const blkMaxWords = 2 << 12
+
+// keepBlock adds block b's symbols to blks (or stops keeping them, should
+// they be more than the caller was told).
+func (g *grouper) keepBlock(b int, counts []uint16, syms []uint16) {
+	n := len(g.blks)
+	if n == 0 || len(g.blks[n-1])+2*len(syms) > g.chunk {
+		if n == g.chunks {
+			g.keep, g.blks, g.blkAt, g.blkLen = false, nil, nil, nil
+			return
+		}
+		g.blks = append(g.blks, make([]uint16, 0, g.chunk))
+		n++
+	}
+	c := g.blks[n-1]
+	at := len(c)
+	for _, s := range syms {
+		if k := counts[s]; k < 16 {
+			c = append(c, k<<12|s)
+		} else {
+			c = append(c, s, k)
+		}
+	}
+	g.blkAt[b], g.blkLen[b] = uint32(n-1)<<16|uint32(at), uint16(len(c)-at)
+	g.blks[n-1] = c
+	g.dec = slices.Grow(g.dec, len(syms))
+}
+
+// stored reports whether the first replay is over and kept every block's
+// symbols.
+func (g *grouper) stored() bool { return g.keep && !g.binning }
+
+// rerun is a replay (after beginReplay) from the symbols the first one
+// kept: every block goes to the group whose codes are cheapest for it, as
+// in flushRows.
+func (g *grouper) rerun() {
+	for b := 0; b < g.tw*g.th; b++ {
+		if g.blkLen[b] == 0 {
+			g.assign[b] = g.last
+			continue
+		}
+		at := g.blkAt[b]
+		ents := g.dec[:0]
+		words := g.blks[at>>16][at&0xffff:][:g.blkLen[b]]
+		for i := 0; i < len(words); i++ {
+			s, k := words[i]&0xfff, words[i]>>12
+			if k == 0 {
+				i++
+				k = words[i]
+			}
+			ents = append(ents, uint32(s)<<16|uint32(k))
+		}
+		best, bestCost := -1, uint64(math.MaxUint64)
+		for i, gr := range g.groups {
+			if gr.cost == nil {
+				continue
+			}
+			var c uint64
+			cost := gr.cost
+			for _, e := range ents {
+				c += uint64(e&0xffff) * uint64(cost[e>>16])
+			}
+			if c < bestCost || best < 0 {
+				best, bestCost = i, c
+			}
+		}
+		hist := g.groups[best].hist
+		for _, e := range ents {
+			hist[e>>16] += e & 0xffff
+		}
+		g.last = uint16(best)
+		g.assign[b] = g.last
+	}
+	g.curRow = g.th
 }
 
 // endReplay closes a replay. It reports the number of groups in use.
@@ -262,6 +399,30 @@ func (g *grouper) beginReplay() {
 			}
 		}
 		clear(gr.hist)
+	}
+}
+
+// retain prepares another replay after mergeSets: alive tells, in the order
+// result returned them, which of the groups in use are left; their
+// histograms hold what was joined into them.
+func (g *grouper) retain(alive []bool) {
+	off := g.offsets()
+	j := 0
+	for _, gr := range g.groups {
+		if gr.total[0] == 0 {
+			continue
+		}
+		gr.total = [5]uint64{}
+		if !alive[j] {
+			clear(gr.hist)
+		} else {
+			for a := 0; a < 5; a++ {
+				for _, c := range gr.hist[off[a]:off[a+1]] {
+					gr.total[a] += uint64(c)
+				}
+			}
+		}
+		j++
 	}
 }
 

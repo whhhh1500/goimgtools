@@ -152,6 +152,16 @@ func (h *histSet) lists() [5][]uint32 {
 	return [5][]uint32{h.green, h.red, h.blue, h.alpha, h.dist}
 }
 
+// bits is what build reports, without making the codes; lens is scratch,
+// as long as the longest alphabet.
+func (h *histSet) bits(lens []uint8) int64 {
+	var bits int64
+	for _, l := range h.lists() {
+		bits += bestBits(l, lens[:len(l)])
+	}
+	return bits
+}
+
 // build makes the codes for h and returns them with the exact number of
 // bits the trees and the symbols take (extra bits not included).
 func (h *histSet) build() (*codeSet, int64) {

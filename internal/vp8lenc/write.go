@@ -88,6 +88,11 @@ const rleMargin = 1.02
 // second split takes 2s and 4MB more, and has not been seen to pay.
 const regroupMaxPixels = 1 << 22
 
+// remapMaxPixels bounds the images whose groups, once joined, get another
+// replay to choose among those left: it takes 0.4s at 24 megapixels, for
+// a file 0.006% smaller.
+const remapMaxPixels = 1 << 22
+
 // weighed is the size of the plan as the variants are compared by: that of
 // one with the cross-color transform counts for a percent more.
 func (p *plan) weighed() float64 {
@@ -247,13 +252,35 @@ func (e *encoder) groupBy(p *plan, w *walker, hbits uint, want int, done map[[2]
 	if e.gs == nil {
 		e.gs = &grouperScratch{}
 	}
-	g := newGrouper(f.sw, f.h, hbits, cacheBits, want, f.tok.lit1, e.gs)
+	// The replays after the first go through the symbols of the blocks,
+	// kept by the first, when they surely fit below the peak of the budget
+	// so far (pass one is over) and in a sixteenth of the budget (4MB by
+	// default): the replays then take a fraction of the time (a photograph
+	// of 768×512 is encoded in a sixth less time). Pass one holds less
+	// than the budget counts for it, so the process may peak a little
+	// higher; the sixteenth bounds that.
+	words := 4*st.nLit + 2*st.nCopy
+	km := keepMem(f.sw, f.h, hbits, words)
+	b := e.env.Budget
+	keep := !e.replay && km <= min(b.Peak()-b.Used(), e.avail()/2, b.Limit()/16) &&
+		e.reserve(km, "webp Huffman groups") == nil
+	if keep {
+		defer e.unreserve(km)
+	}
+	g := newGrouper(f.sw, f.h, hbits, cacheBits, want, f.tok.lit1, e.gs, keep, words)
 	size := f.tokens.Size()
+	replay := func() error {
+		if g.stored() {
+			g.rerun()
+			return nil
+		}
+		return w.run(pipeline.NewSeqReader(f.tokens, 0, size, replayReadBuf), size, g)
+	}
 	for i := 0; i <= e.p.groupIter; i++ {
 		if i > 0 {
 			g.beginReplay()
 		}
-		if err := w.run(pipeline.NewSeqReader(f.tokens, 0, size, replayReadBuf), size, g); err != nil {
+		if err := replay(); err != nil {
 			return err
 		}
 		if g.endReplay() < 2 {
@@ -261,14 +288,28 @@ func (e *encoder) groupBy(p *plan, w *walker, hbits uint, want int, done map[[2]
 			return nil
 		}
 	}
+	// Join the groups that do not pay for their codes; if any were, let
+	// every block choose again among those left (and join again), unless
+	// the image is large.
 	sets := g.result()
+	m := mergeSets(sets, g.assign)
+	if len(m.sets) < len(sets) && int64(e.w)*int64(e.h) <= remapMaxPixels {
+		g.retain(m.alive)
+		g.beginReplay()
+		if err := replay(); err != nil {
+			return err
+		}
+		g.endReplay()
+		m = mergeSets(g.result(), g.assign)
+	}
+	if len(m.sets) < 2 {
+		e.unreserve(need)
+		return nil
+	}
 
 	// Price the split: entropy image, one set of codes per group, symbols.
 	tail := 1 + 3 + st.extraBits
-	groups := make([]*codeSet, len(sets))
-	for i, hs := range sets {
-		cs, bits := hs.build()
-		groups[i] = cs
+	for _, bits := range m.bits {
 		tail += bits
 	}
 	npix := int64(len(g.assign))
@@ -292,6 +333,10 @@ func (e *encoder) groupBy(p *plan, w *walker, hbits uint, want int, done map[[2]
 	}
 	e.unreserve(p.groupMem) // the split this one replaces
 	p.groupMem = need
+	groups := make([]*codeSet, len(m.sets))
+	for i, hs := range m.sets {
+		groups[i], _ = hs.build() // as m.bits counted them
+	}
 	p.groups, p.assign, p.hbits, p.tw = groups, g.assign, hbits, g.tw
 	p.tail = tail
 	p.totalBits = p.bw.bitLen() + tail

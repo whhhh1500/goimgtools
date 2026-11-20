@@ -38,6 +38,35 @@ func bestCode(hist []uint32) (*code, int64) {
 	return c, bits
 }
 
+// bestBits is the bits of bestCode(hist), without making the code: lens,
+// as long as hist, is scratch.
+func bestBits(hist []uint32, lens []uint8) int64 {
+	sc := treePool.Get().(*treeScratch)
+	defer treePool.Put(sc)
+	codeLengths(hist, maxCodeLen, lens)
+	var bits int64
+	used := 0
+	for s, l := range lens {
+		if l != 0 {
+			used++
+			bits += int64(hist[s]) * int64(l)
+		}
+	}
+	if used <= 1 {
+		bits = 0
+	}
+	bits += treeSize(lens, sc)
+	if used <= 2 || !evenForRLE(hist, sc) {
+		return bits
+	}
+	codeLengths(sc.even, maxCodeLen, lens)
+	var b int64
+	for s, h := range hist {
+		b += int64(h) * int64(lens[s])
+	}
+	return min(bits, b+treeSize(lens, sc))
+}
+
 // evenForRLE puts in sc.even a copy of counts in which the stretches of
 // nearly equal counts are replaced by their mean, and reports whether that
 // changed anything. A count that is not zero stays at least 1, so every

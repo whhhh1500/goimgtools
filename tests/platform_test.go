@@ -136,7 +136,7 @@ func TestSameOnEveryProcessor(t *testing.T) {
 		{"png", func() ([]byte, error) { return clear.Clone().PNG().ToBytes() }, "28793aaceffed8bc"},
 		{"png 40 colours", func() ([]byte, error) { return photo.Clone().PNG(PNGOptions{Colors: 40}).ToBytes() }, "a22a7198a696d7a8"},
 		{"webp", func() ([]byte, error) { return photo.Clone().WebP(WebPOptions{Quality: 70}).ToBytes() }, "3fd53ba37ca99645"},
-		{"webp lossless", func() ([]byte, error) { return clear.Clone().WebP(WebPOptions{Lossless: true}).ToBytes() }, "9d7241e10fec8b83"},
+		{"webp lossless", func() ([]byte, error) { return clear.Clone().WebP(WebPOptions{Lossless: true}).ToBytes() }, "c9e3f3c7f3205db8"},
 		{"invisible watermark", func() ([]byte, error) {
 			return photo.Clone().InvisibleWatermark([]byte("mark"), InvisibleWatermarkOptions{Key: "k", Kind: WatermarkScreen, Strength: 1.3}).BMP().ToBytes()
 		}, "56d395e855d48b6b"},

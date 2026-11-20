@@ -186,6 +186,7 @@ type encoder struct {
 	fes      []*frontend // every variant started, closed or not
 	opt      *optimal    // the optimal parse, shared by the variants
 	gs       *grouperScratch
+	replay   bool // tests: the grouper replays the tokens every time, keeping nothing
 }
 
 func (e *encoder) reserve(n int64, what string) error {

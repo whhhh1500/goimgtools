@@ -167,7 +167,11 @@ type WebPOptions struct {
 	// 0 to 2 pick them), and two rather than four 4x4 modes coded for each
 	// block: 28% less time than 2, files 2.5% to 4% larger. Above 5, only
 	// transparency gets more: every filter of the alpha plane is tried, and
-	// planes of more than 4 megapixels get the optimal parse too.
+	// planes of more than 4 megapixels get the optimal parse too. Lossless
+	// output gets more at every level: on photographs 3 takes a quarter of
+	// the time of 5 for files 1% larger, and 1 an eighth for 4%;
+	// screenshots and drawings gain more from 5 (7% over 3) and little
+	// above it (0.3% at 7).
 	Effort int
 }
 
