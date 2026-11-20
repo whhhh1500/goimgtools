@@ -92,11 +92,10 @@ jobs:
       - run: go test -race -timeout 45m . ./tests ./pipeline ./inspect ./cmd/...
 
   api:
-    # No exported name of the settled API may change incompatibly. That API
-    # is the one of the commit .github/api-base names (the API was settled
-    # after 0.1.0, once), or of the last tag without the file. apidiff
-    # (golang.org/x/exp) compares the exported API of the whole module with
-    # it.
+    # No exported name of the last release may change incompatibly: its tag
+    # (or commit) is in .github/api-base, the last tag without the file.
+    # apidiff (golang.org/x/exp) compares the exported API of the whole
+    # module with it.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
