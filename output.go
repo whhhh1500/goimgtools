@@ -414,19 +414,20 @@ type PNGOptions struct {
 	// chosen by compressing the rows with each (libdeflate's level 10, the
 	// data before as the dictionary), as oxipng's Brute strategy does, and
 	// the data is compressed with a port of Zopfli (60 runs of its optimal
-	// parse, with ECT's additions: runs priced by the code lengths after
-	// them, the codes and header of each block chosen among more, short
-	// matches written as literals where that is smaller; the data split
-	// further where its symbols' statistics change, before the parse and
-	// after it; its master blocks of 1MB on threads of their own, joined into one
-	// stream), each block by level 9's compressor instead where that is
-	// smaller; a palette is written in the order its colours first appear,
-	// as ECT writes it, without the colours no pixel uses. On the same 17
-	// images it is 0.40% smaller than level 9 and 0.23% smaller than ECT -9
-	// (smaller on 15 of them), in 431s with 8 threads against level 9's
-	// 31.5s (ECT: 606s on 6 cores). Its compressor takes about 50MB for each
-	// thread compressing: with the default memory limit it compresses on
-	// one thread, with a limit of 480MB on 8.
+	// parse, up to 200 for an image of less than 1MB, with ECT's
+	// additions: runs priced by the code lengths after them, the codes and
+	// header of each block chosen among more, short matches written as
+	// literals where that is smaller; the data split further where its
+	// symbols' statistics change, before the parse and after it; its master
+	// blocks of 1MB on threads of their own, joined into one stream), each
+	// block by level 9's compressor instead where that is smaller; a
+	// palette is written in the order its colours first appear, as ECT
+	// writes it, without the colours no pixel uses. On the same 17 images
+	// it is 0.40% smaller than level 9 and 0.23% smaller than ECT -9
+	// (smaller on 15 of them), in 443s with 8 threads against level 9's
+	// 31.5s (ECT: 606s on 6 cores). Its compressor takes about 50MB for
+	// each thread compressing: with the default memory limit it compresses
+	// on one thread, with a limit of 480MB on 8.
 	CompressionLevel int
 	// Colors, 2 to 256, reduces the image to that many colours, chosen for
 	// this image, and writes a paletted PNG. This is how PNG files are made

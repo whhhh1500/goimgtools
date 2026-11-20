@@ -156,10 +156,26 @@ func tenBytes(n int) int64 {
 	return zopfli.Bytes(n) + nearLevels[9].Bytes() + int64(n+zOutSlack)
 }
 
-// newTenCompressor makes a tenCompressor for blocks of n bytes, which
-// parses the parts of a block on up to lanes cores at a time.
-func newTenCompressor(n int, env *pipeline.Env, lanes int) *tenCompressor {
-	t := &tenCompressor{z: zopfli.New(zopfliOptions, n), d: deflate.New(nearLevels[9]), alt: make([]byte, 0, n+zOutSlack)}
+// tenRuns is the runs of Zopfli's optimal parse for an image of total
+// bytes of data: zopfliOptions', or for less than a block more, as many as
+// take about the time of a block's (60 runs of 1MB), up to 10/3 as many.
+// On the 5 of the 17 test images with less than 1MB, 200 runs rather than
+// 60 are 0.015% smaller, the most 0.05%.
+func tenRuns(total int64) int {
+	n := zopfliOptions.NumIterations
+	if total <= 0 || total >= int64(zopfliBlock) {
+		return n
+	}
+	return int(min(int64(n)*10/3, max(int64(n), int64(n)*int64(zopfliBlock)/total)))
+}
+
+// newTenCompressor makes a tenCompressor for blocks of n bytes, parsed with
+// runs runs, which parses the parts of a block on up to lanes cores at a
+// time.
+func newTenCompressor(n, runs int, env *pipeline.Env, lanes int) *tenCompressor {
+	opts := zopfliOptions
+	opts.NumIterations = runs
+	t := &tenCompressor{z: zopfli.New(opts, n), d: deflate.New(nearLevels[9]), alt: make([]byte, 0, n+zOutSlack)}
 	if lanes > 1 {
 		t.z.SetWorkers(&envWorkers{env: env, lanes: lanes})
 	}
@@ -318,8 +334,8 @@ func newZBlocks(w io.Writer, level int, env *pipeline.Env, total int64) (*zBlock
 		p.MaxInput = z.blk
 		z.newComp, z.compBytes = func() blockCompressor { return deflate.New(p) }, p.Bytes()
 	} else if level == zopfliLevel {
-		n, ways := z.blk, z.ways
-		z.newComp, z.compBytes = func() blockCompressor { return newTenCompressor(n, env, ways) }, tenBytes(n)
+		n, ways, runs := z.blk, z.ways, tenRuns(total)
+		z.newComp, z.compBytes = func() blockCompressor { return newTenCompressor(n, runs, env, ways) }, tenBytes(n)
 	} else if z.multi {
 		z.kws = make(chan *gflate.Writer, z.ways+1)
 	}

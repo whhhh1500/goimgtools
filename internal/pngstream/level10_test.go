@@ -103,7 +103,7 @@ func TestLevel10(t *testing.T) {
 		t.Fatalf("%d bytes of data: not more than two blocks", len(rows))
 	}
 	// The blocks compressed one after the other, and their bits joined.
-	tc := newTenCompressor(zopfliBlock, nil, 1)
+	tc := newTenCompressor(zopfliBlock, tenRuns(int64(len(rows))), nil, 1)
 	var want10 []byte
 	var pend byte
 	pendN, shifted := 0, 0
@@ -253,7 +253,7 @@ func TestTenCompressor(t *testing.T) {
 	zopfliOptions.NumIterations = 2
 	nat := testutil.Natural(300, 60, 5)
 	rows := nat.Pix // noise-like rows, on which level 9's compressor wins
-	c := newTenCompressor(len(rows), nil, 1)
+	c := newTenCompressor(len(rows), zopfliOptions.NumIterations, nil, 1)
 	for _, data := range [][]byte{rows, bytes.Repeat([]byte("abcdefgh"), 3000)} {
 		for _, final := range []bool{true, false} {
 			got, bits, _ := c.CompressBits(nil, data, 0, final)
