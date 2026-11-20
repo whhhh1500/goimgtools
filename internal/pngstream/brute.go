@@ -59,6 +59,7 @@ func filterRow(dst, cur, prev []byte, bpp, f int) {
 // the same on every processor.
 type bruteFilter struct {
 	row   int // bytes in a row, with the type byte
+	chain int // earlier positions a match is looked for at, at most
 	cands [nFilter][]byte
 
 	// The data of deflate's window and the row: buf[i] is at position
@@ -98,8 +99,12 @@ const (
 	bruteLines    = 4
 	bruteHashBits = 13
 	bruteWindow   = 32 << 10 // deflate's
-	bruteChain    = 16
-	nSyms         = 286 + 30 // literals and lengths, then distances
+	// bruteChain is how many earlier positions a match is looked for at:
+	// at level 8 bruteChain, at 9 bruteChain9 (the 17 images of level 9
+	// 0.05% smaller, in 15% more time with eight threads; 64: 0.04%).
+	bruteChain  = 16
+	bruteChain9 = 256
+	nSyms       = 286 + 30 // literals and lengths, then distances
 )
 
 // bruteBytes is the memory a bruteFilter takes for rows of rowBytes.
@@ -124,7 +129,7 @@ func bufSize(rowBytes int) int {
 	return 2 * (bruteWindow + rowBytes)
 }
 
-func newBruteFilter(env *pipeline.Env, rowBytes int) (*bruteFilter, error) {
+func newBruteFilter(env *pipeline.Env, rowBytes, chain int) (*bruteFilter, error) {
 	need := bruteBytes(rowBytes)
 	if err := env.Budget.Reserve(need, "png filter search"); err != nil {
 		return nil, err
@@ -132,6 +137,7 @@ func newBruteFilter(env *pipeline.Env, rowBytes int) (*bruteFilter, error) {
 	ps := prevSize(rowBytes)
 	b := &bruteFilter{
 		row:      rowBytes,
+		chain:    chain,
 		buf:      make([]byte, bufSize(rowBytes)),
 		prev:     make([]uint16, ps),
 		head:     make([]int64, 1<<bruteHashBits),
@@ -243,7 +249,7 @@ func (b *bruteFilter) parse(row []byte, f int, trying bool) {
 			l, at := 0, int64(-1)
 			pi := int(p - base)
 			maxLen := int(min(258, end-p))
-			for k := 0; k < bruteChain && c >= 0 && p-c < bruteWindow; k++ {
+			for k := 0; k < b.chain && c >= 0 && p-c < bruteWindow; k++ {
 				ci := int(c - base)
 				if d[ci] == d[pi] && d[ci+1] == d[pi+1] && d[ci+2] == d[pi+2] {
 					if j := matchLen(d, pi, ci, 3, maxLen); j > l {

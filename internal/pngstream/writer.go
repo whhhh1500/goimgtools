@@ -407,7 +407,11 @@ func (e *encoder) writeImage(w io.Writer, cb int, level int) error {
 	var trial *filterTrial
 	var brute *bruteFilter
 	if filtering && level >= 8 && !testNoTrial {
-		if brute, err = newBruteFilter(e.env, sz); err != nil {
+		chain := bruteChain
+		if level >= 9 {
+			chain = bruteChain9
+		}
+		if brute, err = newBruteFilter(e.env, sz, chain); err != nil {
 			return err
 		}
 		defer brute.release()

@@ -400,7 +400,7 @@ type PNGOptions struct {
 	// zopfli splits them, its symbols priced at their entropy, as zopfli
 	// prices them. On six screenshots and photographs the files are 9 to
 	// 15% (8) and 10 to 21% (9) smaller than at level 7; level 9 is 0.9%
-	// smaller than oxipng -o max and 0.26% larger than ECT -9. Level 8
+	// smaller than oxipng -o max and 0.21% larger than ECT -9. Level 8
 	// takes 5 to 20 times as long as level 7 on one core, level 9 18 to 65
 	// times (oxipng -o max about 6 times as long as level 9, ECT -9 about
 	// 25 times). They take about 4MB (level 8) and 6.5MB (level 9) more
