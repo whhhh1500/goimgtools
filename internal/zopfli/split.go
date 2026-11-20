@@ -118,8 +118,8 @@ func (c *Compressor) blockSplitLZ77(s *lz77Store, maxBlocks int) []int {
 func (c *Compressor) blockSplit(data []byte, inStart, inEnd, maxBlocks int) []int {
 	store := &c.whole
 	store.reset(data)
-	bs := c.blockState(inStart, inEnd, false)
-	bs.greedy(data, inStart, inEnd, store, c.h)
+	bs := c.own.blockState(&c.opts, inStart, inEnd, false)
+	bs.greedy(data, inStart, inEnd, store, c.own.h)
 	lzSplit := c.blockSplitLZ77(store, maxBlocks)
 	var split []int
 	pos := inStart

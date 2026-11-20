@@ -77,7 +77,7 @@ goimgtools.Open("in.jpg").Resize(800, 0).Pipe(count).ToFile("out.jpg")
 
 操作可以改变尺寸（`OutputSize()` 报告其输出尺寸），并可置于链中任意位置。测试中有一个完整的加边框操作（[tests/extend_test.go](../../tests/extend_test.go) 中的 `border`），可作参考。
 
-`pipeline` 包另提供编写环节所需的组件：`Map`（`Pixels` 的底层实现）、`RowReader` / `Rechunk`（按所需行数重新切分条带）、`NewBand` / `CopyRows`（按像素类型分配与复制）、`Spill` / `Scratch`（超出内存份额后自动转存临时文件的存储）、`env.Parallel(n, fn)`（将一批互相独立的任务分配给本链空闲的核，仅在 `Threads(4)` 及以上时生效；无空闲核时在当前线程依次执行，因此总核数不会超限，也不会阻塞）。
+`pipeline` 包另提供编写环节所需的组件：`Map`（`Pixels` 的底层实现）、`RowReader` / `Rechunk`（按所需行数重新切分条带）、`NewBand` / `CopyRows`（按像素类型分配与复制）、`Spill` / `Scratch`（超出内存份额后自动转存临时文件的存储）、`env.Parallel(n, fn)`（将一批互相独立的任务分配给本链空闲的核及中途空出来的核，仅在 `Threads(4)` 及以上时生效；无空闲核时在当前线程依次执行，因此总核数不会超限，也不会阻塞），以及 `env.Go(fn)` / `env.TryGo(fn)`（在空闲的核上运行环节可以不等的工作，如一边压缩已满的块、一边填下一块：无空闲核时 `Go` 在当前线程执行，`TryGo` 则不执行，留给环节稍后再试）。
 
 ```go
 env := pipeline.EnvOf(src)

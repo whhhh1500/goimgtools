@@ -100,7 +100,7 @@ func TestLevel10(t *testing.T) {
 		t.Fatalf("%d bytes of data: not more than two blocks", len(rows))
 	}
 	// The blocks compressed one after the other, and their bits joined.
-	tc := newTenCompressor(zopfliBlock)
+	tc := newTenCompressor(zopfliBlock, nil, 1)
 	var want10 []byte
 	var pend byte
 	pendN := 0
@@ -153,7 +153,17 @@ func TestLevel10Small(t *testing.T) {
 			}
 			files[i], pics[i] = buf.Bytes(), pic
 		}
-		samePixels(t, fmt.Sprintf("%s level 10", name), pics[0], pics[1])
+		if p0, ok := pics[0].(*image.Paletted); ok {
+			// Level 10 writes the palette in another order.
+			p1 := pics[1].(*image.Paletted)
+			for i, v := range p0.Pix {
+				if p0.Palette[v] != p1.Palette[p1.Pix[i]] {
+					t.Fatalf("%s level 10: pixel %d differs", name, i)
+				}
+			}
+		} else {
+			samePixels(t, fmt.Sprintf("%s level 10", name), pics[0], pics[1])
+		}
 		if name == "natural" && len(files[1]) > len(files[0]) {
 			t.Errorf("%s: %d bytes at level 10, %d at 9", name, len(files[1]), len(files[0]))
 		}
@@ -167,7 +177,7 @@ func TestTenCompressor(t *testing.T) {
 	zopfliOptions.NumIterations = 2
 	nat := testutil.Natural(300, 60, 5)
 	rows := nat.Pix // noise-like rows, on which level 9's compressor wins
-	c := newTenCompressor(len(rows))
+	c := newTenCompressor(len(rows), nil, 1)
 	for _, data := range [][]byte{rows, bytes.Repeat([]byte("abcdefgh"), 3000)} {
 		for _, final := range []bool{true, false} {
 			got, bits := c.CompressBits(nil, data, 0, final)
@@ -180,6 +190,54 @@ func TestTenCompressor(t *testing.T) {
 			if !bytes.Equal(got, want) || bits != wbits {
 				t.Errorf("%d bytes, final %v: not the smaller of Zopfli's (%d) and level 9's (%d)", len(data), final, len(z), len(d))
 			}
+		}
+	}
+}
+
+// TestLevel10Palette: at level 10 a palette is written in the order its
+// colours first appear, without the ones no pixel uses, and with the bits
+// a pixel the colours left need; every pixel keeps its colour.
+func TestLevel10Palette(t *testing.T) {
+	pal := make(color.Palette, 256)
+	for i := range pal {
+		pal[i] = color.NRGBA{uint8(i), uint8(255 - i), uint8(i * 7), uint8(255 - i%3)}
+	}
+	m := image.NewPaletted(image.Rect(0, 0, 37, 23), pal)
+	used := []uint8{200, 3, 77, 3, 200, 9, 250} // six colours, first seen in this order
+	for i := range m.Pix {
+		m.Pix[i] = used[(i*5+i/37)%len(used)]
+	}
+	var buf bytes.Buffer
+	if err := Encode(&buf, testutil.Chopped(m, 5), &Options{Level: 10}); err != nil {
+		t.Fatal(err)
+	}
+	if depth := buf.Bytes()[24]; depth != 4 {
+		t.Errorf("bit depth %d, want 4 for 6 colours", depth)
+	}
+	got, err := decodeStream(buf.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := got.(*image.Paletted)
+	var order []color.Color
+	seen := map[uint8]bool{}
+	for _, v := range m.Pix {
+		if !seen[v] {
+			seen[v] = true
+			order = append(order, pal[v])
+		}
+	}
+	if len(p.Palette) != len(order) {
+		t.Fatalf("%d colours in the palette, want %d", len(p.Palette), len(order))
+	}
+	for i := range order {
+		if p.Palette[i] != order[i] {
+			t.Errorf("palette entry %d is %v, want %v", i, p.Palette[i], order[i])
+		}
+	}
+	for i, v := range m.Pix {
+		if p.Palette[p.Pix[i]] != pal[v] {
+			t.Fatalf("pixel %d: %v, want %v", i, p.Palette[p.Pix[i]], pal[v])
 		}
 	}
 }

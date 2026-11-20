@@ -617,7 +617,7 @@ func (e *apngEncoder) encodeRect(i int, mode apngMode, rect image.Rectangle, kee
 	defer src.Close()
 	file := pipeline.NewSpill(e.env)
 	defer file.Close()
-	if err := Encode(file, src, &Options{Level: level, alpha: mode.pal == nil && mode.alpha}); err != nil {
+	if err := Encode(file, src, &Options{Level: level, alpha: mode.pal == nil && mode.alpha, keepPalette: true}); err != nil {
 		return nil, err
 	}
 	// The encoder wrote a whole file: what its IDAT chunks hold is the

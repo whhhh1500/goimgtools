@@ -111,7 +111,7 @@ err := goimgtools.Open("in.jpg").
 | 方法 | 说明 |
 |---|---|
 | `JPEG(JPEGOptions{Quality, Optimize, Progressive, Trellis, QuantTable, ChromaSubsampling})` | 质量 `Quality` 为 1–100，0 表示 80。`Optimize`、`Progressive` 在像素不变的前提下减小文件；`Trellis`、`QuantTable`（0–8，编号同 mozjpeg 的 `-quant-table`；或 `QuantTableJpegli`）会改变像素（见[压缩](compression.md)）。`ChromaSubsampling`：`Chroma420`（默认：色度为宽高各一半，同标准库与 libjpeg）、`Chroma422`（宽度一半）或 `Chroma444`（保留全部色度：彩色文字与边缘清晰，文件约大 30%），即 sharp 的 `chromaSubsampling` |
-| `PNG(PNGOptions{CompressionLevel, Colors, NoDither})` | 压缩级别 1（最快）至 10（最小；8、9 级搜索最小文件，单核耗时分别为 7 级的 5–20 倍和 18–65 倍；10 级用 Zopfli 压缩，8 线程时耗时约为 9 级的 28 倍）；`Colors` 将颜色减至最多 256 色（见[压缩](compression.md)） |
+| `PNG(PNGOptions{CompressionLevel, Colors, NoDither})` | 压缩级别 1（最快）至 10（最小；8、9 级搜索最小文件，单核耗时分别为 7 级的 5–20 倍和 18–65 倍；10 级用 Zopfli 压缩，8 线程时耗时约为 9 级的 22 倍）；`Colors` 将颜色减至最多 256 色（见[压缩](compression.md)） |
 | `WebP(WebPOptions{Quality, Lossless, Effort})` | 有损（质量 1–100，默认 75）或无损；`Effort` 1 最快至 9 最小，默认 5（有损时 5 已用上除透明通道外的全部手段，2 耗时约减半，1 约为三分之一） |
 | `GIF(GIFOptions{Colors, NoDither, FixedPalette})` | 最多 256 色，按图像内容选取；`FixedPalette` 改用标准库的固定调色板 |
 | `BMP()` | |

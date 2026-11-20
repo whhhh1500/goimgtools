@@ -14,6 +14,7 @@ import (
 	"io"
 	"strconv"
 
+	"github.com/whhhh1500/goimgtools/internal/deflate"
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
@@ -411,13 +412,17 @@ func (e *encoder) writeImage(w io.Writer, cb int, level int) error {
 		if level >= 9 {
 			chain = bruteChain9
 		}
-		if brute, err = newBruteFilter(e.env, sz, chain, level >= zopfliLevel); err != nil {
+		if brute, err = newBruteFilter(e.env, sz, chain, level >= zopfliLevel, zw.ahead()); err != nil {
 			return err
 		}
 		defer brute.release()
 	}
 	if filtering && level >= 7 && !testNoTrial {
-		if trial, err = newFilterTrial(e.env, sz, brute != nil); err != nil {
+		var real *deflate.Compressor
+		if brute != nil {
+			real = brute.real
+		}
+		if trial, err = newFilterTrial(e.env, sz, brute != nil, real); err != nil {
 			return err
 		}
 		defer trial.release()

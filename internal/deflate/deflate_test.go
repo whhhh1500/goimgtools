@@ -263,3 +263,40 @@ func TestCompressShared(t *testing.T) {
 		}
 	}
 }
+
+// TestEnterShared: the dictionary entered once with EnterShared, then
+// taken by other compressors with TakeShared, each compressing its own
+// tail: each output is what Compress writes.
+func TestEnterShared(t *testing.T) {
+	data := samples()["rows"]
+	r := rand.New(rand.NewPCG(5, 6))
+	for _, p := range []Params{Level10, Level12} {
+		ref, first := New(p), New(p)
+		others := []*Compressor{New(p), New(p), New(p)}
+		for _, dict := range []int{1000, 32 << 10, 50 << 10} {
+			for _, tail := range []int{1, 4000, 30000} {
+				base := data[:dict+sharedAfter] // the same in all
+				in := func(k int) []byte {
+					b := append(append([]byte{}, base...), data[dict+sharedAfter:dict+sharedAfter+tail]...)
+					for i := len(base); i < len(b); i++ {
+						if r.IntN(4) == k%4 {
+							b[i] = byte(r.Uint32())
+						}
+					}
+					return b
+				}
+				ins := [][]byte{in(0), in(1), in(2), in(3)}
+				first.EnterShared(ins[0], dict)
+				for _, o := range others {
+					o.TakeShared(first)
+				}
+				for k, c := range append([]*Compressor{first}, others...) {
+					got, _ := c.CompressShared(nil, ins[k], dict, true, false)
+					if want := ref.Compress(nil, ins[k], dict, true); !bytes.Equal(got, want) {
+						t.Fatalf("depth %d dict %d tail %d, compressor %d: not what Compress writes", p.SearchDepth, dict, tail, k)
+					}
+				}
+			}
+		}
+	}
+}

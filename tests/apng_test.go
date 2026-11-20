@@ -199,7 +199,7 @@ func TestAPNGOutput(t *testing.T) {
 		{"gif, many colours", encodeAll(t, movingAnimation(80, 40, 6, true)), 2},
 		{"apng with transparency", opsAPNG, 6},
 	} {
-		for _, level := range []int{0, 9} {
+		for _, level := range []int{0, 9, 10} {
 			out, pics := framesOf(t, c.in, func(m *Image) *Image { return m.PNG(PNGOptions{CompressionLevel: level}) })
 			f := readAPNG(t, out)
 			if f.colorType != c.colorType {

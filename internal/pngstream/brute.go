@@ -97,19 +97,25 @@ type bruteFilter struct {
 	reserved int64
 	env      *pipeline.Env
 
-	// At level 10: the compressor, its input and output.
-	real    *deflate.Compressor
-	realIn  []byte
-	realOut []byte
+	// At level 10: the compressors that score the rows, each with an input
+	// and an output (the first also scores the segments of the filter
+	// trial; the others, when the memory limit has room for them, score
+	// candidates on helpers at the same time), and the candidates' costs.
+	real     *deflate.Compressor // reals[0]
+	reals    []*deflate.Compressor
+	realIns  [][]byte
+	realOuts [][]byte
+	costs    [nFilter]int
 }
 
 // bruteReal are the settings of the compressor that scores rows of
-// rowBytes at level 10: libdeflate's level 10, with blocks of at most 8
-// rows rather than 300000 bytes (the rows compressed are 4: they make one
-// block either way), so that it takes 1 to 4MB rather than 8.6MB.
+// rowBytes at level 10, and segments of the filter trial: libdeflate's
+// level 10, with blocks of at most 8 rows or 2 segments rather than 300000
+// bytes (what it compresses makes one block either way), so that it takes
+// 2 to 4MB rather than 8.6MB.
 func bruteReal(rowBytes int) deflate.Params {
 	p := deflate.Level10
-	p.BlockLen = min(p.BlockLen, max(8*rowBytes, 16<<10))
+	p.BlockLen = min(p.BlockLen, max(8*rowBytes, 2*(trialBytes+rowBytes)))
 	return p
 }
 
@@ -136,10 +142,16 @@ func bruteBytes(rowBytes int, real bool) int64 {
 	n := int64(nFilter*rowBytes) + int64(bufSize(rowBytes, real)) + int64(2*prevSize(rowBytes)) + 8<<bruteHashBits +
 		int64(bruteLines)*8*nSyms + int64(2*nFilter+2)*8*nSyms + 16*int64(rowBytes)
 	if real {
-		in := realInSize(rowBytes)
-		n += bruteReal(rowBytes).Bytes() + deflate.SharedBytes + int64(in) + int64(in+in/8+1<<10)
+		n += scorerBytes(rowBytes)
 	}
 	return n
+}
+
+// scorerBytes is the memory of a compressor that scores rows of rowBytes,
+// with its input and output.
+func scorerBytes(rowBytes int) int64 {
+	in := realInSize(rowBytes)
+	return bruteReal(rowBytes).Bytes() + deflate.SharedBytes + int64(in) + int64(in+in/8+1<<10)
 }
 
 // realInSize is the most a compression of the rows takes in: the window
@@ -172,7 +184,12 @@ func keptBytes(rowBytes int, real bool) int {
 	return bruteWindow
 }
 
-func newBruteFilter(env *pipeline.Env, rowBytes, chain int, real bool) (*bruteFilter, error) {
+// newBruteFilter makes a bruteFilter for rows of rowBytes that looks for
+// matches at chain earlier positions, or with real scores them by
+// compressing them; then it takes compressors to score candidates on
+// helpers at the same time, as many as the memory limit has room for while
+// leaving keep bytes free.
+func newBruteFilter(env *pipeline.Env, rowBytes, chain int, real bool, keep int64) (*bruteFilter, error) {
 	need := bruteBytes(rowBytes, real)
 	if err := env.Budget.Reserve(need, "png filter search"); err != nil {
 		return nil, err
@@ -201,7 +218,21 @@ func newBruteFilter(env *pipeline.Env, rowBytes, chain int, real bool) (*bruteFi
 	}
 	if real {
 		in := realInSize(rowBytes)
-		b.real, b.realIn, b.realOut = deflate.New(bruteReal(rowBytes)), make([]byte, 0, in), make([]byte, 0, in+in/8+1<<10)
+		add := func() {
+			b.reals = append(b.reals, deflate.New(bruteReal(rowBytes)))
+			b.realIns = append(b.realIns, make([]byte, 0, in))
+			b.realOuts = append(b.realOuts, make([]byte, 0, in+in/8+1<<10))
+		}
+		add()
+		b.real = b.reals[0]
+		for env.Helpers() > 0 && len(b.reals) < nFilter {
+			more := scorerBytes(rowBytes)
+			if env.Budget.Limit()-env.Budget.Used()-more < keep || env.Budget.Reserve(more, "png filter search") != nil {
+				break
+			}
+			b.reserved += more
+			add()
+		}
 	}
 	return b, nil
 }
@@ -249,20 +280,50 @@ func (b *bruteFilter) choose(cur, prev []byte, bpp int) []byte {
 
 // chooseReal chooses the filter with which the last rows compress
 // smallest, the window kept before them as the dictionary (the first on a
-// tie).
+// tie). The dictionary is entered once for the five, when the rows before
+// the candidate are long enough (see deflate.SharedAfter); the candidates
+// are scored on helpers at the same time when there are compressors for
+// them. The choice is the same either way.
 func (b *bruteFilter) chooseReal(cur, prev []byte, bpp int) []byte {
 	hist := b.buf[:b.pos-b.base]
 	from := max(0, len(hist)-bruteWindow-(bruteLines-1)*b.row)
 	start := max(0, len(hist)-(bruteLines-1)*b.row) - from
-	best, bestCost := ftNone, -1
+	share := start > 0 && len(hist)-from-start >= deflate.SharedAfter
 	for f := ftNone; f <= ftPaeth; f++ {
 		filterRow(b.cands[f], cur, prev, bpp, f)
-		b.realIn = append(append(b.realIn[:0], hist[from:]...), b.cands[f]...)
-		// The candidates share the dictionary: it is entered once.
-		var bits int
-		b.realOut, bits = b.real.CompressShared(b.realOut[:0], b.realIn, start, true, f == ftNone)
-		if cost := 8*len(b.realOut) - 8 + bits; bestCost < 0 || cost < bestCost {
-			bestCost, best = cost, f
+	}
+	lanes := len(b.reals)
+	input := func(k, f int) []byte {
+		b.realIns[k] = append(append(b.realIns[k][:0], hist[from:]...), b.cands[f]...)
+		return b.realIns[k]
+	}
+	if share {
+		b.reals[0].EnterShared(input(0, ftNone), start)
+		for _, r := range b.reals[1:] {
+			r.TakeShared(b.reals[0])
+		}
+	}
+	score := func(k int) {
+		r := b.reals[k]
+		for f := k; f < nFilter; f += lanes {
+			var bits int
+			if share {
+				b.realOuts[k], bits = r.CompressShared(b.realOuts[k][:0], input(k, f), start, true, false)
+			} else {
+				b.realOuts[k], bits = r.CompressBits(b.realOuts[k][:0], input(k, f), start, true)
+			}
+			b.costs[f] = 8*len(b.realOuts[k]) - 8 + bits
+		}
+	}
+	if lanes > 1 {
+		b.env.Parallel(lanes, score)
+	} else {
+		score(0)
+	}
+	best := ftNone
+	for f := ftNone + 1; f <= ftPaeth; f++ {
+		if b.costs[f] < b.costs[best] {
+			best = f
 		}
 	}
 	b.place(b.cands[best])

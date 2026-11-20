@@ -46,6 +46,9 @@ func (c *Compressor) compress(in []byte, start int, final bool) {
 			d.mf = *c.mf
 			d.base, d.nextSlide, d.maxLen, d.niceLen, d.nh = base, nextSlide, maxLen, niceLen, nh
 			d.valid = true
+			if d.only {
+				return // EnterShared
+			}
 		}
 	}
 

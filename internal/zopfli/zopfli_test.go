@@ -8,6 +8,7 @@ import (
 	"io"
 	"math/rand/v2"
 	"runtime"
+	"sync"
 	"testing"
 )
 
@@ -165,6 +166,62 @@ func TestCompressBits(t *testing.T) {
 			if want := DeflateBlocks(nil, DefaultOptions(), data, part); !bytes.Equal(out, want) {
 				t.Errorf("%s in blocks of %d: joined, not the stream of DeflateBlocks", name, part)
 			}
+		}
+	}
+}
+
+// goWorkers runs the parts on goroutines of their own, lending memory for
+// at most room bytes of workers.
+type goWorkers struct {
+	mu         sync.Mutex
+	room, used int64
+}
+
+func (g *goWorkers) Parallel(n int, fn func(i int)) {
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			fn(i)
+		}()
+	}
+	wg.Wait()
+}
+
+func (g *goWorkers) Reserve(n int64) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.used+n > g.room {
+		return false
+	}
+	g.used += n
+	return true
+}
+
+func (g *goWorkers) Release(n int64) {
+	g.mu.Lock()
+	g.used -= n
+	g.mu.Unlock()
+}
+
+// TestWorkers: with the parts of each block parsed at the same time, with
+// memory for many workers, for one, or for none, the bytes are Zopfli's,
+// and the memory lent is given back.
+func TestWorkers(t *testing.T) {
+	for _, room := range []int64{1 << 40, workerBytes(minWorker), 0} {
+		g := &goWorkers{room: room}
+		c := New(DefaultOptions(), 1000)
+		c.SetWorkers(g)
+		for name, data := range testInputs() {
+			out := c.Compress(nil, data, 0, true)
+			if sum := fmt.Sprintf("%x", sha256.Sum256(out))[:16]; sum != wantSums[name] {
+				t.Errorf("room %d, %s: sum %s, want %s", room, name, sum, wantSums[name])
+			}
+		}
+		c.Release()
+		if g.used != 0 {
+			t.Errorf("room %d: %d bytes not given back", room, g.used)
 		}
 	}
 }

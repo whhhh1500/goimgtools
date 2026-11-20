@@ -275,8 +275,8 @@ func (q *squeezer) run(s *blockState, data []byte, inStart, inEnd int, cm costMo
 // is run again at the end, from the statistics it was run with: the same
 // path, and the same items, the match cache having been filled by the
 // first run.
-func (c *Compressor) lz77Optimal(s *blockState, data []byte, inStart, inEnd, numIterations int, store *lz77Store) {
-	q := &c.q
+func (w *worker) lz77Optimal(s *blockState, data []byte, inStart, inEnd, numIterations int, store parseSink) {
+	q := &w.q
 	var stats, bestStats, lastStats symbolStats
 	ran := ranState{w: 1, z: 2}
 	lastRandomStep := -1
@@ -320,7 +320,7 @@ func (c *Compressor) lz77Optimal(s *blockState, data []byte, inStart, inEnd, num
 
 // lz77OptimalFixed is the optimal parse for the fixed code; its items go to
 // sink, and its path stays in c.q.path.
-func (c *Compressor) lz77OptimalFixed(s *blockState, data []byte, inStart, inEnd int, sink parseSink) {
+func (w *worker) lz77OptimalFixed(s *blockState, data []byte, inStart, inEnd int, sink parseSink) {
 	s.blockStart, s.blockEnd = inStart, inEnd
-	c.q.run(s, data, inStart, inEnd, costFixed, sink)
+	w.q.run(s, data, inStart, inEnd, costFixed, sink)
 }

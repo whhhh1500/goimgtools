@@ -20,11 +20,14 @@ type Compressor struct {
 	opts Options
 	max  int // the longest data it has memory for
 
-	h   *hash
-	lmc matchCache
-	q   squeezer
+	own *worker
 	// The parse of all the data (or first the greedy parse that splits it).
 	whole lz77Store
+
+	// More cores, and the workers made with the memory they lend (see
+	// SetWorkers).
+	workers Workers
+	compressorSync
 }
 
 // hashBytes is the memory of the hash chains.
@@ -37,22 +40,21 @@ const hashBytes = 2*65536*4 + 2*windowSize*2 + 2*windowSize*4 + windowSize*2
 // peak on 1MB of a photograph).
 func Bytes(maxInput int) int64 {
 	n := max(maxInput, 1)
-	return hashBytes + cacheBytes(n) + squeezerBytes(n) + storeBytes(n) + int64(unsafe.Sizeof(Compressor{}))
+	return workerBytes(n) + storeBytes(n) + int64(unsafe.Sizeof(Compressor{}))
 }
 
 // New makes a Compressor for data of up to maxInput bytes; it takes
 // Bytes(maxInput) of memory. Longer data is compressed too, with memory
 // made for it then.
 func New(opts Options, maxInput int) *Compressor {
-	c := &Compressor{opts: opts, h: newHash(windowSize)}
+	c := &Compressor{opts: opts}
 	c.grow(max(maxInput, 1))
 	return c
 }
 
 func (c *Compressor) grow(n int) {
 	c.max = n
-	c.lmc = makeMatchCache(n)
-	c.q = makeSqueezer(n, c.h)
+	c.own = newWorker(n)
 	c.whole = makeStore(n)
 }
 
@@ -203,9 +205,9 @@ func (c *Compressor) addLZ77BlockAutoType(final bool, s *lz77Store, lstart, lend
 	if expensiveFixed {
 		inStart = int(s.pos[lstart])
 		inEnd = inStart + s.byteRange(lstart, lend)
-		bs = c.blockState(inStart, inEnd, true)
+		bs = c.own.blockState(&c.opts, inStart, inEnd, true)
 		var counts symbolCounts
-		c.lz77OptimalFixed(bs, s.data, inStart, inEnd, &counts)
+		c.own.lz77OptimalFixed(bs, s.data, inStart, inEnd, &counts)
 		fixed = fixedBlockSize(&counts)
 	}
 	switch {
@@ -221,7 +223,7 @@ func (c *Compressor) addLZ77BlockAutoType(final bool, s *lz77Store, lstart, lend
 			w.addBit(1)
 			w.addBit(0)
 			fw := newFixedWriter(w)
-			followPath(bs, c.h, s.data, inStart, inEnd, c.q.path, fw)
+			followPath(bs, c.own.h, s.data, inStart, inEnd, c.own.q.path, fw)
 			w.addHuffmanBits(fw.llSymbols[256], fw.llLengths[256])
 		} else {
 			addLZ77Block(1, final, s, lstart, lend, w)
@@ -243,8 +245,8 @@ func (c *Compressor) deflatePart(btype int, final bool, data []byte, inStart, in
 	case 1:
 		store := &c.whole
 		store.reset(data)
-		bs := c.blockState(inStart, inEnd, true)
-		c.lz77OptimalFixed(bs, data, inStart, inEnd, store)
+		bs := c.own.blockState(&c.opts, inStart, inEnd, true)
+		c.own.lz77OptimalFixed(bs, data, inStart, inEnd, store)
 		addLZ77Block(1, final, store, 0, store.size(), w)
 		return
 	}
@@ -256,21 +258,29 @@ func (c *Compressor) deflatePart(btype int, final bool, data []byte, inStart, in
 	split := make([]int, npoints)
 	lz77 := &c.whole
 	lz77.reset(data)
+	// The optimal parse of each part, into a region of the parse's arrays
+	// as far in as the part starts (at the same time with Workers), then
+	// the regions packed together.
+	bounds := append(append([]int{inStart}, splitUnc...), inEnd)
+	lens, at, counts := make([]int, npoints+1), make([]int, npoints+1), make([]int, npoints+1)
+	for i := range lens {
+		lens[i], at[i] = bounds[i+1]-bounds[i], bounds[i]-inStart
+	}
+	lz77.open(inEnd - inStart)
+	c.eachPart(lens, func(i int, w *worker) {
+		bs := w.blockState(opts, bounds[i], bounds[i+1], true)
+		sink := regionSink{s: lz77, at: at[i]}
+		w.lz77Optimal(bs, data, bounds[i], bounds[i+1], opts.NumIterations, &sink)
+		counts[i] = sink.n
+	})
+	lz77.pack(at, counts)
 	totalCost := 0.0
+	item := 0
 	for i := 0; i <= npoints; i++ {
-		start, end := inStart, inEnd
-		if i > 0 {
-			start = splitUnc[i-1]
-		}
+		totalCost += blockSizeAutoType(lz77, item, item+counts[i], counts[i])
+		item += counts[i]
 		if i < npoints {
-			end = splitUnc[i]
-		}
-		base := lz77.size()
-		bs := c.blockState(start, end, true)
-		c.lz77Optimal(bs, data, start, end, opts.NumIterations, lz77)
-		totalCost += blockSizeAutoType(lz77, base, lz77.size(), lz77.size()-base)
-		if i < npoints {
-			split[i] = lz77.size()
+			split[i] = item
 		}
 	}
 	if opts.BlockSplitting && npoints > 1 {

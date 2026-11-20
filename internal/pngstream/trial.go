@@ -6,6 +6,7 @@ import (
 	"io"
 	mbits "math/bits"
 
+	"github.com/whhhh1500/goimgtools/internal/deflate"
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
@@ -42,6 +43,8 @@ type filterTrial struct {
 	filtered []byte // the segment as the rows filtered themselves
 	brute    []byte // the segment as bruteFilter filtered it, from level 8
 	est      *estimator
+	real     *deflate.Compressor // at level 10, Brute's: the segments are compressed rather than estimated
+	realOut  []byte
 	skip     int // segments to take filtered without a trial
 	streak   int // clear wins of filtering in a row
 	reserved int64
@@ -56,8 +59,11 @@ const (
 )
 
 // newFilterTrial makes room for segments of rows of rowBytes, and for
-// Brute's version of them when brute is set.
-func newFilterTrial(env *pipeline.Env, rowBytes int, brute bool) (*filterTrial, error) {
+// Brute's version of them when brute is set; with real (at level 10, the
+// compressor with which Brute scores the rows), the three versions of a
+// segment are compressed to choose between them rather than estimated
+// (17 images 0.012% smaller, in about the same time).
+func newFilterTrial(env *pipeline.Env, rowBytes int, brute bool, real *deflate.Compressor) (*filterTrial, error) {
 	seg := trialBytes + rowBytes
 	ways := int64(2)
 	if brute {
@@ -66,6 +72,9 @@ func newFilterTrial(env *pipeline.Env, rowBytes int, brute bool) (*filterTrial, 
 	need := ways*int64(seg) + estimatorBytes
 	if brute {
 		need = ways*int64(seg) + nearEstimatorBytes + int64(estWindowNear+estWindowNear+seg)
+	}
+	if real != nil {
+		need += int64(seg + seg/8 + 1<<10)
 	}
 	if err := env.Budget.Reserve(need, "png filter trial"); err != nil {
 		return nil, err
@@ -76,6 +85,10 @@ func newFilterTrial(env *pipeline.Env, rowBytes int, brute bool) (*filterTrial, 
 		t.est = newEstimator(estHashBitsNear, estWindowNear)
 		t.ctx = make([]byte, 0, estWindowNear)
 		t.buf = make([]byte, 0, estWindowNear+seg)
+	}
+	if real != nil {
+		t.real = real
+		t.realOut = make([]byte, 0, seg+seg/8+1<<10)
 	}
 	return t, nil
 }
@@ -108,15 +121,21 @@ func (t *filterTrial) flush(w io.Writer) error {
 	}
 	seg := t.filtered
 	if t.brute != nil {
-		est := func(p []byte) int64 {
+		est := func(p []byte, first bool) int64 {
 			t.buf = append(append(t.buf[:0], t.ctx...), p...)
+			if t.real != nil {
+				// The three share the context as their dictionary.
+				var bits int
+				t.realOut, bits = t.real.CompressShared(t.realOut[:0], t.buf, len(t.ctx), true, first)
+				return int64(8*len(t.realOut) - 8 + bits)
+			}
 			return t.est.estimateAfter(t.buf, len(t.ctx))
 		}
-		best := est(t.filtered)
-		if b := est(t.brute); b < best {
+		best := est(t.filtered, true)
+		if b := est(t.brute, false); b < best {
 			best, seg = b, t.brute
 		}
-		if n := est(t.none); n < best {
+		if n := est(t.none, false); n < best {
 			seg = t.none
 		}
 		keep := min(len(seg), estWindowNear)

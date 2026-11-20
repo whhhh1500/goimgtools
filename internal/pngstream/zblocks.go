@@ -6,6 +6,7 @@ import (
 	"hash"
 	"hash/adler32"
 	"io"
+	"sync/atomic"
 
 	"github.com/whhhh1500/goimgtools/internal/deflate"
 	"github.com/whhhh1500/goimgtools/internal/gflate"
@@ -81,9 +82,13 @@ type zBlocks struct {
 	blk  int
 
 	// At level 10, the bits of the last byte written out so far that are
-	// not yet a whole byte: pendN of them, in the low bits of pend.
-	pend  byte
-	pendN int
+	// not yet a whole byte: pendN of them, in the low bits of pend. The
+	// blocks filled and not yet handed to a helper, oldest first (all newer
+	// than the busy ones): a block waits for a helper to be free rather than
+	// be compressed on the goroutine that filters the rows (see dispatch).
+	pend    byte
+	pendN   int
+	pending []*zBlock
 }
 
 const (
@@ -147,9 +152,39 @@ func tenBytes(n int) int64 {
 	return zopfli.Bytes(n) + nearLevels[9].Bytes() + int64(n+zOutSlack)
 }
 
-func newTenCompressor(n int) *tenCompressor {
-	return &tenCompressor{z: zopfli.New(zopfliOptions, n), d: deflate.New(nearLevels[9]), alt: make([]byte, 0, n+zOutSlack)}
+// newTenCompressor makes a tenCompressor for blocks of n bytes, which
+// parses the parts of a block on up to lanes cores at a time.
+func newTenCompressor(n int, env *pipeline.Env, lanes int) *tenCompressor {
+	t := &tenCompressor{z: zopfli.New(zopfliOptions, n), d: deflate.New(nearLevels[9]), alt: make([]byte, 0, n+zOutSlack)}
+	if lanes > 1 {
+		t.z.SetWorkers(&envWorkers{env: env, lanes: lanes})
+	}
+	return t
 }
+
+// envWorkers lends Zopfli the pipeline's helpers and memory, to parse the
+// parts of a block on up to lanes cores at a time: on the helpers free, and
+// those that become free while parts are left. A block filled meanwhile
+// waits for a helper (see zBlocks.dispatch).
+type envWorkers struct {
+	env   *pipeline.Env
+	lanes int
+}
+
+func (w *envWorkers) Parallel(n int, fn func(i int)) {
+	var next atomic.Int64
+	w.env.Parallel(min(n, w.lanes), func(int) {
+		for i := int(next.Add(1) - 1); i < n; i = int(next.Add(1) - 1) {
+			fn(i)
+		}
+	})
+}
+
+func (w *envWorkers) Reserve(n int64) bool {
+	return w.env.Budget.Reserve(n, "png compression helper") == nil
+}
+
+func (w *envWorkers) Release(n int64) { w.env.Budget.Release(n) }
 
 // CompressBits compresses as zopfli.Compressor.CompressBits does.
 func (t *tenCompressor) CompressBits(dst, in []byte, start int, final bool) ([]byte, int) {
@@ -268,8 +303,8 @@ func newZBlocks(w io.Writer, level int, env *pipeline.Env, total int64) (*zBlock
 		p.MaxInput = z.blk
 		z.newComp, z.compBytes = func() blockCompressor { return deflate.New(p) }, p.Bytes()
 	} else if level == zopfliLevel {
-		n := z.blk
-		z.newComp, z.compBytes = func() blockCompressor { return newTenCompressor(n) }, tenBytes(n)
+		n, ways := z.blk, z.ways
+		z.newComp, z.compBytes = func() blockCompressor { return newTenCompressor(n, env, ways) }, tenBytes(n)
 	} else if z.multi {
 		z.kws = make(chan *gflate.Writer, z.ways+1)
 	}
@@ -336,6 +371,11 @@ func (z *zBlocks) Write(p []byte) (int, error) {
 	if z.err != nil {
 		return 0, z.err
 	}
+	if len(z.pending) > 0 {
+		if z.err = z.dispatch(false); z.err != nil {
+			return 0, z.err
+		}
+	}
 	n := len(p)
 	z.sum.Write(p)
 	for len(p) > 0 {
@@ -400,7 +440,7 @@ func (z *zBlocks) block() (*zBlock, error) {
 		// The dictionary, the data and its output.
 		need := int64(zWindow + 2*z.blk + zOutSlack)
 		if err := z.env.Budget.Reserve(need, "png compression block"); err != nil {
-			if len(z.busy) == 0 {
+			if len(z.busy)+len(z.pending) == 0 {
 				return nil, err
 			}
 			// The memory limit allows no more blocks at once: the oldest is
@@ -416,6 +456,68 @@ func (z *zBlocks) block() (*zBlock, error) {
 	b.buf = append(b.buf[:0], z.tail...)
 	b.dict = len(z.tail)
 	return b, nil
+}
+
+// ahead is the memory the blocks need at the least, beyond what is reserved
+// so far, to be compressed from level 7 (a compressor, and a block to fill
+// while another is compressed): the search for the filters, which reserves
+// after the blocks are set up, leaves it free.
+func (z *zBlocks) ahead() int64 {
+	if z.newComp == nil {
+		return 0
+	}
+	return z.compBytes + 2*int64(zWindow+2*z.blk+zOutSlack)
+}
+
+// tryCompressor returns a free compressor, or a new one if the memory limit
+// allows it; nil if neither.
+func (z *zBlocks) tryCompressor() blockCompressor {
+	select {
+	case c := <-z.comps:
+		return c
+	default:
+	}
+	if z.made < z.ways && z.env.Budget.Reserve(z.compBytes, "png compressor") == nil {
+		z.held += z.compBytes
+		z.made++
+		return z.newComp()
+	}
+	return nil
+}
+
+// dispatch hands the blocks waiting at level 10 to helpers, oldest first,
+// while helpers are free and compressors to be had; with force, all of them,
+// those with no helper free compressed on this goroutine.
+func (z *zBlocks) dispatch(force bool) error {
+	for len(z.pending) > 0 {
+		b := z.pending[0]
+		c := z.tryCompressor()
+		if c == nil {
+			if !force {
+				return nil
+			}
+			var err error
+			if c, err = z.compressor(); err != nil {
+				return err
+			}
+		}
+		comps, tc := z.comps, c.(*tenCompressor)
+		fn := func() {
+			defer func() { comps <- c }()
+			b.out, b.bits = tc.CompressBits(b.out, b.buf, b.dict, b.last)
+		}
+		if wait, ok := z.env.TryGo(fn); ok {
+			b.wait = wait
+		} else if force {
+			b.wait = z.env.Go(fn)
+		} else {
+			z.comps <- c
+			return nil
+		}
+		z.pending = z.pending[1:]
+		z.busy = append(z.busy, b)
+	}
+	return nil
 }
 
 // compressor returns a compressor from level 7: a free one, a new one if
@@ -449,6 +551,18 @@ func (z *zBlocks) send() error {
 	b := z.cur
 	z.cur = nil
 	level := z.level
+	if level == zopfliLevel && z.ways > 1 {
+		z.pending = append(z.pending, b)
+		if err := z.dispatch(b.last); err != nil {
+			return err
+		}
+		for len(z.busy)+len(z.pending) > z.ways {
+			if err := z.drain(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	if z.newComp != nil {
 		c, err := z.compressor()
 		if err != nil {
@@ -527,8 +641,14 @@ func (z *zBlocks) compressBlock(out io.Writer, dict, data []byte, level int, las
 	return fw.Flush()
 }
 
-// drain waits for the oldest block and writes it out.
+// drain waits for the oldest block and writes it out (at level 10 handing
+// it to a helper first, or compressing it, if it is still waiting).
 func (z *zBlocks) drain() error {
+	if len(z.busy) == 0 {
+		if err := z.dispatch(true); err != nil {
+			return err
+		}
+	}
 	b := z.busy[0]
 	z.busy = z.busy[1:]
 	b.wait()
@@ -618,6 +738,14 @@ func (z *zBlocks) release() {
 	for _, b := range z.busy {
 		if b.wait != nil {
 			b.wait()
+		}
+	}
+	if z.comps != nil {
+		// The memory the compressors took for their workers.
+		for len(z.comps) > 0 {
+			if t, ok := (<-z.comps).(*tenCompressor); ok {
+				t.z.Release()
+			}
 		}
 	}
 	z.busy, z.free, z.cur, z.fw, z.kw, z.comps = nil, nil, nil, nil, nil, nil

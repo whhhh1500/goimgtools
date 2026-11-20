@@ -33,9 +33,11 @@ func (e *Env) Helpers() int {
 // Parallel calls fn(0), fn(1), …, fn(n-1), each once, and returns when all
 // of them have returned. They run at the same time on the calling
 // goroutine and on as many helpers as are free at that moment (see
-// SetHelpers); without helpers they run one after another, in order, on
-// the calling goroutine. So the calls must not depend on each other, and
-// what they write must not overlap.
+// SetHelpers), and on helpers that become free while calls are left (the
+// calling goroutine looks for them between its calls); without helpers
+// they run one after another, in order, on the calling goroutine. So the
+// calls must not depend on each other, and what they write must not
+// overlap.
 //
 // A helper is taken only for as long as the calls run and never waits for
 // anything, so Parallel cannot block on other stages, and it may be used
@@ -55,8 +57,28 @@ func (e *Env) Parallel(n int, fn func(i int)) {
 		next   atomic.Int64
 		failed atomic.Pointer[PanicError]
 		wg     sync.WaitGroup
+		taken  int // helpers taken, by the calling goroutine only
 	)
-	work := func() {
+	var work func(caller bool)
+	// take takes a free helper, if there is one and calls are left for it.
+	take := func() bool {
+		if taken >= n-1 || next.Load() >= int64(n)-1 {
+			return false
+		}
+		select {
+		case <-e.helpers:
+			taken++
+			wg.Add(1)
+			go func() {
+				defer func() { e.helpers <- struct{}{}; wg.Done() }()
+				work(false)
+			}()
+			return true
+		default:
+			return false
+		}
+	}
+	work = func(caller bool) {
 		defer func() {
 			if v := recover(); v != nil {
 				p, ok := v.(*PanicError)
@@ -72,22 +94,15 @@ func (e *Env) Parallel(n int, fn func(i int)) {
 				return
 			}
 			fn(int(i))
+			if caller {
+				for take() {
+				}
+			}
 		}
 	}
-take:
-	for h := 1; h < n; h++ {
-		select {
-		case <-e.helpers:
-			wg.Add(1)
-			go func() {
-				defer func() { e.helpers <- struct{}{}; wg.Done() }()
-				work()
-			}()
-		default:
-			break take // none free: the calling goroutine does the rest
-		}
+	for take() {
 	}
-	work()
+	work(true)
 	wg.Wait()
 	if p := failed.Load(); p != nil {
 		panic(p)
@@ -105,34 +120,48 @@ take:
 // It is for work a stage can go on without, such as compressing one block
 // while the next is being filled; Parallel is for work it waits for.
 func (e *Env) Go(fn func()) (wait func()) {
-	if e.Helpers() > 0 {
-		select {
-		case <-e.helpers:
-			var failed *PanicError
-			done := make(chan struct{})
-			go func() {
-				defer func() {
-					if v := recover(); v != nil {
-						p, ok := v.(*PanicError)
-						if !ok {
-							p = &PanicError{Value: v, Stack: debug.Stack()}
-						}
-						failed = p
-					}
-					e.helpers <- struct{}{}
-					close(done)
-				}()
-				fn()
-			}()
-			return func() {
-				<-done
-				if failed != nil {
-					panic(failed)
-				}
-			}
-		default:
-		}
+	if wait, ok := e.TryGo(fn); ok {
+		return wait
 	}
 	fn()
 	return func() {}
+}
+
+// TryGo is Go that never runs fn on the calling goroutine: with a helper
+// free it runs fn on it and returns a function that waits for fn to end,
+// and true; with none free it does not run fn, and returns false. It is
+// for work a stage can put off until a helper is free while it goes on
+// with its own, such as compressing a block it has filled while it fills
+// the next.
+func (e *Env) TryGo(fn func()) (wait func(), ok bool) {
+	if e.Helpers() == 0 {
+		return nil, false
+	}
+	select {
+	case <-e.helpers:
+	default:
+		return nil, false
+	}
+	var failed *PanicError
+	done := make(chan struct{})
+	go func() {
+		defer func() {
+			if v := recover(); v != nil {
+				p, ok := v.(*PanicError)
+				if !ok {
+					p = &PanicError{Value: v, Stack: debug.Stack()}
+				}
+				failed = p
+			}
+			e.helpers <- struct{}{}
+			close(done)
+		}()
+		fn()
+	}()
+	return func() {
+		<-done
+		if failed != nil {
+			panic(failed)
+		}
+	}, true
 }

@@ -9,13 +9,13 @@ type blockState struct {
 	lmc        *matchCache
 }
 
-// blockState starts the parse of data[start:end], with the compressor's
+// blockState starts the parse of data[start:end], with the worker's
 // longest match cache, emptied, when addLMC is set.
-func (c *Compressor) blockState(start, end int, addLMC bool) *blockState {
-	s := &blockState{opts: &c.opts, blockStart: start, blockEnd: end}
+func (w *worker) blockState(opts *Options, start, end int, addLMC bool) *blockState {
+	s := &blockState{opts: opts, blockStart: start, blockEnd: end}
 	if addLMC {
-		c.lmc.init(end - start)
-		s.lmc = &c.lmc
+		w.lmc.init(end - start)
+		s.lmc = &w.lmc
 	}
 	return s
 }

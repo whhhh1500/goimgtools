@@ -152,3 +152,75 @@ func TestGo(t *testing.T) {
 		t.Errorf("after the panic: %d of 2 helpers given back", len(env.helpers))
 	}
 }
+
+// TestTryGo: TryGo runs work on a free helper and says so; with none free,
+// or without helpers, it runs nothing; its panic comes back from the wait.
+func TestTryGo(t *testing.T) {
+	env := NewEnv(0, t.TempDir())
+	if _, ok := env.TryGo(func() { t.Error("ran without helpers") }); ok {
+		t.Error("ok without helpers")
+	}
+	env.SetHelpers(1)
+	hold, started := make(chan struct{}), make(chan struct{})
+	wait, ok := env.TryGo(func() { close(started); <-hold })
+	if !ok {
+		t.Fatal("not run with a helper free")
+	}
+	<-started
+	if _, ok := env.TryGo(func() { t.Error("ran with no helper free") }); ok {
+		t.Error("ok with no helper free")
+	}
+	close(hold)
+	wait()
+	if len(env.helpers) != 1 {
+		t.Errorf("%d of 1 helper given back", len(env.helpers))
+	}
+	wait, ok = env.TryGo(func() { panic("boom") })
+	if !ok {
+		t.Fatal("not run with the helper free again")
+	}
+	func() {
+		defer func() {
+			v := recover()
+			var p *PanicError
+			if err, ok := v.(error); !ok || !errors.As(err, &p) || p.Value != "boom" {
+				t.Errorf("panic came back as %v", v)
+			}
+		}()
+		wait()
+		t.Error("panic not raised by wait")
+	}()
+	if len(env.helpers) != 1 {
+		t.Errorf("after the panic: %d of 1 helper given back", len(env.helpers))
+	}
+}
+
+// TestParallelTakesFreedHelpers: helpers that become free while calls are
+// left take some of them. Both helpers are busy when Parallel starts; its
+// first call (on the caller) frees them.
+func TestParallelTakesFreedHelpers(t *testing.T) {
+	env := NewEnv(0, t.TempDir())
+	env.SetHelpers(2)
+	hold := make(chan struct{})
+	w1, w2 := env.Go(func() { <-hold }), env.Go(func() { <-hold })
+	var first atomic.Bool
+	var busy, worst atomic.Int32
+	env.Parallel(20, func(int) {
+		if first.CompareAndSwap(false, true) {
+			close(hold)
+			w1()
+			w2()
+		}
+		n := busy.Add(1)
+		for w := worst.Load(); n > w && !worst.CompareAndSwap(w, n); w = worst.Load() {
+		}
+		time.Sleep(5 * time.Millisecond)
+		busy.Add(-1)
+	})
+	if w := worst.Load(); w < 2 || w > 3 {
+		t.Errorf("%d calls at once, want 2 or 3", w)
+	}
+	if len(env.helpers) != 2 {
+		t.Errorf("%d of 2 helpers given back", len(env.helpers))
+	}
+}

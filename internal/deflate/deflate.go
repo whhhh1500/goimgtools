@@ -210,16 +210,19 @@ type sharedDict struct {
 	mf                               btMatchfinder
 	base, nextSlide, maxLen, niceLen int
 	nh                               [2]uint32
-	save, use, valid                 bool
+	save, use, valid, only           bool
 }
 
 // SharedBytes is the memory CompressShared takes beyond Bytes.
 const SharedBytes = int64(unsafe.Sizeof(sharedDict{}))
 
-// sharedAfter is how far beyond the dictionary the matchfinder looks while
-// it enters it: the data after must be at least that long for its state to
-// be the same whatever comes after that.
-const sharedAfter = maxMatch + mfRequiredBytes
+// SharedAfter is how far beyond the dictionary the matchfinder looks while
+// it enters it: the inputs that share a dictionary must have the same bytes
+// for at least that long after it, for its state to be the same whatever
+// comes after that.
+const SharedAfter = maxMatch + mfRequiredBytes
+
+const sharedAfter = SharedAfter
 
 // New makes a compressor; it takes p.Bytes() of memory.
 func New(p Params) *Compressor {
@@ -319,6 +322,45 @@ func (c *Compressor) CompressShared(dst, in []byte, start int, final, first bool
 	out, bits = c.compressTo(dst, in, start, final, true)
 	d.save, d.use = false, false
 	return out, bits
+}
+
+// EnterShared enters in[:start] as the dictionary, as CompressShared with
+// first does, without compressing in[start:]: the calls of CompressShared
+// that follow (with first not set), on inputs of the length of in and with
+// the same bytes up to sharedAfter past the dictionary, take the
+// matchfinder from there; so do those of another Compressor that takes it
+// with TakeShared.
+func (c *Compressor) EnterShared(in []byte, start int) {
+	if c.shared == nil {
+		c.shared = new(sharedDict)
+	}
+	d := c.shared
+	d.valid = false
+	if start > windowSize {
+		in, start = in[start-windowSize:], windowSize
+	}
+	if c.p.Lazy != 0 || len(in)-start < sharedAfter {
+		return
+	}
+	d.save, d.only = true, true
+	c.compress(in, start, true)
+	d.save, d.only = false, false
+}
+
+// TakeShared gives c the matchfinder's state after the dictionary src
+// entered last (with CompressShared or EnterShared), for the calls of
+// CompressShared that follow; c and src must have the same Params. src must
+// not be in use meanwhile.
+func (c *Compressor) TakeShared(src *Compressor) {
+	if c.shared == nil {
+		c.shared = new(sharedDict)
+	}
+	if src.shared == nil || !src.shared.valid {
+		c.shared.valid = false
+		return
+	}
+	*c.shared = *src.shared
+	c.shared.save, c.shared.use, c.shared.only = false, false, false
 }
 
 // CompressBits is Compress without the sync flush: the blocks end where
