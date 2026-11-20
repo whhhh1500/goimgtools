@@ -181,6 +181,32 @@ each match, and added in Zopfli's order. It adds
 compressing a block after a dictionary with its bits left open, so that
 blocks compressed on several cores join into zopfli's stream.
 
+## ECT (Efficient Compression Tool)
+
+Apache License 2.0, copyright 2011 Google Inc. (the zopfli it builds on),
+with modifications by Felix Hanau. The full text, as
+github.com/fhanau/Efficient-Compression-Tool distributes it
+(`License.txt`), is in `LICENSE-ECT`, next to this file.
+
+`internal/zopfli` adds, as options (`Ultra`, `MoreCodes`), what ECT's fork
+of zopfli does on top of it (`src/zopfli/squeeze.c`: the "ultra" runs of
+the optimal parse priced by the code lengths of the best parse;
+`src/zopfli/deflate.cpp`: `GetAdvancedLengths`, `EncodeTree` with its
+fused repeats of 7 and 8, `ReplaceBadCodes`), rewritten in Go on the
+port's own structures; nothing of the original files is included
+unchanged. The order of the first appearance of the colours that
+`internal/pngstream` gives a palette at level 10 is the one ECT's lodepng
+gives it.
+
+## Brotli
+
+MIT License, copyright (c) 2009, 2010, 2013-2016 by the Brotli Authors. The
+full text is in `LICENSE-BROTLI`, next to this file.
+
+`internal/zopfli/blocksize.go` (`brotliEvenForRle`) is a port of Brotli's
+`OptimizeHuffmanCountsForRle`, as ECT carries it (`src/zopfli/deflate.cpp`);
+its tests check it against that C code.
+
 ## oxipng
 
 MIT License, copyright (c) 2016 Joshua Holmer. The full text is in

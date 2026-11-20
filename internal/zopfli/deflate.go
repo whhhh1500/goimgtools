@@ -7,6 +7,17 @@ type Options struct {
 	NumIterations     int  // runs of the optimal parse of each block (Zopfli's default 15)
 	BlockSplitting    bool // split the data into blocks where that saves bits
 	BlockSplittingMax int  // blocks at most (0: no limit; Zopfli's default 15)
+
+	// Ultra (not in Zopfli; ECT's "ultra") runs the optimal parse of a
+	// part again after the last run, priced by the lengths of the Huffman
+	// codes of the best parse so far, while that makes it smaller.
+	Ultra bool
+	// MoreCodes (not in Zopfli; as ECT does) writes a dynamic block with
+	// the smallest of more codes: made from its counts evened out for the
+	// header as Zopfli evens them, as Brotli does, or not at all, and then
+	// limited to 14 bits down to 9 while that is smaller; and its header
+	// in the smallest of 32 ways rather than 8.
+	MoreCodes bool
 }
 
 // DefaultOptions are Zopfli's defaults.
@@ -23,6 +34,8 @@ type Compressor struct {
 	own *worker
 	// The parse of all the data (or first the greedy parse that splits it).
 	whole lz77Store
+	// With MoreCodes, room for two bits an item of a block (see writeMore).
+	marks []uint64
 
 	// More cores, and the workers made with the memory they lend (see
 	// SetWorkers).
@@ -40,8 +53,12 @@ const hashBytes = 2*65536*4 + 2*windowSize*2 + 2*windowSize*4 + windowSize*2
 // peak on 1MB of a photograph).
 func Bytes(maxInput int) int64 {
 	n := max(maxInput, 1)
-	return workerBytes(n) + storeBytes(n) + int64(unsafe.Sizeof(Compressor{}))
+	return workerBytes(n) + storeBytes(n) + marksBytes(n) + int64(unsafe.Sizeof(Compressor{}))
 }
+
+// marksBytes is the memory MoreCodes takes for blocks of up to n items: two
+// bits an item (counted whether the options ask for it or not).
+func marksBytes(n int) int64 { return 2 * 8 * int64(n/64+1) }
 
 // New makes a Compressor for data of up to maxInput bytes; it takes
 // Bytes(maxInput) of memory. Longer data is compressed too, with memory
@@ -55,7 +72,11 @@ func New(opts Options, maxInput int) *Compressor {
 func (c *Compressor) grow(n int) {
 	c.max = n
 	c.own = newWorker(n)
+	c.own.ultra = c.opts.Ultra
 	c.whole = makeStore(n)
+	if c.opts.MoreCodes {
+		c.marks = make([]uint64, 2*(n/64+1))
+	}
 }
 
 // Compress appends to dst in[start:] compressed as raw deflate blocks, and
@@ -152,7 +173,10 @@ func addNonCompressedBlock(final bool, data []byte, inStart, inEnd int, w *bitWr
 	}
 }
 
-func addLZ77Block(btype int, final bool, s *lz77Store, lstart, lend int, w *bitWriter) {
+// addLZ77Block writes items lstart to lend of s as a block of type btype;
+// with more (room for two bits an item, see writeMore), a dynamic block's
+// codes and header are chosen among more (see Options.MoreCodes).
+func addLZ77Block(btype int, final bool, s *lz77Store, lstart, lend int, more []uint64, w *bitWriter) {
 	var llLengths, llSymbols [numLL]uint32
 	var dLengths, dSymbols [numD]uint32
 	if btype == 0 {
@@ -174,8 +198,12 @@ func addLZ77Block(btype int, final bool, s *lz77Store, lstart, lend int, w *bitW
 	if btype == 1 {
 		fixedTree(llLengths[:], dLengths[:])
 	} else {
+		if more != nil {
+			s.writeMore(lstart, lend, more, w)
+			return
+		}
 		dynamicLengths(s, lstart, lend, llLengths[:], dLengths[:])
-		addDynamicTree(llLengths[:], dLengths[:], w)
+		addDynamicTree(llLengths[:], dLengths[:], zopfliWays, w)
 	}
 	lengthsToSymbols(llLengths[:], 15, llSymbols[:])
 	lengthsToSymbols(dLengths[:], 15, dSymbols[:])
@@ -184,6 +212,7 @@ func addLZ77Block(btype int, final bool, s *lz77Store, lstart, lend int, w *bitW
 }
 
 func (c *Compressor) addLZ77BlockAutoType(final bool, s *lz77Store, lstart, lend int, w *bitWriter) {
+	more := c.marks
 	unc := calculateBlockSize(s, lstart, lend, 0)
 	fixed := calculateBlockSize(s, lstart, lend, 1)
 	dyn := calculateBlockSize(s, lstart, lend, 2)
@@ -212,7 +241,7 @@ func (c *Compressor) addLZ77BlockAutoType(final bool, s *lz77Store, lstart, lend
 	}
 	switch {
 	case unc < fixed && unc < dyn:
-		addLZ77Block(0, final, s, lstart, lend, w)
+		addLZ77Block(0, final, s, lstart, lend, more, w)
 	case fixed < dyn:
 		if expensiveFixed {
 			f := uint32(0)
@@ -226,10 +255,10 @@ func (c *Compressor) addLZ77BlockAutoType(final bool, s *lz77Store, lstart, lend
 			followPath(bs, c.own.h, s.data, inStart, inEnd, c.own.q.path, fw)
 			w.addHuffmanBits(fw.llSymbols[256], fw.llLengths[256])
 		} else {
-			addLZ77Block(1, final, s, lstart, lend, w)
+			addLZ77Block(1, final, s, lstart, lend, more, w)
 		}
 	default:
-		addLZ77Block(2, final, s, lstart, lend, w)
+		addLZ77Block(2, final, s, lstart, lend, more, w)
 	}
 }
 
@@ -238,6 +267,7 @@ func (c *Compressor) addLZ77BlockAutoType(final bool, s *lz77Store, lstart, lend
 // before inStart serving as the dictionary.
 func (c *Compressor) deflatePart(btype int, final bool, data []byte, inStart, inEnd int, w *bitWriter) {
 	opts := &c.opts
+	more := c.marks
 	switch btype {
 	case 0:
 		addNonCompressedBlock(final, data, inStart, inEnd, w)
@@ -247,7 +277,7 @@ func (c *Compressor) deflatePart(btype int, final bool, data []byte, inStart, in
 		store.reset(data)
 		bs := c.own.blockState(&c.opts, inStart, inEnd, true)
 		c.own.lz77OptimalFixed(bs, data, inStart, inEnd, store)
-		addLZ77Block(1, final, store, 0, store.size(), w)
+		addLZ77Block(1, final, store, 0, store.size(), more, w)
 		return
 	}
 	var splitUnc []int

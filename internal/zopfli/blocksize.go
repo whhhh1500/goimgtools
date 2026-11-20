@@ -239,3 +239,207 @@ func blockSizeAutoType(s *lz77Store, lstart, lend, size int) float64 {
 	}
 	return dyn
 }
+
+// brotliEvenForRle evens out stretches of nearly equal counts as Brotli
+// does (OptimizeHuffmanCountsForRle, as ECT uses it), in 24.8 fixed point.
+func brotliEvenForRle(length int, counts []uint64) {
+	for ; length > 0 && counts[length-1] == 0; length-- {
+	}
+	if length == 0 {
+		return
+	}
+	var goodAll [numLL]bool
+	good := goodAll[:length]
+	symbol, stride := counts[0], 0
+	for i := 0; i < length+1; i++ {
+		if i == length || counts[i] != symbol {
+			if (symbol == 0 && stride >= 5) || stride >= 7 {
+				for k := 0; k < stride; k++ {
+					good[i-k-1] = true
+				}
+			}
+			stride = 1
+			if i != length {
+				symbol = counts[i]
+			}
+		} else {
+			stride++
+		}
+	}
+	const streakLimit = 1240
+	stride = 0
+	limit := int64(256*(counts[0]+counts[1]+counts[2]))/3 + 420
+	var sum int64
+	for i := 0; i < length+1; i++ {
+		if i == length || good[i] || (i > 0 && good[i-1]) || abs64(int64(256*counts[i])-limit) >= streakLimit {
+			if stride >= 4 {
+				count := (sum + int64(stride/2)) / int64(stride)
+				if count < 1 && sum != 0 {
+					count = 1
+				}
+				for k := 0; k < stride; k++ {
+					counts[i-k-1] = uint64(count)
+				}
+			}
+			stride, sum = 0, 0
+			if i < length-2 {
+				limit = int64(256*(counts[i]+counts[i+1]+counts[i+2]))/3 + 420
+			} else if i < length {
+				limit = int64(256 * counts[i])
+			} else {
+				limit = 0
+			}
+		}
+		stride++
+		if i != length {
+			sum += int64(counts[i])
+			if stride >= 4 {
+				limit = (256*sum + int64(stride/2)) / int64(stride)
+			}
+			if stride == 4 {
+				limit += 120
+			}
+		}
+	}
+}
+
+func abs64(v int64) int64 {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+// countsLengths sets the code lengths of a dynamic block of the symbols
+// counted, as ECT chooses them, and returns the size of its header and
+// symbols in bits: the smallest of codes made from the counts evened out
+// as Zopfli evens them for the header, as they are, or evened out as
+// Brotli does; then of those limited to 14 bits, 13, and down to 9, while
+// the block gets no larger. Zopfli's choice (see dynamicLengths) is among
+// them: never larger.
+func countsLengths(llCounts *[numLL]uint64, dCounts *[numD]uint64, llLengths, dLengths []uint32) uint64 {
+	counts := [3][numLL]uint64{*llCounts, *llCounts, *llCounts}
+	dcounts := [3][numD]uint64{*dCounts, *dCounts, *dCounts}
+	optimizeHuffmanForRle(numLL, counts[1][:])
+	optimizeHuffmanForRle(numD, dcounts[1][:])
+	brotliEvenForRle(numLL, counts[2][:])
+	brotliEvenForRle(numD, dcounts[2][:])
+	var ll [numLL]uint32
+	var d [numD]uint32
+	size := func(set, maxBits int) (uint64, bool) {
+		if !lengthLimitedCodeLengths(counts[set][:], maxBits, ll[:]) || !lengthLimitedCodeLengths(dcounts[set][:], maxBits, d[:]) {
+			return 0, false
+		}
+		patchDistanceCodes(d[:])
+		return symbolSizeGivenCounts(llCounts[:], dCounts[:], ll[:], d[:], nil, 0, 0) + uint64(treeSize(ll[:], d[:], allWays)), true
+	}
+	best, bestSet := uint64(0), -1
+	for set := range counts {
+		if n, ok := size(set, 15); ok && (bestSet < 0 || n < best) {
+			best, bestSet = n, set
+			copy(llLengths, ll[:])
+			copy(dLengths, d[:])
+		}
+	}
+	for maxBits := 14; maxBits >= 9; maxBits-- {
+		n, ok := size(bestSet, maxBits)
+		if !ok || n > best {
+			break
+		}
+		if n < best {
+			best = n
+			copy(llLengths, ll[:])
+			copy(dLengths, d[:])
+		}
+	}
+	return best
+}
+
+// writeMore writes items lstart to lend as the header and symbols of a
+// dynamic block as ECT writes them (see Options.MoreCodes): with the codes
+// of countsLengths, after replacing, as ECT's ReplaceBadCodes does, each
+// match of 3 to 7 bytes that costs more under them than its bytes as
+// literals (all of which have codes) by those literals, the codes made
+// again and the matches looked at again, until none is replaced; the
+// smallest of the blocks made on the way is written (ECT writes the last).
+// A match replaced stays replaced, so the replaced ones are one bit each.
+// room is two bits an item at least.
+func (s *lz77Store) writeMore(lstart, lend int, room []uint64, w *bitWriter) {
+	n := lend - lstart
+	k := (n + 63) / 64
+	marks, bestMarks := room[:k], room[k:2*k]
+	clear(marks)
+	clear(bestMarks)
+	marked := func(m []uint64, i int) bool { return m[i>>6]&(1<<(i&63)) != 0 }
+	counts := func() (ll [numLL]uint64, d [numD]uint64) {
+		for i := 0; i < n; i++ {
+			l, dist := s.litlens[lstart+i], s.dists[lstart+i]
+			switch {
+			case dist == 0:
+				ll[l]++
+			case marked(marks, i):
+				p := int(s.pos[lstart+i])
+				for _, b := range s.data[p : p+int(l)] {
+					ll[b]++
+				}
+			default:
+				ll[lengthSymbol(int(l))]++
+				d[distSymbol(int(dist))]++
+			}
+		}
+		ll[256] = 1
+		return
+	}
+	var llLengths, bestLL [numLL]uint32
+	var dLengths, bestD [numD]uint32
+	llc, dc := counts()
+	best := countsLengths(&llc, &dc, bestLL[:], bestD[:])
+	llLengths, dLengths = bestLL, bestD
+	for {
+		replaced := false
+		for i := 0; i < n; i++ {
+			l, dist := int(s.litlens[lstart+i]), int(s.dists[lstart+i])
+			if dist == 0 || l > 7 || marked(marks, i) {
+				continue
+			}
+			price := uint32(0)
+			p := int(s.pos[lstart+i])
+			for _, b := range s.data[p : p+l] {
+				if llLengths[b] == 0 {
+					price = ^uint32(0)
+					break
+				}
+				price += llLengths[b]
+			}
+			if price < llLengths[lengthSymbol(l)]+uint32(lengthExtraBits(l))+uint32(distExtraBits(dist))+dLengths[distSymbol(dist)] {
+				marks[i>>6] |= 1 << (i & 63)
+				replaced = true
+			}
+		}
+		if !replaced {
+			break
+		}
+		llc, dc = counts()
+		if size := countsLengths(&llc, &dc, llLengths[:], dLengths[:]); size < best {
+			best, bestLL, bestD = size, llLengths, dLengths
+			copy(bestMarks, marks)
+		}
+	}
+	var llSymbols [numLL]uint32
+	var dSymbols [numD]uint32
+	addDynamicTree(bestLL[:], bestD[:], allWays, w)
+	lengthsToSymbols(bestLL[:], 15, llSymbols[:])
+	lengthsToSymbols(bestD[:], 15, dSymbols[:])
+	for i := 0; i < n; i++ {
+		l, dist := int(s.litlens[lstart+i]), int(s.dists[lstart+i])
+		if dist != 0 && marked(bestMarks, i) {
+			p := int(s.pos[lstart+i])
+			for _, b := range s.data[p : p+l] {
+				addItem(int(b), 0, llSymbols[:], bestLL[:], dSymbols[:], bestD[:], w)
+			}
+			continue
+		}
+		addItem(l, dist, llSymbols[:], bestLL[:], dSymbols[:], bestD[:], w)
+	}
+	w.addHuffmanBits(llSymbols[256], bestLL[256])
+}

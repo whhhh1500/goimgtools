@@ -122,10 +122,13 @@ const MaxLevel = zopfliLevel
 
 // zopfliLevel is the level compressed with Zopfli, with zopfliOptions: 60
 // runs of its optimal parse rather than its default 15 (17 images 0.03%
-// smaller).
+// smaller), and as ECT does, runs priced by the code lengths after them,
+// no limit on the blocks, and the codes of a block chosen among more, its
+// short matches replaced by literals where that is smaller (0.026%
+// smaller on the filtered rows of the 17, in about the same time).
 const zopfliLevel = 10
 
-var zopfliOptions = zopfli.Options{NumIterations: 60, BlockSplitting: true, BlockSplittingMax: 15}
+var zopfliOptions = zopfli.Options{NumIterations: 60, BlockSplitting: true, Ultra: true, MoreCodes: true}
 
 // zopfliBlock is the data of a block at level 10 (a variable for tests).
 var zopfliBlock = zopfli.MasterBlock

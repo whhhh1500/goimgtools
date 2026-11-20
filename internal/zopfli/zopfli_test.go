@@ -8,6 +8,7 @@ import (
 	"io"
 	"math/rand/v2"
 	"runtime"
+	"slices"
 	"sync"
 	"testing"
 )
@@ -222,6 +223,49 @@ func TestWorkers(t *testing.T) {
 		c.Release()
 		if g.used != 0 {
 			t.Errorf("room %d: %d bytes not given back", room, g.used)
+		}
+	}
+}
+
+// TestMoreOptions: with Ultra, MoreCodes and no limit on the blocks the
+// data comes back, and is no larger than Zopfli makes it on these inputs.
+func TestMoreOptions(t *testing.T) {
+	more := DefaultOptions()
+	more.Ultra, more.MoreCodes, more.BlockSplittingMax = true, true, 0
+	for name, data := range testInputs() {
+		got := Deflate(nil, more, data)
+		back, err := io.ReadAll(flate.NewReader(bytes.NewReader(got)))
+		if err != nil || !bytes.Equal(back, data) {
+			t.Fatalf("%s: does not inflate to the data (%v)", name, err)
+		}
+		if want := Deflate(nil, DefaultOptions(), data); len(got) > len(want) {
+			t.Errorf("%s: %d bytes, Zopfli %d", name, len(got), len(want))
+		}
+	}
+}
+
+// TestBrotliEven: Brotli's evening out of the counts gives what ECT's C
+// code (OptimizeHuffmanCountsForRle in its deflate.cpp) gives for them.
+func TestBrotliEven(t *testing.T) {
+	var e, eWant [32]uint64
+	for i := 0; i < 30; i++ {
+		e[i] = uint64((i*37)%11 + 4)
+		if i > 20 {
+			e[i] -= 4
+		}
+	}
+	eWant = [32]uint64{8, 8, 8, 8, 8, 13, 10, 10, 10, 10, 10, 8, 8, 8, 8, 8, 13, 9, 9, 9, 9, 9, 4, 4, 4, 4, 4, 9, 2, 6, 0, 0}
+	for _, c := range []struct{ in, want []uint64 }{
+		{[]uint64{0, 0, 0}, []uint64{0, 0, 0}},
+		{[]uint64{5, 5, 6, 5, 5, 4, 0, 0, 9}, []uint64{5, 5, 5, 5, 5, 5, 0, 0, 9}},
+		{[]uint64{100, 101, 99, 100, 3, 3, 3, 3, 3, 3, 3, 1}, []uint64{100, 100, 100, 100, 3, 3, 3, 3, 3, 3, 3, 1}},
+		{[]uint64{7, 9, 8, 8, 7, 0, 0, 0, 0, 0, 0, 2, 2, 2, 3, 2, 2, 50, 1}, []uint64{8, 8, 8, 8, 8, 0, 0, 0, 0, 0, 0, 2, 2, 2, 2, 2, 2, 50, 1}},
+		{e[:], eWant[:]},
+	} {
+		got := append([]uint64{}, c.in...)
+		brotliEvenForRle(len(got), got)
+		if !slices.Equal(got, c.want) {
+			t.Errorf("%v: %v, want %v", c.in, got, c.want)
 		}
 	}
 }

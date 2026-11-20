@@ -52,9 +52,23 @@ func patchDistanceCodes(dLengths []uint32) {
 
 var clOrder = [19]int{16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15}
 
+// Ways of coding the code lengths of a dynamic block: the bits of a way
+// are the codes it uses (16, 17, 18) and, as ECT can, the repeats of 7 and
+// 8 it writes as two (4 and 3, 4 and 4) rather than 6 and one or two.
+const (
+	use16 = 1 << iota
+	use17
+	use18
+	fuse7
+	fuse8
+	zopfliWays = 8      // Zopfli's: the codes used
+	allWays    = 8 << 2 // and how 7 and 8 repeats are written
+)
+
 // encodeTree writes (with w not nil) the code lengths of a dynamic block's
-// header and returns its size in bits.
-func encodeTree(llLengths, dLengths []uint32, use16, use17, use18 bool, w *bitWriter) int {
+// header, the way given, and returns its size in bits.
+func encodeTree(llLengths, dLengths []uint32, way int, w *bitWriter) int {
+	use16, use17, use18 := way&use16 != 0, way&use17 != 0, way&use18 != 0
 	var rle, rleBits []uint32
 	hlit, hdist := 29, 29
 	var clCounts [19]uint64
@@ -112,6 +126,14 @@ func encodeTree(llLengths, dLengths []uint32, use16, use17, use18 bool, w *bitWr
 				rle, rleBits = append(rle, symbol), append(rleBits, 0)
 			}
 			for count >= 3 {
+				if (count == 8 && way&fuse8 != 0) || (count == 7 && way&fuse7 != 0) {
+					if !sizeOnly {
+						rle, rleBits = append(rle, 16, 16), append(rleBits, 1, uint32(count-7))
+					}
+					clCounts[16] += 2
+					count = 0
+					break
+				}
 				c2 := min(count, 6)
 				if !sizeOnly {
 					rle, rleBits = append(rle, 16), append(rleBits, uint32(c2-3))
@@ -162,20 +184,26 @@ func encodeTree(llLengths, dLengths []uint32, use16, use17, use18 bool, w *bitWr
 	return size
 }
 
-func addDynamicTree(llLengths, dLengths []uint32, w *bitWriter) {
+// addDynamicTree writes the header the smallest of the first ways way.
+func addDynamicTree(llLengths, dLengths []uint32, ways int, w *bitWriter) {
 	best, bestSize := 0, 0
-	for i := 0; i < 8; i++ {
-		if size := encodeTree(llLengths, dLengths, i&1 != 0, i&2 != 0, i&4 != 0, nil); bestSize == 0 || size < bestSize {
+	for i := 0; i < ways; i++ {
+		if size := encodeTree(llLengths, dLengths, i, nil); bestSize == 0 || size < bestSize {
 			best, bestSize = i, size
 		}
 	}
-	encodeTree(llLengths, dLengths, best&1 != 0, best&2 != 0, best&4 != 0, w)
+	encodeTree(llLengths, dLengths, best, w)
 }
 
 func calculateTreeSize(llLengths, dLengths []uint32) int {
+	return treeSize(llLengths, dLengths, zopfliWays)
+}
+
+// treeSize is the size of the header the smallest of the first ways way.
+func treeSize(llLengths, dLengths []uint32, ways int) int {
 	result := 0
-	for i := 0; i < 8; i++ {
-		if size := encodeTree(llLengths, dLengths, i&1 != 0, i&2 != 0, i&4 != 0, nil); result == 0 || size < result {
+	for i := 0; i < ways; i++ {
+		if size := encodeTree(llLengths, dLengths, i, nil); result == 0 || size < result {
 			result = size
 		}
 	}

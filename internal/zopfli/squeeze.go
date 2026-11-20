@@ -59,6 +59,26 @@ func (s *symbolStats) gather(c *symbolCounts) {
 	s.calculate()
 }
 
+// codeCosts sets the costs of the symbols to the lengths of the codes the
+// block of the counts would be written with (see dynamicLengths); a symbol
+// with no code costs nothing.
+func (s *symbolStats) codeCosts(c *symbolCounts) {
+	var llLengths [numLL]uint32
+	var dLengths [numD]uint32
+	ll, d := c.ll, c.d
+	ll[256] = 1
+	calculateBitLengths(ll[:], 15, llLengths[:])
+	calculateBitLengths(d[:], 15, dLengths[:])
+	patchDistanceCodes(dLengths[:])
+	tryOptimizeHuffmanForRle(nil, 0, 0, ll[:], d[:], llLengths[:], dLengths[:])
+	for i, l := range llLengths {
+		s.llSymbols[i] = float64(l)
+	}
+	for i, l := range dLengths {
+		s.dSymbols[i] = float64(l)
+	}
+}
+
 // parseSink takes the items of a parse, in order: an lz77Store keeps them,
 // symbolCounts counts their symbols, fixedWriter writes them.
 type parseSink interface {
@@ -353,6 +373,7 @@ func (w *worker) lz77Optimal(s *blockState, data []byte, inStart, inEnd, numIter
 	s.greedy(data, inStart, inEnd, &counts, q.h)
 	stats.gather(&counts)
 	last := -1 // the run whose parse is the best, if it is the last made
+	var bestCounts symbolCounts
 	for i := 0; i < numIterations; i++ {
 		counts = symbolCounts{}
 		q.run(s, data, inStart, inEnd, &stats, &counts)
@@ -361,6 +382,7 @@ func (w *worker) lz77Optimal(s *blockState, data []byte, inStart, inEnd, numIter
 		if cost < bestCost {
 			bestStats = stats
 			bestCost = cost
+			bestCounts = counts
 			last = i
 		}
 		lastStats = stats
@@ -376,6 +398,23 @@ func (w *worker) lz77Optimal(s *blockState, data []byte, inStart, inEnd, numIter
 			lastRandomStep = i
 		}
 		lastCost = cost
+	}
+	if numIterations > 0 && w.ultra {
+		// Then, as ECT does, runs priced by the lengths of the Huffman codes
+		// of the best parse (evened out for the header, as the block is
+		// written), while they make it smaller.
+		for {
+			var model symbolStats
+			model.codeCosts(&bestCounts)
+			counts = symbolCounts{}
+			q.run(s, data, inStart, inEnd, &model, &counts)
+			cost := dynamicBlockSize(&counts)
+			last = -1
+			if cost >= bestCost {
+				break
+			}
+			bestStats, bestCost, bestCounts, last = model, cost, counts, 0
+		}
 	}
 	if numIterations > 0 {
 		if last < 0 {

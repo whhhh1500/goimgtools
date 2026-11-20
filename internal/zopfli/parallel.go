@@ -6,10 +6,11 @@ import "sync"
 // the hash chains, the longest match cache and the squeezer's arrays, for
 // parts of up to cap bytes.
 type worker struct {
-	h   *hash
-	lmc matchCache
-	q   squeezer
-	cap int
+	h     *hash
+	lmc   matchCache
+	q     squeezer
+	cap   int
+	ultra bool // see Options.Ultra
 }
 
 // workerBytes is the memory of a worker for parts of up to n bytes.
@@ -79,7 +80,9 @@ func (c *Compressor) takeWorker(n int) *worker {
 	c.mu.Lock()
 	c.reserved += need
 	c.mu.Unlock()
-	return newWorker(m)
+	w := newWorker(m)
+	w.ultra = c.opts.Ultra
+	return w
 }
 
 func (c *Compressor) giveWorker(w *worker) {
