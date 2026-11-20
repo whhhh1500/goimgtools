@@ -13,7 +13,6 @@ func (c *Compressor) compress(in []byte, start int, final bool) {
 	maxLen, niceLen := maxMatch, min(c.p.NiceLen, maxMatch)
 	depth := c.p.SearchDepth
 	var nh [2]uint32
-	c.mf.init()
 
 	// step makes way for the position i: moves the base on at the end of
 	// a window, and shortens the matches looked for near the end.
@@ -29,11 +28,24 @@ func (c *Compressor) compress(in []byte, start int, final bool) {
 			niceLen = min(niceLen, maxLen)
 		}
 	}
-	// The dictionary is entered as libdeflate enters the bytes it skips.
-	for i := 0; i < start; i++ {
-		step(i)
-		if maxLen >= mfRequiredBytes {
-			c.mf.advance(in, base, i-base, niceLen, niceLen, depth, &nh, nil, false)
+	if d := c.shared; d != nil && d.use {
+		// The matchfinder after the same dictionary, kept (see
+		// CompressShared).
+		*c.mf = d.mf
+		base, nextSlide, maxLen, niceLen, nh = d.base, d.nextSlide, d.maxLen, d.niceLen, d.nh
+	} else {
+		c.mf.init()
+		// The dictionary is entered as libdeflate enters the bytes it skips.
+		for i := 0; i < start; i++ {
+			step(i)
+			if maxLen >= mfRequiredBytes {
+				c.mf.advance(in, base, i-base, niceLen, niceLen, depth, &nh, nil, false)
+			}
+		}
+		if d := c.shared; d != nil && d.save {
+			d.mf = *c.mf
+			d.base, d.nextSlide, d.maxLen, d.niceLen, d.nh = base, nextSlide, maxLen, niceLen, nh
+			d.valid = true
 		}
 	}
 

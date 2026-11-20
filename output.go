@@ -390,7 +390,7 @@ const DefaultPNGLevel = pngstream.DefaultLevel
 
 // PNGOptions are the optional settings of PNG.
 type PNGOptions struct {
-	// CompressionLevel is 1 (fastest) to 9 (smallest); 0 means
+	// CompressionLevel is 1 (fastest) to 10 (smallest); 0 means
 	// DefaultPNGLevel.
 	//
 	// Levels 8 and 9 search for the smallest file: each row's filter is
@@ -405,6 +405,19 @@ type PNGOptions struct {
 	// times (oxipng -o max about 6 times as long as level 9, ECT -9 about
 	// 25 times). They take about 4MB (level 8) and 6.5MB (level 9) more
 	// memory per thread, and give the same file with every Go version.
+	//
+	// Level 10 is smaller still, and much slower: each row's filter is
+	// chosen by compressing the rows with each (libdeflate's level 10, the
+	// data before as the dictionary), as oxipng's Brute strategy does, and
+	// the data is compressed with a port of Zopfli (60 runs of its optimal
+	// parse; its master blocks of 1MB on threads of their own, joined into
+	// the stream Zopfli writes), each block by level 9's compressor instead
+	// where that is smaller. On the same 17 images it is 0.25% smaller than
+	// level 9 and 0.036% smaller than ECT -9 (smaller on 11 of them), in
+	// 885s with 8 threads against level 9's 31.5s (ECT: 606s on 6 cores).
+	// Its compressor takes about 51MB for each thread compressing: with the
+	// default memory limit it compresses on one thread, with a limit of
+	// 480MB on 8.
 	CompressionLevel int
 	// Colors, 2 to 256, reduces the image to that many colours, chosen for
 	// this image, and writes a paletted PNG. This is how PNG files are made

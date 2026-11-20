@@ -4,6 +4,10 @@ English | [中文](zh-CN/CHANGELOG.md)
 
 ## Unreleased
 
+### Added
+
+- PNG level 10 (`PNGOptions{CompressionLevel: 10}`, `-png-level 10`), smaller than level 9 and much slower: each row's filter is chosen by compressing the rows with each of the five (libdeflate's level 10, with the 32KB before as the dictionary; the five share the work of entering it), and the data is compressed with a Go port of Zopfli (`internal/zopfli`, byte for byte Zopfli's output with its settings; here 60 runs of its optimal parse) in its master blocks of 1MB, each on a thread of its own and joined bit by bit into the stream Zopfli writes for all of them; a block that level 9's compressor makes smaller is written as that. On 17 screenshots, photographs and game artwork: 0.25% smaller than level 9 and 0.036% smaller than ECT 0.9.5 `-9` (smaller on 11 of them), in 885s with 8 threads (level 9 31.5s, ECT 606s on 6 cores). Each thread compressing takes about 51MB: with the default memory limit it compresses on one thread. Levels 1 to 9 write the same bytes as before.
+
 ### Changed
 
 - No dependency on `github.com/klauspost/compress`: the dependencies are `golang.org/x/image`, `x/text` and `x/sys` only. With Go 1.27 or later, PNG data of more than one block, at levels 1 to 6, is compressed by Go 1.27's `compress/flate`, copied into the package (`internal/gflate`, with a method to reset it with a dictionary and, on little-endian processors, word loads as `klauspost/compress` makes them): the same bytes as 0.2.0 (with Go 1.26 too, which compresses every block with its own `compress/flate` as before), at about the same speed (a picture of 6000×4000 at level 6, 720ms against 707ms on one core, 276ms against 268ms on four). Compressed text and ICC profiles in PNG files are read by `compress/zlib`.

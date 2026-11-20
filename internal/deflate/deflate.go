@@ -199,7 +199,27 @@ type Compressor struct {
 	bounds    []int
 	ends      []int
 	done      []bool
+
+	// The matchfinder after a dictionary, for CompressShared.
+	shared *sharedDict
 }
+
+// sharedDict is the state of the matchfinder after a dictionary, saved by
+// a call of CompressShared to be used again by the next.
+type sharedDict struct {
+	mf                               btMatchfinder
+	base, nextSlide, maxLen, niceLen int
+	nh                               [2]uint32
+	save, use, valid                 bool
+}
+
+// SharedBytes is the memory CompressShared takes beyond Bytes.
+const SharedBytes = int64(unsafe.Sizeof(sharedDict{}))
+
+// sharedAfter is how far beyond the dictionary the matchfinder looks while
+// it enters it: the data after must be at least that long for its state to
+// be the same whatever comes after that.
+const sharedAfter = maxMatch + mfRequiredBytes
 
 // New makes a compressor; it takes p.Bytes() of memory.
 func New(p Params) *Compressor {
@@ -270,6 +290,47 @@ var offsetSlotFull = func() *[windowSize + 1]uint8 {
 // the blocks end with an empty stored block, so that the output ends on a
 // byte and more blocks can follow (a sync flush).
 func (c *Compressor) Compress(dst, in []byte, start int, final bool) []byte {
+	out, _ := c.compressTo(dst, in, start, final, true)
+	return out
+}
+
+// CompressShared is Compress for a run of inputs with the same dictionary
+// and the same length (and the same bytes up to sharedAfter past the
+// dictionary), such as the same data followed by each of several
+// candidates for what comes next: with first, the dictionary is entered
+// and the matchfinder's state after it kept; otherwise that state is used
+// again instead of entering the dictionary anew (most of the time on
+// short data after a long dictionary). The output is that of Compress;
+// bits is how many bits of its last byte are the blocks'. The near-optimal
+// parsing only.
+func (c *Compressor) CompressShared(dst, in []byte, start int, final, first bool) (out []byte, bits int) {
+	if c.shared == nil {
+		c.shared = new(sharedDict)
+	}
+	d := c.shared
+	if start > windowSize {
+		in, start = in[start-windowSize:], windowSize
+	}
+	ok := c.p.Lazy == 0 && len(in)-start >= sharedAfter
+	if first {
+		d.valid = false
+	}
+	d.save, d.use = ok && first, ok && !first && d.valid
+	out, bits = c.compressTo(dst, in, start, final, true)
+	d.save, d.use = false, false
+	return out, bits
+}
+
+// CompressBits is Compress without the sync flush: the blocks end where
+// they end, and bits says how many bits of the last byte they take (1 to
+// 8; the rest are zeros), so that blocks compressed after them can be
+// joined to them bit by bit. With nothing to compress and final not set,
+// nothing is appended.
+func (c *Compressor) CompressBits(dst, in []byte, start int, final bool) (out []byte, bits int) {
+	return c.compressTo(dst, in, start, final, false)
+}
+
+func (c *Compressor) compressTo(dst, in []byte, start int, final, flush bool) ([]byte, int) {
 	c.w = bitWriter{out: dst}
 	if start == len(in) {
 		if final {
@@ -287,15 +348,19 @@ func (c *Compressor) Compress(dst, in []byte, start int, final bool) []byte {
 			c.compress(in, start, final)
 		}
 	}
-	if !final {
+	if !final && flush {
 		c.w.add(0, 3)
 		c.w.align()
 		c.w.out = append(c.w.out, 0, 0, 0xff, 0xff)
 	}
+	bits := 8
+	if r := c.w.count % 8; r != 0 {
+		bits = int(r)
+	}
 	c.w.align()
 	out := c.w.out
 	c.w = bitWriter{}
-	return out
+	return out, bits
 }
 
 // precode is the header of a dynamic block: the code of the code lengths

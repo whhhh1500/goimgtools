@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"slices"
 
+	"github.com/whhhh1500/goimgtools/internal/deflate"
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
@@ -55,11 +56,18 @@ func filterRow(dst, cur, prev []byte, bpp, f int) {
 // before it, each counted when it was chosen, under Huffman codes made
 // for them all: the same choice, mostly, in a fraction of the time.
 //
+// At level 10 the rows are compressed for each filter, as oxipng does:
+// the last bruteLines rows, with the data before them as the dictionary
+// (as far back as the window kept, 32KB at least), with libdeflate's level
+// 10 (17 images 0.12% smaller than with the estimate, in 18 times the
+// time).
+//
 // Everything is integer arithmetic on the rows alone, so the choices are
 // the same on every processor.
 type bruteFilter struct {
 	row   int // bytes in a row, with the type byte
 	chain int // earlier positions a match is looked for at, at most
+	kept  int // the data kept before the next row (see keptBytes)
 	cands [nFilter][]byte
 
 	// The data of deflate's window and the row: buf[i] is at position
@@ -88,6 +96,21 @@ type bruteFilter struct {
 
 	reserved int64
 	env      *pipeline.Env
+
+	// At level 10: the compressor, its input and output.
+	real    *deflate.Compressor
+	realIn  []byte
+	realOut []byte
+}
+
+// bruteReal are the settings of the compressor that scores rows of
+// rowBytes at level 10: libdeflate's level 10, with blocks of at most 8
+// rows rather than 300000 bytes (the rows compressed are 4: they make one
+// block either way), so that it takes 1 to 4MB rather than 8.6MB.
+func bruteReal(rowBytes int) deflate.Params {
+	p := deflate.Level10
+	p.BlockLen = min(p.BlockLen, max(8*rowBytes, 16<<10))
+	return p
 }
 
 type undoEntry struct {
@@ -107,11 +130,21 @@ const (
 	nSyms       = 286 + 30 // literals and lengths, then distances
 )
 
-// bruteBytes is the memory a bruteFilter takes for rows of rowBytes.
-func bruteBytes(rowBytes int) int64 {
-	return int64(nFilter*rowBytes) + int64(bufSize(rowBytes)) + int64(2*prevSize(rowBytes)) + 8<<bruteHashBits +
+// bruteBytes is the memory a bruteFilter takes for rows of rowBytes, with
+// real when the rows are scored by compressing them.
+func bruteBytes(rowBytes int, real bool) int64 {
+	n := int64(nFilter*rowBytes) + int64(bufSize(rowBytes, real)) + int64(2*prevSize(rowBytes)) + 8<<bruteHashBits +
 		int64(bruteLines)*8*nSyms + int64(2*nFilter+2)*8*nSyms + 16*int64(rowBytes)
+	if real {
+		in := realInSize(rowBytes)
+		n += bruteReal(rowBytes).Bytes() + deflate.SharedBytes + int64(in) + int64(in+in/8+1<<10)
+	}
+	return n
 }
+
+// realInSize is the most a compression of the rows takes in: the window
+// kept and a row.
+func realInSize(rowBytes int) int { return bufSize(rowBytes, true) + rowBytes }
 
 // prevSize holds the window behind the last position of a row, and the
 // row.
@@ -123,14 +156,24 @@ func prevSize(rowBytes int) int {
 	return n
 }
 
-// bufSize holds the window and a row twice over, so that the window is
+// bufSize holds the data kept and a row twice over, so that the window is
 // moved back at most every other row.
-func bufSize(rowBytes int) int {
-	return 2 * (bruteWindow + rowBytes)
+func bufSize(rowBytes int, real bool) int {
+	return 2 * (keptBytes(rowBytes, real) + rowBytes)
 }
 
-func newBruteFilter(env *pipeline.Env, rowBytes, chain int) (*bruteFilter, error) {
-	need := bruteBytes(rowBytes)
+// keptBytes is the data kept before the next row: deflate's window, and
+// when the rows are scored by compressing them, the rows compressed with
+// the next before that window, its dictionary.
+func keptBytes(rowBytes int, real bool) int {
+	if real {
+		return bruteWindow + (bruteLines-1)*rowBytes
+	}
+	return bruteWindow
+}
+
+func newBruteFilter(env *pipeline.Env, rowBytes, chain int, real bool) (*bruteFilter, error) {
+	need := bruteBytes(rowBytes, real)
 	if err := env.Budget.Reserve(need, "png filter search"); err != nil {
 		return nil, err
 	}
@@ -138,7 +181,8 @@ func newBruteFilter(env *pipeline.Env, rowBytes, chain int) (*bruteFilter, error
 	b := &bruteFilter{
 		row:      rowBytes,
 		chain:    chain,
-		buf:      make([]byte, bufSize(rowBytes)),
+		buf:      make([]byte, bufSize(rowBytes, real)),
+		kept:     keptBytes(rowBytes, real),
 		prev:     make([]uint16, ps),
 		head:     make([]int64, 1<<bruteHashBits),
 		mask:     int64(ps - 1),
@@ -154,6 +198,10 @@ func newBruteFilter(env *pipeline.Env, rowBytes, chain int) (*bruteFilter, error
 	}
 	for i := range b.head {
 		b.head[i] = -1
+	}
+	if real {
+		in := realInSize(rowBytes)
+		b.real, b.realIn, b.realOut = deflate.New(bruteReal(rowBytes)), make([]byte, 0, in), make([]byte, 0, in+in/8+1<<10)
 	}
 	return b, nil
 }
@@ -177,6 +225,8 @@ func (b *bruteFilter) choose(cur, prev []byte, bpp int) []byte {
 	if zero {
 		filterRow(b.cands[ftNone], cur, prev, bpp, ftNone)
 		b.parse(b.cands[ftNone], ftNone, false)
+	} else if b.real != nil {
+		return b.chooseReal(cur, prev, bpp)
 	} else {
 		var bestCost int64 = -1
 		for f := ftNone; f <= ftPaeth; f++ {
@@ -197,6 +247,29 @@ func (b *bruteFilter) choose(cur, prev []byte, bpp int) []byte {
 	return b.cands[best]
 }
 
+// chooseReal chooses the filter with which the last rows compress
+// smallest, the window kept before them as the dictionary (the first on a
+// tie).
+func (b *bruteFilter) chooseReal(cur, prev []byte, bpp int) []byte {
+	hist := b.buf[:b.pos-b.base]
+	from := max(0, len(hist)-bruteWindow-(bruteLines-1)*b.row)
+	start := max(0, len(hist)-(bruteLines-1)*b.row) - from
+	best, bestCost := ftNone, -1
+	for f := ftNone; f <= ftPaeth; f++ {
+		filterRow(b.cands[f], cur, prev, bpp, f)
+		b.realIn = append(append(b.realIn[:0], hist[from:]...), b.cands[f]...)
+		// The candidates share the dictionary: it is entered once.
+		var bits int
+		b.realOut, bits = b.real.CompressShared(b.realOut[:0], b.realIn, start, true, f == ftNone)
+		if cost := 8*len(b.realOut) - 8 + bits; bestCost < 0 || cost < bestCost {
+			bestCost, best = cost, f
+		}
+	}
+	b.place(b.cands[best])
+	b.pos += int64(b.row)
+	return b.cands[best]
+}
+
 func (b *bruteFilter) hash(p int64) int32 {
 	v := binary.LittleEndian.Uint32(b.buf[p-b.base:])
 	return int32(v * 2654435761 >> (32 - bruteHashBits))
@@ -206,7 +279,7 @@ func (b *bruteFilter) hash(p int64) int32 {
 // to the start of the buffer if the row would not fit.
 func (b *bruteFilter) place(row []byte) {
 	if int(b.pos-b.base)+len(row) > len(b.buf) {
-		from := max(b.base, b.pos-bruteWindow)
+		from := max(b.base, b.pos-int64(b.kept))
 		copy(b.buf, b.buf[from-b.base:b.pos-b.base])
 		b.base = from
 	}

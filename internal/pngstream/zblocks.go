@@ -9,6 +9,7 @@ import (
 
 	"github.com/whhhh1500/goimgtools/internal/deflate"
 	"github.com/whhhh1500/goimgtools/internal/gflate"
+	"github.com/whhhh1500/goimgtools/internal/zopfli"
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
@@ -17,7 +18,11 @@ import (
 // each compressed on its own with the 32KB before it as its dictionary,
 // and the compressed blocks follow each other in one deflate stream (every
 // block but the last ends with a sync flush, the last is final). The
-// checksum is over all the data, in order.
+// checksum is over all the data, in order. At level 10 the blocks are
+// Zopfli's master blocks, of zopfli.MasterBlock, and each follows the bits
+// of the one before without a sync flush: the stream is the one Zopfli
+// writes for all the data (smaller blocks, or the flushes, would make it
+// larger: 0.03% with blocks of 256KB).
 //
 // Up to level 6 the blocks are compressed with compress/flate; with Go
 // 1.27 or later, data of more than one block with internal/gflate, Go
@@ -29,7 +34,7 @@ import (
 // see lazyLevel), the same with every Go version. Levels 8 and 9 use the
 // near-optimal parsing of libdeflate, with the settings of its levels 10
 // and 12, and the blocks of deflate split where it saves bits, as zopfli
-// does.
+// does. Level 10 uses Zopfli itself (internal/zopfli; see zopfliOptions).
 //
 // The blocks are the same however many helpers the pipeline has (see
 // pipeline.Env.Go), and so is the file. Without helpers, up to level 6,
@@ -61,16 +66,24 @@ type zBlocks struct {
 	busy []*zBlock // handed out to be compressed, oldest first
 	free []*zBlock
 
-	// Levels 8 and 9: the settings, and the compressors not in use (one
-	// for each block being compressed at once, as many as the memory
-	// limit allows).
-	near  *deflate.Params
-	comps chan *deflate.Compressor
-	made  int
+	// From level 7: how a compressor is made and the memory it takes,
+	// and the compressors not in use (one for each block being compressed
+	// at once, as many as the memory limit allows).
+	newComp   func() blockCompressor
+	compBytes int64
+	comps     chan blockCompressor
+	made      int
 
-	// blk is the size of the blocks' buffers: zBlockBytes, or all the
+	// size is the data of a block: zBlockBytes, or zopfli.MasterBlock at
+	// level 10. blk is the size of the blocks' buffers: size, or all the
 	// data when there is less.
-	blk int
+	size int
+	blk  int
+
+	// At level 10, the bits of the last byte written out so far that are
+	// not yet a whole byte: pendN of them, in the low bits of pend.
+	pend  byte
+	pendN int
 }
 
 const (
@@ -99,6 +112,66 @@ var nearLevels = map[int]deflate.Params{
 // DefaultLevel is the compression level used when none is given.
 const DefaultLevel = 7
 
+// MaxLevel is the highest compression level.
+const MaxLevel = zopfliLevel
+
+// zopfliLevel is the level compressed with Zopfli, with zopfliOptions: 60
+// runs of its optimal parse rather than its default 15 (17 images 0.03%
+// smaller).
+const zopfliLevel = 10
+
+var zopfliOptions = zopfli.Options{NumIterations: 60, BlockSplitting: true, BlockSplittingMax: 15}
+
+// zopfliBlock is the data of a block at level 10 (a variable for tests).
+var zopfliBlock = zopfli.MasterBlock
+
+// blockCompressor compresses a block after its dictionary, as
+// deflate.Compressor does.
+type blockCompressor interface {
+	Compress(dst, in []byte, start int, final bool) []byte
+}
+
+// tenCompressor compresses a block of level 10 with Zopfli and with level
+// 9's compressor, and keeps the smaller (Zopfli's on a tie). Zopfli is the
+// smaller on the rows of photographs and screenshots (0.12% on 17 of
+// them), but not always: on a synthetic photograph of 1000×300, level 9's
+// was 2% smaller.
+type tenCompressor struct {
+	z   *zopfli.Compressor
+	d   *deflate.Compressor
+	alt []byte
+}
+
+// tenBytes is the memory of a tenCompressor for blocks of n bytes.
+func tenBytes(n int) int64 {
+	return zopfli.Bytes(n) + nearLevels[9].Bytes() + int64(n+zOutSlack)
+}
+
+func newTenCompressor(n int) *tenCompressor {
+	return &tenCompressor{z: zopfli.New(zopfliOptions, n), d: deflate.New(nearLevels[9]), alt: make([]byte, 0, n+zOutSlack)}
+}
+
+// CompressBits compresses as zopfli.Compressor.CompressBits does.
+func (t *tenCompressor) CompressBits(dst, in []byte, start int, final bool) ([]byte, int) {
+	out, bits := t.z.CompressBits(dst, in, start, final)
+	alt, altBits := t.d.CompressBits(t.alt[:0], in, start, final)
+	t.alt = alt
+	if 8*len(alt)+altBits < 8*(len(out)-len(dst))+bits {
+		return append(out[:len(dst)], alt...), altBits
+	}
+	return out, bits
+}
+
+// Compress compresses as zopfli.Compressor.Compress does.
+func (t *tenCompressor) Compress(dst, in []byte, start int, final bool) []byte {
+	out := t.z.Compress(dst, in, start, final)
+	t.alt = t.d.Compress(t.alt[:0], in, start, final)
+	if len(t.alt) < len(out)-len(dst) {
+		return append(out[:len(dst)], t.alt...)
+	}
+	return out
+}
+
 // lazyParams are the settings of level 7: libdeflate's level 7, its lazy
 // parsing (see lazyLevel).
 var lazyParams = deflate.LazyLevel7
@@ -119,17 +192,23 @@ func withSplit(p deflate.Params, noSkip bool, passes int) deflate.Params {
 	return p
 }
 
-// nearBytes is the memory levels 8 and 9 take beyond what level 7 takes
+// nearBytes is the memory levels 8 to 10 take beyond what level 7 takes
 // without helpers, for images of the width: a compressor, and a block
 // gathered for it (for each helper too, when the limit allows; see
 // compressor), and the search of the rows' filters (see bruteFilter).
 func nearBytes(level, width int) int64 {
-	p, ok := nearLevels[level]
-	if !ok {
+	var comp int64
+	block := int64(zBlockBytes)
+	zopfliBlock := int64(zopfliBlock)
+	if p, ok := nearLevels[level]; ok {
+		comp = p.Bytes()
+	} else if level == zopfliLevel {
+		comp, block = tenBytes(int(zopfliBlock)), zopfliBlock
+	} else {
 		return 0
 	}
 	row := 1 + 8*width // at most
-	return p.Bytes() + zWindow + zBlockBytes + zBlockOut + bruteBytes(row) + int64(trialBytes+row) +
+	return comp + zWindow + 2*block + zOutSlack + bruteBytes(row, level >= zopfliLevel) + int64(trialBytes+row) +
 		nearEstimatorBytes - estimatorBytes + int64(2*estWindowNear+trialBytes+row)
 }
 
@@ -149,6 +228,7 @@ type zBlock struct {
 	dict   int    // the length of the dictionary
 	out    []byte
 	writes []int
+	bits   int // at level 10: the bits of out's last byte that are the block's
 	last   bool
 	err    error
 	wait   func()
@@ -160,9 +240,9 @@ type flateWriter interface {
 	Flush() error
 }
 
-// zBlockOut is room enough for the compressed block: stored blocks and the
-// sync flush add a few bytes to every 64KB at most.
-const zBlockOut = zBlockBytes + 1<<10
+// zOutSlack is room enough beyond a block's data for it compressed: stored
+// blocks and the sync flush add a few bytes to every 64KB at most.
+const zOutSlack = 1 << 10
 
 // recorder appends to the output of a block and notes each write's size.
 type recorder struct{ b *zBlock }
@@ -175,18 +255,26 @@ func (r recorder) Write(p []byte) (int, error) {
 
 // newZBlocks starts the zlib stream of total bytes of data.
 func newZBlocks(w io.Writer, level int, env *pipeline.Env, total int64) (*zBlocks, error) {
+	size := zBlockBytes
+	if level == zopfliLevel {
+		size = zopfliBlock
+	}
 	z := &zBlocks{w: w, env: env, level: level, sum: adler32.New(), ways: env.Helpers() + 1, multi: gflateSame && total > zBlockBytes,
-		blk: int(max(1, min(total, zBlockBytes)))}
+		size: size, blk: int(max(1, min(total, int64(size))))}
 	if p, ok := nearLevels[level]; ok {
-		z.near = &p
-		z.comps = make(chan *deflate.Compressor, z.ways)
+		z.newComp, z.compBytes = func() blockCompressor { return deflate.New(p) }, p.Bytes()
 	} else if lazyLevel(level) {
 		p := lazyParams
 		p.MaxInput = z.blk
-		z.near = &p
-		z.comps = make(chan *deflate.Compressor, z.ways)
+		z.newComp, z.compBytes = func() blockCompressor { return deflate.New(p) }, p.Bytes()
+	} else if level == zopfliLevel {
+		n := z.blk
+		z.newComp, z.compBytes = func() blockCompressor { return newTenCompressor(n) }, tenBytes(n)
 	} else if z.multi {
 		z.kws = make(chan *gflate.Writer, z.ways+1)
+	}
+	if z.newComp != nil {
+		z.comps = make(chan blockCompressor, z.ways)
 	}
 	if err := env.Budget.Reserve(zWindow, "png compression window"); err != nil {
 		return nil, err
@@ -195,7 +283,7 @@ func newZBlocks(w io.Writer, level int, env *pipeline.Env, total int64) (*zBlock
 	if _, err := z.w.Write(z.header()); err != nil {
 		return z, err
 	}
-	if z.ways == 1 && z.near == nil {
+	if z.ways == 1 && z.newComp == nil {
 		if z.multi {
 			kw, err := gflate.NewWriter(z.w, level)
 			if err != nil {
@@ -224,7 +312,7 @@ func (z *zBlocks) header() []byte {
 		flags = 1
 	case 6, -1:
 		flags = 2
-	case 7, 8, 9:
+	case 7, 8, 9, 10:
 		flags = 3
 	}
 	h[1] = flags << 6
@@ -253,12 +341,12 @@ func (z *zBlocks) Write(p []byte) (int, error) {
 	for len(p) > 0 {
 		// A full block is ended only when more data comes, so that the last
 		// block is the one Close finishes.
-		if z.n > 0 && z.n%zBlockBytes == 0 {
+		if z.n > 0 && z.n%int64(z.size) == 0 {
 			if z.err = z.next(); z.err != nil {
 				return 0, z.err
 			}
 		}
-		k := min(len(p), zBlockBytes-int(z.n%zBlockBytes))
+		k := min(len(p), z.size-int(z.n%int64(z.size)))
 		if z.fw != nil {
 			if _, z.err = z.fw.Write(p[:k]); z.err != nil {
 				return 0, z.err
@@ -307,10 +395,10 @@ func (z *zBlocks) block() (*zBlock, error) {
 	if n := len(z.free); n > 0 {
 		b = z.free[n-1]
 		z.free = z.free[:n-1]
-		b.out, b.writes, b.last, b.err = b.out[:0], b.writes[:0], false, nil
+		b.out, b.writes, b.bits, b.last, b.err = b.out[:0], b.writes[:0], 0, false, nil
 	} else {
 		// The dictionary, the data and its output.
-		need := int64(zWindow + 2*z.blk + zBlockOut - zBlockBytes)
+		need := int64(zWindow + 2*z.blk + zOutSlack)
 		if err := z.env.Budget.Reserve(need, "png compression block"); err != nil {
 			if len(z.busy) == 0 {
 				return nil, err
@@ -323,28 +411,28 @@ func (z *zBlocks) block() (*zBlock, error) {
 			return z.block()
 		}
 		z.held += need
-		b = &zBlock{buf: make([]byte, 0, zWindow+z.blk), out: make([]byte, 0, z.blk+zBlockOut-zBlockBytes)}
+		b = &zBlock{buf: make([]byte, 0, zWindow+z.blk), out: make([]byte, 0, z.blk+zOutSlack)}
 	}
 	b.buf = append(b.buf[:0], z.tail...)
 	b.dict = len(z.tail)
 	return b, nil
 }
 
-// compressor returns a compressor for levels 8 and 9: a free one, a new
-// one if the memory limit allows it, or the next to be free.
-func (z *zBlocks) compressor() (*deflate.Compressor, error) {
+// compressor returns a compressor from level 7: a free one, a new one if
+// the memory limit allows it, or the next to be free.
+func (z *zBlocks) compressor() (blockCompressor, error) {
 	select {
 	case c := <-z.comps:
 		return c, nil
 	default:
 	}
 	if z.made < z.ways {
-		need := z.near.Bytes()
+		need := z.compBytes
 		err := z.env.Budget.Reserve(need, "png compressor")
 		if err == nil {
 			z.held += need
 			z.made++
-			return deflate.New(*z.near), nil
+			return z.newComp(), nil
 		}
 		if z.made == 0 {
 			return nil, err
@@ -361,7 +449,7 @@ func (z *zBlocks) send() error {
 	b := z.cur
 	z.cur = nil
 	level := z.level
-	if z.near != nil {
+	if z.newComp != nil {
 		c, err := z.compressor()
 		if err != nil {
 			return err
@@ -369,6 +457,10 @@ func (z *zBlocks) send() error {
 		comps := z.comps
 		b.wait = z.env.Go(func() {
 			defer func() { comps <- c }()
+			if tc, ok := c.(*tenCompressor); ok {
+				b.out, b.bits = tc.CompressBits(b.out, b.buf, b.dict, b.last)
+				return
+			}
 			b.out = c.Compress(b.out, b.buf, b.dict, b.last)
 			b.writes = append(b.writes, len(b.out))
 		})
@@ -444,15 +536,48 @@ func (z *zBlocks) drain() error {
 	if b.err != nil {
 		return b.err
 	}
-	out := b.out
-	for _, n := range b.writes {
-		if _, err := z.w.Write(out[:n]); err != nil {
+	if b.bits != 0 {
+		if err := z.writeBits(b); err != nil {
 			return err
 		}
-		out = out[n:]
+	} else {
+		out := b.out
+		for _, n := range b.writes {
+			if _, err := z.w.Write(out[:n]); err != nil {
+				return err
+			}
+			out = out[n:]
+		}
 	}
 	z.free = append(z.free, b)
 	return nil
+}
+
+// writeBits writes out a block of level 10 after the bits before it: its
+// bytes shifted by the pendN bits pending, the bits left over pending.
+func (z *zBlocks) writeBits(b *zBlock) error {
+	out := b.out
+	if len(out) == 0 {
+		return nil
+	}
+	s := z.pendN
+	if s != 0 {
+		carry := z.pend
+		for i, v := range out {
+			out[i] = carry | v<<s
+			carry = v >> (8 - s)
+		}
+		out = append(out, carry) // within zOutSlack
+	}
+	total := s + 8*(len(b.out)-1) + b.bits
+	whole := total / 8
+	z.pendN = total % 8
+	if z.pendN != 0 {
+		z.pend = out[whole]
+	}
+	b.out = out[:0]
+	_, err := z.w.Write(out[:whole])
+	return err
 }
 
 // Close ends the last block and writes everything out with the checksum.
@@ -473,6 +598,9 @@ func (z *zBlocks) Close() error {
 			for len(z.busy) > 0 && z.err == nil {
 				z.err = z.drain()
 			}
+		}
+		if z.err == nil && z.pendN != 0 {
+			_, z.err = z.w.Write([]byte{z.pend})
 		}
 	}
 	if z.err != nil {

@@ -217,3 +217,49 @@ func TestLog2Fix(t *testing.T) {
 		}
 	}
 }
+
+// TestCompressShared: inputs with the same dictionary and length, each
+// tail different, compressed with CompressShared are what Compress writes
+// for them (the dictionary entered once), with dictionaries short and
+// long (beyond the window), tails too short to share and long enough, and
+// a first call that is not first in the run of calls.
+func TestCompressShared(t *testing.T) {
+	s := samples()
+	r := rand.New(rand.NewPCG(3, 4))
+	for _, p := range []Params{Level10, Level12} {
+		c, ref := New(p), New(p)
+		for _, src := range []string{"rows", "text", "mixed"} {
+			data := s[src]
+			for _, dict := range []int{0, 1000, 32 << 10, 50 << 10} {
+				for _, after := range []int{100, sharedAfter - 1, sharedAfter, 3000, 70 << 10} {
+					for _, tail := range []int{1, 500, 12000} {
+						if dict+after+tail > len(data) {
+							continue
+						}
+						base := data[:dict+after]
+						for k := 0; k < 4; k++ {
+							in := append(append([]byte{}, base...), data[dict+after:dict+after+tail]...)
+							for i := range in[dict+after:] { // another tail each time
+								if r.IntN(3) == 0 {
+									in[dict+after+i] = byte(r.Uint32())
+								}
+							}
+							want := ref.Compress(nil, in, dict, k%2 == 0)
+							got, _ := c.CompressShared(nil, in, dict, k%2 == 0, k == 0)
+							if !bytes.Equal(got, want) {
+								t.Fatalf("%s depth %d dict %d after %d tail %d, call %d: not what Compress writes", src, p.SearchDepth, dict, after, tail, k)
+							}
+						}
+					}
+				}
+			}
+		}
+		// Without a first call there is nothing to share: the dictionary
+		// is entered.
+		c = New(p)
+		in := s["rows"][:40000]
+		if got, _ := c.CompressShared(nil, in, 30000, true, false); !bytes.Equal(got, ref.Compress(nil, in, 30000, true)) {
+			t.Fatalf("depth %d: without a first call, not what Compress writes", p.SearchDepth)
+		}
+	}
+}

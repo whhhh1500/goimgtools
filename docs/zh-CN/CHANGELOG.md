@@ -4,6 +4,10 @@
 
 ## 未发布
 
+### 新增
+
+- PNG 10 级（`PNGOptions{CompressionLevel: 10}`、`-png-level 10`），比 9 级更小、慢得多：每行的滤波把各行连同前几行用五种滤波分别真实压缩一遍后选取（libdeflate 10 级，前 32KB 作字典；五种共用录入字典的工作），数据用 Zopfli 的 Go 移植（`internal/zopfli`，按其设置时与 Zopfli 输出逐字节相同；这里用 60 轮最优解析）按其 1MB 主块压缩，各块在各自线程上压缩后逐比特拼成 Zopfli 对整段数据写出的同一条流；某块用 9 级压缩器更小时改用它。17 张截图、照片与游戏美术图上：比 9 级小 0.25%，比 ECT 0.9.5 `-9` 小 0.036%（11 张更小），8 线程用时 885 秒（9 级 31.5 秒，ECT 6 核 606 秒）。每个压缩线程约占 51MB，默认内存上限下只用一个线程压缩。1 至 9 级输出字节不变。
+
 ### 变更
 
 - 不再依赖 `github.com/klauspost/compress`，依赖只剩 `golang.org/x/image`、`x/text` 与 `x/sys`。Go 1.27 及以上版本中，1 至 6 级下超过一块的 PNG 数据改由 Go 1.27 的 `compress/flate` 压缩，它已复制进本库（`internal/gflate`），另加了带字典复位的方法，并在小端处理器上按字读取（与 `klauspost/compress` 的做法相同）。字节与 0.2.0 相同（Go 1.26 下也相同，那里仍和以前一样每块用它自己的 `compress/flate` 压缩）；速度与原来相当：6000×4000 的图存 6 级，单核 720ms 对 707ms，四核 276ms 对 268ms。PNG 中压缩的文字与 ICC 配置文件改由 `compress/zlib` 解压。

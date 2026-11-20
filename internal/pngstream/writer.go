@@ -411,7 +411,7 @@ func (e *encoder) writeImage(w io.Writer, cb int, level int) error {
 		if level >= 9 {
 			chain = bruteChain9
 		}
-		if brute, err = newBruteFilter(e.env, sz, chain); err != nil {
+		if brute, err = newBruteFilter(e.env, sz, chain, level >= zopfliLevel); err != nil {
 			return err
 		}
 		defer brute.release()

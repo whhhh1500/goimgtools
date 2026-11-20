@@ -197,7 +197,7 @@ func register(fs *flag.FlagSet) *options {
 		jpegQuantTable: fs.Int("jpeg-quant-table", 0, "JPEG: quantization tables: 0-8 numbered as mozjpeg's -quant-table (0 the standard's, as the standard library; 3 mozjpeg's default), 9 made as jpegli makes them (the smallest files)"),
 		pngColors:      fs.Int("png-colors", 0, "PNG: reduce to this many colours, 2-256, chosen for the image (a much smaller, lossy file)"),
 		noDither:       fs.Bool("no-dither", false, "no dithering when colours are reduced (-png-colors, GIF output, -animated)"),
-		pngLevel:       fs.Int("png-level", 0, fmt.Sprintf("PNG compression 1 (fastest) to 9 (smallest); default %d", goimgtools.DefaultPNGLevel)),
+		pngLevel:       fs.Int("png-level", 0, fmt.Sprintf("PNG compression 1 (fastest) to 10 (smallest, slowest); default %d", goimgtools.DefaultPNGLevel)),
 		format:         fs.String("format", "", "output format: "+formatNames()+" (default: from the output file name)"),
 		skipLarger:     fs.Bool("skip-larger", false, "when the result is not smaller than the input file (same format), keep the input file as it is; for runs that only compress"),
 		tileSize:       fs.Int("tile-size", 256, "the side of a tile, for an output named .dzi or .dz (a Deep Zoom pyramid of tiles, as sharp's tile)"),

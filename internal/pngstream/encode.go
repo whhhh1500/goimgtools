@@ -17,7 +17,7 @@ import (
 
 // Options are the encoding parameters.
 type Options struct {
-	// Level is the zlib compression level, 1 (fastest) to 9 (smallest).
+	// Level is the zlib compression level, 1 (fastest) to 10 (smallest).
 	// Zero means the default, which is what the standard library uses.
 	Level int
 	// Exif (in TIFF form) and ICC are written as eXIf and iCCP chunks when
@@ -57,8 +57,8 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 	}
 	level := zlib.DefaultCompression
 	if o != nil && o.Level != 0 {
-		if o.Level < 1 || o.Level > 9 {
-			return errors.New("goimgtools: PNG compression level must be 1 to 9")
+		if o.Level < 1 || o.Level > MaxLevel {
+			return errors.New("goimgtools: PNG compression level must be 1 to 10")
 		}
 		level = o.Level
 	}

@@ -163,6 +163,19 @@ rewritten in Go and nothing of the original files is included unchanged.
 `OptimizeHuffmanForRle` (`src/zopfli/deflate.c`), used as zopfli's
 `TryOptimizeHuffmanForRle` uses it, under the same licence.
 
+`internal/zopfli` is a port of zopfli's compressor, under the same
+licence: `src/zopfli/katajainen.c`, `tree.c`, `hash.c`, `cache.c`,
+`lz77.c`, `squeeze.c`, `blocksplitter.c` and `deflate.c`, translated into
+Go. Given the same data and options it writes the bytes zopfli writes (the
+tests check this against zopfli's own output). It makes its memory once,
+for the longest data it is given, rather than as it goes, and keeps less
+of it for each byte: the parse of each run of the optimal parse is
+counted rather than kept, the best run made again at the end; the
+symbols of a parse are found again from its lengths and distances; the
+match cache holds 7 lengths a position rather than 8. It adds
+compressing a block after a dictionary with its bits left open, so that
+blocks compressed on several cores join into zopfli's stream.
+
 ## oxipng
 
 MIT License, copyright (c) 2016 Joshua Holmer. The full text is in

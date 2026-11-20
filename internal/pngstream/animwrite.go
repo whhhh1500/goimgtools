@@ -67,8 +67,8 @@ func EncodeAnimation(w io.Writer, env *pipeline.Env, o AnimOptions, next func() 
 	if o.LoopCount < 0 || int64(o.LoopCount) > math.MaxInt32 {
 		return fmt.Errorf("goimgtools: an APNG plays 0 (for ever) to %d times, not %d", math.MaxInt32, o.LoopCount)
 	}
-	if o.Level < 0 || o.Level > 9 {
-		return errors.New("goimgtools: PNG compression level must be 1 to 9")
+	if o.Level < 0 || o.Level > MaxLevel {
+		return errors.New("goimgtools: PNG compression level must be 1 to 10")
 	}
 	src, ms, err := next()
 	if err == io.EOF {
