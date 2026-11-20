@@ -300,6 +300,31 @@ type tokenizer struct {
 	// box lists the distances to the nearest pixels above and to the left
 	// whose codes are the cheapest (but 1 and width), cheapest first.
 	box []int
+	// With par, the optimal parse enters a whole stretch into the hash
+	// chains first and searches its pixels on several cores, each part by
+	// one of searchers: a copy of the tokenizer with matchEnds of its own.
+	// Each search starts from the chain link of its own pixel (ahead),
+	// which is where the head of its hash was before the pixel went in,
+	// and the links the stretch overwrote, of the pixels a window before
+	// it, are read from saved (from saveFrom on, see link): the candidates,
+	// and the matches, are those of searching one pixel after the other.
+	par       func(n int, fn func(int))
+	ahead     bool
+	searchers []*tokenizer
+	saved     []uint32
+	saveFrom  int
+	emask     int // matchEnds-1, or less in a searcher
+}
+
+// link is the chain link of position c: the position+1 before it with the
+// same hash.
+func (t *tokenizer) link(c int) int {
+	if t.ahead {
+		if k := c - t.saveFrom; uint(k) < uint(len(t.saved)) {
+			return int(t.saved[k])
+		}
+	}
+	return int(t.prev[c&t.wmask])
 }
 
 // matchEnd remembers where the match at a distance ends: a match at
@@ -340,7 +365,7 @@ func tokenizerSizes(total int64, window int) (nbuf, nhead, nprev int) {
 func newTokenizer(width int, total int64, window int, buf []uint32, out io.Writer, st *stats) *tokenizer {
 	nbuf, nhead, nprev := tokenizerSizes(total, window)
 	t := &tokenizer{
-		width: width, wsize: window, wmask: window - 1,
+		width: width, wsize: window, wmask: window - 1, emask: matchEnds - 1,
 		maxDist: min(window-1, maxDistance),
 		head:    make([]uint32, nhead),
 		prev:    make([]uint32, nprev),
@@ -366,7 +391,7 @@ func newTokenizer(width int, total int64, window int, buf []uint32, out io.Write
 // (an index in buf) with those d before them.
 func (t *tokenizer) matchAt(p, d, limit int) int {
 	pos := p + t.base
-	m := &t.ends[d&(matchEnds-1)]
+	m := &t.ends[d&t.emask]
 	k := 0
 	if int(m.d) == d && int(m.e) > pos {
 		k = int(m.e) - pos
@@ -445,7 +470,12 @@ func (t *tokenizer) find(pos int) (bestLen, bestDist int, value int32) {
 		return
 	}
 	lowest := max(pos-t.maxDist, t.base)
-	cand := int(t.head[t.hash(p)])
+	var cand int
+	if t.ahead {
+		cand = int(t.prev[pos&t.wmask])
+	} else {
+		cand = int(t.head[t.hash(p)])
+	}
 	chain := t.chain
 	if run >= 3 {
 		// Inside a run of equal pixels, the latest candidates are the
@@ -459,7 +489,7 @@ func (t *tokenizer) find(pos int) (bestLen, bestDist int, value int32) {
 			return
 		}
 		chain -= pos - from
-		cand = int(t.prev[from&t.wmask])
+		cand = t.link(from)
 	}
 	for ; cand > 0 && chain > 0; chain-- {
 		c := cand - 1
@@ -478,7 +508,7 @@ func (t *tokenizer) find(pos int) (bestLen, bestDist int, value int32) {
 				}
 			}
 		}
-		next := int(t.prev[c&t.wmask])
+		next := t.link(c)
 		if next >= cand {
 			break
 		}

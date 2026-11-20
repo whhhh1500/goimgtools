@@ -526,6 +526,7 @@ func (f *frontend) finish() error {
 	}
 	f.band, f.res, f.resBand, f.tmps = nil, nil, nil, nil
 	f.tok.head, f.tok.prev, f.tok.obuf, f.tok.opt = nil, nil, nil, nil
+	f.tok.searchers, f.tok.par = nil, nil
 	f.e.unreserve(f.passOne)
 	f.mem -= f.passOne
 	f.passOne = 0

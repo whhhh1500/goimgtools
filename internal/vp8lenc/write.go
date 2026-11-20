@@ -356,6 +356,8 @@ func (e *encoder) write(rc *race, alpha bool) error {
 		e.opt = nil
 		e.unreserve(optimalBytes)
 	}
+	e.unreserve(rc.optMem)
+	rc.optMem = 0
 	for _, f := range rc.alive {
 		p, err := e.plan(f, alpha)
 		if err != nil {

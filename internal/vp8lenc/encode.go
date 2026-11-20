@@ -385,6 +385,13 @@ type race struct {
 	alive []*frontend
 	fed   int64 // image pixels fed
 	next  int64 // compare when fed reaches this
+	// With helpers, every row goes to the variants at the same time: they
+	// share nothing then, each with its own optimal parse (the extra ones
+	// held in optMem). The rows at which they are compared are the same,
+	// and so is every byte.
+	par    bool
+	optMem int64
+	errs   []error
 }
 
 // raceMem is the budget a variant should have to itself; with less than
@@ -444,6 +451,40 @@ func (e *encoder) newRace(palette []uint32, specs ...spec) (*race, error) {
 		}
 		rc.alive = append(rc.alive, f)
 	}
+	// The variants run side by side if there are helpers and the memory
+	// for an optimal parse each. It is reserved after they are set up, as
+	// it is freed before the Huffman groups are made, so that the budget
+	// decides for them as without helpers.
+	if helpers := e.env.Helpers(); helpers > 0 {
+		var share []*frontend
+		for _, f := range rc.alive {
+			if f.tok.opt != nil {
+				share = append(share, f)
+			}
+		}
+		need := int64(max(len(share)-1, 0)) * optimalBytes
+		if len(rc.alive) > 1 && need <= e.avail()/4 && e.reserve(need, "webp optimal parse") == nil {
+			for _, f := range share[min(1, len(share)):] {
+				f.tok.opt = newOptimal()
+			}
+			rc.par, rc.optMem, rc.errs = true, need, make([]error, len(rc.alive))
+		}
+		// And the optimal parse of each searches on several cores.
+		parts := min(16, 2*(helpers+1))
+		for _, f := range share {
+			mem := searchMem(parts)
+			if mem > e.avail()/4 || f.reserve(mem, "webp LZ77 search") != nil {
+				break
+			}
+			f.passOne += mem
+			t := f.tok
+			t.saved = make([]uint32, optimalStretch)
+			for range parts {
+				t.searchers = append(t.searchers, &tokenizer{ends: make([]matchEnd, searcherEnds)})
+			}
+			t.par = e.env.Parallel
+		}
+	}
 	// A variant with subtract green forced on is meant to run against its
 	// twin without; if the twin did not fit, it decides for itself.
 	for _, f := range rc.alive {
@@ -477,15 +518,25 @@ func (rc *race) wantsARGB() bool {
 // feed hands one image row to every variant still running: as pixels, and
 // (for the variants that use a colour table) as indices.
 func (rc *race) feed(row []uint32, idx []byte) error {
-	for _, f := range rc.alive {
-		var err error
+	one := func(f *frontend) error {
 		if f.kind == kindIndex {
-			err = f.feedIndex(idx)
-		} else {
-			err = f.feedRow(row)
+			return f.feedIndex(idx)
 		}
-		if err != nil {
-			return err
+		return f.feedRow(row)
+	}
+	if rc.par && len(rc.alive) > 1 {
+		errs := rc.errs[:len(rc.alive)]
+		rc.e.env.Parallel(len(errs), func(i int) { errs[i] = one(rc.alive[i]) })
+		for _, err := range errs {
+			if err != nil {
+				return err
+			}
+		}
+	} else {
+		for _, f := range rc.alive {
+			if err := one(f); err != nil {
+				return err
+			}
 		}
 	}
 	rc.fed += int64(rc.e.w)

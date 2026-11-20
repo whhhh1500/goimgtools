@@ -751,7 +751,7 @@ func TestThreads(t *testing.T) {
 		imgs[name] = m
 	}
 	for name, m := range imgs {
-		for _, effort := range []int{1, 5, 9} {
+		for _, effort := range []int{1, 4, 5, 9} {
 			o := &Options{Effort: effort}
 			ref := encodeBytes(t, testutil.Chopped(m, 16), o)
 			for _, helpers := range []int{1, 3, 7} {

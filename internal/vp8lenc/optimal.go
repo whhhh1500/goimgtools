@@ -100,19 +100,12 @@ func (t *tokenizer) processOptimal(final bool) {
 		n := min(stop, t.cur+optimalStretch) - t.cur
 		ml, md, lit, cte, choice, cd, nb := o.ml[:n+1], o.md[:n+1], o.lit[:n+1], o.cte[:n+1], o.choice[:n+1], o.cd[:n+1], o.nextBreak[:n+2]
 		bl, bd := o.bl[:n+1], o.bd[:n+1]
-		for i := 0; i < n; i++ {
-			t.insertTo(t.cur + i)
-			l, dist, _ := t.find(t.cur + i)
-			if l < minMatch {
-				l = 0
-			}
-			ml[i], md[i] = int32(min(l, n-i)), int32(dist)
-			bl[i] = 0
-			if len(t.box) > 0 {
-				l, dist := t.boxMatch(t.cur + i)
-				if dist != 0 && !(int32(dist) == md[i] && ml[i] > 0) {
-					bl[i], bd[i] = int32(min(l, n-i)), int32(dist)
-				}
+		if t.par != nil && n >= 2*searchPart {
+			t.searchAhead(n, ml, md, bl, bd)
+		} else {
+			for i := 0; i < n; i++ {
+				t.insertTo(t.cur + i)
+				t.searchAt(i, n, ml, md, bl, bd)
 			}
 		}
 		t.insertTo(t.cur + n)
@@ -244,6 +237,65 @@ func (t *tokenizer) processOptimal(final bool) {
 		}
 		t.cur += n
 	}
+}
+
+// searchAt finds the matches at pixel i of a stretch of n.
+func (t *tokenizer) searchAt(i, n int, ml, md, bl, bd []int32) {
+	l, dist, _ := t.find(t.cur + i)
+	if l < minMatch {
+		l = 0
+	}
+	ml[i], md[i] = int32(min(l, n-i)), int32(dist)
+	bl[i] = 0
+	if len(t.box) > 0 {
+		l, dist := t.boxMatch(t.cur + i)
+		if dist != 0 && !(int32(dist) == md[i] && ml[i] > 0) {
+			bl[i], bd[i] = int32(min(l, n-i)), int32(dist)
+		}
+	}
+}
+
+// searchPart is the least a searcher takes of a stretch, in pixels.
+const searchPart = 1024
+
+// searcherEnds is the size of a searcher's matchEnds, a power of two.
+const searcherEnds = 1024
+
+// searchAhead is the search of a stretch of n on several cores (see
+// tokenizer.par).
+func (t *tokenizer) searchAhead(n int, ml, md, bl, bd []int32) {
+	t.enterAhead(n)
+	parts := min(len(t.searchers), (n+searchPart-1)/searchPart)
+	size := (n + parts - 1) / parts
+	t.par(parts, func(k int) {
+		s := t.searchers[k]
+		ends := s.ends
+		*s = *t
+		s.ends, s.emask, s.ahead, s.runAt = ends, len(ends)-1, true, 0
+		s.par, s.searchers = nil, nil
+		for i := k * size; i < min(n, (k+1)*size); i++ {
+			s.searchAt(i, n, ml, md, bl, bd)
+		}
+	})
+}
+
+// enterAhead enters the stretch of n from t.cur into the hash chains,
+// saving first the links it overwrites: those of the pixels a window
+// before it.
+func (t *tokenizer) enterAhead(n int) {
+	t.saveFrom = t.cur - t.wsize
+	k := min(max(0, -t.saveFrom), n)
+	t.saved = t.saved[:n]
+	clear(t.saved[:k])
+	for i := k; i < n; i++ {
+		t.saved[i] = t.prev[(t.saveFrom+i)&t.wmask]
+	}
+	t.insertTo(t.cur + n)
+}
+
+// searchMem is what searching ahead takes, with parts searchers.
+func searchMem(parts int) int64 {
+	return optimalStretch*4 + int64(parts)*(searcherEnds*12+4096)
 }
 
 // literalCosts sets the cost of each pixel of the stretch of n as a
