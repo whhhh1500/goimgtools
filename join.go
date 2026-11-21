@@ -31,8 +31,10 @@ type JoinOptions struct {
 // largest of them (they are not resized: Resize them first for a grid of
 // thumbnails). Each image is read through its own recipe, a few rows at a
 // time, while its row of the grid is written, so memory holds a strip of
-// each image of one row, whatever their size or number. Without an output
-// format the result is written as PNG.
+// each image of one row, whatever their size or number; an image that can
+// be read only once (FromReader) is opened at the start, to learn its
+// size, and held until its row. Without an output format the result is
+// written as PNG.
 func Join(images []*Image, opts ...JoinOptions) *Image {
 	if len(opts) > 1 {
 		return &Image{err: errors.New("goimgtools: Join takes at most one JoinOptions")}
@@ -78,7 +80,10 @@ type gridSource struct {
 	// The images of the grid row being written, opened when it starts.
 	gridRow int
 	open    []*gridCell
-	closed  bool
+	// The images that can be read only once (FromReader), opened at the
+	// start to learn their size, until their row.
+	early  map[int]*gridCell
+	closed bool
 }
 
 // gridCell is an image of the grid row being written.
@@ -92,10 +97,29 @@ type gridCell struct {
 
 func newGrid(imgs []*Image, o JoinOptions, env *pipeline.Env) (*gridSource, error) {
 	j := &gridSource{env: env, imgs: imgs, o: o, gridRow: -1}
+	ok := false
+	defer func() {
+		if !ok {
+			j.closeEarly()
+		}
+	}()
 	for i, m := range imgs {
-		w, h, err := m.OutputSize()
-		if err != nil {
-			return nil, fmt.Errorf("goimgtools: Join: image %d: %w", i, err)
+		var w, h int
+		if m.once {
+			src, closer, _, _, err := m.build(env, false)
+			if err != nil {
+				return nil, fmt.Errorf("goimgtools: Join: image %d: %w", i, err)
+			}
+			if j.early == nil {
+				j.early = map[int]*gridCell{}
+			}
+			j.early[i] = &gridCell{src: src, closer: closer}
+			w, h = src.Bounds().Dx(), src.Bounds().Dy()
+		} else {
+			var err error
+			if w, h, err = m.OutputSize(); err != nil {
+				return nil, fmt.Errorf("goimgtools: Join: image %d: %w", i, err)
+			}
 		}
 		j.sizes = append(j.sizes, image.Pt(w, h))
 		j.cw, j.ch = max(j.cw, w), max(j.ch, h)
@@ -120,6 +144,7 @@ func newGrid(imgs []*Image, o JoinOptions, env *pipeline.Env) (*gridSource, erro
 		return nil, err
 	}
 	j.strip = image.NewNRGBA(image.Rect(0, 0, int(w), rows))
+	ok = true
 	return j, nil
 }
 
@@ -137,9 +162,16 @@ func (j *gridSource) startRow(r int) error {
 		if i >= len(j.imgs) {
 			break
 		}
-		src, closer, _, _, err := j.imgs[i].build(j.env, false)
-		if err != nil {
-			return fmt.Errorf("goimgtools: Join: image %d: %w", i, err)
+		var src pipeline.Source
+		var closer io.Closer
+		if c := j.early[i]; c != nil {
+			src, closer = c.src, c.closer
+			delete(j.early, i)
+		} else {
+			var err error
+			if src, closer, _, _, err = j.imgs[i].build(j.env, false); err != nil {
+				return fmt.Errorf("goimgtools: Join: image %d: %w", i, err)
+			}
 		}
 		sz := j.sizes[i]
 		if sb := src.Bounds(); sb.Size() != sz {
@@ -229,6 +261,7 @@ func (j *gridSource) Next() (image.Image, error) {
 	return out, nil
 }
 
+// closeCells closes the images of the grid row being written.
 func (j *gridSource) closeCells() {
 	for _, c := range j.open {
 		c.src.Close()
@@ -237,10 +270,20 @@ func (j *gridSource) closeCells() {
 	j.open = nil
 }
 
+// closeEarly closes the images opened early whose row never came.
+func (j *gridSource) closeEarly() {
+	for i, c := range j.early {
+		c.src.Close()
+		c.closer.Close()
+		delete(j.early, i)
+	}
+}
+
 func (j *gridSource) Close() error {
 	if !j.closed {
 		j.closed = true
 		j.closeCells()
+		j.closeEarly()
 		j.env.Budget.Release(j.held)
 	}
 	return nil

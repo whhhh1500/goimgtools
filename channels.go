@@ -363,6 +363,7 @@ type joinSource struct {
 }
 
 func (j *joinSource) Env() *pipeline.Env { return pipeline.EnvOf(j.Source) }
+func (j *joinSource) Opaque() bool       { return pipeline.IsOpaque(j.Source) }
 
 func (j *joinSource) Close() error {
 	err := j.Source.Close()

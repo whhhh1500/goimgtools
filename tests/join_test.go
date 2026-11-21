@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"bytes"
 	"image"
 	"image/color"
 	"testing"
@@ -70,5 +71,23 @@ func TestJoin(t *testing.T) {
 		if _, err := bad.PNG().ToBytes(); err == nil {
 			t.Errorf("case %d: no error", i)
 		}
+	}
+}
+
+// TestJoinFromReader: an image that can be read only once has its place
+// in the grid like any other.
+func TestJoinFromReader(t *testing.T) {
+	a, _ := Blank(30, 20, color.NRGBA{200, 0, 0, 255}).PNG().ToBytes()
+	b, _ := Blank(10, 40, color.NRGBA{0, 0, 200, 255}).PNG().ToBytes()
+	want, err := Join([]*Image{FromBytes(a), FromBytes(b), FromBytes(a)}, JoinOptions{Across: 2}).PNG().ToBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Join([]*Image{FromBytes(a), FromReader(bytes.NewReader(b)), FromReader(bytes.NewReader(a))}, JoinOptions{Across: 2}).PNG().ToBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Error("another grid with FromReader images")
 	}
 }

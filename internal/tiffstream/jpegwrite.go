@@ -76,10 +76,11 @@ func encodeJPEG(w io.Writer, src pipeline.Source, o *Options) error {
 	feed := &rowFeed{rd: rd, cur: first, gray: gray}
 	var held int64
 	defer func() { env.Budget.Release(held) }()
+	var buf bytes.Buffer // a strip's JPEG stream, its room kept for the next
 	for y := 0; y < dy; y += rowsPerStrip {
 		n := min(rowsPerStrip, dy-y)
 		feed.start(b.Min.Y+y, n)
-		var buf bytes.Buffer
+		buf.Reset()
 		err := jpegstream.Encode(&buf, &stripSource{feed: feed, env: env, rect: image.Rect(b.Min.X, b.Min.Y+y, b.Max.X, b.Min.Y+y+n)},
 			&jpegstream.Options{Quality: q, Subsampling: sub})
 		if err == nil && feed.err != nil {
@@ -88,13 +89,13 @@ func encodeJPEG(w io.Writer, src pipeline.Source, o *Options) error {
 		if err != nil {
 			return err
 		}
-		if int64(buf.Len()) > held {
-			if err := env.Budget.Reserve(int64(buf.Len())-held, "tiff jpeg strip"); err != nil {
+		if int64(buf.Cap()) > held {
+			if err := env.Budget.Reserve(int64(buf.Cap())-held, "tiff jpeg strip"); err != nil {
 				return err
 			}
-			held = int64(buf.Len())
+			held = int64(buf.Cap())
 		}
-		t, data, err := splitTables(buf.Bytes())
+		t, head, scan, err := splitTables(buf.Bytes())
 		if err != nil {
 			return err
 		}
@@ -104,8 +105,11 @@ func encodeJPEG(w io.Writer, src pipeline.Source, o *Options) error {
 			return errors.New("goimgtools: tiff: the JPEG strips have different tables")
 		}
 		offsets = append(offsets, uint32(sp.Size()))
-		counts = append(counts, uint32(len(data)))
-		if _, err := sp.Write(data); err != nil {
+		counts = append(counts, uint32(len(head)+len(scan)))
+		if _, err := sp.Write(head); err != nil {
+			return err
+		}
+		if _, err := sp.Write(scan); err != nil {
 			return err
 		}
 		if sp.Size() > math.MaxUint32-maxIFD-int64(len(tables)+len(o.ICC)+len(o.Xmp))-8*int64(len(offsets)) {
@@ -197,22 +201,23 @@ func encodeJPEG(w io.Writer, src pipeline.Source, o *Options) error {
 
 // splitTables cuts a JPEG stream into its tables (SOI, the DQT and DHT
 // segments, EOI), which go into JPEGTables, and the stream without them
-// or any other segment but the frame, the scan and what they need.
-func splitTables(s []byte) (tables, data []byte, err error) {
+// or any other segment but the frame, the scan and what they need: its
+// head (SOI, the frame), copied, and its scan to the EOI, a part of s.
+func splitTables(s []byte) (tables, head, scan []byte, err error) {
 	bad := errors.New("goimgtools: tiff: unexpected JPEG stream")
 	if len(s) < 4 || s[0] != 0xff || s[1] != 0xd8 {
-		return nil, nil, bad
+		return nil, nil, nil, bad
 	}
 	tables = []byte{0xff, 0xd8}
-	data = []byte{0xff, 0xd8}
+	head = []byte{0xff, 0xd8}
 	for i := 2; ; {
 		if i+4 > len(s) || s[i] != 0xff {
-			return nil, nil, bad
+			return nil, nil, nil, bad
 		}
 		m := s[i+1]
 		n := int(s[i+2])<<8 | int(s[i+3])
 		if i+2+n > len(s) {
-			return nil, nil, bad
+			return nil, nil, nil, bad
 		}
 		seg := s[i : i+2+n]
 		switch {
@@ -222,11 +227,11 @@ func splitTables(s []byte) (tables, data []byte, err error) {
 			// APPn: nothing of the image (no JFIF here, and no metadata
 			// was given to the encoder).
 		case m == 0xda:
-			// The scan and everything after it, to the EOI.
-			data = append(data, s[i:]...)
-			return append(tables, 0xff, 0xd9), data, nil
+			// The scan and everything after it, to the EOI, left where
+			// it is.
+			return append(tables, 0xff, 0xd9), head, s[i:], nil
 		default:
-			data = append(data, seg...)
+			head = append(head, seg...)
 		}
 		i += 2 + n
 	}

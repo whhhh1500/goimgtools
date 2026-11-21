@@ -3,6 +3,7 @@
 package exifedit
 
 import (
+	"bytes"
 	"encoding/binary"
 	"sort"
 )
@@ -34,11 +35,13 @@ type order interface {
 // not fit in its entries, go after the end of the block and the header
 // points to them (the old directory is left unused). So the offsets in the
 // rest of the block, a maker note's among them, stay right. exif is not
-// changed.
+// changed. A block that starts as in JPEG's APP1 ("Exif\0\0", which some
+// tools leave in a PNG's eXIf) is read without it.
 func Set(exif []byte, fields []Field) []byte {
 	if len(fields) == 0 {
 		return exif
 	}
+	exif = bytes.TrimPrefix(exif, []byte("Exif\x00\x00"))
 	var bo order
 	var entries []entry
 	var next uint32

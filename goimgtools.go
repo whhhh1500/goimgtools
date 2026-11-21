@@ -101,6 +101,7 @@ var ErrPixelLimit = errors.New("goimgtools: image has too many pixels")
 type Image struct {
 	ctx        context.Context
 	open       func() (*input, error)
+	once       bool        // FromReader: the input can be read only once
 	chain      []operation // the operations, in the order they were asked for
 	limit      int64
 	tempDir    string
@@ -140,7 +141,7 @@ func FromBytes(data []byte) *Image {
 // FromReader reads the image from r. Such an Image can be written once.
 func FromReader(r io.Reader) *Image {
 	var used atomic.Bool
-	return &Image{open: func() (*input, error) {
+	return &Image{once: true, open: func() (*input, error) {
 		if used.Swap(true) {
 			return nil, errors.New("goimgtools: a FromReader image can only be read once")
 		}

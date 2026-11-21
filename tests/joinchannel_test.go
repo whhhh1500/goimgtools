@@ -101,3 +101,19 @@ func TestBooleanAndBandbool(t *testing.T) {
 		}
 	}
 }
+
+// TestBooleanKeepsOpacity: the result of Boolean on an image without
+// transparency has none, so EnsureAlpha gives it the alpha asked for.
+func TestBooleanKeepsOpacity(t *testing.T) {
+	j, err := Blank(16, 16, color.NRGBA{120, 60, 30, 255}).JPEG().ToBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err := FromBytes(j).Boolean(FromBytes(j), BoolAnd).EnsureAlpha(0.5).ToImage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, a := img.At(3, 3).RGBA(); a>>8 != 127 {
+		t.Errorf("alpha %d, want 127", a>>8)
+	}
+}

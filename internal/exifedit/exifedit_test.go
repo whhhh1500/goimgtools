@@ -112,6 +112,11 @@ func TestMerge(t *testing.T) {
 		if bo.Uint32(out[4:]) != uint32(len(exif)+len(exif)%2) {
 			t.Error("the header does not point to the new directory")
 		}
+		// The same block after "Exif\0\0", as some tools leave it.
+		fs := []Field{{33432, "Rights"}, {270, "A caption that is long"}, {305, "goimgtools"}}
+		if !bytes.Equal(Set(append([]byte("Exif\x00\x00"), exif...), fs), out) {
+			t.Error("a block after Exif\\0\\0 is set otherwise")
+		}
 	}
 }
 

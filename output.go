@@ -331,7 +331,9 @@ type ICOOptions struct {
 // stored as a PNG with transparency, which every Windows since Vista and
 // every browser shows. For several sizes the image is kept in working
 // storage (a temporary file beyond its memory share) and resized for each.
-// An ICO or CUR file read is its largest image.
+// An ICO or CUR file read is its largest image, of those as large the one
+// with the most colours, as Windows shows it (Pillow takes the one with the
+// fewest).
 func (m *Image) ICO(opts ...ICOOptions) *Image {
 	m.atMostOne("ICO", len(opts))
 	m.format, m.options = "ico", first(opts)
