@@ -1320,7 +1320,7 @@ func TestAffine(t *testing.T) {
 		t.Error("by name, bicubic: another image")
 	}
 	for _, m := range []*Image{FromBytes(rgb).Affine(1, 2, 2, 4), FromBytes(rgb).Affine(math.NaN(), 0, 0, 1), FromBytes(rgb).Affine(0.001, 0, 0, 1),
-		FromBytes(rgb).Do("affine", "1", "0", "0"), FromBytes(rgb).Do("affine", "1", "0", "0", "1", "pink"),
+		FromBytes(rgb).Do("affine", "1", "0", "0"), FromBytes(rgb).Do("affine", "1", "0", "0", "1", "pinkish"),
 		FromBytes(rgb).Affine(1, 0.1, 0, 1, AffineOptions{Interpolator: 3})} {
 		if _, err := m.PNG().ToBytes(); err == nil {
 			t.Error("no error")
