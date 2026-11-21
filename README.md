@@ -94,6 +94,7 @@ goimgtools batch -resize 1920x1920 -no-enlarge -quality 80 -format jpeg in_dir o
 | GIF | ✓ (including animation) | ✓ (including animation) | Row-by-row streaming; interlaced images handled as for PNG |
 | BMP | ✓ | ✓ | Rows read by file offset |
 | TIFF | ✓ | ✓ | Row-by-row streaming decompression; JPEG-compressed TIFFs (as libtiff, libvips and sharp write them) are read |
+| ICO | ✓ (and CUR: the largest image) | ✓ (one or several sizes, as PNG) | The largest image: a PNG one streamed, a bitmap one (at most 256×256) whole; several sizes are each resized from the image kept in working storage |
 
 Staged data is kept in memory up to 1/8 of the memory limit (8MB by default); beyond that it is written to temporary files, which are deleted after use.
 

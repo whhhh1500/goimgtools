@@ -295,6 +295,9 @@ func TestNewOptions(t *testing.T) {
 	same("exact lossless webp", out, goimgtools.Open(in).WebP(goimgtools.WebPOptions{Lossless: true, Exact: true}))
 	must("-quality", "70", "-webp-alpha-quality", "40", in, out)
 	same("webp alpha quality", out, goimgtools.Open(in).WebP(goimgtools.WebPOptions{Quality: 70, AlphaQuality: 40}))
+	out = filepath.Join(dir, "fav.ico")
+	must("-ico-sizes", "32, 16", in, out)
+	same("ico sizes", out, goimgtools.Open(in).ICO(goimgtools.ICOOptions{Sizes: []int{32, 16}}))
 
 	// The font list always ends with the built-in font.
 	list, _, err := cli("fonts")

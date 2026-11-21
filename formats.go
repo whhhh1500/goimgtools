@@ -7,15 +7,18 @@ import (
 	"fmt"
 	"image/color"
 	"io"
+	"slices"
 	"strings"
 	"sync"
 
 	"github.com/whhhh1500/goimgtools/internal/bmpstream"
 	"github.com/whhhh1500/goimgtools/internal/gifstream"
+	"github.com/whhhh1500/goimgtools/internal/icostream"
 	"github.com/whhhh1500/goimgtools/internal/jpegstream"
 	"github.com/whhhh1500/goimgtools/internal/ops"
 	"github.com/whhhh1500/goimgtools/internal/pngstream"
 	"github.com/whhhh1500/goimgtools/internal/quant"
+	"github.com/whhhh1500/goimgtools/internal/resize"
 	"github.com/whhhh1500/goimgtools/internal/tiffstream"
 	"github.com/whhhh1500/goimgtools/internal/vp8enc"
 	"github.com/whhhh1500/goimgtools/internal/vp8lenc"
@@ -27,7 +30,8 @@ import (
 type Format struct {
 	// Name is what the format is called everywhere: in Info.Format, in
 	// ToFormat, in error messages, on the command line. The formats of
-	// this package are "jpeg", "png", "webp", "gif", "bmp" and "tiff".
+	// this package are "jpeg", "png", "webp", "gif", "bmp", "tiff" and
+	// "ico".
 	Name string
 	// Extensions are the file extensions of the format, in lower case and
 	// with the dot. The first is the one to give a new file.
@@ -348,6 +352,21 @@ var builtin = []*formatDef{
 			return tiffstream.Encode(w, src, out)
 		},
 		check: checks[TIFFOptions]("tiff"),
+	}, {
+		Format:    Format{"ico", []string{".ico"}},
+		noProfile: true,
+		magic:     icostream.Match,
+		open: func(in *input, env *pipeline.Env) (pipeline.Source, error) {
+			return in.openAt(env, icostream.Open)
+		},
+		encode: func(w io.Writer, src pipeline.Source, o EncodeOptions) error {
+			ico, err := optionsOf[ICOOptions](o.Options, "ico")
+			if err != nil {
+				return err
+			}
+			return encodeICO(w, src, ico.Sizes)
+		},
+		check: checks[ICOOptions]("ico"),
 	},
 }
 
@@ -692,4 +711,76 @@ func nearLosslessBits(q int) (int, error) {
 		return 0, fmt.Errorf("goimgtools: webp quality %d out of range 1..100", q)
 	}
 	return 5 - q/20, nil
+}
+
+// encodeICO writes src as an icon: as it is, or resized to fit each of the
+// sizes (Lanczos3, as Pillow resizes them), each as a PNG at level 9.
+func encodeICO(w io.Writer, src pipeline.Source, sizes []int) error {
+	env := pipeline.EnvOf(src)
+	b := src.Bounds()
+	var imgs []icostream.Image
+	var held int64
+	defer func() { env.Budget.Release(held) }()
+	add := func(s pipeline.Source) error {
+		var buf bytes.Buffer
+		if err := pngstream.Encode(&buf, s, &pngstream.Options{Level: 9}); err != nil {
+			return err
+		}
+		if err := env.Budget.Reserve(int64(buf.Len()), "ico images"); err != nil {
+			return err
+		}
+		held += int64(buf.Len())
+		sb := s.Bounds()
+		imgs = append(imgs, icostream.Image{W: sb.Dx(), H: sb.Dy(), PNG: buf.Bytes()})
+		return nil
+	}
+	if len(sizes) == 0 {
+		if b.Dx() > icostream.MaxSide || b.Dy() > icostream.MaxSide {
+			return fmt.Errorf("goimgtools: an ICO image is at most %dx%d, this one %dx%d: Resize it, or give ICOOptions.Sizes", icostream.MaxSide, icostream.MaxSide, b.Dx(), b.Dy())
+		}
+		if err := add(src); err != nil {
+			return err
+		}
+		return icostream.Encode(w, imgs)
+	}
+	sorted := slices.Clone(sizes)
+	slices.Sort(sorted)
+	sorted = slices.Compact(sorted)
+	if sorted[0] < 1 || sorted[len(sorted)-1] > icostream.MaxSide {
+		return fmt.Errorf("goimgtools: ICOOptions.Sizes must be 1 to %d", icostream.MaxSide)
+	}
+	rec, err := pipeline.Record(src)
+	if err != nil {
+		return err
+	}
+	defer rec.Close()
+	for _, s := range sorted {
+		// The largest that fits s x s, in the image's proportions.
+		dw, dh := s, s
+		if b.Dx() > b.Dy() {
+			dh = max(1, int((int64(b.Dy())*int64(s)+int64(b.Dx())/2)/int64(b.Dx())))
+		} else if b.Dy() > b.Dx() {
+			dw = max(1, int((int64(b.Dx())*int64(s)+int64(b.Dy())/2)/int64(b.Dy())))
+		}
+		rs, err := rec.Source()
+		if err != nil {
+			return err
+		}
+		out := rs
+		if dw != b.Dx() || dh != b.Dy() {
+			if out, err = resize.Scale(rs, dw, dh, resize.Lanczos3); err != nil {
+				rs.Close()
+				return err
+			}
+		}
+		err = add(out)
+		if out != rs {
+			out.Close()
+		}
+		rs.Close()
+		if err != nil {
+			return err
+		}
+	}
+	return icostream.Encode(w, imgs)
 }

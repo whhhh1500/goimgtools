@@ -99,6 +99,7 @@ goimgtools -op median:3 -op normalize -op "tint:#704214" scan.jpg out.jpg
 | `-jpeg-chroma 420\|422\|444` | JPEG：色度保留的精细程度：420（默认，横纵各一半）、422（横向一半）或 444（全部保留：彩色文字与边缘清晰，文件更大） |
 | `-jpeg-quant-table N` | JPEG：量化表 0–8，编号与 mozjpeg 的 `-quant-table` 一致（默认 0 为标准表，3 为 mozjpeg 的默认表）；9 为按 jpegli 方法生成的表，文件最小（见[压缩](compression.md)） |
 | `-png-colors N`、`-no-dither` | PNG：减至 N 色（2–256）；关闭抖动 |
+| `-ico-sizes 16,32,48,256` | ICO：要写的图标尺寸，图像按比例缩放到每个尺寸以内；不给时原样写（至多 256×256）。输出文件扩展名为 `.ico` 即选 ICO |
 | `-max-size 大小` | 文件大小不超过此值（`200KB`、`1.5MB` 或字节数），自动降低质量（JPEG、有损 WebP）或颜色数（PNG 先试无损；GIF）；与 `-animated` 同用时动画报错 |
 | `-tile-size N`、`-tile-overlap N`、`-tile-layout 名称` | 输出文件名以 `.dzi`、`.dz` 或 `.zip`（写入 ZIP 压缩包）结尾时写瓦片金字塔（同 sharp 的 `tile`）：瓦片边长（256）、重叠像素（0）与布局：`dz`（Deep Zoom，默认）、`google`、`iiif`、`iiif3` 或 `zoomify`（瓦片写入以输出名去掉 `.dz` 命名的目录） |
 | `-skip-larger` | 结果不小于原文件（同格式）时保留原文件；适用于仅做压缩的任务 |

@@ -196,10 +196,10 @@ func TestFormats(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if len(lines) != 6 {
+	if len(lines) != 7 {
 		t.Fatalf("formats printed %d lines:\n%s", len(lines), out)
 	}
-	for _, name := range []string{"jpeg", "png", "webp", "gif", "bmp", "tiff"} {
+	for _, name := range []string{"jpeg", "png", "webp", "gif", "bmp", "tiff", "ico"} {
 		found := false
 		for _, l := range lines {
 			f := strings.Fields(l)

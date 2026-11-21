@@ -306,6 +306,27 @@ func (m *Image) GIF(opts ...GIFOptions) *Image {
 	return m
 }
 
+// ICOOptions are the optional settings of ICO.
+type ICOOptions struct {
+	// Sizes are the sides of the icons to write, 1 to 256 pixels (16, 32,
+	// 48 and 256 make a favicon.ico for every screen): the image resized to
+	// fit each, in its proportions, as Pillow writes them. Without them the
+	// image is written as it is, which must then be at most 256x256.
+	Sizes []int
+}
+
+// ICO selects ICO output, the icon file of Windows and of web sites
+// (favicon.ico): one image or several sizes of it (ICOOptions.Sizes), each
+// stored as a PNG with transparency, which every Windows since Vista and
+// every browser shows. For several sizes the image is kept in working
+// storage (a temporary file beyond its memory share) and resized for each.
+// An ICO or CUR file read is its largest image.
+func (m *Image) ICO(opts ...ICOOptions) *Image {
+	m.atMostOne("ICO", len(opts))
+	m.format, m.options = "ico", first(opts)
+	return m
+}
+
 // ErrFileSize is returned (wrapped) when MaxFileSize asks for a file smaller
 // than the lowest quality (or two colours) can make.
 var ErrFileSize = errors.New("goimgtools: cannot reach the requested file size")

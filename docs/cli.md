@@ -99,6 +99,7 @@ Operations run in a fixed order: rotate → flip → trim → crop → resize �
 | `-jpeg-chroma 420\|422\|444` | JPEG: how finely colour is kept: 420 (the default, half across and down), 422 (half across) or 444 (all of it: crisp coloured text and edges, a larger file) |
 | `-jpeg-quant-table N` | JPEG: quantization tables 0–8, numbered as mozjpeg's `-quant-table` (0, the default, the standard's; 3 mozjpeg's default), or 9, made as jpegli makes them: the smallest files (see [Compression](compression.md)) |
 | `-png-colors N`, `-no-dither` | PNG: reduce to N colours (2–256); disable dithering |
+| `-ico-sizes 16,32,48,256` | ICO: the sizes of the icons to write, the image fitted to each; without it the image as it is (at most 256×256). A `.ico` output file selects ICO |
 | `-max-size size` | Limit the file to this size (`200KB`, `1.5MB` or a number of bytes) by lowering the quality automatically (JPEG, lossy WebP) or the number of colours (PNG, first without loss; GIF); with `-animated`, an animation is an error |
 | `-tile-size N`, `-tile-overlap N`, `-tile-layout NAME` | For an output named `.dzi`, `.dz` or `.zip` (in a ZIP archive), which writes a pyramid of tiles (as sharp's `tile`): the side of a tile (256), the overlap (0), and the layout: `dz` (Deep Zoom, the default), `google`, `iiif`, `iiif3` or `zoomify` (the tiles then go in a directory named as the output without `.dz`) |
 | `-skip-larger` | Keep the original file if the result is not smaller than it (same format); intended for compression-only jobs |

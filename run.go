@@ -23,7 +23,8 @@ import (
 // changed by the operations of a recipe.
 type Info struct {
 	// Format is the name of the format: "jpeg", "png", "webp", "gif",
-	// "bmp", "tiff" or one added with RegisterFormat (see Formats). For an
+	// "bmp", "tiff", "ico" or one added with RegisterFormat (see
+	// Formats). For an
 	// input that is not a file it says where the pixels come from: "text"
 	// (Text), "blank" (Blank), "image" (FromImage) or "source"
 	// (FromSource).
