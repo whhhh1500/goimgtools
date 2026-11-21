@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"image/color"
 	"io"
 	"os"
 	"runtime"
@@ -30,10 +31,28 @@ func texture(w, h int) *image.NRGBA {
 	return m
 }
 
+// pixels are an image's pixels as the stream hands them out: NRGBA, or
+// NRGBA64 above 8 bits (bpp 8).
+type pixels struct {
+	Rect        image.Rectangle
+	Pix         []uint8
+	Stride, bpp int
+}
+
+func pixelsOf(m image.Image) (*pixels, bool) {
+	switch m := m.(type) {
+	case *image.NRGBA:
+		return &pixels{m.Rect, m.Pix, m.Stride, 4}, true
+	case *image.NRGBA64:
+		return &pixels{m.Rect, m.Pix, m.Stride, 8}, true
+	}
+	return nil, false
+}
+
 // streamed decodes a file with the stream, without helpers and with three
 // (tiles decoded ahead, rows converted at once), and checks both give the
 // same; nil if it would not take it.
-func streamed(t *testing.T, data []byte) *image.NRGBA {
+func streamed(t *testing.T, data []byte) *pixels {
 	t.Helper()
 	a, _, err := streamedWith(data, 0, 0)
 	if err != nil {
@@ -51,7 +70,7 @@ func streamed(t *testing.T, data []byte) *image.NRGBA {
 
 // streamedWith decodes a file with the stream, under a memory limit (0 for
 // the default), and says how many rows of tiles it held.
-func streamedWith(data []byte, helpers int, limit int64) (*image.NRGBA, int, error) {
+func streamedWith(data []byte, helpers int, limit int64) (*pixels, int, error) {
 	env := pipeline.NewEnv(limit, "")
 	env.SetHelpers(helpers)
 	s, err := newStream(data, env)
@@ -59,7 +78,9 @@ func streamedWith(data []byte, helpers int, limit int64) (*image.NRGBA, int, err
 		return nil, 0, err
 	}
 	defer s.Close()
-	out := image.NewNRGBA(s.Bounds())
+	b := s.Bounds()
+	out := &pixels{Rect: b, Stride: s.bpp * b.Dx(), bpp: s.bpp}
+	out.Pix = make([]uint8, out.Stride*b.Dy())
 	for {
 		strip, err := s.Next()
 		if err == io.EOF {
@@ -68,9 +89,12 @@ func streamedWith(data []byte, helpers int, limit int64) (*image.NRGBA, int, err
 		if err != nil {
 			return nil, 0, err
 		}
-		m := strip.(*image.NRGBA)
+		m, ok := pixelsOf(strip)
+		if !ok || m.bpp != s.bpp || (s.bpp == 8) != (s.ColorModel() == color.NRGBA64Model) {
+			return nil, 0, fmt.Errorf("a strip %T", strip)
+		}
 		for y := m.Rect.Min.Y; y < m.Rect.Max.Y; y++ {
-			copy(out.Pix[y*out.Stride:][:4*out.Rect.Dx()], m.Pix[(y-m.Rect.Min.Y)*m.Stride:])
+			copy(out.Pix[y*out.Stride:][:out.Stride], m.Pix[(y-m.Rect.Min.Y)*m.Stride:])
 		}
 	}
 	if env.Budget.Used() != s.reserve {
@@ -80,20 +104,19 @@ func streamedWith(data []byte, helpers int, limit int64) (*image.NRGBA, int, err
 }
 
 // whole decodes a file with gen2brain/h265, as the module did before.
-func whole(t *testing.T, data []byte) *image.NRGBA {
+func whole(t *testing.T, data []byte) *pixels {
 	t.Helper()
 	m, _, err := gheic.DecodeColor(bytes.NewReader(data), gheic.Options{AutoRotate: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	n, ok := m.(*image.NRGBA)
+	n, ok := pixelsOf(m)
 	if !ok {
 		t.Fatalf("%T", m)
 	}
 	return n
 }
-
-func sum(m *image.NRGBA) string { return fmt.Sprintf("%x", sha256.Sum256(m.Pix))[:16] }
+func sum(m *pixels) string { return fmt.Sprintf("%x", sha256.Sum256(m.Pix))[:16] }
 
 func testFile(t testing.TB, name string) []byte {
 	t.Helper()
@@ -125,9 +148,9 @@ func heicOf(t testing.TB, w, h, tile int, o Options) []byte {
 // gen2brain/h265's whole decoding as it converts them with SIMD: grids of
 // small tiles cut by odd sizes, at 4:2:0 and 4:4:4, single pictures (with
 // a clean aperture, as odd sizes are written), and the test files it
-// takes (4:2:0, 4:2:2, 4:4:4 and 4:0:0, one turned by irot). The sums hold
-// on every processor (the conversion rounds every product); the whole
-// decoding is compared where it converts that way too.
+// takes (4:2:0, 4:2:2, 4:4:4 and 4:0:0, one turned by irot, one of 12
+// bits). The sums hold on every processor (the conversion rounds every
+// product); the whole decoding is compared where it converts that way too.
 func TestStreamSameAsWhole(t *testing.T) {
 	check := func(name string, b []byte, want string) {
 		t.Helper()
@@ -199,6 +222,7 @@ func TestStreamSameAsWhole(t *testing.T) {
 		{"test_exif.heic", "bfec4c500d7df317"},
 		{"chroma422.heic", "e41cdcb08b940c16"},
 		{"gray.heic", "716f627794cd2262"},
+		{"test12.heic", "138ee7a196195f6d"},
 	} {
 		check(c.name, testFile(t, c.name), c.sum)
 	}
@@ -277,13 +301,14 @@ func TestStreamClose(t *testing.T) {
 // turnRef turns and flips m as gen2brain/h265 does (its transform.go):
 // turn anticlockwise quarter turns, then flip 0 top and bottom, 1 left and
 // right.
-func turnRef(m *image.NRGBA, turn, flip int) *image.NRGBA {
+func turnRef(m *pixels, turn, flip int) *pixels {
 	w, h := m.Rect.Dx(), m.Rect.Dy()
 	ow, oh := w, h
 	if turn&1 != 0 {
 		ow, oh = h, w
 	}
-	out := image.NewNRGBA(image.Rect(0, 0, ow, oh))
+	bpp := m.bpp
+	out := &pixels{Rect: image.Rect(0, 0, ow, oh), Pix: make([]uint8, bpp*ow*oh), Stride: bpp * ow, bpp: bpp}
 	for j := range h {
 		for i := range w {
 			var dx, dy int
@@ -303,7 +328,7 @@ func turnRef(m *image.NRGBA, turn, flip int) *image.NRGBA {
 			case 1:
 				dx = ow - 1 - dx
 			}
-			copy(out.Pix[dy*out.Stride+4*dx:][:4], m.Pix[j*m.Stride+4*i:])
+			copy(out.Pix[dy*out.Stride+bpp*dx:][:bpp], m.Pix[j*m.Stride+bpp*i:])
 		}
 	}
 	return out
@@ -358,6 +383,74 @@ func TestStreamTurned(t *testing.T) {
 						t.Errorf("%s, a limit of 150KB: %v", name, err)
 					}
 				}
+			}
+		}
+	}
+}
+
+// gridOf writes the picture of a HEIC of one picture (square) as a grid of
+// rows x cols of it, w x h, with the properties given on the grid.
+func gridOf(t *testing.T, data []byte, rows, cols, w, h int, props []property) []byte {
+	t.Helper()
+	hf, err := parseHEIF(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	it := hf.items[hf.primary]
+	cfg, sp := hf.prop(it, "hvcC").hvcC, hf.prop(it, "ispe")
+	sample, err := hf.itemData(it)
+	if err != nil || cfg.lengthSize != 4 || sp.w != sp.h {
+		t.Fatalf("%v, %d, %dx%d", err, cfg.lengthSize, sp.w, sp.h)
+	}
+	tiles := make([]coded, rows*cols)
+	for i := range tiles {
+		tiles[i] = coded{params: cfg.paramSets, sample: sample}
+	}
+	saved := primaryProps
+	defer func() { primaryProps = saved }()
+	primaryProps = props
+	p := picture{width: w, height: h, tile: int(sp.w), cols: cols, rows: rows, color: tiles, channels: 3, matrix: mcBT709}
+	b, err := p.marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// TestStreamDeep: a grid of 12-bit tiles (made from test12.heic, cut by odd
+// sizes) gives NRGBA64 of the pixels h265's whole decoding gives, held
+// within the memory it reserves, and turned and flipped the image turned.
+func TestStreamDeep(t *testing.T) {
+	one := testFile(t, "test12.heic")
+	plain := gridOf(t, one, 2, 2, 1001, 899, nil)
+	got := streamed(t, plain)
+	if got == nil || got.bpp != 8 {
+		t.Fatalf("not streamed as 16 bits: %v", got)
+	}
+	if s := sum(got); s != "9779909a4382e12c" {
+		t.Errorf("sum %s, want 9779909a4382e12c", s)
+	}
+	if wholeSame {
+		if w := whole(t, plain); got.Rect != w.Rect || !bytes.Equal(got.Pix, w.Pix) {
+			t.Error("not the pixels of the whole decoding")
+		}
+	}
+	for _, c := range []struct{ turn, flip int }{{1, -1}, {2, 1}, {3, 0}} {
+		var props []property
+		if c.turn != 0 {
+			props = append(props, property{box("irot", []byte{byte(c.turn)}), true})
+		}
+		if c.flip >= 0 {
+			props = append(props, property{box("imir", []byte{byte(c.flip)}), true})
+		}
+		b := gridOf(t, one, 2, 2, 1001, 899, props)
+		turned := streamed(t, b)
+		if want := turnRef(got, c.turn, c.flip); turned == nil || turned.Rect != want.Rect || !bytes.Equal(turned.Pix, want.Pix) {
+			t.Errorf("turned %d, flipped %d: not the image turned", c.turn, c.flip)
+		}
+		if wholeSame {
+			if w := whole(t, b); turned.Rect != w.Rect || !bytes.Equal(turned.Pix, w.Pix) {
+				t.Errorf("turned %d, flipped %d: not the pixels of the whole decoding", c.turn, c.flip)
 			}
 		}
 	}

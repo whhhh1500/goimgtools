@@ -432,8 +432,8 @@ what it includes in its own `licenses/` directory, which goes with it:
   `chroma422.heic`, `chroma444.heic` and `grid_alpha.heic` are from its
   testdata.
 - **gen2brain/heic** (MIT licence, copyright gen2brain;
-  `LICENSE-GEN2BRAIN-HEIC`): the test files `gray.heic` and
-  `test_exif.heic` are from its testdata.
+  `LICENSE-GEN2BRAIN-HEIC`): the test files `gray.heic`, `test12.heic`
+  and `test_exif.heic` are from its testdata.
 
 ## The AVIF module (`avif/`)
 

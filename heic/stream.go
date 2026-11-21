@@ -16,9 +16,10 @@ import (
 )
 
 // stream decodes the primary image of a HEIC a row of tiles at a time, and
-// hands it out in strips: what a phone writes (a grid of 512 x 512 tiles, 8
-// bits, no transparency) takes a few rows of tiles of memory instead of the
-// whole image twice over (its planes, and its pixels). The tiles are
+// hands it out in strips (NRGBA, or NRGBA64 above 8 bits, as h265 gives
+// them): what a phone writes (a grid of 512 x 512 tiles, no transparency)
+// takes a few rows of tiles of memory instead of the whole image twice over
+// (its planes, and its pixels). The tiles are
 // decoded in the order they are stored, by the goroutine that needs a row
 // and by the helpers free, up to window rows ahead of the rows being read.
 // A single picture is decoded whole, its pixels made a strip at a time; so
@@ -27,9 +28,9 @@ import (
 // gen2brain/h265 gives, which decodes the grid into one picture, converts
 // it and then turns it: a row of output needs the chroma of the rows next
 // to it, so the row of tiles below is decoded before the last rows of a row
-// are converted. Files with transparency, more than 8 bits, or a clean
-// aperture h265 cuts from the pixels (or on a grid) are decoded whole as
-// before.
+// are converted. Files with transparency, luma and chroma of different
+// depths, or a clean aperture h265 cuts from the pixels (or on a grid) are
+// decoded whole as before.
 type stream struct {
 	env     *pipeline.Env
 	file    *heif
@@ -45,7 +46,9 @@ type stream struct {
 	chroma  int
 	sw, sh  int
 	colour  *colourOf // from the file's nclx box, or the first tile's VUI
-	conv    *rowConverter
+	conv    converter
+	depth   int // bits a sample
+	bpp     int // bytes a pixel of output: 4 (NRGBA), 8 (NRGBA64) above 8 bits
 	single  *hevc.Picture
 	held    []tileRow // row r of tiles in held[r%len(held)]
 	slots   int
@@ -53,16 +56,19 @@ type stream struct {
 	flip    int // 0 top and bottom, 1 left and right (imir); -1 none
 	queue   tileQueue
 	y       int
-	strip   *image.NRGBA
+	strip   []uint8 // rows of pixels, stride bpp*width
+	stride  int
 	scratch []*rowScratch
 	reserve int64
 	err     error
 }
 
-// tileRow is a row of tiles put together: planes of the image's width.
+// tileRow is a row of tiles put together: planes of the image's width, of
+// 8-bit samples or (y16, cb16, cr16) of more.
 type tileRow struct {
-	y, cb, cr []byte
-	ys, cs    int // strides
+	y, cb, cr       []uint8
+	y16, cb16, cr16 []uint16
+	ys, cs          int // strides, in samples
 }
 
 // maxTileSamples bounds what a tile's stream may ask a decoder for (HEVC's
@@ -80,10 +86,16 @@ func newStream(data []byte, env *pipeline.Env) (*stream, error) {
 	if it == nil || it.unsupported || h.hasAlpha(it.id) {
 		return nil, nil
 	}
-	eightBit := func(t *heifItem) bool {
+	// The pictures: coded as HEVC, their luma and chroma of the same depth.
+	depth := func(t *heifItem) int {
+		if t == nil || t.unsupported || t.typ != "hvc1" {
+			return 0
+		}
 		p := h.prop(t, "hvcC")
-		return t != nil && !t.unsupported && t.typ == "hvc1" && p != nil && p.hvcC != nil &&
-			p.hvcC.bitDepthLuma == 8 && p.hvcC.bitDepthChroma == 8
+		if p == nil || p.hvcC == nil || p.hvcC.bitDepthLuma != p.hvcC.bitDepthChroma || p.hvcC.bitDepthLuma > 16 {
+			return 0
+		}
+		return int(p.hvcC.bitDepthLuma)
 	}
 	s := &stream{env: env, file: h, clap: h.prop(it, "clap"), flip: -1}
 	// Turned by irot, then flipped by imir, as h265 turns the pixels.
@@ -97,7 +109,8 @@ func newStream(data []byte, env *pipeline.Env) (*stream, error) {
 	switch it.typ {
 	case "hvc1":
 		sp := h.prop(it, "ispe")
-		if !eightBit(it) || sp == nil || sp.w == 0 || sp.h == 0 || sp.w > 1<<20 || sp.h > 1<<20 {
+		s.depth = depth(it)
+		if s.depth == 0 || sp == nil || sp.w == 0 || sp.h == 0 || sp.w > 1<<20 || sp.h > 1<<20 {
 			return nil, nil
 		}
 		// Its size is the one ispe gives, cut to the clean aperture, as
@@ -129,11 +142,12 @@ func newStream(data []byte, env *pipeline.Env) (*stream, error) {
 		}
 		for _, id := range ids {
 			t := h.items[id]
-			if !eightBit(t) || h.hasAlpha(id) {
+			if d := depth(t); d == 0 || d != depth(h.items[ids[0]]) || h.hasAlpha(id) {
 				return nil, nil
 			}
 			s.tiles = append(s.tiles, t)
 		}
+		s.depth = depth(s.tiles[0])
 		// The grid is cut to the size ispe gives, as h265 cuts it. (No
 		// writer known puts a clean aperture on a grid: one that has it is
 		// decoded whole.)
@@ -159,6 +173,10 @@ func newStream(data []byte, env *pipeline.Env) (*stream, error) {
 	if nclx != nil {
 		s.colour = &colourOf{matrix: int(nclx.matrix), fullRange: nclx.fullRange}
 	}
+	s.bpp = 4
+	if s.depth > 8 {
+		s.bpp = 8
+	}
 	// The metadata, as the whole decoder keeps it.
 	if x, err := gheic.RawExif(bytes.NewReader(data)); err == nil && len(x) <= pipeline.MaxMetaBytes {
 		s.meta.Exif = pipeline.ExifUpright(bytes.Clone(x))
@@ -181,10 +199,15 @@ func (s *stream) Bounds() image.Rectangle {
 	}
 	return image.Rect(0, 0, s.w, s.h)
 }
-func (s *stream) ColorModel() color.Model { return color.NRGBAModel }
-func (s *stream) Env() *pipeline.Env      { return s.env }
-func (s *stream) Meta() pipeline.Meta     { return s.meta }
-func (s *stream) Opaque() bool            { return true }
+func (s *stream) ColorModel() color.Model {
+	if s.depth > 8 {
+		return color.NRGBA64Model
+	}
+	return color.NRGBAModel
+}
+func (s *stream) Env() *pipeline.Env  { return s.env }
+func (s *stream) Meta() pipeline.Meta { return s.meta }
+func (s *stream) Opaque() bool        { return true }
 
 func (s *stream) Close() error {
 	// The helpers decoding ahead stop after the tiles they are on.
@@ -260,7 +283,9 @@ func decodeHEVC(dec *tileDecoder, h *heif, it *heifItem) (*hevc.Picture, error) 
 	for _, q := range out[1:] {
 		q.Release()
 	}
-	if out[0].BitDepth != 8 || out[0].Y == nil {
+	// Luma and chroma of one depth, in the planes of that depth.
+	if p := out[0]; p.BitDepthC != p.BitDepth && p.ChromaFormat != 0 || p.BitDepth < 8 || p.BitDepth > 16 ||
+		p.BitDepth == 8 && p.Y == nil || p.BitDepth > 8 && p.Y16 == nil {
 		out[0].Release()
 		return nil, errHEIF
 	}
@@ -269,11 +294,20 @@ func decodeHEVC(dec *tileDecoder, h *heif, it *heifItem) (*hevc.Picture, error) 
 
 // setColour prepares the conversion once a picture of the image is known.
 func (s *stream) setColour(p *hevc.Picture) error {
+	if p.BitDepth != s.depth {
+		return fmt.Errorf("%w: heic: a picture of %d bits, its configuration says %d", goimgtools.ErrFormat, p.BitDepth, s.depth)
+	}
 	c := colourOf{matrix: int(p.ColorMatrix), fullRange: p.FullRange}
 	if s.colour != nil {
 		c = *s.colour
 	}
-	conv, ok := newRowConverter(c, p.ChromaFormat, s.w)
+	var conv converter
+	ok := false
+	if s.depth > 8 {
+		conv, ok = newRowConverter(s.rowsOf16, c, p.ChromaFormat, s.depth, s.w)
+	} else {
+		conv, ok = newRowConverter(s.rowsOf8, c, p.ChromaFormat, s.depth, s.w)
+	}
 	if !ok {
 		// h265 refuses these too.
 		return fmt.Errorf("%w: heic: unsupported colour matrix %d", goimgtools.ErrFormat, c.matrix)
@@ -289,18 +323,30 @@ func (s *stream) setColour(p *hevc.Picture) error {
 	return nil
 }
 
+// sampleBytes is the size of a sample of the planes.
+func (s *stream) sampleBytes() int64 {
+	if s.depth > 8 {
+		return 2
+	}
+	return 1
+}
+
 // decodeSingle decodes the single picture, which must be of the size ispe
 // gives (h265 would cut a larger one to it).
 func (s *stream) decodeSingle() error {
 	// The planes, held while the pixels are handed out: reserved by the
 	// size the file gives before they are decoded.
 	sp, cp := s.file.prop(s.tiles[0], "ispe"), s.file.prop(s.tiles[0], "hvcC")
-	need := int64(sp.w) * int64(sp.h) * [4]int64{2, 3, 4, 6}[cp.hvcC.chromaFormat] / 2
+	need := int64(sp.w) * int64(sp.h) * [4]int64{2, 3, 4, 6}[cp.hvcC.chromaFormat] / 2 * s.sampleBytes()
 	if err := s.env.Budget.Reserve(need, "heic planes"); err != nil {
 		return err
 	}
 	s.reserve += need
-	p, err := decodeHEVC(newTileDecoder(s.env.Helpers()+1), s.file, s.tiles[0])
+	dec := newTileDecoder(s.env.Helpers() + 1)
+	p, err := decodeHEVC(dec, s.file, s.tiles[0])
+	// The decoder's own buffers (as large again as the planes) go now, not
+	// when the picture does: the picture keeps the decoder.
+	dec.d.Reset()
 	if err != nil {
 		return fmt.Errorf("%w: heic: %v", goimgtools.ErrFormat, err)
 	}
@@ -314,32 +360,44 @@ func (s *stream) decodeSingle() error {
 	return s.setColour(p)
 }
 
-// rowsOf gives the converter its rows: of the single picture, or of the
-// rows of tiles held.
-func (s *stream) rowsOf(plane, y int) []uint8 {
+// rowsOf8 and rowsOf16 give the converter its rows: of the single
+// picture, or of the rows of tiles held.
+func (s *stream) rowsOf8(plane, y int) []uint8 {
 	if p := s.single; p != nil {
-		if plane == 0 {
-			return p.Y[(p.CropY+y)*p.StrideY+p.CropX:]
-		}
-		off := (p.CropY/s.sh+y)*p.StrideC + p.CropX/s.sw
-		if plane == 1 {
-			return p.Cb[off:]
-		}
-		return p.Cr[off:]
+		return pictureRow(s, p, [3][]uint8{p.Y, p.Cb, p.Cr}, plane, y)
 	}
+	t, at := s.heldRow(plane, y)
+	return [3][]uint8{t.y, t.cb, t.cr}[plane][at:]
+}
+
+func (s *stream) rowsOf16(plane, y int) []uint16 {
+	if p := s.single; p != nil {
+		return pictureRow(s, p, [3][]uint16{p.Y16, p.Cb16, p.Cr16}, plane, y)
+	}
+	t, at := s.heldRow(plane, y)
+	return [3][]uint16{t.y16, t.cb16, t.cr16}[plane][at:]
+}
+
+// pictureRow is row y of a plane of the single picture, from its crop.
+func pictureRow[T sample](s *stream, p *hevc.Picture, planes [3][]T, plane, y int) []T {
+	if plane == 0 {
+		return planes[0][(p.CropY+y)*p.StrideY+p.CropX:]
+	}
+	return planes[plane][(p.CropY/s.sh+y)*p.StrideC+p.CropX/s.sw:]
+}
+
+// heldRow is the row of tiles that row y of a plane is in, and where in its
+// plane the row starts.
+func (s *stream) heldRow(plane, y int) (*tileRow, int) {
 	rowsPer := s.th
 	if plane != 0 {
 		rowsPer = s.th / s.sh
 	}
 	t := &s.held[(y/rowsPer)%s.slots]
-	at := y % rowsPer
-	switch plane {
-	case 0:
-		return t.y[at*t.ys:]
-	case 1:
-		return t.cb[at*t.cs:]
+	if plane == 0 {
+		return t, (y % rowsPer) * t.ys
 	}
-	return t.cr[at*t.cs:]
+	return t, (y % rowsPer) * t.cs
 }
 
 // window is how many rows of tiles are held at most: the two being read,
@@ -456,7 +514,7 @@ func (s *stream) decodeTile(r, c int) (err error) {
 	if err != nil {
 		return err
 	}
-	if p.CropW != s.tw || p.CropH != s.th || p.ChromaFormat != s.chroma {
+	if p.CropW != s.tw || p.CropH != s.th || p.ChromaFormat != s.chroma || p.BitDepth != s.depth {
 		err = errors.New("the tiles differ")
 	} else {
 		s.blit(&s.held[r%s.slots], p, r, c)
@@ -477,7 +535,7 @@ func (s *stream) firstTile() error {
 	// decoded.
 	var pre int64
 	if sp, cp := s.file.prop(s.tiles[0], "ispe"), s.file.prop(s.tiles[0], "hvcC"); sp != nil {
-		pre = int64(sp.w) * int64(sp.h) * [4]int64{2, 3, 4, 6}[cp.hvcC.chromaFormat] / 2
+		pre = int64(sp.w) * int64(sp.h) * [4]int64{2, 3, 4, 6}[cp.hvcC.chromaFormat] / 2 * s.sampleBytes()
 	}
 	if err := s.env.Budget.Reserve(pre, "heic tile"); err != nil {
 		return err
@@ -511,8 +569,8 @@ func (s *stream) firstTile() error {
 	// one for each goroutine: window rows when the memory limit has room
 	// for them, down to the two that are read; all of them for an image
 	// to be turned or flipped.
-	one := int64(s.w)*int64(s.th) + 2*int64(cw)*int64(s.th/s.sh)
-	tile := int64(len(p.Y) + len(p.Cb) + len(p.Cr))
+	one := (int64(s.w)*int64(s.th) + 2*int64(cw)*int64(s.th/s.sh)) * s.sampleBytes()
+	tile := int64(len(p.Y)+len(p.Cb)+len(p.Cr)) + 2*int64(len(p.Y16)+len(p.Cb16)+len(p.Cr16))
 	pics := int64(min(s.env.Helpers()+1, len(s.tiles))) * tile
 	least := min(2, s.rows)
 	s.slots = min(window, s.rows)
@@ -532,10 +590,13 @@ func (s *stream) firstTile() error {
 	}
 	s.held = make([]tileRow, s.slots)
 	for i := range s.held {
-		s.held[i].y = make([]byte, s.w*s.th)
-		s.held[i].cb = make([]byte, cw*(s.th/s.sh))
-		s.held[i].cr = make([]byte, cw*(s.th/s.sh))
-		s.held[i].ys, s.held[i].cs = s.w, cw
+		t := &s.held[i]
+		if s.depth > 8 {
+			t.y16, t.cb16, t.cr16 = make([]uint16, s.w*s.th), make([]uint16, cw*(s.th/s.sh)), make([]uint16, cw*(s.th/s.sh))
+		} else {
+			t.y, t.cb, t.cr = make([]uint8, s.w*s.th), make([]uint8, cw*(s.th/s.sh)), make([]uint8, cw*(s.th/s.sh))
+		}
+		t.ys, t.cs = s.w, cw
 	}
 	s.blit(&s.held[0], p, 0, 0)
 	q := &s.queue
@@ -554,13 +615,20 @@ func (s *stream) perTile() int { return max((s.env.Helpers()+1)/s.cols, 1) }
 
 // blit copies a tile into the row of tiles, clipped to the image.
 func (s *stream) blit(t *tileRow, p *hevc.Picture, r, c int) {
+	if s.depth > 8 {
+		blitPlanes(s, [3][]uint16{t.y16, t.cb16, t.cr16}, [3][]uint16{p.Y16, p.Cb16, p.Cr16}, t, p, r, c)
+		return
+	}
+	blitPlanes(s, [3][]uint8{t.y, t.cb, t.cr}, [3][]uint8{p.Y, p.Cb, p.Cr}, t, p, r, c)
+}
+
+func blitPlanes[T sample](s *stream, dsts, srcs [3][]T, t *tileRow, p *hevc.Picture, r, c int) {
 	for pl := range 3 {
 		sx, sy := c*s.tw, r*s.th
 		w, h := s.tw, s.th
 		ow, oh := s.w, s.h
 		ss, ds := p.StrideY, t.ys
 		ox, oy := p.CropX, p.CropY
-		src, dst := p.Y, t.y
 		if pl != 0 {
 			if s.chroma == 0 {
 				return
@@ -569,18 +637,14 @@ func (s *stream) blit(t *tileRow, p *hevc.Picture, r, c int) {
 			ow, oh = (s.w+s.sw-1)/s.sw, (s.h+s.sh-1)/s.sh
 			ss, ds = p.StrideC, t.cs
 			ox, oy = ox/s.sw, oy/s.sh
-			src, dst = p.Cb, t.cb
-			if pl == 2 {
-				src, dst = p.Cr, t.cr
-			}
 		}
+		src, dst := srcs[pl], dsts[pl]
 		w, h = min(w, ow-sx), min(h, oh-sy)
 		for y := range max(h, 0) {
 			copy(dst[y*ds+sx:][:w], src[(oy+y)*ss+ox:][:w])
 		}
 	}
 }
-
 func (s *stream) Next() (image.Image, error) {
 	if s.err != nil {
 		return nil, s.err
@@ -590,7 +654,7 @@ func (s *stream) Next() (image.Image, error) {
 	if s.y >= oh {
 		return nil, io.EOF
 	}
-	rows := pipeline.StripRows(4*int64(ow), oh)
+	rows := pipeline.StripRows(int64(s.bpp)*int64(ow), oh)
 	if s.turn&1 != 0 {
 		// A strip of a turned image is made from a band of columns of the
 		// image, read row by row: a band of at least 128 (with 64, 3.5%
@@ -602,7 +666,7 @@ func (s *stream) Next() (image.Image, error) {
 		// The strip, and what each goroutine converting rows writes; then
 		// the rows of tiles, as many as the memory limit has room for.
 		k := min(s.env.Helpers()+1, max(rows, s.h))
-		need := 4*int64(ow)*int64(rows) + int64(k)*scratchBytes(s.w)
+		need := int64(s.bpp)*int64(ow)*int64(rows) + int64(k)*scratchBytes(s.w, s.bpp)
 		if err := s.env.Budget.Reserve(need, "heic strip"); err != nil {
 			s.err = err
 			return nil, err
@@ -623,7 +687,8 @@ func (s *stream) Next() (image.Image, error) {
 			s.err = err
 			return nil, err
 		}
-		s.strip = image.NewNRGBA(image.Rect(0, 0, ow, rows))
+		s.stride = s.bpp * ow
+		s.strip = make([]uint8, s.stride*rows)
 		s.scratch = make([]*rowScratch, k)
 	}
 	if s.turned() {
@@ -653,10 +718,12 @@ func (s *stream) Next() (image.Image, error) {
 			i = j
 		}
 	}
-	out := &image.NRGBA{Pix: s.strip.Pix[:n*s.strip.Stride], Stride: s.strip.Stride,
-		Rect: image.Rect(0, s.y, ow, s.y+n)}
+	pix, rect := s.strip[:n*s.stride], image.Rect(0, s.y, ow, s.y+n)
 	s.y += n
-	return out, nil
+	if s.bpp == 8 {
+		return &image.NRGBA64{Pix: pix, Stride: s.stride, Rect: rect}, nil
+	}
+	return &image.NRGBA{Pix: pix, Stride: s.stride, Rect: rect}, nil
 }
 
 // source is the line of the image row y of the output is: a row (byRow)
@@ -691,7 +758,7 @@ func (s *stream) source(y int) (byRow bool, line, at0, step int) {
 // from a row of the image, or for a quarter turn the n rows from a band of
 // columns of all its rows; on as many goroutines as there are helpers free.
 func (s *stream) convertTurned(n int) {
-	stride := s.strip.Stride
+	stride, bpp := s.stride, s.bpp
 	scratch := func(c int) *rowScratch {
 		if s.scratch[c] == nil {
 			s.scratch[c] = s.conv.newScratch()
@@ -704,14 +771,14 @@ func (s *stream) convertTurned(n int) {
 			sc := scratch(c)
 			for i := c * n / k; i < (c+1)*n/k; i++ {
 				_, j, at0, step := s.source(s.y + i)
-				dst := s.strip.Pix[i*stride:]
+				dst := s.strip[i*stride:]
 				if step == 1 {
-					s.conv.convert(s.rowsOf, j, 0, s.w, s.h, dst, sc)
+					s.conv.convert(j, 0, s.w, s.h, dst, sc)
 					continue
 				}
-				s.conv.convert(s.rowsOf, j, 0, s.w, s.h, sc.row, sc)
+				s.conv.convert(j, 0, s.w, s.h, sc.row, sc)
 				for x := range s.w {
-					copy(dst[4*x:4*x+4], sc.row[4*(at0-x):])
+					copy(dst[bpp*x:bpp*x+bpp], sc.row[bpp*(at0-x):])
 				}
 			}
 		})
@@ -724,16 +791,16 @@ func (s *stream) convertTurned(n int) {
 	col := make([]int, n) // of each output row, in the band
 	for i := range col {
 		_, c, _, _ := s.source(s.y + i)
-		col[i] = 4 * (c - lo)
+		col[i] = bpp * (c - lo)
 	}
 	k := min(len(s.scratch), s.h)
 	s.env.Parallel(k, func(c int) {
 		sc := scratch(c)
 		for j := c * s.h / k; j < (c+1)*s.h/k; j++ {
-			s.conv.convert(s.rowsOf, j, lo, hi, s.h, sc.row, sc)
-			at := 4 * (j - at0) * step
+			s.conv.convert(j, lo, hi, s.h, sc.row, sc)
+			at := bpp * (j - at0) * step
 			for i, o := range col {
-				copy(s.strip.Pix[i*stride+at:][:4], sc.row[o:])
+				copy(s.strip[i*stride+at:][:bpp], sc.row[o:])
 			}
 		}
 	})
@@ -760,7 +827,7 @@ func (s *stream) convertRows(a, b int) {
 			s.scratch[c] = s.conv.newScratch()
 		}
 		for i := a + c*(b-a)/k; i < a+(c+1)*(b-a)/k; i++ {
-			s.conv.convert(s.rowsOf, s.y+i, 0, s.w, s.h, s.strip.Pix[i*s.strip.Stride:], s.scratch[c])
+			s.conv.convert(s.y+i, 0, s.w, s.h, s.strip[i*s.stride:], s.scratch[c])
 		}
 	})
 }

@@ -21,9 +21,11 @@
 //
 // Unlike the formats of goimgtools, an AVIF is decoded whole: the pixels
 // (4 bytes each, 8 for more than 8 bits) are counted in the memory limit,
-// the codec's own memory is not: about 6.4 bytes a pixel more while it
-// decodes, and 8MB and 28 bytes a pixel while it encodes (243MB for a
-// picture of 3840 x 2160). The colours of a 4:2:0 file are brought to full
+// the codec's own memory is not: about 2.5 bytes a pixel more while it
+// decodes (the pixels are handed on from the codec's memory, 6.5 bytes a
+// pixel in all at 8 bits), and 8MB and 28 bytes a pixel while it encodes
+// (44 at effort 7; 243MB for a picture of 3840 x 2160 at the default), room
+// for which is made at once. The colours of a 4:2:0 file are brought to full
 // size by libyuv, as Pillow's libavif does; pixels go to libavif and come
 // back with the colour not multiplied by alpha, so that without loss an
 // image with transparency keeps every pixel too. Animated AVIF files are

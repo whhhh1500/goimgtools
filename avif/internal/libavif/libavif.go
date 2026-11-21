@@ -11,6 +11,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"slices"
 )
 
 // ErrOption is returned for an encoder option aom does not understand.
@@ -124,14 +125,25 @@ func Decode(data []byte, configOnly bool) (*Image, error) {
 		if im.Depth > 8 {
 			depth16 = 1
 		}
+		// The memory libavif and dav1d go on to take, made room for at once
+		// (6.5 bytes a pixel for a photograph at 8 bits, measured): the
+		// module's memory grows by append, which holds the old array and
+		// the new at each step, and a 12-megapixel image peaked at 180MB.
+		per := int64(7)
+		if depth16 != 0 {
+			per = 13
+		}
+		more := min(int64(im.Width)*int64(im.Height)*per+8<<20, 4<<30-int64(len(m.m.memory)))
+		m.m.memory = slices.Grow(m.m.memory, int(max(more, 0)))
 		pix := m.m.Xdec_pixels(d, depth16, res, res+4)
 		if pix == 0 {
 			return fmt.Errorf("libavif: %s", resultString(int32(binary.LittleEndian.Uint32(m.m.memory[res+4:]))))
 		}
 		im.Stride = int(binary.LittleEndian.Uint32(m.m.memory[res:]))
 		n := int64(im.Stride) * int64(im.Height)
-		im.Pix = make([]byte, n)
-		copy(im.Pix, m.m.memory[pix:int64(pix)+n])
+		// The pixels stay where libavif wrote them: the module is not called
+		// again, and its memory goes when they do (a copy was as large again).
+		im.Pix = m.m.memory[pix : int64(pix)+n : int64(pix)+n]
 		if depth16 != 0 {
 			// libavif's 16-bit samples are in the machine's order, which is
 			// little endian in WebAssembly; image.NRGBA64 wants big endian.
@@ -172,6 +184,15 @@ func Encode(rgba []byte, width, height int, o Options) ([]byte, error) {
 	var out []byte
 	err := call(func() error {
 		m := newModule()
+		// The memory aom goes on to take, made room for at once (see
+		// Decode): measured on a photograph of 4.3 megapixels, 28 bytes a
+		// pixel at speed 6 and 44 at speed 4.
+		per := int64(30)
+		if o.Speed <= 5 {
+			per = 46
+		}
+		more := min(int64(width)*int64(height)*(per+4)+8<<20, 4<<30-int64(len(m.m.memory)))
+		m.m.memory = slices.Grow(m.m.memory, int(max(more, 0)))
 		pix := m.alloc(rgba[:4*width*height])
 		icc, exif, xmp := m.alloc(o.ICC), m.alloc(o.Exif), m.alloc(o.XMP)
 		opts := m.alloc(append([]byte(o.CodecOptions), 0))

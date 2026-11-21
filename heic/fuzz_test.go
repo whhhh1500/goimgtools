@@ -2,7 +2,6 @@ package heic
 
 import (
 	"bytes"
-	"image"
 	"testing"
 
 	gheic "github.com/gen2brain/h265/heic"
@@ -28,7 +27,7 @@ func FuzzStream(f *testing.F) {
 		if err != nil {
 			return
 		}
-		if n, ok := m.(*image.NRGBA); ok && (n.Rect != got.Rect || !bytes.Equal(n.Pix, got.Pix)) {
+		if n, ok := pixelsOf(m); ok && (n.Rect != got.Rect || !bytes.Equal(n.Pix, got.Pix)) {
 			t.Fatalf("the stream gives %v, the whole decoding %v, other pixels", got.Rect, n.Rect)
 		}
 	})

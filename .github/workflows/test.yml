@@ -226,7 +226,7 @@ jobs:
       - working-directory: heic
         run: |
           GOARCH=${{ matrix.arch }} go test -exec ${{ matrix.qemu }} -timeout 30m -v ./internal/kvazaar
-          GOARCH=${{ matrix.arch }} go test -exec ${{ matrix.qemu }} -timeout 30m -v -run 'TestStreamSameAsWhole|TestStreamTurned' .
+          GOARCH=${{ matrix.arch }} go test -exec ${{ matrix.qemu }} -timeout 30m -v -run 'TestStreamSameAsWhole|TestStreamTurned|TestStreamDeep' .
       - working-directory: avif
         run: GOARCH=${{ matrix.arch }} go test -exec ${{ matrix.qemu }} -timeout 30m -v ./internal/libavif
 

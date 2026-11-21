@@ -133,6 +133,20 @@ Times for this library include decoding and encoding. The Pillow column gives th
 - Single-threaded, after subtracting the 0.16s of the no-operation case: blur adds 0.13s (Pillow 0.38s) and the unsharp mask 0.21s (0.48s), their box passes running with AVX2 or NEON on Pillow's integer arithmetic, every byte the same; trimming adds 0.08s, its 3×3 median taken 32 bytes at a time; rotation by 30° adds 0.50s, of which about 0.08s is spent encoding the additional 22 MP (estimated from the encoding time per megapixel), so the rotation itself takes about 0.42s, against Pillow's 0.57s; `Modulate(1.1, 1.3, 20)` adds 0.25s, where sharp's `modulate` with the same factors adds 0.89s (1.06s in all, one thread), every pixel within 1 of sharp's.
 - With the memory limit lowered to 16MB (staged rows written to a temporary file), blur, sharpening, rotation and trimming produce results pixel-for-pixel identical to those without a memory limit (compared as PNG output); time increases by 0–15%, and peak memory remains within 13MB in all cases.
 
+### The HEIC and AVIF modules (conversion to JPEG at the default settings)
+
+Each file converted to JPEG with the module imported; "decoded whole" is the decoding before the changes of the next release, measured the same way.
+
+| Input | 1 thread | 8 threads | Peak memory (1 / 8 threads) | Decoded whole: time (1 / 8), peak |
+|---|---|---|---|---|
+| HEIC, 3992×2992 in 48 tiles of 512×512 | 1.20s | 0.29s | 27 / 37MB | 1.15s / 0.29s, 81 / 87MB |
+| HEIC, the same turned a quarter by irot | 1.07s | 0.28s | 32 / 50MB | 1.01s / 0.31s, 124 / 131MB |
+| HEIC, 4032×3024 as one picture | 0.80s | 0.22s | 56 / 63MB | 0.74s / 0.21s, 102 / 104MB |
+| HEIC, 2992×3992 at 10 bits, one picture | 1.23s | 0.33s | 120 / 121MB | 1.20s / 0.38s, 233 / 243MB, with a memory limit of 96MB or more |
+| AVIF, 2992×3992 (written by Pillow 13, quality 70) | 0.55s | 0.55s | 111MB | 0.60s, 180MB |
+
+- A HEIC without transparency is decoded without holding its pixels (see the module's documentation); `Metadata` reads such a file in 2ms (1.1s decoded whole). Most of the time is h265's decoding of HEVC; the conversion of colour, done here without SIMD, makes one thread 4% to 7% slower.
+- AVIF decodes on one thread (dav1d in WebAssembly has no threads). The module's memory is made room for at once and the pixels are read where libavif wrote them: before, its memory grew by append, which holds the old array and the new at each step.
 Evaluated but not implemented:
 
 - Depending on `klauspost/compress` for PNG compression: compression in the Go 1.27 standard library is the same implementation (it writes the same bytes); copied into `internal/gflate` with a reset that takes a new dictionary and its word loads, it runs within 3% of it, and spares those who use this package a module of 38MB to download (see [PNG block compression](#cpu-and-threads)).

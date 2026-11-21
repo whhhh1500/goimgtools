@@ -69,7 +69,7 @@ WebP 编码器由本模块自行实现，无标准库可供对照，因此采用
 
 ## HEIC 解码器
 
-HEIC 由 gen2brain/h265（纯 Go 的 HEVC 解码器，模块 `goimgtools/heic`）读取。无透明、8 位的文件（手机就是这样写的）解码时不保存整幅像素：网格按瓦片行解码，单幅画面或要旋转的网格从其平面出发，用 h265 的算法逐条带转成 RGB，每个乘积单独取整。像素与 h265 整图解码、用 SIMD 转换的结果相同，在所有处理器上一样。核对过的有：被奇数尺寸截断的小瓦片网格（4:2:0、4:4:4）、单幅画面（4:2:0、4:2:2、4:4:4、4:0:0）、按 irot 旋转与按 imir 翻转的各种组合、带裁剪框的文件、gen2brain/h265 与 gen2brain/heic 的测试文件，以及 5 张 1.1 至 12.2 百万像素的照片。带透明或超过 8 位的文件由 h265 整图解码；它的纯 Go 转换（`-tags noasm`，或没有其 SIMD 的处理器）在 Go 会融合乘加的处理器上偶有一级之差。
+HEIC 由 gen2brain/h265（纯 Go 的 HEVC 解码器，模块 `goimgtools/heic`）读取。无透明的文件（手机与相机就是这样写的）解码时不保存整幅像素：网格按瓦片行解码，单幅画面或要旋转的网格从其平面出发，用 h265 的算法逐条带转成 RGB，每个乘积单独取整（超过 8 位时与 h265 一样转成每通道 16 位）。像素与 h265 整图解码、用 SIMD 转换的结果相同，在所有处理器上一样。核对过的有：被奇数尺寸截断的小瓦片网格（4:2:0、4:4:4）、单幅画面（4:2:0、4:2:2、4:4:4、4:0:0）、12 位的网格与单幅画面、按 irot 旋转与按 imir 翻转的各种组合、带裁剪框的文件、gen2brain/h265 与 gen2brain/heic 的测试文件，以及 6 张 1.1 至 12.2 百万像素的照片（其一为 10 位）。带透明的文件由 h265 整图解码；它的纯 Go 转换（`-tags noasm`，或没有其 SIMD 的处理器）在 Go 会融合乘加的处理器上偶有一级之差。
 ## HEIC 编码器
 
 HEIC 由坦佩雷大学的 HEVC 编码器 Kvazaar 写出（模块 `goimgtools/heic`），编译为 WebAssembly 后转写为 Go；为它加了两个选项（Cb、Cr 的 QP 低 2，其失真权重加大），方差自适应量化改为对所有画面统一的基准。24 张 Kodak 照片（768×512）各以质量 30–90 写出、用 libheif 读取，与 libheif 1.23.6 配 x265 4.3 默认设置（pillow-heif 1.8.1，x265 的 slow 预设，4:2:0）在同等 SSIMULACRA2 下相比：
@@ -90,4 +90,4 @@ x265 单核编一张 Kodak 照片 0.36 秒、一张 3840×2160 照片 3.2 秒，
 
 ## AVIF 编码器
 
-AVIF 由 libavif 1.4.2 配 aom 3.14.1 写出（模块 `goimgtools/avif`），与 avifenc、Pillow 13 用的编码器相同，编译为 WebAssembly 后转写为 Go。默认力度（aom 速度 6，与它们相同）下文件与 Pillow 在同等 SSIMULACRA2 下一样小（4 张 Kodak 照片各以质量 30–90 写出、用 Pillow 解码，小 0.3%）；力度 7（速度 4）小 4.8%。它单线程运行、没有 SIMD：一张 Kodak 照片默认力度 1.1 秒，Pillow 为 0.08 秒（多线程、有 SIMD）。原先经 gen2brain/avif 在 WebAssembly 运行时里跑 libavif，要 2.4 秒（其中 0.8 秒是程序启动时编译编码器），峰值 157MB（现在 85MB；16×16 的图原为 103MB，现在 9MB）。
+AVIF 由 libavif 1.4.2 配 aom 3.14.1 写出（模块 `goimgtools/avif`），与 avifenc、Pillow 13 用的编码器相同，编译为 WebAssembly 后转写为 Go。默认力度（aom 速度 6，与它们相同）下文件与 Pillow 在同等 SSIMULACRA2 下一样小（4 张 Kodak 照片各以质量 30–90 写出、用 Pillow 解码，小 0.3%）；力度 7（速度 4）小 4.8%。它单线程运行、没有 SIMD：一张 Kodak 照片默认力度 1.1 秒，Pillow 为 0.08 秒（多线程、有 SIMD）。原先经 gen2brain/avif 在 WebAssembly 运行时里跑 libavif，要 2.4 秒（其中 0.8 秒是程序启动时编译编码器），峰值 157MB（现在 39MB；16×16 的图原为 103MB，现在 10MB）。
