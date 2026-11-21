@@ -233,9 +233,10 @@ func roundRect(x, y, w, h, r float64, reverse bool) []float64 {
 
 // strokeLine adds a line of half width hw through the points: a rectangle
 // along each segment and a disc at each corner (and, closed, at the first
-// point), all in the same direction so that where they overlap they count
-// once.
+// point), all in the same direction, covered by their union so that where
+// they overlap they count once.
 func strokeLine(p *raster.Path, xy []float64, hw float64, closed bool) {
+	p.Union = true
 	n := len(xy) / 2
 	segs := n - 1
 	if closed {

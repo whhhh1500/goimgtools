@@ -6,9 +6,22 @@
 // worked out from its two ends, never by stepping along it, so the
 // coverage of a pixel is the same whatever band it is rendered in, and on
 // every processor. The fill rule is non-zero.
+//
+// A path whose contours overlap (the pieces of a stroke) can instead be
+// covered by their union, as cairo's and Skia's scan converters do: each
+// row is cut at the ends of its edges into bands every edge crosses whole,
+// the edges of a band are put in order across it, and only those where the
+// winding turns from nothing to something, or back, are added up, so that
+// where pieces overlap they count once, partly covered pixels too. A band
+// two edges cross in is halved until they do not, or sampled across its
+// middle when it is thin.
 package raster
 
-import "math"
+import (
+	"cmp"
+	"math"
+	"slices"
+)
 
 // one is a pixel in the units of the coordinates.
 const one = 256
@@ -19,7 +32,12 @@ type pt struct{ x, y int64 }
 // Path is a set of closed contours.
 type Path struct {
 	contours               [][]pt
+	spans                  [][2]int64 // the least and greatest y of each contour
 	minX, minY, maxX, maxY int64
+	// Union covers a pixel by the union of the contours, exactly, rather
+	// than by adding up the area each covers, which counts twice the part
+	// of a pixel two of them cover: for the overlapping pieces of a stroke.
+	Union bool
 }
 
 // Add adds a closed contour through the points (x, y pairs, in pixels).
@@ -30,16 +48,22 @@ func (p *Path) Add(xy []float64) {
 		return
 	}
 	c := make([]pt, 0, len(xy)/2)
+	var span [2]int64
 	for i := 0; i+1 < len(xy); i += 2 {
 		q := pt{fix(xy[i]), fix(xy[i+1])}
 		if len(p.contours) == 0 && len(c) == 0 {
 			p.minX, p.maxX, p.minY, p.maxY = q.x, q.x, q.y, q.y
 		}
+		if len(c) == 0 {
+			span = [2]int64{q.y, q.y}
+		}
 		p.minX, p.maxX = min(p.minX, q.x), max(p.maxX, q.x)
 		p.minY, p.maxY = min(p.minY, q.y), max(p.maxY, q.y)
+		span = [2]int64{min(span[0], q.y), max(span[1], q.y)}
 		c = append(c, q)
 	}
 	p.contours = append(p.contours, c)
+	p.spans = append(p.spans, span)
 }
 
 // fix is v pixels in 1/256 of a pixel, rounded, held where it cannot
@@ -87,6 +111,9 @@ func lerp(u0, v0, u1, v1, v int64) int64 {
 // Cells is the scratch of a rendering, reused from one to the next.
 type Cells struct {
 	cover, area []int64
+	edges       []edge
+	events      []int64
+	act         []int32
 }
 
 // Render writes the coverage of the path, 0 to 255, of the pixels of rows
@@ -112,29 +139,36 @@ func (p *Path) Render(dst []uint8, stride, x0, y0, w, h int, c *Cells) {
 		clear(cover)
 		clear(area)
 		var left int64 // the cover of what lies left of x0
-		for _, ct := range p.contours {
-			for i := range ct {
-				a, b := ct[i], ct[(i+1)%len(ct)]
-				if a.y == b.y {
+		if p.Union {
+			left = p.unionRow(cover, area, int64(x0), lo, hi, top, bot, c)
+		} else {
+			for k, ct := range p.contours {
+				if p.spans[k][1] <= top || p.spans[k][0] >= bot {
 					continue
 				}
-				ya, yb := max(min(a.y, b.y), top), min(max(a.y, b.y), bot)
-				if ya >= yb {
-					continue
+				for i := range ct {
+					a, b := ct[i], ct[(i+1)%len(ct)]
+					if a.y == b.y {
+						continue
+					}
+					ya, yb := max(min(a.y, b.y), top), min(max(a.y, b.y), bot)
+					if ya >= yb {
+						continue
+					}
+					// The piece of the edge in this row, in its direction.
+					y1, y2 := ya, yb
+					if a.y > b.y {
+						y1, y2 = yb, ya
+					}
+					x1, x2 := a.x, b.x
+					if y1 != a.y {
+						x1 = lerp(a.x, a.y, b.x, b.y, y1)
+					}
+					if y2 != b.y {
+						x2 = lerp(a.x, a.y, b.x, b.y, y2)
+					}
+					left += row(cover, area, int64(x0), lo, hi, x1, y1-top, x2, y2-top)
 				}
-				// The piece of the edge in this row, in its direction.
-				y1, y2 := ya, yb
-				if a.y > b.y {
-					y1, y2 = yb, ya
-				}
-				x1, x2 := a.x, b.x
-				if y1 != a.y {
-					x1 = lerp(a.x, a.y, b.x, b.y, y1)
-				}
-				if y2 != b.y {
-					x2 = lerp(a.x, a.y, b.x, b.y, y2)
-				}
-				left += row(cover, area, int64(x0), lo, hi, x1, y1-top, x2, y2-top)
 			}
 		}
 		// Sweep: the cover of the edges to the left runs on to the right.
@@ -187,4 +221,176 @@ func row(cover, area []int64, x0, lo, hi, x1, fy1, x2, fy2 int64) (left int64) {
 	}
 	add(px, py, x2, fy2)
 	return left
+}
+
+// edge is an edge of a Union path, top end first.
+type edge struct {
+	ax, ay, bx, by int64
+	dir            int64 // 1 if it runs down, -1 up
+	t, b           int64 // where it is at the top and the bottom of a band
+}
+
+// at is where the edge is at y, ay <= y <= by.
+func (e *edge) at(y int64) int64 {
+	switch y {
+	case e.ay:
+		return e.ax
+	case e.by:
+		return e.bx
+	}
+	return lerp(e.ax, e.ay, e.bx, e.by, y)
+}
+
+const (
+	maxCuts  = 32  // more ends of edges in a row than this: cut it evenly
+	evenCuts = 16  // into this many bands, each sampled where edges end in it
+	minBand  = 4   // a band two edges cross in is halved down to this height
+	maxBands = 256 // and no more bands than this in a row
+)
+
+// unionRow adds the boundary of the union of the contours within the row
+// from top to bot to the cells, and returns the cover of what lies left of
+// the columns.
+func (p *Path) unionRow(cover, area []int64, x0, lo, hi, top, bot int64, c *Cells) (left int64) {
+	es, ev := c.edges[:0], c.events[:0]
+	for k, ct := range p.contours {
+		if p.spans[k][1] <= top || p.spans[k][0] >= bot {
+			continue
+		}
+		for i := range ct {
+			a, b := ct[i], ct[(i+1)%len(ct)]
+			e := edge{ax: a.x, ay: a.y, bx: b.x, by: b.y, dir: 1}
+			if a.y > b.y {
+				e = edge{ax: b.x, ay: b.y, bx: a.x, by: a.y, dir: -1}
+			}
+			if e.ay == e.by || e.by <= top || e.ay >= bot {
+				continue
+			}
+			if e.ay > top {
+				ev = append(ev, e.ay)
+			}
+			if e.by < bot {
+				ev = append(ev, e.by)
+			}
+			es = append(es, e)
+		}
+	}
+	c.edges, c.events = es, ev
+	if len(es) == 0 {
+		return 0
+	}
+	u := union{es: es, cover: cover, area: area, x0: x0, lo: lo, hi: hi, top: top, c: c, budget: maxBands}
+	if len(ev) <= maxCuts {
+		slices.Sort(ev)
+		ev = slices.Compact(ev)
+		y := top
+		for _, e := range ev {
+			u.band(y, e)
+			y = e
+		}
+		u.band(y, bot)
+	} else {
+		for k := int64(0); k < evenCuts; k++ {
+			u.band(top+k*one/evenCuts, top+(k+1)*one/evenCuts)
+		}
+	}
+	return u.left
+}
+
+// union is the rendering of a row of a Union path.
+type union struct {
+	es              []edge
+	cover, area     []int64
+	x0, lo, hi, top int64
+	c               *Cells
+	budget          int
+	left            int64
+}
+
+// band adds the boundary of the union between ya and yb.
+func (u *union) band(ya, yb int64) {
+	act := u.c.act[:0]
+	whole := true
+	for i := range u.es {
+		e := &u.es[i]
+		if e.by <= ya || e.ay >= yb {
+			continue
+		}
+		if e.ay > ya || e.by < yb {
+			whole = false
+		}
+		act = append(act, int32(i))
+	}
+	u.c.act = act
+	u.budget--
+	if len(act) == 0 {
+		return
+	}
+	es := u.es
+	if whole {
+		for _, i := range act {
+			e := &es[i]
+			e.t, e.b = e.at(ya), e.at(yb)
+		}
+		slices.SortFunc(act, func(i, j int32) int {
+			a, b := &es[i], &es[j]
+			return cmp.Or(cmp.Compare(a.t+a.b, b.t+b.b), cmp.Compare(a.t, b.t), cmp.Compare(i, j))
+		})
+		ordered := true
+		for k := 1; k < len(act); k++ {
+			if es[act[k]].t < es[act[k-1]].t || es[act[k]].b < es[act[k-1]].b {
+				ordered = false
+				break
+			}
+		}
+		if ordered {
+			// The edges where the winding starts, running down (covering
+			// what lies right of them), and where it stops, running up.
+			w := int64(0)
+			for _, i := range act {
+				e := &es[i]
+				was := w
+				w += e.dir
+				switch {
+				case was == 0 && w != 0:
+					u.left += row(u.cover, u.area, u.x0, u.lo, u.hi, e.t, ya-u.top, e.b, yb-u.top)
+				case was != 0 && w == 0:
+					u.left += row(u.cover, u.area, u.x0, u.lo, u.hi, e.b, yb-u.top, e.t, ya-u.top)
+				}
+			}
+			return
+		}
+		if yb-ya > minBand && u.budget > 1 {
+			m := ya + (yb-ya)/2
+			u.band(ya, m)
+			u.band(m, yb)
+			return
+		}
+	}
+	// Sampled across its middle: the spans there, as wide as they are and
+	// as high as the band.
+	ym := ya + (yb-ya)/2
+	act = act[:0]
+	for _, i := range u.c.act {
+		e := &es[i]
+		if e.ay <= ym && e.by > ym {
+			e.t = e.at(ym)
+			act = append(act, i)
+		}
+	}
+	slices.SortFunc(act, func(i, j int32) int {
+		return cmp.Or(cmp.Compare(es[i].t, es[j].t), cmp.Compare(i, j))
+	})
+	w := int64(0)
+	for _, i := range act {
+		e := &es[i]
+		was := w
+		w += e.dir
+		switch {
+		case was == 0 && w != 0:
+			u.left += row(u.cover, u.area, u.x0, u.lo, u.hi, e.t, ya-u.top, e.t, yb-u.top)
+		case was != 0 && w == 0:
+			u.left += row(u.cover, u.area, u.x0, u.lo, u.hi, e.t, yb-u.top, e.t, ya-u.top)
+		}
+	}
 }

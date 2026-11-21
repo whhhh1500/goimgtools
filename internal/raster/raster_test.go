@@ -120,3 +120,91 @@ func TestFarOut(t *testing.T) {
 		}
 	}
 }
+
+// TestUnion: a Union path covers each pixel by what it overlaps of the
+// union of its contours, overlapping pieces of strokes (bars and discs)
+// counting once: to within a level and a half of 64 by 64 samples of the
+// winding, the same whatever the band of rows.
+func TestUnion(t *testing.T) {
+	const w, h, s = 28, 24, 64
+	winding := func(p *Path, x, y float64) int {
+		n := 0
+		for _, ct := range p.contours {
+			for i := range ct {
+				a, b := ct[i], ct[(i+1)%len(ct)]
+				ay, by := float64(a.y)/one, float64(b.y)/one
+				if (ay <= y) != (by <= y) {
+					ax, bx := float64(a.x)/one, float64(b.x)/one
+					if ax+(bx-ax)*(y-ay)/(by-ay) > x {
+						if by > ay {
+							n++
+						} else {
+							n--
+						}
+					}
+				}
+			}
+		}
+		return n
+	}
+	disc := func(cx, cy, r float64) []float64 {
+		var xy []float64
+		for i := 0; i < 24; i++ {
+			xy = append(xy, cx+r*trig.CosPi(2*i, 24), cy+r*trig.SinPi(2*i, 24))
+		}
+		return xy
+	}
+	bar := func(x1, y1, x2, y2, hw float64) []float64 {
+		l := math.Hypot(x2-x1, y2-y1)
+		nx, ny := -(y2-y1)/l*hw, (x2-x1)/l*hw
+		xy := []float64{x1 + nx, y1 + ny, x2 + nx, y2 + ny, x2 - nx, y2 - ny, x1 - nx, y1 - ny}
+		if (x2-x1)*ny-(y2-y1)*nx < 0 { // clockwise, as the discs
+			xy = []float64{xy[6], xy[7], xy[4], xy[5], xy[2], xy[3], xy[0], xy[1]}
+		}
+		return xy
+	}
+	for k, add := range []func(p *Path){
+		func(p *Path) { // a bend of a thick line
+			p.Add(bar(3, 4, 14.3, 15.6, 2.2))
+			p.Add(bar(14.3, 15.6, 25.1, 6.7, 2.2))
+			p.Add(disc(14.3, 15.6, 2.2))
+		},
+		func(p *Path) { // a crowd of thin pieces
+			for i := 0; i < 9; i++ {
+				x := 4 + 2.3*float64(i)
+				p.Add(bar(x, 3+float64(i%3), x+3.1, 20-float64(i%4), 0.7))
+				p.Add(disc(x+1.5, 11.2, 1.1+0.2*float64(i%3)))
+			}
+		},
+	} {
+		p := &Path{Union: true}
+		add(p)
+		got := render(p, 0, 0, w, h)
+		worst := 0.0
+		for y := 0; y < h; y++ {
+			for x := 0; x < w; x++ {
+				in := 0
+				for sy := 0; sy < s; sy++ {
+					for sx := 0; sx < s; sx++ {
+						if winding(p, float64(x)+(float64(sx)+0.5)/s, float64(y)+(float64(sy)+0.5)/s) != 0 {
+							in++
+						}
+					}
+				}
+				worst = math.Max(worst, math.Abs(float64(got[y*w+x])-255*float64(in)/(s*s)))
+			}
+		}
+		if worst > 1.5 {
+			t.Errorf("path %d: %.2f levels off", k, worst)
+		}
+		for _, rows := range []int{1, 5} {
+			var band []uint8
+			for y := 0; y < h; y += rows {
+				band = append(band, render(p, 0, y, w, min(rows, h-y))...)
+			}
+			if !bytes.Equal(band, got) {
+				t.Errorf("path %d: bands of %d rows give another picture", k, rows)
+			}
+		}
+	}
+}

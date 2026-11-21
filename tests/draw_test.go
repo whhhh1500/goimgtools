@@ -132,3 +132,33 @@ func TestDrawErrors(t *testing.T) {
 		}
 	}
 }
+
+// TestStrokeJoints: where the pieces of a stroke overlap they count once,
+// in partly covered pixels too: a line through a point on it is the line,
+// and a curve through points however close paints its length times its
+// width.
+func TestStrokeJoints(t *testing.T) {
+	one := drawn(t, Blank(20, 20, color.White).Draw(Line(2, 10, 18, 10).Stroke(color.Black, 2.5)))
+	two := drawn(t, Blank(20, 20, color.White).Draw(Polyline(2, 10, 10, 10, 18, 10).Stroke(color.Black, 2.5)))
+	if !bytes.Equal(one.Pix, two.Pix) {
+		t.Error("a line through a point on it is not the line")
+	}
+	for _, step := range []float64{40, 4, 0.4} {
+		var xy []float64
+		length := 0.0
+		for x := 0.0; x <= 800; x += step {
+			xy = append(xy, x, 200+150*math.Sin(x/120))
+			if n := len(xy); n >= 4 {
+				length += math.Hypot(xy[n-2]-xy[n-4], xy[n-1]-xy[n-3])
+			}
+		}
+		m := drawn(t, Blank(800, 400, color.White).Draw(Polyline(xy...).Stroke(color.Black, 2.5)))
+		dark := 0.0
+		for i := 0; i < len(m.Pix); i += 4 {
+			dark += float64(255-m.Pix[i]) / 255
+		}
+		if want := length * 2.5; math.Abs(dark-want) > want*0.005 {
+			t.Errorf("points %.1f apart: painted %.0f, want %.0f", step, dark, want)
+		}
+	}
+}

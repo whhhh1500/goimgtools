@@ -64,7 +64,7 @@ func TestSameOnEveryProcessor(t *testing.T) {
 		{"entropy crop", photo.Clone().Resize(150, 60, ResizeOptions{Fit: FitCover, Interesting: InterestingEntropy}), "d5a7e04db11ef0a0"},
 		{"alpha channel", clear.Clone().ExtractChannel(ChannelAlpha), "e880988a7dc509ad"},
 		{"draw", photo.Clone().Draw(Circle(150.3, 101.7, 60.2).Fill(color.NRGBA{200, 30, 30, 140}).Stroke(color.Black, 3.5),
-			Rect(20.25, 30.5, 90, 50).Rounded(12.5).Stroke(color.White, 2), Polyline(5, 190, 100, 120, 290, 195).Stroke(color.NRGBA{0, 90, 220, 255}, 6)), "c23aacaca3a2b07d"},
+			Rect(20.25, 30.5, 90, 50).Rounded(12.5).Stroke(color.White, 2), Polyline(5, 190, 100, 120, 290, 195).Stroke(color.NRGBA{0, 90, 220, 255}, 6)), "698852c92a589ce3"},
 		{"resize libvips", photo.Clone().Resize(97, 0, ResizeOptions{Kernel: KernelLanczos3, Method: MethodLibvips}), "0021404ad205d433"},
 		{"resize libvips translucent", clear.Clone().Resize(400, 50, ResizeOptions{Fit: FitFill, Kernel: KernelMKS2021, Method: MethodLibvips}), "75485f3a5472db7f"},
 		{"enhance", photo.Clone().Enhance(EnhanceSharpness, 1.6).Enhance(EnhanceColor, 1.3).Enhance(EnhanceContrast, 0.8), "22429f5f874bed97"},
