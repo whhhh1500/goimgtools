@@ -112,7 +112,10 @@ func Open(r io.ReaderAt, size int64, env *pipeline.Env) (pipeline.Source, error)
 	}
 	s := &stream{r: r, env: env, h: h, bpp: (h.depth + 7) / 8}
 	off := int64(18 + h.idLen)
-	if h.cmType == 1 {
+	if h.cmType == 1 && h.imgType&^8 != 1 {
+		// A colour map of a true colour or grey image: not used, stepped over.
+		off += int64(h.cmLen) * int64((h.cmDepth+7)/8)
+	} else if h.cmType == 1 {
 		eb := (h.cmDepth + 7) / 8
 		cm := make([]byte, h.cmLen*eb)
 		if _, err := r.ReadAt(cm, off); err != nil {
