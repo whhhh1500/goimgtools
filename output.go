@@ -13,8 +13,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/whhhh1500/goimgtools/internal/density"
+	"github.com/whhhh1500/goimgtools/internal/exifedit"
 	"github.com/whhhh1500/goimgtools/internal/iccprof"
 	"github.com/whhhh1500/goimgtools/internal/jpegstream"
 	"github.com/whhhh1500/goimgtools/internal/ops"
@@ -29,6 +31,47 @@ import (
 // the output. By default it is dropped. After Rotate() the copied block
 // says the image is upright.
 func (m *Image) KeepExif() *Image { m.keepExif = true; return m }
+
+// ExifFields are text fields of the EXIF block that SetExif writes. An
+// empty one is left as it is.
+type ExifFields struct {
+	// Copyright is who holds the rights to the image.
+	Copyright string
+	// Artist is who made it: the photographer, the author.
+	Artist string
+	// ImageDescription says what it shows: a title or a caption.
+	ImageDescription string
+	// Software is the program that made the file.
+	Software string
+	// DateTime is when the file was last changed, written in its own
+	// time zone as EXIF writes it (2006:01:02 15:04:05); the zero time
+	// leaves it as it is.
+	DateTime time.Time
+}
+
+// SetExif writes fields into the EXIF block of the output, as sharp's
+// withExif and withExifMerge do: into the input's block when KeepExif
+// keeps it, every other field and directory as it was (a maker note's
+// offsets stay right), and else into a block of their own. JPEG, PNG,
+// WebP and TIFF hold it; GIF and BMP have no place for one. Calls add up,
+// a later value winning. The text is written as it is, UTF-8, as exiftool
+// writes it (EXIF's own type for it is ASCII, which a few old readers show
+// byte by byte).
+func (m *Image) SetExif(f ExifFields) *Image {
+	add := func(tag uint16, v string) {
+		if v != "" {
+			m.exifSet = append(m.exifSet[:len(m.exifSet):len(m.exifSet)], exifedit.Field{Tag: tag, Value: v})
+		}
+	}
+	add(270, f.ImageDescription)
+	add(305, f.Software)
+	if !f.DateTime.IsZero() {
+		add(306, f.DateTime.Format("2006:01:02 15:04:05"))
+	}
+	add(315, f.Artist)
+	add(33432, f.Copyright)
+	return m
+}
 
 // KeepXmp copies the XMP packet of the input (Adobe's metadata: keywords,
 // rating, rights, the history of edits) to the output, for JPEG, PNG, WebP
@@ -649,6 +692,7 @@ func (m *Image) outputMeta(meta pipeline.Meta) (out pipeline.Meta) {
 			out.Exif = density.SetExif(out.Exif, m.density)
 		}
 	}
+	out.Exif = exifedit.Set(out.Exif, m.exifSet)
 	if !m.stripICC {
 		out.ICC = meta.ICC
 	}

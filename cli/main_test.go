@@ -263,6 +263,8 @@ func TestNewOptions(t *testing.T) {
 	same("progressive jpeg", out, goimgtools.Open(in).JPEG(goimgtools.JPEGOptions{Quality: 70, Progressive: true}))
 	must("-quality", "70", "-jpeg-optimize", in, out)
 	same("optimized jpeg", out, goimgtools.Open(in).JPEG(goimgtools.JPEGOptions{Quality: 70, Optimize: true}))
+	must("-exif-copyright", "© Somebody", "-exif-artist", "Ann", "-exif-description", "A caption", in, out)
+	same("exif fields", out, goimgtools.Open(in).SetExif(goimgtools.ExifFields{Copyright: "© Somebody", Artist: "Ann", ImageDescription: "A caption"}).JPEG())
 	must("-quality", "50", "-jpeg-overshoot-deringing", in, out)
 	same("deringed jpeg", out, goimgtools.Open(in).JPEG(goimgtools.JPEGOptions{Quality: 50, OvershootDeringing: true}))
 	out = filepath.Join(dir, "c16.png")
