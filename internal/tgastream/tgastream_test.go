@@ -50,8 +50,9 @@ func FuzzOpen(f *testing.F) {
 	binary.LittleEndian.PutUint16(h[12:], 3)
 	binary.LittleEndian.PutUint16(h[14:], 2)
 	f.Add(append(h, 0x85, 1, 2, 3))
+	dir := f.TempDir() // one for every input: making one each is slow
 	f.Fuzz(func(t *testing.T, data []byte) {
-		env := pipeline.NewEnv(4<<20, t.TempDir())
+		env := pipeline.NewEnv(4<<20, dir)
 		src, err := Open(bytes.NewReader(data), int64(len(data)), env)
 		if err != nil {
 			return

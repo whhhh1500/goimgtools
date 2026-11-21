@@ -50,8 +50,9 @@ func FuzzOpen(f *testing.F) {
 	f.Add(testutil.PSD(testutil.PSDFile{RLE: true, Mode: 4, Depth: 16, W: 2, H: 2, Channels: px(5, 8)}))
 	f.Add(testutil.PSD(testutil.PSDFile{Mode: 0, Depth: 1, W: 9, H: 2, Channels: px(1, 4)}))
 	f.Add(testutil.PSD(testutil.PSDFile{Mode: 9, Depth: 8, W: 2, H: 1, Channels: px(3, 2)}))
+	dir := f.TempDir() // one for every input: making one each is slow
 	f.Fuzz(func(t *testing.T, data []byte) {
-		env := pipeline.NewEnv(4<<20, t.TempDir())
+		env := pipeline.NewEnv(4<<20, dir)
 		src, err := Open(bytes.NewReader(data), int64(len(data)), env)
 		if err != nil {
 			return

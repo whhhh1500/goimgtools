@@ -21,8 +21,9 @@ func FuzzOpen(f *testing.F) {
 	e := append([]byte("is32"), binary.BigEndian.AppendUint32(nil, uint32(8+len(plane)))...)
 	e = append(e, plane...)
 	f.Add(append(append([]byte("icns"), binary.BigEndian.AppendUint32(nil, uint32(8+len(e)))...), e...))
+	dir := f.TempDir() // one for every input: making one each is slow
 	f.Fuzz(func(t *testing.T, data []byte) {
-		env := pipeline.NewEnv(4<<20, t.TempDir())
+		env := pipeline.NewEnv(4<<20, dir)
 		src, err := Open(bytes.NewReader(data), int64(len(data)), env)
 		if err != nil {
 			return

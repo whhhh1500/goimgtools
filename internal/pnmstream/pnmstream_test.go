@@ -18,8 +18,9 @@ func FuzzOpen(f *testing.F) {
 	} {
 		f.Add([]byte(s))
 	}
+	dir := f.TempDir() // one for every input: making one each is slow
 	f.Fuzz(func(t *testing.T, data []byte) {
-		env := pipeline.NewEnv(4<<20, t.TempDir())
+		env := pipeline.NewEnv(4<<20, dir)
 		src, err := Open(bytes.NewReader(data), int64(len(data)), env)
 		if err != nil {
 			return
