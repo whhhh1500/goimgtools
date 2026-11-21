@@ -130,39 +130,16 @@ func (b *builder) filtered(n *node, f *node, m matrix, st style, vp viewport, ow
 	inner := st
 	inner.opacity = 1
 	cm := toRegion.mul(m)
-	outerSc, full := b.sc, b.full
-	b.sc = &scene{w: w, h: h, points: outerSc.points, itemCount: outerSc.itemCount, charged: outerSc.charged, imageBytes: outerSc.imageBytes}
-	b.full = image.Rect(0, 0, w, h)
-	b.draw(n, cm, inner, vp, nil, nil)
-	sub := b.sc
-	b.sc, b.full = outerSc, full
-	outerSc.points, outerSc.itemCount, outerSc.charged, outerSc.imageBytes = sub.points, sub.itemCount, sub.charged, sub.imageBytes
-	if b.err != nil {
-		return
-	}
 	px := int64(w) * int64(h)
-	if err := b.reserve(4 * px); err != nil {
+	src, err := b.renderRegion(w, h, func() { b.draw(n, cm, inner, vp, nil, nil) })
+	if err != nil {
 		b.err = err
 		return
 	}
-	src := make([]uint8, 4*px)
-	if len(sub.items) > 0 {
-		layers := layersNeeded(sub.items)
-		need := int64(layers)*4*px + 4*px
-		if err := b.reserve(need); err != nil {
-			b.release(4 * px) // src
-			b.err = err
-			return
-		}
-		r := &renderer{sc: sub, n: h, cov: make([]uint8, px), ccov: make([]uint8, px), tmp: make([]uint8, px), mcov: make([]uint8, px)}
-		for i := 0; i < layers; i++ {
-			r.pool = append(r.pool, make([]uint8, 4*px))
-		}
-		copy(src, r.band(0, h))
-		b.release(need)
-	}
 	// The filter's primitives, on pictures of floats.
-	fc := &fctx{w: w, h: h, m: matrix{sx, 0, 0, sy, 0, 0}.mul(m), results: map[string]fbuf{}, reserve: b.reserve, release: b.release}
+	fc := &fctx{w: w, h: h, m: matrix{sx, 0, 0, sy, 0, 0}.mul(m), results: map[string]fbuf{}, reserve: b.reserve, release: b.release,
+		full: cm, region: [4]float64{rx, ry, rw, rh}, bbox: bx, primBox: primBox, fontSize: st.fontSize, vp: vp,
+		rects: map[string]image.Rectangle{}, lastRect: image.Rect(0, 0, w, h), images: map[*node]fbuf{}}
 	defer fc.end()
 	fc.linear = true
 	if v, ok := f.prop("color-interpolation-filters"); ok && strings.TrimSpace(v) == "sRGB" {
@@ -178,11 +155,66 @@ func (b *builder) filtered(n *node, f *node, m matrix, st style, vp viewport, ow
 	} else {
 		fc.unit = [2]float64{1, 1}
 	}
-	err := fc.begin(src)
+	err = fc.begin(src)
 	b.release(4 * px) // src
 	if err != nil {
 		b.err = err
 		return
+	}
+	// The pictures of feImage: a picture of a data URI in the subregion, or
+	// an element of the document, drawn as the element is.
+	for _, p := range f.children {
+		if p.name != "feImage" {
+			continue
+		}
+		href, ok := p.attr("href")
+		if !ok {
+			href, _ = p.attr("xlink:href")
+		}
+		href = strings.TrimSpace(href)
+		var draw func()
+		if strings.HasPrefix(href, "#") {
+			t := b.ids[href[1:]]
+			if t == nil {
+				continue
+			}
+			draw = func() { b.element(t, cm, inner, vp, nil) }
+		} else if strings.HasPrefix(href, "data:") {
+			x, y, iw, ih := rx, ry, rw, rh
+			if v, ok := parseLength(p.attrs["x"], st.fontSize, vp, axisX); ok && p.attrs["x"] != "" {
+				x = v
+			}
+			if v, ok := parseLength(p.attrs["y"], st.fontSize, vp, axisY); ok && p.attrs["y"] != "" {
+				y = v
+			}
+			if v, ok := parseLength(p.attrs["width"], st.fontSize, vp, axisX); ok && p.attrs["width"] != "" {
+				iw = v
+			}
+			if v, ok := parseLength(p.attrs["height"], st.fontSize, vp, axisY); ok && p.attrs["height"] != "" {
+				ih = v
+			}
+			attrs := map[string]string{"x": strconv.FormatFloat(x, 'g', -1, 64), "y": strconv.FormatFloat(y, 'g', -1, 64),
+				"width": strconv.FormatFloat(iw, 'g', -1, 64), "height": strconv.FormatFloat(ih, 'g', -1, 64), "href": href}
+			if v, ok := p.attrs["preserveAspectRatio"]; ok {
+				attrs["preserveAspectRatio"] = v
+			}
+			img := &node{name: "image", attrs: attrs, parent: p}
+			draw = func() { b.image(img, cm, inner, vp, nil, nil) }
+		} else {
+			continue
+		}
+		pic, err := b.renderRegion(w, h, draw)
+		if err != nil {
+			b.err = err
+			return
+		}
+		buf, err := fc.fromBytes(pic)
+		b.release(4 * px) // pic
+		if err != nil {
+			b.err = err
+			return
+		}
+		fc.images[p] = buf
 	}
 	out, err := fc.run(f, vp, st)
 	if err != nil {
@@ -225,6 +257,41 @@ func (b *builder) filtered(n *node, f *node, m matrix, st style, vp viewport, ow
 	b.add(it)
 }
 
+// renderRegion draws what draw adds into a scene of its own, w by h, and
+// returns its pixels, 4 w h bytes reserved for the caller to release.
+func (b *builder) renderRegion(w, h int, draw func()) ([]uint8, error) {
+	outerSc, full := b.sc, b.full
+	b.sc = &scene{w: w, h: h, points: outerSc.points, itemCount: outerSc.itemCount, charged: outerSc.charged, imageBytes: outerSc.imageBytes}
+	b.full = image.Rect(0, 0, w, h)
+	draw()
+	sub := b.sc
+	b.sc, b.full = outerSc, full
+	outerSc.points, outerSc.itemCount, outerSc.charged, outerSc.imageBytes = sub.points, sub.itemCount, sub.charged, sub.imageBytes
+	if b.err != nil {
+		return nil, b.err
+	}
+	px := int64(w) * int64(h)
+	if err := b.reserve(4 * px); err != nil {
+		return nil, err
+	}
+	pic := make([]uint8, 4*px)
+	if len(sub.items) > 0 {
+		layers := layersNeeded(sub.items)
+		need := int64(layers)*4*px + 4*px
+		if err := b.reserve(need); err != nil {
+			b.release(4 * px) // pic
+			return nil, err
+		}
+		r := &renderer{sc: sub, n: h, cov: make([]uint8, px), ccov: make([]uint8, px), tmp: make([]uint8, px), mcov: make([]uint8, px)}
+		for i := 0; i < layers; i++ {
+			r.pool = append(r.pool, make([]uint8, 4*px))
+		}
+		copy(pic, r.band(0, h))
+		b.release(need)
+	}
+	return pic, nil
+}
+
 // fctx runs a filter's primitives.
 type fctx struct {
 	w, h     int
@@ -238,6 +305,19 @@ type fctx struct {
 	release  func(int64)
 	reserved int64
 	under    bool // the last primitive leaves out the source it puts on top
+	// For primitives placed in user space: the transform from it to the
+	// region's pixels, the filter region (x, y, width, height), the
+	// element's bounding box, whether primitive units are fractions of it,
+	// the font size and viewport for lengths.
+	full     matrix
+	region   [4]float64
+	bbox     [4]float64
+	primBox  bool
+	fontSize float64
+	vp       viewport
+	rects    map[string]image.Rectangle // the subregions of the results
+	lastRect image.Rectangle            // and of the last one
+	images   map[*node]fbuf             // the pictures of feImage
 }
 
 // sourceOnTop reports whether the last primitive of a filter puts the
@@ -328,7 +408,8 @@ func paintsOpaque(n *node, st style, vp viewport, depth int) bool {
 // drawnPrimitive reports whether run draws a primitive of that name.
 func drawnPrimitive(name string) bool {
 	switch name {
-	case "feGaussianBlur", "feOffset", "feFlood", "feComposite", "feMerge", "feColorMatrix", "feBlend", "feDropShadow", "feComponentTransfer":
+	case "feGaussianBlur", "feOffset", "feFlood", "feComposite", "feMerge", "feColorMatrix", "feBlend", "feDropShadow", "feComponentTransfer",
+		"feTurbulence", "feMorphology", "feConvolveMatrix", "feDisplacementMap", "feTile", "feImage", "feDiffuseLighting", "feSpecularLighting":
 		return true
 	}
 	return false
@@ -386,9 +467,19 @@ func fromLinear(v float32) float32 {
 
 // begin turns the drawn element into the source picture.
 func (c *fctx) begin(src []uint8) error {
-	b, err := c.alloc()
+	b, err := c.fromBytes(src)
 	if err != nil {
 		return err
+	}
+	c.source, c.last = b, b
+	return nil
+}
+
+// fromBytes turns premultiplied sRGB bytes into a picture of floats.
+func (c *fctx) fromBytes(src []uint8) (fbuf, error) {
+	b, err := c.alloc()
+	if err != nil {
+		return nil, err
 	}
 	for i := 0; i < len(src); i += 4 {
 		a := float32(src[i+3]) / 255
@@ -404,8 +495,7 @@ func (c *fctx) begin(src []uint8) error {
 			b[i+k] = float32(min(v, 1) * a)
 		}
 	}
-	c.source, c.last = b, b
-	return nil
+	return b, nil
 }
 
 // finish turns a result back into premultiplied sRGB bytes.
@@ -484,6 +574,10 @@ func (c *fctx) run(f *node, vp viewport, st style) (fbuf, error) {
 		var out fbuf
 		var err error
 		under := c.under && i == lastAt
+		var r image.Rectangle
+		if drawnPrimitive(p.name) {
+			r = c.subregion(p, inputsOf(p))
+		}
 		switch p.name {
 		case "feGaussianBlur":
 			out, err = c.blur(p)
@@ -511,15 +605,42 @@ func (c *fctx) run(f *node, vp viewport, st style) (fbuf, error) {
 			out, err = c.dropShadow(p, vp, st, under)
 		case "feComponentTransfer":
 			out, err = c.transfer(p)
+		case "feTurbulence":
+			out, err = c.turbulence(p, r)
+		case "feMorphology":
+			out, err = c.morphology(p)
+		case "feConvolveMatrix":
+			out, err = c.convolve(p)
+		case "feDisplacementMap":
+			out, err = c.displacement(p)
+		case "feTile":
+			out, err = c.tile(p, r)
+		case "feImage":
+			out, err = c.image(p)
+		case "feDiffuseLighting":
+			out, err = c.lighting(p, st, false)
+		case "feSpecularLighting":
+			out, err = c.lighting(p, st, true)
 		default:
 			continue // not drawn: the input passes on
 		}
 		if err != nil {
 			return nil, err
 		}
-		c.last = out
-		if r := strings.TrimSpace(p.attrs["result"]); r != "" {
-			c.results[r] = out
+		if r != image.Rect(0, 0, c.w, c.h) {
+			// Only its subregion: on a copy, the result may be an input's.
+			cp, err := c.alloc()
+			if err != nil {
+				return nil, err
+			}
+			copy(cp, out)
+			c.clip(cp, r)
+			out = cp
+		}
+		c.last, c.lastRect = out, r
+		if name := strings.TrimSpace(p.attrs["result"]); name != "" {
+			c.results[name] = out
+			c.rects[name] = r
 		}
 	}
 	return c.last, nil

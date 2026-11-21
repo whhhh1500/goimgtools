@@ -92,6 +92,7 @@ func FuzzOpen(f *testing.F) {
 	f.Add([]byte(sample))
 	f.Add([]byte(`<svg width="10" height="10"><text x="1" y="8" font-size="8">ab</text></svg>`))
 	f.Add([]byte(`<svg viewBox="0 0 1 1"><use href="#a"/><g id="a"><use href="#a"/></g></svg>`))
+	f.Add([]byte(`<svg width="24" height="16"><filter id="f"><feTurbulence baseFrequency=".2" numOctaves="2" stitchTiles="stitch" result="t"/><feMorphology radius="1" operator="dilate" in="SourceGraphic"/><feConvolveMatrix order="3" kernelMatrix="0 1 0 1 -4 1 0 1 0" edgeMode="wrap"/><feDisplacementMap in2="t" scale="4" xChannelSelector="R"/><feTile x="2" y="2" width="5" height="5"/><feDiffuseLighting in="SourceAlpha" surfaceScale="3"><fePointLight x="4" y="4" z="9"/></feDiffuseLighting><feSpecularLighting specularExponent="8"><feSpotLight x="1" y="1" z="5" pointsAtX="9" limitingConeAngle="40"/></feSpecularLighting><feImage href="#c" x="1" width="9"/></filter><circle id="c" cx="8" cy="8" r="5" filter="url(#f)"/></svg>`))
 	f.Fuzz(func(t *testing.T, data []byte) {
 		env := pipeline.NewEnv(16<<20, "")
 		s, err := Open(data, env)
