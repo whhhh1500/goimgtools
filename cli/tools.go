@@ -207,8 +207,9 @@ func compare(args []string, stdout, stderr io.Writer) error {
 	fl := flag.NewFlagSet("goimgtools compare", flag.ContinueOnError)
 	fl.SetOutput(stderr)
 	minPSNR := fl.Float64("min-psnr", 0, "fail (exit status 1) unless the images are of the same size and at least this many `dB` close")
+	ssim := fl.Bool("ssim", false, "also print the structural similarity (SSIM, 1 for identical; above about 0.98 a difference is hard to see)")
 	fl.Usage = func() {
-		fmt.Fprint(stderr, "usage: goimgtools compare [-min-psnr dB] a b\n\nCompares two images pixel by pixel, whatever their formats: whether they\nare identical, and if not, the PSNR in dB (higher is closer: above 40 the\ndifference is hard to see), the largest difference and how many pixels\ndiffer.\n\n")
+		fmt.Fprint(stderr, "usage: goimgtools compare [-min-psnr dB] [-ssim] a b\n\nCompares two images pixel by pixel, whatever their formats: whether they\nare identical, and if not, the PSNR in dB (higher is closer: above 40 the\ndifference is hard to see), the largest difference and how many pixels\ndiffer.\n\n")
 		fl.PrintDefaults()
 	}
 	if err := fl.Parse(args); err != nil {
@@ -230,6 +231,13 @@ func compare(args []string, stdout, stderr io.Writer) error {
 		fmt.Fprintf(stdout, "different sizes: %dx%d and %dx%d\n", d.Width, d.Height, w, h)
 	} else {
 		fmt.Fprintln(stdout, d.String())
+		if *ssim {
+			s, err := inspect.SSIM(a, b)
+			if err != nil {
+				return fmt.Errorf("compare: %w", err)
+			}
+			fmt.Fprintf(stdout, "SSIM %.5f\n", s)
+		}
 	}
 	if *minPSNR > 0 && (!d.SameSize || d.PSNR < *minPSNR) {
 		return fmt.Errorf("compare: below the %.2f dB asked for", *minPSNR)

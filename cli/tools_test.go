@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/color"
 	"image/gif"
@@ -466,5 +467,17 @@ func TestPlaceholderCommand(t *testing.T) {
 		if _, _, err := cli(args...); err == nil {
 			t.Errorf("%v: no error", args)
 		}
+	}
+}
+
+func TestCompareSSIM(t *testing.T) {
+	dir := t.TempDir()
+	a, b := filepath.Join(dir, "a.png"), filepath.Join(dir, "b.png")
+	writePNG(t, a, testutil.Images(60, 40)["rgba-opaque"])
+	writePNG(t, b, testutil.Images(60, 40)["gray"])
+	out, _, err := cli("compare", "-ssim", a, b)
+	s, _ := inspect.SSIM(goimgtools.Open(a), goimgtools.Open(b))
+	if err != nil || !strings.Contains(out, fmt.Sprintf("SSIM %.5f\n", s)) {
+		t.Errorf("printed %q, %v; SSIM %.5f", out, err, s)
 	}
 }

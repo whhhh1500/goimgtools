@@ -169,6 +169,10 @@ func TestSameOnEveryProcessor(t *testing.T) {
 			return []byte(s), err
 		}, "d28e56cb71c3aa27"},
 		{"thumbhash", func() ([]byte, error) { return inspect.ThumbHash(clear.Clone()) }, "fd2197c16d62bb42"},
+		{"ssim", func() ([]byte, error) {
+			s, err := inspect.SSIM(photo.Clone(), photo.Clone().Blur(1.3))
+			return []byte(fmt.Sprintf("%.17g", s)), err
+		}, "9a2732cf4d680163"},
 		{"gif animation", func() ([]byte, error) {
 			return FromBytes(animationBytes(t)).Animated().Resize(90, 0).GIF(GIFOptions{Colors: 50}).ToBytes()
 		}, "57b8955b8f3855b5"},
