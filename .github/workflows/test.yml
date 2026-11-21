@@ -153,9 +153,9 @@ jobs:
     # would come out differently on them: no floating-point product may be
     # fused with an addition (an explicit conversion, float64(a*b) + c,
     # rounds the product first). This lists any the compiler still fuses,
-    # in the library and in the codecs of the HEIC and AVIF modules (Kvazaar
-    # and libavif translated from WebAssembly, whose translation converts
-    # every product).
+    # in the library, in the HEIC module's colour conversion, and in the
+    # codecs of the HEIC and AVIF modules (Kvazaar and libavif translated
+    # from WebAssembly, whose translation converts every product).
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -167,7 +167,7 @@ jobs:
           bad=0
           s=$RUNNER_TEMP/asm.txt
           for arch in arm64 ppc64le s390x riscv64 loong64; do
-            for p in .:./... heic:./internal/kvazaar avif:./internal/libavif; do
+            for p in .:./... heic:. heic:./internal/kvazaar avif:./internal/libavif; do
               # The listing of a translated codec runs to millions of lines:
               # it goes to a file, not into a variable.
               (cd "${p%%:*}" && GOARCH=$arch go build -a -gcflags=-S "${p#*:}") > "$s" 2>&1 || { tail -20 "$s"; exit 1; }
@@ -221,9 +221,12 @@ jobs:
           set -o pipefail
           GOARCH=${{ matrix.arch }} go test -exec ${{ matrix.qemu }} -timeout 120m -skip "${{ matrix.skip || '^$' }}" -v ./tests ./pipeline ./inspect ./internal/resize ./internal/ops | grep -E '^(--- (PASS|FAIL|SKIP)|FAIL|ok|panic)|^ +[^ ]+\.go:[0-9]+:'
       # The HEIC encoder (Kvazaar translated to Go) gives the same stream,
-      # and libavif (AVIF) the same file.
+      # HEIC files decoded a row of tiles at a time the same pixels, and
+      # libavif (AVIF) the same file.
       - working-directory: heic
-        run: GOARCH=${{ matrix.arch }} go test -exec ${{ matrix.qemu }} -timeout 30m -v ./internal/kvazaar
+        run: |
+          GOARCH=${{ matrix.arch }} go test -exec ${{ matrix.qemu }} -timeout 30m -v ./internal/kvazaar
+          GOARCH=${{ matrix.arch }} go test -exec ${{ matrix.qemu }} -timeout 30m -v -run 'TestStreamSameAsWhole|TestStreamTurned' .
       - working-directory: avif
         run: GOARCH=${{ matrix.arch }} go test -exec ${{ matrix.qemu }} -timeout 30m -v ./internal/libavif
 

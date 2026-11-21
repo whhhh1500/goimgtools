@@ -423,9 +423,17 @@ what it includes in its own `licenses/` directory, which goes with it:
   includes parts of the C library of wasi-sdk (wasi-libc, with musl and
   cloudlibc; MIT and BSD 2-clause licences, `LICENSE-WASI-LIBC`).
 - **gen2brain/h265** (MIT licence, copyright roticv and Karpeles Lab Inc.;
-  `LICENSE-H265`): the module decodes HEIC with it (a dependency), and the
+  `LICENSE-H265`): the module decodes HEIC with it (a dependency); the
   writing of the HEIF boxes in `container.go` is taken from its
-  `heic/encode.go` and `heic/gridenc.go`, changed.
+  `heic/encode.go` and `heic/gridenc.go`, their reading in `heif.go` from
+  its `heic/isobmff.go`, `heic/grid.go` and `heic/transform.go`, and the
+  conversion of colours in `convert.go` from its `heic/color.go` and
+  `heic/color_row.go`, changed. The test files `alpha.heic`, `basic.heic`,
+  `chroma422.heic`, `chroma444.heic` and `grid_alpha.heic` are from its
+  testdata.
+- **gen2brain/heic** (MIT licence, copyright gen2brain;
+  `LICENSE-GEN2BRAIN-HEIC`): the test files `gray.heic` and
+  `test_exif.heic` are from its testdata.
 
 ## The AVIF module (`avif/`)
 

@@ -35,13 +35,35 @@
 // it includes (Kvazaar's BSD licence among them) are in its licenses
 // directory.
 //
-// Unlike the formats of goimgtools, a HEIC is decoded whole: the pixels (4
-// bytes each, 8 for more than 8 bits) are counted in the memory limit. The
-// decoder takes as many goroutines as the image's Threads (a grid's tiles
-// and the rows of a picture are decoded at once); its output does not
-// depend on them. It does depend, by a level here and there, on whether
-// h265 converts the colours with SIMD (amd64, arm64 and riscv64 with RVV)
-// or in Go (-tags noasm, other processors): Go fuses multiplications and
+// A HEIC without transparency and of 8 bits (as phones write them: a grid
+// of 512 x 512 tiles, or one picture) is decoded without holding its
+// pixels. A grid is decoded a row of tiles at a time and handed on in
+// strips: up to four rows of tiles are held (as many as the memory limit
+// has room for, at least the two a row of pixels is made from), their tiles
+// decoded in the order they are stored, on as many goroutines as the
+// image's Threads, ahead of the rows being made into pixels. A single
+// picture, and a grid turned by irot or flipped by imir (a photograph taken
+// upright), are decoded into their planes (1.5 bytes a pixel) and made into
+// pixels a strip at a time. Converted to JPEG, a photograph of 3992 x 2992
+// in 48 tiles peaks at 27MB of process memory instead of 81MB decoded whole
+// (37MB instead of 87MB with Threads(8)), the same turned a quarter by irot
+// at 32MB instead of 124MB, and one of 4032 x 3024 as a single picture at
+// 56MB instead of 102MB: 4% to 7% slower on one thread, as fast or faster
+// with Threads(8). Nothing is decoded before the first strip is asked for:
+// Metadata takes 2ms for such a file, and LimitInputPixels refuses one
+// before it is decoded. Its pixels are those h265 gives with its SIMD, on
+// every processor: the colours are converted here with its arithmetic,
+// each product rounded on its own. A picture smaller than its ispe box says
+// is an error.
+//
+// Other files (with transparency, or of more than 8 bits) are decoded
+// whole: the pixels (4 bytes each, 8 for more than 8 bits) are counted in
+// the memory limit. The decoder takes as many goroutines as the image's
+// Threads (a grid's tiles and the rows of a picture are decoded at once).
+// The output depends on neither Threads nor the memory limit; for files
+// decoded whole it does depend, by a level here and there, on whether h265
+// converts the colours with SIMD (amd64, arm64 and riscv64 with RVV) or in
+// Go (-tags noasm, other processors): Go fuses multiplications and
 // additions on some processors, and its rounding then differs.
 package heic
 
@@ -192,6 +214,12 @@ func decode(in goimgtools.Input, env *pipeline.Env) (pipeline.Source, error) {
 	data := make([]byte, size)
 	if _, err := ra.ReadAt(data, 0); err != nil && err != io.EOF {
 		return nil, err
+	}
+	if s, err := newStream(data, env); s != nil || err != nil {
+		if err != nil {
+			return nil, err
+		}
+		return s, nil
 	}
 	cfg, err := gheic.DecodeConfig(bytes.NewReader(data))
 	if err != nil {

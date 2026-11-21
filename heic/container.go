@@ -249,6 +249,10 @@ func (f *heicFile) coded(pics []coded, w, h, channels int, hidden bool, extra ..
 	return ids
 }
 
+// primaryProps are put on the primary image after its own: by the tests,
+// for an image turned by irot and imir.
+var primaryProps []property
+
 // marshal writes the file.
 func (p *picture) marshal() ([]byte, error) {
 	f := &heicFile{}
@@ -262,7 +266,7 @@ func (p *picture) marshal() ([]byte, error) {
 		if p.storedW != p.width || p.storedH != p.height {
 			crop = []property{{clap(p.width, p.height, p.storedW, p.storedH), true}}
 		}
-		f.coded(p.color, p.storedW, p.storedH, p.channels, false, append(colour, crop...)...)
+		f.coded(p.color, p.storedW, p.storedH, p.channels, false, append(append(colour, crop...), primaryProps...)...)
 		if p.alpha != nil {
 			ids := f.coded(p.alpha, p.storedW, p.storedH, 1, true, append([]property{aux}, crop...)...)
 			if len(ids) == 1 {
@@ -284,7 +288,7 @@ func (p *picture) marshal() ([]byte, error) {
 			f.items[id-1].refs = []ref{{"dimg", ids}}
 			return id
 		}
-		primary := grid(p.color, p.channels, false, colour...)
+		primary := grid(p.color, p.channels, false, append(colour, primaryProps...)...)
 		if p.alpha != nil {
 			id := grid(p.alpha, 1, true, aux)
 			f.items[id-1].refs = append(f.items[id-1].refs, ref{"auxl", []uint16{primary}})
