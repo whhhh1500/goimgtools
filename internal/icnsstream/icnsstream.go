@@ -157,9 +157,9 @@ func decodeLegacy(r io.ReaderAt, e, mask entry, s int) (*image.NRGBA, error) {
 	m := image.NewNRGBA(image.Rect(0, 0, s, s))
 	n := s * s
 	if len(data) == 3*n {
-		// Not compressed.
+		// Not compressed: red, green and blue together, as Pillow reads it.
 		for i := 0; i < n; i++ {
-			m.Pix[4*i], m.Pix[4*i+1], m.Pix[4*i+2] = data[i], data[n+i], data[2*n+i]
+			m.Pix[4*i], m.Pix[4*i+1], m.Pix[4*i+2] = data[3*i], data[3*i+1], data[3*i+2]
 		}
 	} else {
 		p := 0

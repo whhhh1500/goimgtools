@@ -6,11 +6,11 @@
 
 ### 新增
 
-- `Pages(images)`（`goimgtools pages 图片... out.pdf`）：多页 PDF，每张图一页、按顺序，各自按自己的配方在写到它那一页时读取，无论多少页内存只占一页；当作图像读取时是第一页。
-- `ToProfile(icc)`（`-profile p3|adobe-rgb|文件.icc`），同 sharp 的 `withIccProfile`：把颜色转换到由原色与色调曲线描述的 RGB 配置并随输出写入；输入有自己的配置时直接从它转换，sRGB 表现不了的颜色得以保留（Display P3 的红转到 Adobe RGB 是 LittleCMS 的 (239, 0, 0)，而不是经 sRGB 裁剪后的 (219, 0, 0)）；在 32³ 个颜色上与 LittleCMS 相差不超过 1 级。`ProfileDisplayP3()` 与 `ProfileAdobeRGB()` 给出这两个色彩空间的配置。
+- `Pages(images)`（`goimgtools pages 图片... out.pdf`）：多页 PDF，每张图一页、按顺序，各自按自己的配方在写到它那一页时读取，无论多少页内存只占一页；当作图像读取时是第一页。各页的操作与设置（Resize、Density、ToProfile 等）设在该页的图上，设在整份文档上会报错；文档或任一页上的 WithContext 都能中止它。命令行的最后一个参数须以 .pdf 结尾，以免忘写 PDF 名时覆盖了图片。
+- `ToProfile(icc)`（`-profile p3|adobe-rgb|文件.icc`），同 sharp 的 `withIccProfile`：把颜色转换到由原色与色调曲线描述的 RGB 配置并随输出写入；输入有自己的配置时直接从它转换，sRGB 表现不了的颜色得以保留（Display P3 的红转到 Adobe RGB 是 LittleCMS 的 (239, 0, 0)，而不是经 sRGB 裁剪后的 (219, 0, 0)）；在 32³ 个颜色上与 LittleCMS 相差不超过 1 级；结果每通道 8 位，同 `ToSRGB`。`ProfileDisplayP3()` 与 `ProfileAdobeRGB()` 给出这两个色彩空间的配置。用于瓦片或 `Animated` 保留的动画时报错。
 - ICNS，macOS 的图标文件（`ICNS(ICNSOptions{Sizes})`、`.icns`、`-icns-sizes`）：写出为不超过原图的各标准尺寸的正方形 PNG，图像按比例放入、居中、四周透明（Pillow 会把图拉伸到每个尺寸、一直到 1024），每个类型同时充当一半尺寸的 Retina 图，带目录，同 iconutil 的写法；读取最大的一张，PNG 的或旧式行程编码 RGB 加遮罩的，与 Pillow 逐像素相同。
-- PDF 输出（`PDF(PDFOptions{Quality})`、`.pdf`，`-quality` 得 JPEG 页面）：单页，页面大小按图像分辨率，图像无损存储（Flate，逐行按 PNG 的方式滤波）或存为 JPEG，透明作为软蒙版，保留颜色配置；边读图像边写（软蒙版暂存于工作存储）。pdfium 渲染结果与原图相差不超过 1 级。
-- SVG 输入（`.svg`）：用本包的抗锯齿光栅化器逐条带渲染，内存与渲染尺寸无关。支持形状与路径（弧线、曲线）、变换、嵌套视口与 viewBox、填充（非零、奇偶）与描边（虚线；斜接、圆、斜切连接；平头、圆头、方头端点）、线性与径向渐变（焦点、延展方式、单位、继承）、形状与组的不透明度、CSS（style 属性与样式表：类型、类、id、后代与子选择器）、use 与 symbol、switch（`requiredFeatures` 与 `requiredExtensions` 同 librsvg 视为不支持，draw.io 的标签因而回退到其文字）、剪切路径（形状与文字）、亮度与 alpha 蒙版（`mask-type`）、图案、标记、`paint-order`、`vector-effect: non-scaling-stroke`、用已安装字体排版的 text 与 tspan（粗体、斜体、对齐、字距、缺字回退）和内嵌图片（data URI；不读外部文件；画得不到原尺寸一半的图片按画出的尺寸解码，取每个像素覆盖范围的平均，同 cairo 缩小图片的方式：2400 万像素的照片画成 600×400 用时 0.25 秒，librsvg 则拒绝超过 10MB 的 data URI）。use 在别处重画的形状共用轮廓：matplotlib 两万个点的散点图轮廓只占 5MB，用时 0.6 秒。链首的缩放直接按目标尺寸渲染矢量，同 sharp 任意倍数清晰。与 librsvg（sharp 0.35.5）相比只在边缘有差异（八个测试文档平均差 0.04–0.27 级，模糊 1.0 级）。滤镜：高斯模糊、偏移、填色、合成（含 arithmetic）、合并、颜色矩阵、混合、投影与分量传递，按规范在线性光中计算（其他滤镜原语原样传递输入）；图像放不进剩余内存的一半时降分辨率计算，此时把元素本身放在最上层的滤镜（投影）之后再按全分辨率画元素本身，保持清晰。要求过多（use 层层相乘）的文档在内存上限处停止。
+- PDF 输出（`PDF(PDFOptions{Quality})`、`.pdf`，`-quality` 得 JPEG 页面）：单页，页面大小按图像分辨率，图像无损存储（Flate，逐行按 PNG 的方式滤波）或存为 JPEG，透明作为软蒙版，保留颜色配置（通道数与图像不符的配置除外，如变成灰度的图上的 RGB 配置）；超过 Acrobat 上限 200 英寸的页面按比例缩小，图像像素不变；边读图像边写（软蒙版暂存于工作存储）。pdfium 渲染结果与原图相差不超过 1 级。
+- SVG 输入（`.svg`）：用本包的抗锯齿光栅化器逐条带渲染，内存与渲染尺寸无关。支持形状与路径（弧线、曲线）、变换、嵌套视口与 viewBox、填充（非零、奇偶）与描边（虚线；斜接、圆、斜切连接；平头、圆头、方头端点）、线性与径向渐变（焦点、延展方式、单位、继承）、形状与组的不透明度、CSS（style 属性与样式表：类型、类、id、后代与子选择器）、use 与 symbol、switch（`requiredFeatures` 与 `requiredExtensions` 同 librsvg 视为不支持，draw.io 的标签因而回退到其文字）、剪切路径（形状与文字）、亮度与 alpha 蒙版（`mask-type`）、图案、标记、`paint-order`、`vector-effect: non-scaling-stroke`、用已安装字体排版的 text 与 tspan（粗体、斜体、对齐、字距、缺字回退）和内嵌图片（data URI；不读外部文件；画得不到原尺寸一半的图片（或整张放不进剩余内存的一半时，只要画得比原尺寸小）按画出的尺寸解码，取每个像素覆盖范围的平均，同 cairo 缩小图片的方式：2400 万像素的照片画成 600×400 用时 0.25 秒，librsvg 则拒绝超过 10MB 的 data URI）。use 在别处重画的形状共用轮廓：matplotlib 两万个点的散点图轮廓只占 5MB，用时 0.6 秒。链首的缩放直接按目标尺寸渲染矢量，同 sharp 任意倍数清晰。与 librsvg（sharp 0.35.5）相比只在边缘有差异（八个测试文档平均差 0.04–0.27 级，模糊 1.0 级）。滤镜：高斯模糊、偏移、填色、合成（含 arithmetic）、合并、颜色矩阵、混合、投影与分量传递，按规范在线性光中计算（其他滤镜原语原样传递输入）；图像放不进剩余内存的一半时降分辨率计算，此时把元素本身放在最上层的滤镜（投影）之后再按全分辨率画元素本身，保持清晰（线性光下限于元素全用不透明颜色时）。要求过多（use 层层相乘）的文档在内存上限处停止。
 - `ParseColor`（因而命令行与 `Do`）接受所有 CSS 颜色：148 个颜色名、`#rgba`、`rgb()`、`rgba()`、`hsl()`、`hsla()`。
 - TGA（Truevision Targa，`TGA()`、`.tga`），游戏贴图常用：读取调色板、15 到 32 位真彩与灰度图，未压缩或 RLE 压缩（允许一个包跨到下一行），任意角起始，遵从 TGA 2.0 扩展区的 alpha 属性（无 alpha 或预乘）；16 位像素只在头部给了 1 个属性位时把该位当不透明度，置位为不透明（Pillow 不看头部，置位即当透明），5 位通道按 Pillow 的方式展开（v × 255 / 31）。写出为 RLE 压缩、自上而下，与 Pillow 以 compression `"tga_rle"`、orientation 1 写出的文件逐字节相同。
 - QOI（"Quite OK Image"，`QOI()`、`.qoi`）：无损 RGB 或 RGBA，流式读写，文件与参考编码器和 Pillow 逐字节相同（只是颜色空间标为 sRGB，Pillow 需指定才这样标）。
@@ -38,6 +38,7 @@
 
 ### 修复
 
+- 带非 sRGB 颜色配置的图（如手机照片的 Display P3）切成瓦片（`ToTiles`）时转换为 sRGB，同不能带配置的格式：瓦片不带配置写出，原先颜色显示不对（P3 的红显示成 sRGB 的 (234, 51, 35)）。
 - 折线与多边形描边在各段相接处偏暗：部分覆盖的像素上各段与拐点的覆盖率直接相加；现按它们的并集计算（同 cairo、Skia 的扫描），与 64×64 采样相差不超过 1.24 级，过折线上一点的线与直线相同，点距 0.4 像素的曲线涂黑面积等于长×宽（原来多 24.8%）。
 - `Join` 遇到 `FromReader`（只能读一次）的图就失败；现在这种图在开头打开、留到它那一行。
 - `Boolean` 让不透明的图在 `EnsureAlpha` 看来像有透明，于是不加 alpha。

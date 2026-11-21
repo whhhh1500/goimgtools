@@ -356,9 +356,11 @@ func (s *stroker) stroke(q poly) {
 	// run adds the segments seg(a) to seg(b), joined by bevels: the union
 	// of their rectangles and bevels is the polygon of the offsets of the
 	// line, the outer side of each turn bevelled and the inner side meeting
-	// at the miter, as long as on each side every segment keeps some of
-	// its length (a turn tighter than the half width does not), so that is
-	// what is added, a piece in place of two for each segment.
+	// at the miter, as long as on each side every segment is longer than
+	// what the rectangles of its neighbours reach into it past their
+	// vertices (h sin(the turn), more than the h tan(half the turn) the
+	// miter is set back by), so that is what is added, a piece in place of
+	// two for each segment.
 	run := func(a, b int) {
 		if a == b {
 			rect(seg(a))
@@ -379,10 +381,10 @@ func (s *stroker) stroke(q poly) {
 			cross := float64(px*uy) - float64(py*ux)
 			dot := float64(px*ux) + float64(py*uy)
 			x, y := pt(v)
-			// The inner side meets at the miter, set back along both
-			// segments by h tan(half the turn).
+			// The inner side meets at the miter; on that side each
+			// rectangle reaches h sin(the turn) into the other segment.
 			mx, my := (pnx+nx)/(1+dot), (pny+ny)/(1+dot)
-			t := float64(h*math.Abs(cross)) / (1 + dot)
+			t := float64(h * math.Abs(cross))
 			var tL, tR float64
 			switch {
 			case cross > 0: // turning to the left: the left side is inside

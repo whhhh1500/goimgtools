@@ -17,6 +17,7 @@ import (
 	"strconv"
 
 	"github.com/whhhh1500/goimgtools/internal/jpegstream"
+	"github.com/whhhh1500/goimgtools/internal/ops"
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
@@ -59,6 +60,12 @@ func num(v float64) string { return strconv.FormatFloat(v, 'f', -1, 64) }
 type noClose struct{ pipeline.Source }
 
 func (noClose) Close() error { return nil }
+
+// opaqueNoClose is noClose for a source of no transparency (grey).
+type opaqueNoClose struct{ pipeline.Source }
+
+func (opaqueNoClose) Close() error { return nil }
+func (opaqueNoClose) Opaque() bool { return true }
 
 // Encode writes src as a PDF document of one page. src is not closed.
 func Encode(w io.Writer, src pipeline.Source, o *Options) error {
@@ -120,22 +127,29 @@ func (d *Document) AddPage(src pipeline.Source, o *Options) error {
 	m := src.ColorModel()
 	grey := m == color.GrayModel || m == color.Gray16Model
 	alpha := !pipeline.IsOpaque(src) && !grey
-	// The compressors: about a megabyte each (compress/flate's tables).
-	zlibs := int64(1)
+	// The compressors: about a megabyte each (compress/flate's tables); and
+	// the rows the filters try, 28 bytes a pixel at most.
+	need := int64(1)<<20 + 32*int64(b.Dx())
 	if alpha {
-		zlibs++
+		need += 1 << 20
 	}
-	if err := env.Budget.Reserve(zlibs<<20, "pdf compressor"); err != nil {
+	if err := env.Budget.Reserve(need, "pdf compressor"); err != nil {
 		return err
 	}
-	defer env.Budget.Release(zlibs << 20)
+	defer env.Budget.Release(need)
+	// A profile of other channels than the picture's (an RGB one on what
+	// was made grey) is left out: a reader could not apply it.
+	icc := o.ICC
+	if len(icc) >= 20 && (string(icc[16:20]) == "GRAY") != grey {
+		icc = nil
+	}
 	c := d.c
 	page, contents, picture, pictureLen := d.alloc(), d.alloc(), d.alloc(), d.alloc()
 	var mask, maskLen, profile int
 	if alpha {
 		mask, maskLen = d.alloc(), d.alloc()
 	}
-	if len(o.ICC) > 0 {
+	if len(icc) > 0 {
 		profile = d.alloc()
 	}
 	d.kids = append(d.kids, page)
@@ -144,6 +158,11 @@ func (d *Document) AddPage(src pipeline.Source, o *Options) error {
 		dpi = 72
 	}
 	pw, ph := float64(b.Dx())*72/dpi, float64(b.Dy())*72/dpi
+	// Acrobat's largest page is 14400 units (200 inches): a larger one is
+	// made smaller, the picture keeping all its pixels.
+	if big := max(pw, ph); big > 14400 {
+		pw, ph = float64(pw*14400)/big, float64(ph*14400)/big
+	}
 	d.obj(page)
 	c.printf("<< /Type /Page /Parent %d 0 R /MediaBox [0 0 %s %s] /Resources << /XObject << /Im0 %d 0 R >> /ProcSet [/PDF /ImageC /ImageB] >> /Contents %d 0 R >>\nendobj\n",
 		pages, num(pw), num(ph), picture, contents)
@@ -155,11 +174,11 @@ func (d *Document) AddPage(src pipeline.Source, o *Options) error {
 	if grey {
 		channels, space = 1, "/DeviceGray"
 	}
-	if len(o.ICC) > 0 {
+	if len(icc) > 0 {
 		d.obj(profile)
 		var zb bufferWriter
 		zw := zlib.NewWriter(&zb)
-		zw.Write(o.ICC)
+		zw.Write(icc)
 		zw.Close()
 		c.printf("<< /N %d /Alternate %s /Filter /FlateDecode /Length %d >>\nstream\n", channels, space, len(zb.b))
 		c.Write(zb.b)
@@ -371,6 +390,11 @@ func rowsOf(src pipeline.Source, grey bool, fn func(colour, alpha []byte) error)
 				}
 			case *image.Gray:
 				copy(row, p.Pix[p.PixOffset(r.Min.X, yy):][:w])
+			case *image.Gray16:
+				px := p.Pix[p.PixOffset(r.Min.X, yy):]
+				for x := 0; x < w; x++ {
+					row[x] = px[2*x] // the high byte, as color.GrayModel takes it
+				}
 			default:
 				for x := 0; x < w; x++ {
 					row[x] = color.GrayModel.Convert(m.At(r.Min.X+x, yy)).(color.Gray).Y
@@ -446,6 +470,12 @@ func (a *alphaTap) Next() (image.Image, error) {
 
 func encodeJPEG(c *counter, src pipeline.Source, o *Options, grey bool, maskZ *zlib.Writer, maskRows *rowFilter) error {
 	var s pipeline.Source = noClose{src}
+	if grey && src.ColorModel() == color.Gray16Model {
+		// 8-bit grey strips, for a JPEG of one component.
+		g := ops.Grayscale(opaqueNoClose{src})
+		defer g.Close()
+		s = g
+	}
 	if maskZ != nil {
 		mapped := pipeline.Map(noClose{src}, func(*image.NRGBA) error { return nil })
 		defer mapped.Close()

@@ -125,6 +125,7 @@ type Image struct {
 	stripICC   bool
 	toProfile  []byte   // see ToProfile
 	pages      []*Image // see Pages
+	pagesBase  int      // the operations of the first page, which Pages copies
 	density    float64  // to record in the output (0: none), when densitySet
 	densitySet bool
 	err        error

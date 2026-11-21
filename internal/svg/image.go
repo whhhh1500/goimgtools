@@ -24,14 +24,19 @@ type DecodeOptions struct {
 	// where it is drawn much smaller (a resize, better than sampling it,
 	// and less to hold). Nil: its own size.
 	Fit func(w, h int) (int, int)
-	// MaxPixels bounds the pixels of the decoded picture.
-	MaxPixels int64
+	// MaxPixels bounds the pixels of the decoded picture, MaxInputPixels
+	// those of the picture in its file.
+	MaxPixels, MaxInputPixels int64
 	// Memory bounds the memory decoding takes (0: the default limit).
 	Memory int64
 }
 
-// maxImagePixels bounds the pictures an SVG holds, all together.
-const maxImagePixels = 64 << 20
+// maxImagePixels bounds the pictures an SVG holds, all together, and
+// maxInputPixels those its files hold (what they take to decode).
+const (
+	maxImagePixels = 64 << 20
+	maxInputPixels = 1 << 28
+)
 
 // sampler colours a shape with a picture: bilinear, premultiplied, its
 // edges held.
@@ -140,20 +145,22 @@ func (b *builder) image(n *node, m matrix, st style, vp viewport, own, outer *cl
 		return m.mul(matrix{1, 0, 0, 1, x, y}).mul(fit), w, h
 	}
 	var iw, ih float64 // the picture's own size
-	o := DecodeOptions{MaxPixels: maxImagePixels - b.imagePixels}
+	o := DecodeOptions{MaxPixels: maxImagePixels - b.imagePixels, MaxInputPixels: maxInputPixels - b.inputPixels}
 	o.Fit = func(pw, ph int) (int, int) {
 		iw, ih = float64(pw), float64(ph)
 		pm, w, h := placed(iw, ih)
 		if !(w > 0) || !(h > 0) {
 			return pw, ph
 		}
-		// Shrunk to less than half along an axis of the picture: decoded
-		// at the size it is drawn.
+		// Shrunk to less than half along an axis of the picture, or at all
+		// when the whole of it would not fit in half the memory: decoded at
+		// the size it is drawn.
+		big := o.Memory > 0 && 4*int64(pw)*int64(ph) > o.Memory/2
 		tw, th := pw, ph
-		if sx := math.Sqrt(float64(pm.a*pm.a) + float64(pm.b*pm.b)); sx < 0.5 {
+		if sx := math.Sqrt(float64(pm.a*pm.a) + float64(pm.b*pm.b)); sx < 0.5 || big && sx < 1 {
 			tw = max(1, int(math.Ceil(float64(iw*sx))))
 		}
-		if sy := math.Sqrt(float64(pm.c*pm.c) + float64(pm.d*pm.d)); sy < 0.5 {
+		if sy := math.Sqrt(float64(pm.c*pm.c) + float64(pm.d*pm.d)); sy < 0.5 || big && sy < 1 {
 			th = max(1, int(math.Ceil(float64(ih*sy))))
 		}
 		return tw, th
@@ -177,6 +184,7 @@ func (b *builder) image(n *node, m matrix, st style, vp viewport, own, outer *cl
 	if iw == 0 {
 		iw, ih = float64(pic.Rect.Dx()), float64(pic.Rect.Dy())
 	}
+	b.inputPixels += int64(iw * ih)
 	b.imagePixels += px
 	if err := b.reserve(4 * px); err != nil {
 		b.err = err

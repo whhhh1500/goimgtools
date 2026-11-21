@@ -150,6 +150,7 @@ func (b *builder) filtered(n *node, f *node, m matrix, st style, vp viewport, ow
 		layers := layersNeeded(sub.items)
 		need := int64(layers)*4*px + 4*px
 		if err := b.reserve(need); err != nil {
+			b.release(4 * px) // src
 			b.err = err
 			return
 		}
@@ -163,13 +164,15 @@ func (b *builder) filtered(n *node, f *node, m matrix, st style, vp viewport, ow
 	// The filter's primitives, on pictures of floats.
 	fc := &fctx{w: w, h: h, m: matrix{sx, 0, 0, sy, 0, 0}.mul(m), results: map[string]fbuf{}, reserve: b.reserve, release: b.release}
 	defer fc.end()
-	// Worked at a lower resolution, a filter that puts the element itself
-	// on top (a drop shadow) leaves it out, to draw it after, sharp.
-	fc.under = (sx < 1 || sy < 1) && sourceOnTop(f)
 	fc.linear = true
 	if v, ok := f.prop("color-interpolation-filters"); ok && strings.TrimSpace(v) == "sRGB" {
 		fc.linear = false
 	}
+	// Worked at a lower resolution, a filter that puts the element itself
+	// on top (a drop shadow) leaves it out, to draw it after, sharp. Drawn
+	// after, it is laid on in sRGB: in linear light only an element of
+	// opaque paint, which shows the difference at its edges alone.
+	fc.under = (sx < 1 || sy < 1) && sourceOnTop(f) && (!fc.linear || paintsOpaque(n, inner, vp, 0))
 	if primBox {
 		fc.unit = [2]float64{bx[2], bx[3]}
 	} else {
@@ -274,6 +277,52 @@ func sourceOnTop(f *node) bool {
 		return isSource(last.attrs["in"])
 	}
 	return false
+}
+
+// paintsOpaque reports whether what n draws is all of opaque colours: no
+// opacity, no fill or stroke opacity, no colour with alpha, nothing
+// painted by a gradient or a pattern, no picture.
+func paintsOpaque(n *node, st style, vp viewport, depth int) bool {
+	if depth > 16 || st.opacity < 1 {
+		return false
+	}
+	switch n.name {
+	case "g", "a", "switch", "svg":
+		for _, k := range n.children {
+			if !strings.HasPrefix(k.name, "#") && !paintsOpaque(k, computeStyle(k, st, vp), vp, depth+1) {
+				return false
+			}
+		}
+		return true
+	case "path", "rect", "circle", "ellipse", "line", "polyline", "polygon", "text", "tspan":
+		for _, p := range []struct {
+			p       paint
+			opacity float64
+		}{{st.fill, st.fillOpacity}, {st.stroke, st.strokeOpacity}} {
+			switch p.p.kind {
+			case paintNone:
+			case paintColor:
+				if p.p.c.A < 255 || p.opacity < 1 {
+					return false
+				}
+			case paintCurrent:
+				if st.color.A < 255 || p.opacity < 1 {
+					return false
+				}
+			default:
+				return false
+			}
+		}
+		for _, k := range n.children {
+			if k.name == "tspan" && !paintsOpaque(k, computeStyle(k, st, vp), vp, depth+1) {
+				return false
+			}
+		}
+		return true
+	case "title", "desc", "metadata", "defs", "style":
+		return true
+	}
+	return false // a use, a picture, ...: not looked into
 }
 
 // drawnPrimitive reports whether run draws a primitive of that name.

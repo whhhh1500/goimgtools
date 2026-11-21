@@ -106,6 +106,7 @@ var errTooMuch = errors.New(errTooLarge)
 // builder walks the document into a scene.
 type builder struct {
 	imagePixels int64
+	inputPixels int64          // of the files of the pictures, against maxInputPixels
 	masking     map[*node]bool // the masks being built, against cycles
 	patterning  map[*node]bool // and the patterns
 	marking     map[*node]bool // and the markers

@@ -7,6 +7,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/whhhh1500/goimgtools"
@@ -274,6 +276,10 @@ func pages(args []string, stdout, stderr io.Writer) error {
 		return errors.New("pages: need at least one image and the PDF to write")
 	}
 	in, out := fl.Args()[:fl.NArg()-1], fl.Arg(fl.NArg()-1)
+	if !strings.EqualFold(filepath.Ext(out), ".pdf") {
+		// Not an image to overwrite when the name of the PDF was forgotten.
+		return fmt.Errorf("pages: the last argument is the PDF to write, a name ending in .pdf, not %q", out)
+	}
 	imgs := make([]*goimgtools.Image, len(in))
 	for i, f := range in {
 		imgs[i] = goimgtools.Open(f)

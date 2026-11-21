@@ -236,7 +236,15 @@ func (m *Image) tiles(zw *zip.Writer, base string, o TileOptions) error {
 	if def := formatNamed(format); def == nil || def.encode == nil {
 		return fmt.Errorf("goimgtools: cannot write %s tiles (%s)", format, formatList())
 	}
-	src, err := m.Stream(nil)
+	if len(m.toProfile) > 0 {
+		return errors.New("goimgtools: ToProfile: tiles carry no colour profile")
+	}
+	// Tiles are written without a profile: their colours are made sRGB,
+	// as for a format that cannot carry one (a Display P3 photograph would
+	// look dull, an Adobe RGB one too bright).
+	c := m.Clone()
+	c.toSRGB = true
+	src, err := c.Stream(nil)
 	if err != nil {
 		return err
 	}

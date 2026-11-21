@@ -1,6 +1,7 @@
 package goimgtools
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -13,8 +14,10 @@ import (
 // each page as large as its image at its resolution, with its own colour
 // profile and transparency. Each image is read through its own recipe
 // while its page is written, so memory holds one page at a time, whatever
-// their number. Read as an image (Metadata, ToImage, another format) it is
-// its first page.
+// their number. The operations and settings of a page (Resize, Density,
+// ToProfile, ...) go on its image: on the document they are an error.
+// WithContext on the document or on a page stops it. Read as an image
+// (Metadata, ToImage) the document is its first page.
 func Pages(images []*Image) *Image {
 	if len(images) == 0 {
 		return &Image{err: errors.New("goimgtools: Pages needs images")}
@@ -26,7 +29,7 @@ func Pages(images []*Image) *Image {
 	}
 	imgs := append([]*Image(nil), images...)
 	first := imgs[0]
-	return &Image{pages: imgs, open: first.open, chain: append([]operation(nil), first.chain...), once: first.once}
+	return &Image{pages: imgs, pagesBase: len(first.chain), open: first.open, chain: append([]operation(nil), first.chain...), once: first.once}
 }
 
 // writePages writes the pages of Pages as a PDF document.
@@ -41,6 +44,9 @@ func (m *Image) writePages(w io.Writer, ext string) error {
 	po, err := optionsOf[PDFOptions](m.options, "pdf")
 	if err != nil {
 		return err
+	}
+	if len(m.chain) > m.pagesBase || len(m.toProfile) > 0 || m.toSRGB || m.stripICC || m.densitySet || m.maxBytes > 0 || m.minSSIM > 0 {
+		return errors.New("goimgtools: Pages: operations and settings (Resize, Density, ToProfile, MaxFileSize, ...) go on the image of each page, not on the document")
 	}
 	doc := pdfwrite.NewDocument(w)
 	for i, pg := range m.pages {
@@ -65,6 +71,15 @@ func (m *Image) addPage(doc *pdfwrite.Document, pg *Image, po PDFOptions) error 
 	defer closer.Close()
 	out := pg.outputMeta(meta)
 	src, out.ICC = pg.manageColour(src, out.ICC, "pdf")
+	for _, ctx := range []context.Context{m.ctx, pg.ctx} {
+		if ctx != nil {
+			if err := ctx.Err(); err != nil {
+				src.Close()
+				return err
+			}
+			src = cancelable{src, ctx}
+		}
+	}
 	defer src.Close()
 	return doc.AddPage(src, &pdfwrite.Options{Quality: po.Quality, Density: out.Density, ICC: out.ICC})
 }

@@ -980,17 +980,31 @@ func encodeICNS(w io.Writer, src pipeline.Source, sizes []int) error {
 				return err
 			}
 		}
+		// Reserved before it is written: at most the pixels, their rows'
+		// filter bytes and a little for the blocks and chunks.
+		bpp := int64(4)
+		if cm := out.ColorModel(); cm == color.NRGBA64Model || cm == color.RGBA64Model || cm == color.Gray16Model {
+			bpp = 8
+		}
+		bound := int64(s)*(bpp*int64(s)+1) + int64(s)*int64(s)/64 + 64<<10
+		if err := env.Budget.Reserve(bound, "icns images"); err != nil {
+			out.Close()
+			rs.Close()
+			return err
+		}
+		held += bound
 		var buf bytes.Buffer
+		buf.Grow(int(bound))
 		err = pngstream.Encode(&buf, out, &pngstream.Options{Level: 9})
 		out.Close()
 		rs.Close()
 		if err != nil {
 			return err
 		}
-		if err := env.Budget.Reserve(int64(buf.Len()), "icns images"); err != nil {
-			return err
+		if c := int64(buf.Cap()); c < bound {
+			env.Budget.Release(bound - c) // what it did not take
+			held -= bound - c
 		}
-		held += int64(buf.Len())
 		pngs[s] = buf.Bytes()
 	}
 	return icnsstream.Encode(w, pngs)
@@ -1000,14 +1014,14 @@ func init() {
 	// The pictures of SVG image elements, read as any input is (but SVG,
 	// against a document holding itself), within what the SVG has left.
 	svg.DecodeImage = func(data []byte, o svg.DecodeOptions) (*image.NRGBA, error) {
-		if svg.Match(data) || o.MaxPixels < 1 {
+		if svg.Match(data) || o.MaxPixels < 1 || o.MaxInputPixels < 1 {
 			return nil, errors.New("goimgtools: svg: an image element holds no picture this package draws")
 		}
-		info, err := FromBytes(data).MemoryLimit(o.Memory).Metadata()
+		info, err := FromBytes(data).MemoryLimit(o.Memory).LimitInputPixels(o.MaxInputPixels).Metadata()
 		if err != nil {
 			return nil, err
 		}
-		in := FromBytes(data).MemoryLimit(o.Memory)
+		in := FromBytes(data).MemoryLimit(o.Memory).LimitInputPixels(o.MaxInputPixels)
 		w, h := info.Width, info.Height
 		if o.Fit != nil {
 			if tw, th := o.Fit(w, h); tw > 0 && th > 0 && (tw < w || th < h) {

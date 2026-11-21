@@ -116,7 +116,8 @@ func (m *Image) Density(dpi float64) *Image {
 // the black point of the last two kinds is compensated as LittleCMS does
 // it. (A CMYK image is turned into sRGB through its profile when it is
 // decoded, whether or not this is asked for; a CMYK file without one
-// through libvips's CMYK profile, as sharp does.)
+// through libvips's CMYK profile, as sharp does.) A converted image has 8
+// bits a channel.
 func (m *Image) ToSRGB() *Image { m.toSRGB = true; return m }
 
 // ToProfile converts the colours of the image into the colour space of the
@@ -126,9 +127,10 @@ func (m *Image) ToSRGB() *Image { m.toSRGB = true; return m }
 // sRGB otherwise (an input's other profile taken to sRGB first). The
 // profile must be an RGB one of primaries and tone curves, such as
 // ProfileDisplayP3 and ProfileAdobeRGB give; the rendering is relative
-// colorimetric, as LittleCMS converts, to within one level. For an output
-// format that cannot carry a profile (GIF, BMP, ICO, QOI, ...) it is an
-// error.
+// colorimetric, as LittleCMS converts, to within one level; the result has
+// 8 bits a channel, as with ToSRGB. For an output format that cannot carry
+// a profile (GIF, BMP, ICO, QOI, ...), for tiles and for an animation that
+// Animated keeps it is an error.
 func (m *Image) ToProfile(icc []byte) *Image {
 	p, err := iccprof.Parse(icc)
 	if err == nil {
@@ -809,6 +811,10 @@ func (m *Image) write(w io.Writer, ext string) (err error) {
 		if keeps && m.minSSIM > 0 {
 			f.Close()
 			return fmt.Errorf("goimgtools: MinSSIM does not apply to an animation that Animated keeps: %w", errors.ErrUnsupported)
+		}
+		if keeps && len(m.toProfile) > 0 {
+			f.Close()
+			return fmt.Errorf("goimgtools: ToProfile does not apply to an animation that Animated keeps: %w", errors.ErrUnsupported)
 		}
 		if keeps && m.maxBytes == 0 {
 			defer f.Close()
