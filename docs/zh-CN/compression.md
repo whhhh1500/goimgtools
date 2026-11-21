@@ -16,6 +16,7 @@
 | PNG 大幅减小（有损） | `PNG(PNGOptions{Colors: 256})`：减至最多 256 色，颜色依图像选取，带抖动 | 6591KB → 2437KB（减小 63%），相对原图 SSIMULACRA2 78.5、butteraugli 1.43（39.2dB），1.0s，16MB |
 | PNG 减色，不抖动 | 另加 `NoDither: true`：文件更小，渐变处出现色带 | 1932KB，72.9、1.57（39.8dB） |
 | 压缩至指定大小以内 | `MaxFileSize(n)`：自动选取不超过 n 的最高质量 | 上限 300KB：结果 297KB，0.66s，12MB |
+| 看起来不变的最小文件 | `MinSSIM(0.98)` / `-min-ssim 0.98`：取 SSIM 不低于该值的最低质量（PNG、GIF 为最少颜色数），编码、解码、测量约八次求得（同 jpeg-recompress）；没指定质量时最高搜到 100，所以默认质量达不到目标时文件会比默认的大 | Kodak 照片在 JPEG 80 质量时 SSIM 只有 0.95–0.97：0.98 需 83–162KB，而 80 质量为 49–105KB；一张文档截图 0.98 时 138KB，80 质量 175KB（−22%），0.97 时 110KB（−37%）；Kodak 照片 0.3 秒，截图 0.9 秒 |
 | 转换格式 | `WebP(WebPOptions{Quality: 80})` | PNG 6591KB → WebP 501KB |
 | 有损 WebP 最佳压缩 | `WebP()`（力度 5，默认）：sharp YUV 颜色换算、4×4 块网格量化、按测量选取环路滤波强度、色度误差扩散；`Effort: 1` 速度约快一倍 | 14 张图：同等 SSIMULACRA2 下比 libwebp 默认设置小 6.6%（同等 butteraugli 下小 9.5%），比其最好设置（`-m 6 -af -sharp_yuv`）小 1.3%（2.2%） |
 | WebP 大幅减小、近乎无损（像素略有改动） | `WebP(WebPOptions{NearLossless: true, Quality: 60})` / `-webp-near-lossless -quality 60`：libwebp 的近无损，照其预测器移植：像素与某个邻像素相差超过一点时，各通道残差舍入到小于该差的 2 的幂的倍数（60–79：每通道至多差 2 级；程度由 `Quality` 定），像素随即改成解码器将得到的值，误差不累积；平滑区保持精确，alpha 为 0 和 255 的也不变。每块的预测模式按舍入后残差的代价选（同 libwebp）；另有一个无损候选同时参与，应对精确重复的图案 | 6 张 Kodak 照片：无损 2.74MB，近无损 60 档 1.73MB（−37.0%；`cwebp -near_lossless 60` 1.78MB），80 档 2.08MB；23 张照片、截图与游戏美术图 60 档比 cwebp 小 7.3%，80 档小 6.6%；截图几乎不变（本来无损就压得好）。照片上耗时约为无损的两倍（libwebp 也如此），内存相同 |

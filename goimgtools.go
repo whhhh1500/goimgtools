@@ -108,6 +108,7 @@ type Image struct {
 	options    any    // its options: a JPEGOptions and so on, or what ToFormat was given
 	animated   bool
 	maxBytes   int64
+	minSSIM    float64 // MinSSIM
 	maxPixels  int64
 	maxOutput  int64
 	threads    int

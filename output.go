@@ -19,6 +19,7 @@ import (
 	"github.com/whhhh1500/goimgtools/internal/exifedit"
 	"github.com/whhhh1500/goimgtools/internal/iccprof"
 	"github.com/whhhh1500/goimgtools/internal/jpegstream"
+	"github.com/whhhh1500/goimgtools/internal/metric"
 	"github.com/whhhh1500/goimgtools/internal/ops"
 	"github.com/whhhh1500/goimgtools/internal/pngstream"
 	"github.com/whhhh1500/goimgtools/pipeline"
@@ -367,6 +368,31 @@ func (m *Image) MaxFileSize(n int64) *Image {
 	return m
 }
 
+// MinSSIM makes the output as small as the quality allows while it stays
+// at least s alike to the image (its SSIM, see inspect.SSIM; 0 to 1): the
+// lowest quality whose file does, as jpeg-recompress and similar tools
+// choose it: from 1 to the quality asked for, or to 100 when none was
+// (the file can then be larger than at the default quality). 0.98 is
+// about where a difference starts to show; 0.99 and above keep the file
+// close to the original. It applies to JPEG and lossy WebP output, TIFF
+// with TIFFJPEG, and PNG and GIF, whose quality is their number of
+// colours (a PNG with no Colors given stays lossless when even 256
+// colours fall short). When even the highest quality falls short it is
+// written at that.
+//
+// The image is encoded, decoded and compared some eight times; it is kept
+// in working storage meanwhile (a temporary file beyond its memory share).
+// It does not go with MaxFileSize, nor with an animation that Animated
+// keeps (an error wrapping errors.ErrUnsupported). A transparent image
+// written as JPEG is compared laid on black, as JPEG lays it.
+func (m *Image) MinSSIM(s float64) *Image {
+	if !(s > 0 && s <= 1) {
+		return m.fail(errors.New("goimgtools: MinSSIM must be above 0 and at most 1"))
+	}
+	m.minSSIM = s
+	return m
+}
+
 // JPEGOptions are the optional settings of JPEG. Optimize and Progressive
 // make the file smaller without changing a single pixel; they need the
 // whole image before the first byte can be written, so its coefficients
@@ -652,6 +678,10 @@ func (m *Image) write(w io.Writer, ext string) (err error) {
 			}
 			keeps = n > 0
 		}
+		if keeps && m.minSSIM > 0 {
+			f.Close()
+			return fmt.Errorf("goimgtools: MinSSIM does not apply to an animation that Animated keeps: %w", errors.ErrUnsupported)
+		}
 		if keeps && m.maxBytes == 0 {
 			defer f.Close()
 			return m.writeAnimated(w, f, env, inFormat, format)
@@ -678,8 +708,14 @@ func (m *Image) write(w io.Writer, ext string) (err error) {
 		src = pipeline.Async(src)
 	}
 	defer src.Close()
+	if m.maxBytes > 0 && m.minSSIM > 0 {
+		return errors.New("goimgtools: MaxFileSize and MinSSIM do not go together")
+	}
 	if m.maxBytes > 0 {
 		return m.writeWithin(w, src, format, out)
+	}
+	if m.minSSIM > 0 {
+		return m.writeAtSSIM(w, src, format, out)
 	}
 	return m.encode(w, src, format, 0, out)
 }
@@ -797,53 +833,9 @@ func (m *Image) writeWithin(w io.Writer, src pipeline.Source, format string, met
 	if def == nil || def.encode == nil {
 		return fmt.Errorf("goimgtools: cannot write %s (%s)", format, formatList())
 	}
-	// encodeAt encodes at step k of the knob: the quality, or the number
-	// of colours (0: a PNG's own, without loss); bottom is its lowest.
-	var encodeAt func(w io.Writer, src pipeline.Source, k int) error
-	var top, bottom int
-	what := "quality"
-	switch format {
-	case "png", "gif":
-		what, bottom, top = "colours", 2, 256
-		options := m.optionsFor(format)
-		var colors int
-		if format == "png" {
-			po, _ := options.(PNGOptions)
-			colors = po.Colors
-		} else {
-			g, _ := options.(GIFOptions)
-			colors = g.Colors
-		}
-		if colors >= bottom && colors < top {
-			top = colors
-		}
-		encodeAt = func(w io.Writer, src pipeline.Source, k int) error {
-			o := options
-			if format == "png" {
-				po, _ := options.(PNGOptions)
-				po.Colors = k
-				o = po
-			} else {
-				g, _ := options.(GIFOptions)
-				g.Colors = k
-				o = g
-			}
-			return m.encodeWith(w, src, format, o, 0, meta)
-		}
-	default:
-		if def.quality == nil {
-			return fmt.Errorf("goimgtools: MaxFileSize applies to JPEG, lossy WebP, PNG and GIF output, not %s", format)
-		}
-		var ok bool
-		top, ok = def.quality(m.optionsFor(format))
-		if !ok {
-			return fmt.Errorf("goimgtools: MaxFileSize applies to JPEG, lossy WebP, PNG and GIF output, not lossless %s", format)
-		}
-		if top < 1 || top > 100 {
-			return errors.New("goimgtools: quality must be 1 to 100")
-		}
-		bottom = 1
-		encodeAt = func(w io.Writer, src pipeline.Source, q int) error { return m.encode(w, src, format, q, meta) }
+	encodeAt, bottom, top, what, err := m.knob(format, meta, "MaxFileSize")
+	if err != nil {
+		return err
 	}
 	rec, err := pipeline.Record(src)
 	if err != nil {
@@ -957,4 +949,183 @@ func (m *Image) writeWithin(w io.Writer, src pipeline.Source, format string, met
 	}
 	_, err = io.Copy(w, io.NewSectionReader(best, 0, best.Size()))
 	return err
+}
+
+// knob is what MaxFileSize and MinSSIM turn: encodeAt encodes at step k,
+// the quality or the number of colours (0: a PNG's own, without loss),
+// from bottom to top; what names it.
+func (m *Image) knob(format string, meta pipeline.Meta, by string) (encodeAt func(w io.Writer, src pipeline.Source, k int) error, bottom, top int, what string, err error) {
+	def := formatNamed(format)
+	what = "quality"
+	switch format {
+	case "png", "gif":
+		what, bottom, top = "colours", 2, 256
+		options := m.optionsFor(format)
+		var colors int
+		if format == "png" {
+			po, _ := options.(PNGOptions)
+			colors = po.Colors
+		} else {
+			g, _ := options.(GIFOptions)
+			colors = g.Colors
+		}
+		if colors >= bottom && colors < top {
+			top = colors
+		}
+		encodeAt = func(w io.Writer, src pipeline.Source, k int) error {
+			o := options
+			if format == "png" {
+				po, _ := options.(PNGOptions)
+				po.Colors = k
+				o = po
+			} else {
+				g, _ := options.(GIFOptions)
+				g.Colors = k
+				o = g
+			}
+			return m.encodeWith(w, src, format, o, 0, meta)
+		}
+	default:
+		if def.quality == nil {
+			return nil, 0, 0, "", fmt.Errorf("goimgtools: %s applies to JPEG, lossy WebP, PNG and GIF output, not %s", by, format)
+		}
+		var ok bool
+		top, ok = def.quality(m.optionsFor(format))
+		if !ok {
+			return nil, 0, 0, "", fmt.Errorf("goimgtools: %s applies to JPEG, lossy WebP, PNG and GIF output, not lossless %s", by, format)
+		}
+		if top < 1 || top > 100 {
+			return nil, 0, 0, "", errors.New("goimgtools: quality must be 1 to 100")
+		}
+		bottom = 1
+		encodeAt = func(w io.Writer, src pipeline.Source, q int) error { return m.encode(w, src, format, q, meta) }
+	}
+	return encodeAt, bottom, top, what, nil
+}
+
+// writeAtSSIM encodes src at the lowest step of the knob whose file is at
+// least m.minSSIM alike to src (see MinSSIM).
+func (m *Image) writeAtSSIM(w io.Writer, src pipeline.Source, format string, meta pipeline.Meta) error {
+	def := formatNamed(format)
+	if def == nil || def.encode == nil {
+		return fmt.Errorf("goimgtools: cannot write %s (%s)", format, formatList())
+	}
+	encodeAt, bottom, top, _, err := m.knob(format, meta, "MinSSIM")
+	if err != nil {
+		return err
+	}
+	// Up to the quality asked for, or to 100 without one.
+	switch o := m.optionsFor(format).(type) {
+	case JPEGOptions:
+		if o.Quality == 0 {
+			top = 100
+		}
+	case WebPOptions:
+		if o.Quality == 0 {
+			top = 100
+		}
+	case TIFFOptions:
+		if o.Quality == 0 {
+			top = 100
+		}
+	case nil:
+		if format == "jpeg" || format == "webp" || format == "tiff" {
+			top = 100
+		}
+	}
+	rec, err := pipeline.Record(src)
+	if err != nil {
+		return err
+	}
+	defer rec.Close()
+	env := pipeline.EnvOf(src)
+	// score encodes at step q and measures the file against the image.
+	score := func(q int) (float64, *pipeline.Spill, error) {
+		in, err := rec.Source()
+		if err != nil {
+			return 0, nil, err
+		}
+		out := pipeline.NewSpill(env)
+		err = encodeAt(out, in, q)
+		in.Close()
+		if err != nil {
+			out.Close()
+			return 0, nil, err
+		}
+		s, err := ssimOf(rec, out, format, env)
+		if err != nil {
+			out.Close()
+			return 0, nil, err
+		}
+		return s, out, nil
+	}
+	var best *pipeline.Spill
+	defer func() {
+		if best != nil {
+			best.Close()
+		}
+	}()
+	keep := func(s *pipeline.Spill) {
+		if best != nil {
+			best.Close()
+		}
+		best = s
+	}
+	sTop, out, err := score(top)
+	if err != nil {
+		return err
+	}
+	keep(out)
+	if sTop < m.minSSIM {
+		// Not even the top: a lossless PNG when no colours were asked for,
+		// else the top as it is.
+		if po, _ := m.optionsFor(format).(PNGOptions); format == "png" && po.Colors == 0 {
+			_, out, err := score(0)
+			if err != nil {
+				return err
+			}
+			keep(out)
+		}
+	} else {
+		// The likeness grows with the step: the lowest that reaches it.
+		lo, hi := bottom-1, top
+		for hi-lo > 1 {
+			mid := (lo + hi) / 2
+			s, out, err := score(mid)
+			if err != nil {
+				return err
+			}
+			if s >= m.minSSIM {
+				hi = mid
+				keep(out)
+			} else {
+				lo = mid
+				out.Close()
+			}
+		}
+	}
+	_, err = io.Copy(w, io.NewSectionReader(best, 0, best.Size()))
+	return err
+}
+
+// ssimOf decodes the file in out (of format) and measures it against the
+// image recorded in rec: laid on black, as the encoder lays it, for a
+// format without transparency.
+func ssimOf(rec *pipeline.Recording, out *pipeline.Spill, format string, env *pipeline.Env) (float64, error) {
+	ref, err := rec.Source()
+	if err != nil {
+		return 0, err
+	}
+	defer ref.Close()
+	got, closer, _, _, err := FromReader(io.NewSectionReader(out, 0, out.Size())).build(env, false)
+	if err != nil {
+		return 0, err
+	}
+	defer closer.Close()
+	defer got.Close()
+	var a pipeline.Source = ref
+	if format == "jpeg" || format == "tiff" {
+		a = ops.Flatten(ref, color.Black)
+	}
+	return metric.SSIM(a, got)
 }

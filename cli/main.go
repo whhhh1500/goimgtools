@@ -110,6 +110,7 @@ type options struct {
 	fontSize, strokeW                              *float64
 	textWidth, shadowBlr                           *int
 	format, maxSize, tiffComp                      *string
+	minSSIM                                        *float64
 	tileSize, tileOverlap                          *int
 	tileLayout                                     *string
 	quality, pngLevel, pngColors, gifColors        *int
@@ -214,6 +215,7 @@ func register(fs *flag.FlagSet) *options {
 		tileOverlap:     fs.Int("tile-overlap", 0, "how many pixels of its neighbours a tile also holds on each side (.dzi output)"),
 		tileLayout:      fs.String("tile-layout", "dz", "the layout of the tiles of a .dzi or .dz output: dz (Deep Zoom), google, iiif, iiif3 or zoomify"),
 		maxSize:         fs.String("max-size", "", "make the file at most this `size` by lowering the quality (JPEG, lossy WebP) or the number of colours (PNG, GIF): 200KB, 1.5MB, or a number of bytes"),
+		minSSIM:         fs.Float64("min-ssim", 0, "make the file as small as the quality (colours, for PNG and GIF) allows while its SSIM against the image stays at least this, such as 0.98 (JPEG, lossy WebP, PNG, GIF, JPEG TIFF)"),
 		lossless:        fs.Bool("webp-lossless", false, "WebP: write without loss"),
 		webpNear:        fs.Bool("webp-near-lossless", false, "WebP: lossless, but pixels that differ from a neighbour anyway may change a little (-quality how much: 100 none, 60-79 at most 2 levels a channel; default 75): photographs about a third smaller"),
 		webpExact:       fs.Bool("webp-exact", false, "WebP: keep the colour of fully transparent pixels (by default it is dropped, as libwebp does)"),
@@ -786,6 +788,9 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 			return nil, fmt.Errorf("-mark-kind: %q is not blind or screen", *o.markKind)
 		}
 		im.InvisibleWatermark([]byte(*o.mark), goimgtools.InvisibleWatermarkOptions{Kind: kind, Key: *o.markKey, Strength: *o.markStrength, Density: *o.markDensity})
+	}
+	if *o.minSSIM != 0 {
+		im.MinSSIM(*o.minSSIM)
 	}
 	if *o.maxSize != "" {
 		n, err := parseSize(*o.maxSize)
