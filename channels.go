@@ -2,6 +2,9 @@ package goimgtools
 
 import (
 	"errors"
+	"fmt"
+	"image"
+	"io"
 	"math"
 	"strconv"
 
@@ -10,7 +13,7 @@ import (
 )
 
 // The operations on channels, after sharp's: Recomb, Unflatten,
-// ExtractChannel and RemoveAlpha. They work a few rows at a time.
+// ExtractChannel, JoinChannel and RemoveAlpha. They work a few rows at a time.
 
 // Recomb mixes the channels of every pixel by a matrix, as sharp's recomb
 // (to the byte): each row of matrix makes one channel of the result, the
@@ -225,4 +228,132 @@ func init() {
 	for n, d := range channelOps {
 		builtInOps[n] = d
 	}
+}
+
+// JoinChannel takes mask as the alpha channel of the image, as sharp's
+// joinChannel adds a channel: the inverse of ExtractChannel(ChannelAlpha).
+// mask must be the size of the image at that point of the chain (its
+// grey, laid on black where it is transparent: a grey picture as it is,
+// white where the image is to show); an image that has transparency of its
+// own keeps it too (the two multiplied). Both are read a few rows at a
+// time, side by side.
+func (m *Image) JoinChannel(mask *Image) *Image {
+	if mask == nil {
+		return m.fail(errors.New("goimgtools: JoinChannel needs a mask"))
+	}
+	return m.add(joinOp{mask})
+}
+
+// joinOp is JoinChannel as a step of the chain.
+type joinOp struct{ mask *Image }
+
+func (j joinOp) apply(src pipeline.Source, r *run) (pipeline.Source, error) {
+	if r.sizeOnly {
+		return src, nil
+	}
+	env := pipeline.EnvOf(src)
+	ms, closer, _, _, err := j.mask.build(env, false)
+	if err != nil {
+		return nil, fmt.Errorf("mask: %w", err)
+	}
+	b, mb := src.Bounds(), ms.Bounds()
+	if b.Size() != mb.Size() {
+		ms.Close()
+		closer.Close()
+		return nil, fmt.Errorf("goimgtools: JoinChannel: the mask is %dx%d, the image %dx%d", mb.Dx(), mb.Dy(), b.Dx(), b.Dy())
+	}
+	g := &maskRows{src: ms, closer: closer, env: env, w: b.Dx(), y: mb.Min.Y, dy: b.Min.Y - mb.Min.Y}
+	out := pipeline.Map(pipeline.WithAlpha(src), func(s *image.NRGBA) error {
+		w := s.Rect.Dx()
+		for y := s.Rect.Min.Y; y < s.Rect.Max.Y; y++ {
+			grey, err := g.row(y)
+			if err != nil {
+				return fmt.Errorf("mask: %w", err)
+			}
+			px := s.Pix[s.PixOffset(s.Rect.Min.X, y):][:4*w]
+			for x, v := range grey[:w] {
+				a := &px[4*x+3]
+				*a = uint8((uint32(*a)*uint32(v) + 127) / 255)
+			}
+		}
+		return nil
+	})
+	return &joinSource{Source: out, mask: g}, nil
+}
+
+// maskRows reads the mask a row at a time as grey levels, in step with
+// the image.
+type maskRows struct {
+	src    pipeline.Source
+	closer io.Closer
+	env    *pipeline.Env
+	w      int
+	strip  image.Image // the mask's strip being read, its rows from y on
+	y      int         // the next row of the mask
+	dy     int         // image row minus mask row
+	grey   []uint8
+	held   int64
+	closed bool
+}
+
+// row returns the grey of the mask's row for image row y; rows come in
+// order.
+func (g *maskRows) row(y int) ([]uint8, error) {
+	want := y - g.dy
+	for g.strip == nil || want >= g.strip.Bounds().Max.Y {
+		s, err := g.src.Next()
+		if err != nil {
+			if err == io.EOF {
+				err = io.ErrUnexpectedEOF
+			}
+			return nil, err
+		}
+		g.strip = s
+	}
+	if g.grey == nil {
+		if err := g.env.Budget.Reserve(int64(g.w), "mask row"); err != nil {
+			return nil, err
+		}
+		g.held, g.grey = int64(g.w), make([]uint8, g.w)
+	}
+	sb := g.strip.Bounds()
+	if p, ok := g.strip.(*image.Gray); ok {
+		copy(g.grey, p.Pix[p.PixOffset(sb.Min.X, want):][:g.w])
+		return g.grey, nil
+	}
+	for x := 0; x < g.w; x++ {
+		// The grey of the colour laid on black.
+		r, gr, b, _ := g.strip.At(sb.Min.X+x, want).RGBA()
+		g.grey[x] = uint8((19595*r + 38470*gr + 7471*b + 1<<15) >> 24)
+	}
+	return g.grey, nil
+}
+
+func (g *maskRows) close() error {
+	if g.closed {
+		return nil
+	}
+	g.closed = true
+	g.env.Budget.Release(g.held)
+	err := g.src.Close()
+	if cerr := g.closer.Close(); err == nil {
+		err = cerr
+	}
+	return err
+}
+
+// joinSource closes the mask with the image.
+type joinSource struct {
+	pipeline.Source
+	mask *maskRows
+}
+
+func (j *joinSource) Env() *pipeline.Env { return pipeline.EnvOf(j.Source) }
+
+func (j *joinSource) Close() error {
+	err := j.Source.Close()
+	if merr := j.mask.close(); err == nil {
+		err = merr
+	}
+	return err
 }

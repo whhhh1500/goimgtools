@@ -81,6 +81,7 @@ Where this library can work an operation out the way libvips (and so sharp) or P
 | `Recomb(matrix)` | Mixes the channels by a matrix of 3 rows of 3 numbers (or 4 of 4, the fourth row making the alpha): each row gives one channel of the result as the sum of the levels times its numbers, the fraction dropped. Byte-for-byte identical to sharp's `recomb`; `{{0.393, 0.769, 0.189}, {0.349, 0.686, 0.168}, {0.272, 0.534, 0.131}}` gives sepia |
 | `Unflatten()` | Makes white pixels transparent (those whose grey, as sharp's, is 255); after `Threshold`, every pixel at or above the threshold. Byte-for-byte identical to sharp's `unflatten` |
 | `ExtractChannel(c)` | A greyscale image of one channel: `ChannelRed`, `ChannelGreen`, `ChannelBlue` or `ChannelAlpha` (sharp's `extractChannel`) |
+| `JoinChannel(mask)` | Takes the grey of `mask`, an image of the same size, as the alpha channel (multiplied with the image's own), as sharp's `joinChannel`: the inverse of `ExtractChannel(ChannelAlpha)`. Both are read a few rows at a time |
 | `EnsureAlpha(alpha)` | An image without transparency gets an alpha channel of the given opacity, 0–1 (trunc(alpha·255), as sharp's `ensureAlpha`, byte for byte); an image with transparency keeps it |
 | `RemoveAlpha()` | Drops the transparency: every pixel shows the colour it stores (sharp's `removeAlpha`); unlike `Flatten`, nothing is blended with a background |
 | `Composite(overlay, CompositeOptions{...})` | Composites an overlay or watermark (see [Watermarks](#watermarks)) |

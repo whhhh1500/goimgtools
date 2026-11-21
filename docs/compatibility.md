@@ -45,7 +45,7 @@ Decoding and encoding of PNG, JPEG, GIF, BMP and TIFF, as well as the default re
 
 ## WebP encoders
 
-The WebP encoders were written for this module. As there is no standard library implementation to compare against, they are verified with two decoders: `x/image` and libwebp (via Python PIL) decode the output to the same result, and lossless encoding is restored pixel for pixel. Comparison with libwebp (test environment as in [Benchmarks](performance.md#benchmarks)):
+The WebP encoders were written for this module. As there is no standard library implementation to compare against, they are verified with two decoders: `x/image` and libwebp (via Python PIL) decode the output to the same result, and lossless encoding is restored pixel for pixel (the colour of fully transparent pixels, which cannot be seen, only with `WebPOptions.Exact`). Comparison with libwebp (test environment as in [Benchmarks](performance.md#benchmarks)):
 
 - Lossy: 14 images (photographs, game artwork and a wallpaper gradient, 0.06 to 15.5 megapixels), each encoded at qualities 45–95 and decoded with libwebp, compared with libwebp 1.6 (`cwebp`) by file size at equal SSIMULACRA2 and at equal butteraugli (3-norm; the 11 images up to 6 megapixels):
 

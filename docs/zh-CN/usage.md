@@ -81,6 +81,7 @@ err := goimgtools.Open("in.jpg").
 | `Recomb(matrix)` | 按矩阵重组通道：3 行 3 列（或 4 行 4 列，第四行生成透明度），每行给出结果的一个通道，即各通道值乘以该行各数之和，舍去小数。与 sharp 的 `recomb` 逐字节一致；`{{0.393, 0.769, 0.189}, {0.349, 0.686, 0.168}, {0.272, 0.534, 0.131}}` 为褐色调 |
 | `Unflatten()` | 白色像素变为透明（灰度按 sharp 的方式计算为 255 的像素）；在 `Threshold` 之后使用，则达到阈值的像素全部变透明。与 sharp 的 `unflatten` 逐字节一致 |
 | `ExtractChannel(c)` | 取出一个通道作为灰度图像：`ChannelRed`、`ChannelGreen`、`ChannelBlue` 或 `ChannelAlpha`（sharp 的 `extractChannel`） |
+| `JoinChannel(mask)` | 把同尺寸图像 `mask` 的灰度作为透明通道（与图像原有的透明相乘），同 sharp 的 `joinChannel`，即 `ExtractChannel(ChannelAlpha)` 的逆操作。两张图都按几行一次读取 |
 | `EnsureAlpha(alpha)` | 为不含透明的图像加上给定不透明度（0–1）的透明通道（值为 alpha·255 舍去小数，与 sharp 的 `ensureAlpha` 逐字节一致）；已含透明的图像保持不变 |
 | `RemoveAlpha()` | 去掉透明度：每个像素显示其存储的颜色（sharp 的 `removeAlpha`）；与 `Flatten` 不同，不与背景色混合 |
 | `Composite(overlay, CompositeOptions{...})` | 图像叠加 / 水印（见[水印](#水印)） |

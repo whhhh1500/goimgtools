@@ -45,7 +45,7 @@ PNG、JPEG、GIF、BMP、TIFF 的解码与编码以及默认缩放均改写自�
 
 ## WebP 编码器
 
-WebP 编码器由本模块自行实现，无标准库可供对照，因此采用两种解码器验证：`x/image` 与 libwebp（通过 Python PIL）的解码结果一致，无损编码可逐像素还原。与 libwebp 的对比如下（测试环境同[实测](performance.md#实测)）：
+WebP 编码器由本模块自行实现，无标准库可供对照，因此采用两种解码器验证：`x/image` 与 libwebp（通过 Python PIL）的解码结果一致，无损编码可逐像素还原（全透明像素的颜色看不见，设 `WebPOptions.Exact` 时才保留）。与 libwebp 的对比如下（测试环境同[实测](performance.md#实测)）：
 
 - 有损：14 张图（照片、游戏美术图和一张渐变壁纸，6 万至 1550 万像素）分别以质量 45–95 编码、以 libwebp 解码，与 libwebp 1.6（`cwebp`）比较同等 SSIMULACRA2 与同等 butteraugli（3 范数；不超过 600 万像素的 11 张）下的文件大小：
 
