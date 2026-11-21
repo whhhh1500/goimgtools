@@ -15,11 +15,12 @@ import (
 
 	"github.com/whhhh1500/goimgtools/internal/bmpstream"
 	"github.com/whhhh1500/goimgtools/internal/gifstream"
+	"github.com/whhhh1500/goimgtools/internal/icnsstream"
 	"github.com/whhhh1500/goimgtools/internal/icostream"
 	"github.com/whhhh1500/goimgtools/internal/jpegstream"
 	"github.com/whhhh1500/goimgtools/internal/ops"
-	"github.com/whhhh1500/goimgtools/internal/pngstream"
 	"github.com/whhhh1500/goimgtools/internal/pdfwrite"
+	"github.com/whhhh1500/goimgtools/internal/pngstream"
 	"github.com/whhhh1500/goimgtools/internal/pnmstream"
 	"github.com/whhhh1500/goimgtools/internal/psdstream"
 	"github.com/whhhh1500/goimgtools/internal/qoistream"
@@ -39,8 +40,8 @@ type Format struct {
 	// Name is what the format is called everywhere: in Info.Format, in
 	// ToFormat, in error messages, on the command line. The formats of
 	// this package are "jpeg", "png", "webp", "gif", "bmp", "tiff",
-	// "ico", "psd" (read only), "qoi", "pnm" (Netpbm), "tga", "pdf" (written
-	// only) and "svg" (read only).
+	// "ico", "icns", "psd" (read only), "qoi", "pnm" (Netpbm), "tga", "pdf"
+	// (written only) and "svg" (read only).
 	Name string
 	// Extensions are the file extensions of the format, in lower case and
 	// with the dot. The first is the one to give a new file.
@@ -421,6 +422,21 @@ var builtin = []*formatDef{
 			return pnmstream.Encode(w, ops.Flatten(src, color.Black))
 		},
 		check: noOptions("pnm"),
+	}, {
+		Format:    Format{"icns", []string{".icns"}},
+		noProfile: true,
+		magic:     icnsstream.Match,
+		open: func(in *input, env *pipeline.Env) (pipeline.Source, error) {
+			return in.openAt(env, icnsstream.Open)
+		},
+		encode: func(w io.Writer, src pipeline.Source, o EncodeOptions) error {
+			opt, err := optionsOf[ICNSOptions](o.Options, "icns")
+			if err != nil {
+				return err
+			}
+			return encodeICNS(w, src, opt.Sizes)
+		},
+		check: checks[ICNSOptions]("icns"),
 	}, {
 		// Written only: a document of one page.
 		Format: Format{"pdf", []string{".pdf"}},
@@ -900,6 +916,78 @@ func encodeICO(w io.Writer, src pipeline.Source, sizes []int) error {
 		}
 	}
 	return icostream.Encode(w, imgs)
+}
+
+// encodeICNS writes src as a macOS icon: square PNG images of the sizes
+// asked for (by default the standard ones up to the image's own), the
+// image fitted into each in its proportions (Lanczos3) and centred on
+// transparency.
+func encodeICNS(w io.Writer, src pipeline.Source, sizes []int) error {
+	env := pipeline.EnvOf(src)
+	b := src.Bounds()
+	if len(sizes) == 0 {
+		side := max(b.Dx(), b.Dy())
+		for _, s := range icnsstream.Sizes {
+			if s <= side || len(sizes) == 0 {
+				sizes = append(sizes, s)
+			}
+		}
+	}
+	sorted := slices.Clone(sizes)
+	slices.Sort(sorted)
+	sorted = slices.Compact(sorted)
+	for _, s := range sorted {
+		if !slices.Contains(icnsstream.Sizes, s) {
+			return fmt.Errorf("goimgtools: ICNSOptions.Sizes must be among %v, got %d", icnsstream.Sizes, s)
+		}
+	}
+	rec, err := pipeline.Record(src)
+	if err != nil {
+		return err
+	}
+	defer rec.Close()
+	pngs := map[int][]byte{}
+	var held int64
+	defer func() { env.Budget.Release(held) }()
+	for _, s := range sorted {
+		dw, dh := s, s
+		if b.Dx() > b.Dy() {
+			dh = max(1, int((int64(b.Dy())*int64(s)+int64(b.Dx())/2)/int64(b.Dx())))
+		} else if b.Dy() > b.Dx() {
+			dw = max(1, int((int64(b.Dx())*int64(s)+int64(b.Dy())/2)/int64(b.Dy())))
+		}
+		rs, err := rec.Source()
+		if err != nil {
+			return err
+		}
+		out := rs
+		if dw != b.Dx() || dh != b.Dy() {
+			if out, err = resize.Scale(rs, dw, dh, resize.Lanczos3); err != nil {
+				rs.Close()
+				return err
+			}
+		}
+		if dw != s || dh != s {
+			l, t := (s-dw)/2, (s-dh)/2
+			if out, err = ops.Extend(out, l, t, s-dw-l, s-dh-t, color.Transparent); err != nil {
+				rs.Close()
+				return err
+			}
+		}
+		var buf bytes.Buffer
+		err = pngstream.Encode(&buf, out, &pngstream.Options{Level: 9})
+		out.Close()
+		rs.Close()
+		if err != nil {
+			return err
+		}
+		if err := env.Budget.Reserve(int64(buf.Len()), "icns images"); err != nil {
+			return err
+		}
+		held += int64(buf.Len())
+		pngs[s] = buf.Bytes()
+	}
+	return icnsstream.Encode(w, pngs)
 }
 
 func init() {

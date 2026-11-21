@@ -186,6 +186,26 @@ func (m *Image) PNM() *Image { m.format, m.options = "pnm", nil; return m }
 // byte.
 func (m *Image) TGA() *Image { m.format, m.options = "tga", nil; return m }
 
+// ICNSOptions are the optional settings of ICNS.
+type ICNSOptions struct {
+	// Sizes are the sides of the icons to write, among 16, 32, 64, 128,
+	// 256, 512 and 1024; by default the ones up to the image's own (16 for
+	// a smaller image).
+	Sizes []int
+}
+
+// ICNS selects ICNS output, the icon file of macOS: square PNG images of
+// standard sizes (ICNSOptions.Sizes), the image fitted into each in its
+// proportions (Lanczos3) and centred on transparency, each also standing
+// for the Retina image of half its size, with a table of contents, as
+// iconutil writes it. An ICNS file read is its largest image, PNG or one
+// of the older run-length ones.
+func (m *Image) ICNS(opts ...ICNSOptions) *Image {
+	m.atMostOne("ICNS", len(opts))
+	m.format, m.options = "icns", first(opts)
+	return m
+}
+
 // PDFOptions are the settings of PDF output.
 type PDFOptions struct {
 	// Quality, 1 to 100, stores the picture as a JPEG of that quality,

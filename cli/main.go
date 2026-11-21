@@ -68,7 +68,7 @@ With -text and no input file, the text itself is the image:
   goimgtools -text "Hello" -font-size 64 out.png
 
 The output format follows the extension of output (.jpg, .png, .webp, .gif,
-.bmp, .tif, .ico, .qoi, .ppm, .pgm, .tga, .pdf) unless -format is given. Operations are applied in this order:
+.bmp, .tif, .ico, .icns, .qoi, .ppm, .pgm, .tga, .pdf) unless -format is given. Operations are applied in this order:
 rotate, flip, flop, trim, crop, resize, extend, grayscale, modulate, blur,
 sharpen, the -op steps (in the order given), flatten, watermark, -mark.
 
@@ -114,7 +114,7 @@ type options struct {
 	tileSize, tileOverlap                          *int
 	tileLayout                                     *string
 	quality, pngLevel, pngColors, gifColors        *int
-	icoSizes, frameDelay                           *string
+	icoSizes, icnsSizes, frameDelay                *string
 	loop                                           *int
 	gifFixed                                       *bool
 	gifLossy                                       *int
@@ -206,6 +206,7 @@ func register(fs *flag.FlagSet) *options {
 		jpegChroma:      fs.String("jpeg-chroma", "420", "JPEG: how finely colour is kept: 420 (half across and down, the default), 422 (half across) or 444 (all of it: crisp coloured text and edges, a larger file)"),
 		jpegQuantTable:  fs.Int("jpeg-quant-table", 0, "JPEG: quantization tables: 0-8 numbered as mozjpeg's -quant-table (0 the standard's, as the standard library; 3 mozjpeg's default), 9 made as jpegli makes them (the smallest files)"),
 		pngColors:       fs.Int("png-colors", 0, "PNG: reduce to this many colours, 2-256, chosen for the image (a much smaller, lossy file)"),
+		icnsSizes:       fs.String("icns-sizes", "", "ICNS: the sizes of the icons to write, among 16,32,64,128,256,512,1024, the image fitted into each (default: the standard sizes up to the image's)"),
 		icoSizes:        fs.String("ico-sizes", "", "ICO: the sizes of the icons to write, such as 16,32,48,256, the image fitted to each (default: the image as it is, at most 256x256)"),
 		noDither:        fs.Bool("no-dither", false, "no dithering when colours are reduced (-png-colors, GIF output, -animated)"),
 		pngLevel:        fs.Int("png-level", 0, fmt.Sprintf("PNG compression 1 (fastest) to 10 (smallest, slowest); default %d", goimgtools.DefaultPNGLevel)),
@@ -842,6 +843,19 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 		im.ICO(goimgtools.ICOOptions{Sizes: sizes})
 	case "pdf":
 		im.PDF(goimgtools.PDFOptions{Quality: *o.quality})
+	case "icns":
+		var sizes []int
+		for _, s := range strings.Split(*o.icnsSizes, ",") {
+			if s = strings.TrimSpace(s); s == "" {
+				continue
+			}
+			n, err := strconv.Atoi(s)
+			if err != nil {
+				return nil, fmt.Errorf("-icns-sizes: %q is not a number", s)
+			}
+			sizes = append(sizes, n)
+		}
+		im.ICNS(goimgtools.ICNSOptions{Sizes: sizes})
 	}
 	// (A name without a known extension: the library reports it.)
 	return im, nil
