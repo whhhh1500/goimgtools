@@ -1,6 +1,8 @@
 package svg
 
 import (
+	"unicode"
+
 	"github.com/whhhh1500/goimgtools/internal/bidi"
 	"github.com/whhhh1500/goimgtools/internal/shape"
 	"github.com/whhhh1500/goimgtools/internal/textsrc"
@@ -16,6 +18,13 @@ type svgShape struct {
 	glyphs []shape.Glyph
 }
 
+// cursive reports whether r is of a script whose letters join (Arabic and
+// those that join as it does), which letter spacing does not part.
+func cursive(r rune) bool {
+	return r >= 0x0600 && unicode.In(r, unicode.Arabic, unicode.Syriac, unicode.Nko, unicode.Mongolian, unicode.Mandaic,
+		unicode.Adlam, unicode.Hanifi_Rohingya)
+}
+
 // chunkEnd is where the chunk of characters from s ends: at the next one
 // placed absolutely, or on another path.
 func chunkEnd(chars []tchar, s int) int {
@@ -28,8 +37,8 @@ func chunkEnd(chars []tchar, s int) int {
 
 // shapeChars shapes the characters of scripts that join, reorder or stack
 // by the tables of their fonts, in their logical order: a run of one font,
-// one level and no placing of its own after its first character at a
-// time, across elements (a cluster is painted as its first character).
+// one level and no absolute place after its first character at a time,
+// across elements (a cluster is painted as its first character).
 func (b *builder) shapeChars(chars []tchar) {
 	rs := make([]rune, len(chars))
 	for i, c := range chars {
@@ -83,8 +92,10 @@ func (b *builder) shapeChars(chars []tchar) {
 		j := i + 1
 		for j < len(chars) && need[j] && fonts[j] == fonts[i] && levels[j] == levels[i] {
 			c := &chars[j]
-			if c.tctx.path != first.tctx.path || c.x != nil || c.y != nil || c.dx != 0 || c.dy != 0 ||
-				c.rotSet != first.rotSet || c.rot != first.rot {
+			// Placed absolutely, a character starts a chunk of its own (as
+			// in Chrome); moved by dx, dy or turned, it is shaped with the
+			// others, its cluster moved and turned with its first character.
+			if c.tctx.path != first.tctx.path || c.x != nil || c.y != nil {
 				break
 			}
 			j++

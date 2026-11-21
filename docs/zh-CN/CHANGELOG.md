@@ -41,6 +41,8 @@
 
 ### 修复
 
+- SVG 的 `text-decoration: line-through` 画在 Chrome 画的位置：线的中间在基线上方字体上升高度的三分之一处；原先在 x 高度的一半，40 像素时比 Chrome 低 4–5 像素（Arial、Segoe UI、Times New Roman、微软雅黑、Tahoma、Verdana、Georgia；现在相差不超过一个像素，Calibri 不超过三个，因 Chrome 用其 Windows 上升高度）。
+- SVG：字体族加载失败（打开字体时到达内存上限）时归还其字体已预留的内存；原先每个字体 256KB 一直占到文档关闭。
 - 文字（`Text()`、水印、SVG）遇到所用字体都没有的字符（如符号 ✨、★、箭头，或字体不含的文字）时，从系统里的符号与其他文字的字体取（Windows 的 Segoe UI Symbol 与 Emoji、Nirmala UI 等；macOS 的 Apple Symbols；Linux 的 Noto Symbols、DejaVu Sans），只在遇到这样的字符时才打开；原来画成缺字的空框。
 - 带非 sRGB 颜色配置的图（如手机照片的 Display P3）切成瓦片（`ToTiles`）时转换为 sRGB，同不能带配置的格式：瓦片不带配置写出，原先颜色显示不对（P3 的红显示成 sRGB 的 (234, 51, 35)）。
 - 折线与多边形描边在各段相接处偏暗：部分覆盖的像素上各段与拐点的覆盖率直接相加；现按它们的并集计算（同 cairo、Skia 的扫描），与 64×64 采样相差不超过 1.24 级，过折线上一点的线与直线相同，点距 0.4 像素的曲线涂黑面积等于长×宽（原来多 24.8%）。

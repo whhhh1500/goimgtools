@@ -201,7 +201,7 @@ func animationBytes(t *testing.T) []byte {
 }
 
 // shapedFont is Noto Sans Devanagari cut down to a few words.
-const shapedFont = "../internal/shape/testdata/NotoSansDevanagari-subset.ttf"
+const shapedFont = "testdata/fonts/NotoSansDevanagari-subset.ttf"
 
 const shapedSVG = `<svg xmlns="http://www.w3.org/2000/svg" width="230" height="70">
 <text x="8" y="44" font-size="29.5" font-family="'` + shapedFont + `'" rotate="3" letter-spacing="0.7">नमस्ते <tspan dy="-4" fill="#a20">कि</tspan> दुनिया</text>

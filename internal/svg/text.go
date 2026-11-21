@@ -140,8 +140,18 @@ func (b *builder) fonts(family, face string) *textsrc.Set {
 			}
 		}
 	}
-	s, err := textsrc.Load(specs, nil, b.reserve)
+	// What the set reserves is given back when it closes; if it fails to
+	// load, here.
+	var got int64
+	s, err := textsrc.Load(specs, nil, func(n int64) error {
+		if err := b.reserve(n); err != nil {
+			return err
+		}
+		got += n
+		return nil
+	})
 	if err != nil {
+		b.release(got)
 		s = nil
 	}
 	b.fontSets[key] = s
@@ -672,7 +682,8 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 				p.base = -float64(desc * u)
 			}
 			p.over = -float64(asc * u)
-			p.through = -float64(xh*u) / 2 // the top of the line, where fonts put their strikeout about
+			// The line-through's middle a third of the ascent up (as Chrome).
+			p.through = -float64(asc*u) / 3
 		}
 		p.thick = float64(c.st.fontSize / 14)
 		p.under = float64(c.st.fontSize / 10)
@@ -680,6 +691,7 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 			p.thick = float64(float64(post.UnderlineThickness) * mscale)
 			p.under = -float64(float64(post.UnderlinePosition) * mscale)
 		}
+		p.through -= float64(p.thick / 2) // its top
 		adv := 0.0
 		if c.sh != nil {
 			// The cluster's advance, its glyphs placed from its pen.
@@ -701,7 +713,11 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 		} else if a, err := sf.GlyphAdvance(&buf, gi, upem, font.HintingNone); err == nil {
 			adv = float64(float64(float64(a)/64) * scale)
 		}
-		adv += c.tctx.letter
+		// Letter spacing parts no letters that join (as Chrome: nor what
+		// is drawn as nothing).
+		if !cursive(c.r) && !bidi.Ignorable(c.r) {
+			adv += c.tctx.letter
+		}
 		if c.r == ' ' {
 			adv += c.tctx.word
 		}

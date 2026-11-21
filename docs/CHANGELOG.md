@@ -41,6 +41,8 @@ English | [中文](zh-CN/CHANGELOG.md)
 
 ### Fixed
 
+- SVG `text-decoration: line-through` is drawn where Chrome draws it, its middle a third of the font's ascent above the baseline; it was half the x-height up, 4 to 5 pixels lower than Chrome's at 40 pixels in Arial, Segoe UI, Times New Roman, Microsoft YaHei, Tahoma, Verdana, Georgia (now within one pixel; Calibri within three, Chrome taking its Windows ascent).
+- SVG: a font family that fails to load (the memory limit reached while its fonts open) gives back what its fonts reserved; 256KB a font stayed reserved until the document closed.
 - Text (`Text()`, watermarks, SVG) draws a character none of its fonts has, such as a symbol (✨, ★, arrows) or a letter of a script they lack, from the fonts of symbols and other scripts the system has (Segoe UI Symbol and Emoji, Nirmala UI, ... on Windows; Apple Symbols on macOS; Noto Symbols, DejaVu Sans on Linux), opened only when such a character comes; it was the empty box of a missing glyph.
 - Tiles (`ToTiles`) of an image with a colour profile other than sRGB, such as the Display P3 of phone photographs, are converted to sRGB, as for a format that cannot carry a profile: tiles are written without one, and their colours were shown wrong (a P3 red as sRGB's (234, 51, 35)).
 - Strokes of polylines and polygons were too dark where their pieces met: the coverage of the segments and joins was added up in partly covered pixels; it is now that of their union (as cairo and Skia scan it), within 1.24 levels of 64×64 samples, so a line drawn through a point on it is the line, and a curve through points 0.4 pixels apart paints its length times its width (it painted 24.8% more).

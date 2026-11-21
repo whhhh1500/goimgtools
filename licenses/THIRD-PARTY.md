@@ -411,7 +411,7 @@ zlib licence), rewritten in Go; nothing of its files is included.
 ## Noto Sans Devanagari (a font for the tests)
 
 SIL Open Font License 1.1, copyright Google Inc. The full text is in
-`LICENSE-OFL-NOTO`, next to this file. `internal/shape/testdata/NotoSansDevanagari-subset.ttf`
+`LICENSE-OFL-NOTO`, next to this file. `tests/testdata/fonts/NotoSansDevanagari-subset.ttf`
 is the font cut down (with fontTools' pyftsubset, its layout features kept) to the characters of the
 texts the tests shape. It is used by the tests only.
 ## Acknowledgements (no code taken)

@@ -59,8 +59,11 @@ func (s *Set) layoutFace(i int) (*shape.Face, error) {
 	return face, nil
 }
 
+// isMark reports whether r is a mark set on the letter before it: one that
+// takes no room (Mn, Me) or one that does (Mc, as the vowel signs of
+// India's scripts after their consonant or a dotted circle).
 func isMark(r rune) bool {
-	return r >= 0x0300 && unicode.In(r, unicode.Mn, unicode.Me)
+	return r >= 0x0300 && unicode.In(r, unicode.Mn, unicode.Me, unicode.Mc)
 }
 
 // ShapingFace is the shaping tables of f, a font of the set, read (and

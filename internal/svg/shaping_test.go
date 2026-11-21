@@ -1,0 +1,108 @@
+package svg
+
+import (
+	"fmt"
+	"testing"
+
+	"github.com/whhhh1500/goimgtools/internal/textsrc"
+	"github.com/whhhh1500/goimgtools/pipeline"
+)
+
+// testFont is Noto Sans Devanagari cut down to a few words, with the
+// dotted circle a vowel sign without its consonant is drawn on.
+const testFont = "../../tests/testdata/fonts/NotoSansDevanagari-subset.ttf"
+
+// inkWidth draws a document and gives the width of what it inks, and the
+// memory left reserved after it is closed.
+func inkWidth(t *testing.T, doc string, limit int64) (int, int64, error) {
+	t.Helper()
+	env := pipeline.NewEnv(limit, "")
+	s, err := Open([]byte(doc), env)
+	if err != nil {
+		return 0, env.Budget.Used(), err
+	}
+	img, err := pipeline.Collect(s)
+	s.Close()
+	if err != nil {
+		return 0, env.Budget.Used(), err
+	}
+	b := img.Bounds()
+	x0, x1 := b.Max.X, b.Min.X
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			if _, _, _, a := img.At(x, y).RGBA(); a > 0x8000 {
+				x0, x1 = min(x0, x), max(x1, x+1)
+			}
+		}
+	}
+	return max(0, x1-x0), env.Budget.Used(), nil
+}
+
+func textDoc(attrs, text string) string {
+	return fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" width="400" height="80"><text x="10" y="55" font-size="36" font-family="'%s'" %s>%s</text></svg>`, testFont, attrs, text)
+}
+
+// TestShapedPlacing: characters moved by dx or turned by rotate are
+// shaped with their neighbours (their cluster moves with its first): the
+// conjunct of स्त stays one, and no vowel sign is drawn on a dotted
+// circle of its own.
+func TestShapedPlacing(t *testing.T) {
+	plain, _, err := inkWidth(t, textDoc("", "नमस्ते कि"), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		attrs string
+		extra int // the most dx adds
+	}{
+		{`dx="0 4 4 4 4 4 4 4 4"`, 32},
+		{`rotate="0 2 4 6 8 10 12 14 16"`, 8},
+		{`dy="0 0 0 0 3"`, 0},
+	} {
+		w, _, err := inkWidth(t, textDoc(c.attrs, "नमस्ते कि"), 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if w > plain+c.extra+2 {
+			t.Errorf("%s: %d pixels wide, %d without (clusters parted)", c.attrs, w, plain)
+		}
+	}
+	// A vowel sign that takes room, after a dotted circle: one circle.
+	one, _, _ := inkWidth(t, textDoc("", "◌"), 0)
+	two, _, _ := inkWidth(t, textDoc("", "◌ा"), 0)
+	if two > 2*one {
+		t.Errorf("◌ा: %d pixels wide, ◌ alone %d (a second circle)", two, one)
+	}
+}
+
+// TestShapedBudget: what text and its shaping reserve is given back, at
+// any limit, the document drawn or not.
+func TestShapedBudget(t *testing.T) {
+	doc := `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="120">
+<text x="10" y="40" font-size="30" font-family="'` + testFont + `', serif">नमस्ते क्षत्रिय</text>
+<text x="10" y="90" font-size="30" font-family="serif" font-weight="bold">कि ◌ा abc</text>
+</svg>`
+	for limit := int64(1 << 19); limit <= 8<<20; limit += 1 << 18 {
+		if _, left, _ := inkWidth(t, doc, limit); left != 0 {
+			t.Fatalf("limit %d: %d bytes left reserved", limit, left)
+		}
+	}
+}
+
+// TestLetterSpacingJoined: letter spacing does not part Arabic letters
+// (as Chrome): Arabic with it is as wide as without.
+func TestLetterSpacingJoined(t *testing.T) {
+	set, err := textsrc.Load([]string{"Segoe UI"}, nil, func(int64) error { return nil })
+	if err != nil {
+		t.Skip("no Segoe UI")
+	}
+	set.Close(nil)
+	doc := func(ls string) string {
+		return `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="80"><text x="10" y="55" font-size="36" font-family="Segoe UI" letter-spacing="` + ls + `">مرحبا</text></svg>`
+	}
+	a, _, _ := inkWidth(t, doc("0"), 0)
+	b, _, _ := inkWidth(t, doc("6"), 0)
+	if a == 0 || b != a {
+		t.Errorf("مرحبا: %d pixels wide spaced, %d not", b, a)
+	}
+}

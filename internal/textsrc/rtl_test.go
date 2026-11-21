@@ -53,7 +53,7 @@ func TestRightToLeft(t *testing.T) {
 // several characters is drawn by its first, the conjunct's glyph is not a
 // letter's own, and a line breaks only between clusters.
 func TestShaped(t *testing.T) {
-	font := []string{"../shape/testdata/NotoSansDevanagari-subset.ttf"}
+	font := []string{"../../tests/testdata/fonts/NotoSansDevanagari-subset.ttf"}
 	src, err := New("नमस्ते", Options{Size: 40, Fonts: font}, pipeline.NewEnv(0, ""))
 	if err != nil {
 		t.Fatal(err)

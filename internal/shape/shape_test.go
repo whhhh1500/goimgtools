@@ -10,7 +10,7 @@ import (
 // The test font is Noto Sans Devanagari (SIL Open Font License 1.1,
 // licenses/LICENSE-OFL-NOTO), cut down to the characters of the texts
 // below with all its layout features.
-const devanagari = "testdata/NotoSansDevanagari-subset.ttf"
+const devanagari = "../../tests/testdata/fonts/NotoSansDevanagari-subset.ttf"
 
 func cmapOf(t *testing.T, data []byte) func(r rune) uint16 {
 	f, err := sfnt.Parse(data)
