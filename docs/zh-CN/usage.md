@@ -281,6 +281,7 @@ goimgtools.Text("第一行\n第二行 Mixed", goimgtools.TextOptions{
 | `goimgtools compare a b` | `inspect.Compare(a, b)` | 逐像素比较两幅图像，格式不同亦可：给出是否完全相同；若不同，则给出 PSNR（越高越接近，40 以上肉眼难以分辨）、最大差值及差异像素数。`-min-psnr 35` 可用作质量门槛：未达到时以非零状态退出 |
 | `goimgtools stats 文件...` | `inspect.Stats(img)` | 遍历全部像素：平均色、亮度、面积占比最大的几种颜色、是否实为灰度图像、是否确有透明像素、颜色数（不超过 256 种时）。可用于选取占位色、决定使用深色或浅色文字、判断能否存储为灰度或调色板图像。另有 sharp 的 `stats()` 所报告的各项，数值一致到末几位：`Channels`（红、绿、蓝、透明各通道的最低与最高值及其首次出现的位置、总和、平均值、标准差）、`Entropy`（熵）与 `Sharpness`（锐度） |
 | `goimgtools hash 文件...` | `inspect.Hash(img)` | 64 位感知哈希：同一图像改变尺寸、格式或压缩率后，哈希值仅相差数位；不同图像约相差一半。`-similar 10` 列出彼此相近的文件，用于查找重复图像 |
+| `goimgtools placeholder 文件...` | `inspect.BlurHash(img, x, y)`、`inspect.ThumbHash(img)` | 网页占位图：每张图的 BlurHash（`-components 4x3`）与 ThumbHash（base64），网页解码成模糊的小图，在原图加载完之前显示。由缩到 100×100 以内的图计算（2400 万像素的 JPEG 解码时即缩小），各处理器结果相同；照片上 ThumbHash 与 JavaScript 参考实现逐字节相同，BlurHash 与 woltapp 的 C 编码器相同 |
 | `goimgtools exif 文件...` | `inspect.ReadExif(img)` | EXIF 中的相机、镜头、拍摄时间、曝光参数、GPS 位置等 |
 | `goimgtools readmark -key 密钥 文件...` | `inspect.ReadWatermark(img, key)` | 用 `InvisibleWatermark` 与同一密钥藏入的标记，不需要原图；没有时如实报告（见[隐形水印](watermark.md)） |
 | | `inspect.ReadXmp(img)` | 文件的 XMP 数据包（XML），即 sharp 的 `metadata().xmp`；`info` 会显示文件是否含 XMP |

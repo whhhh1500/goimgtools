@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"image"
 	"image/color"
@@ -13,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/whhhh1500/goimgtools"
+	"github.com/whhhh1500/goimgtools/inspect"
 	"github.com/whhhh1500/goimgtools/internal/testutil"
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
@@ -444,5 +446,25 @@ func TestOp(t *testing.T) {
 	w, _ := goimgtools.Open(filepath.Join(src, "a.png")).Flip().PNG().ToBytes()
 	if !bytes.Equal(b, w) {
 		t.Error("batch -op flip: another file than the library's")
+	}
+}
+
+func TestPlaceholderCommand(t *testing.T) {
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a.png")
+	writePNG(t, a, testutil.Images(120, 80)["rgba-opaque"])
+	out, _, err := cli("placeholder", "-components", "3x2", a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := inspect.BlurHash(goimgtools.Open(a), 3, 2)
+	th, _ := inspect.ThumbHash(goimgtools.Open(a))
+	if want := b + "  " + base64.StdEncoding.EncodeToString(th) + "  " + a + "\n"; out != want {
+		t.Errorf("printed %q, want %q", out, want)
+	}
+	for _, args := range [][]string{{"placeholder"}, {"placeholder", "-components", "10x1", a}, {"placeholder", filepath.Join(dir, "none.png")}} {
+		if _, _, err := cli(args...); err == nil {
+			t.Errorf("%v: no error", args)
+		}
 	}
 }

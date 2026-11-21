@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -208,6 +209,48 @@ func hash(args []string, stdout, stderr io.Writer) error {
 	}
 	if failed > 0 {
 		return fmt.Errorf("hash: %d of %d files could not be read", failed, fl.NArg())
+	}
+	return nil
+}
+
+// placeholder prints the BlurHash and the ThumbHash of each image.
+func placeholder(args []string, stdout, stderr io.Writer) error {
+	fl := flag.NewFlagSet("goimgtools placeholder", flag.ContinueOnError)
+	fl.SetOutput(stderr)
+	comps := fl.String("components", "4x3", "the BlurHash `components` across and down, 1 to 9 each")
+	fl.Usage = func() {
+		fmt.Fprint(stderr, "usage: goimgtools placeholder [-components 4x3] file...\n\nPrints the BlurHash and the ThumbHash (in base64) of each image: short\ncodes that a page decodes into a blurred picture of it, shown while the\nimage loads.\n\n")
+		fl.PrintDefaults()
+	}
+	if err := fl.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if fl.NArg() == 0 {
+		return errors.New("placeholder: need at least one file")
+	}
+	var cx, cy int
+	if n, err := fmt.Sscanf(*comps, "%dx%d", &cx, &cy); err != nil || n != 2 || cx < 1 || cx > 9 || cy < 1 || cy > 9 {
+		return fmt.Errorf("placeholder: -components %q: want two numbers 1 to 9, such as 4x3", *comps)
+	}
+	failed := 0
+	for _, f := range fl.Args() {
+		b, err := inspect.BlurHash(goimgtools.Open(f), cx, cy)
+		var th []byte
+		if err == nil {
+			th, err = inspect.ThumbHash(goimgtools.Open(f))
+		}
+		if err != nil {
+			failed++
+			fmt.Fprintf(stdout, "%s: %v\n", f, err)
+			continue
+		}
+		fmt.Fprintf(stdout, "%s  %s  %s\n", b, base64.StdEncoding.EncodeToString(th), f)
+	}
+	if failed > 0 {
+		return fmt.Errorf("placeholder: %d of %d files could not be read", failed, fl.NArg())
 	}
 	return nil
 }

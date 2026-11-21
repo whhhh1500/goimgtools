@@ -52,6 +52,8 @@ const usage = `usage:
                                         dominant, greyscale or not
   goimgtools hash file...               a fingerprint of each image, for
                                         finding duplicates (-similar bits)
+  goimgtools placeholder file...        the BlurHash and ThumbHash of each
+                                        image, blurred placeholders for pages
   goimgtools exif file...               camera, time and place from the EXIF
                                         block
   goimgtools readmark -key K file...    the invisible mark (-mark) of each
@@ -267,6 +269,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 			return stats(args[1:], stdout, stderr)
 		case "hash":
 			return hash(args[1:], stdout, stderr)
+		case "placeholder":
+			return placeholder(args[1:], stdout, stderr)
 		case "exif":
 			return exifInfo(args[1:], stdout, stderr)
 		case "readmark":

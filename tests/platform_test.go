@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	. "github.com/whhhh1500/goimgtools"
+	"github.com/whhhh1500/goimgtools/inspect"
 	"github.com/whhhh1500/goimgtools/internal/testutil"
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
@@ -159,6 +160,13 @@ func TestSameOnEveryProcessor(t *testing.T) {
 		// made flat, the alpha plane coded by the lossless encoder.
 		{"webp alpha", func() ([]byte, error) { return clear.Clone().WebP(WebPOptions{Quality: 70}).ToBytes() }, "bd4f113e1fb01ed1"},
 		{"gif", func() ([]byte, error) { return photo.Clone().GIF().ToBytes() }, "88be7f34f4dddfe6"},
+		// Cosines and the sRGB curve of their own: the same placeholders
+		// everywhere.
+		{"blurhash", func() ([]byte, error) {
+			s, err := inspect.BlurHash(photo.Clone(), 5, 4)
+			return []byte(s), err
+		}, "d28e56cb71c3aa27"},
+		{"thumbhash", func() ([]byte, error) { return inspect.ThumbHash(clear.Clone()) }, "fd2197c16d62bb42"},
 		{"gif animation", func() ([]byte, error) {
 			return FromBytes(animationBytes(t)).Animated().Resize(90, 0).GIF(GIFOptions{Colors: 50}).ToBytes()
 		}, "57b8955b8f3855b5"},
