@@ -165,6 +165,19 @@ func (m *Image) manageColour(src pipeline.Source, icc []byte, format string) (pi
 // the memory limit) until the last one has arrived.
 func (m *Image) BMP() *Image { m.format, m.options = "bmp", nil; return m }
 
+// QOI selects QOI output (the "Quite OK Image" format, qoiformat.org):
+// lossless, eight bits, RGB when the image is known to be opaque and RGBA
+// otherwise, written and read about as fast as the pixels are copied. The
+// file is the reference encoder's and Pillow's, but that its colour space is
+// marked sRGB (Pillow marks it linear unless told otherwise).
+func (m *Image) QOI() *Image { m.format, m.options = "qoi", nil; return m }
+
+// PNM selects Netpbm output, as Pillow writes it: PGM (P5) for a grey image,
+// PPM (P6) for any other, with 16 bits a value when the image has them.
+// Netpbm has no transparency: it is laid over black, as for JPEG. Read are
+// also PBM, PAM (with transparency) and PFM, in text or binary.
+func (m *Image) PNM() *Image { m.format, m.options = "pnm", nil; return m }
+
 // TIFFCompression is how TIFF output is compressed.
 type TIFFCompression int
 

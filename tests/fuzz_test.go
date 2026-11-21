@@ -73,6 +73,18 @@ func seedFiles(tb testing.TB) [][]byte {
 	if err := gif.EncodeAll(&anim, testAnimation(20, 14)); err == nil {
 		out = append(out, anim.Bytes())
 	}
+	// Photoshop files: RGB with transparency, PackBits; grey 16-bit PSB.
+	planes := func(n, size int) [][]byte {
+		p := make([][]byte, n)
+		for c := range p {
+			for i := 0; i < size; i++ {
+				p[c] = append(p[c], uint8(i*(c+5)))
+			}
+		}
+		return p
+	}
+	out = append(out, testutil.PSD(testutil.PSDFile{RLE: true, Mode: 3, Depth: 8, W: 9, H: 5, Channels: planes(4, 45), Layers: -1}),
+		testutil.PSD(testutil.PSDFile{PSB: true, Mode: 1, Depth: 16, W: 6, H: 3, Channels: planes(1, 36)}))
 	// An animated WebP (a lossless frame at an offset, then a lossy one
 	// with alpha) and an APNG.
 	m := testutil.Images(12, 8)["nrgba"]

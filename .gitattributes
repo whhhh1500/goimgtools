@@ -10,3 +10,8 @@
 tests/testdata/fuzz/** text eol=lf
 *.icc binary
 *.s text eol=lf
+# Netpbm and QOI files are compared to the byte: kept as they are.
+*.pbm binary
+*.pgm binary
+*.ppm binary
+*.qoi binary

@@ -17,6 +17,9 @@ import (
 	"github.com/whhhh1500/goimgtools/internal/jpegstream"
 	"github.com/whhhh1500/goimgtools/internal/ops"
 	"github.com/whhhh1500/goimgtools/internal/pngstream"
+	"github.com/whhhh1500/goimgtools/internal/pnmstream"
+	"github.com/whhhh1500/goimgtools/internal/psdstream"
+	"github.com/whhhh1500/goimgtools/internal/qoistream"
 	"github.com/whhhh1500/goimgtools/internal/quant"
 	"github.com/whhhh1500/goimgtools/internal/resize"
 	"github.com/whhhh1500/goimgtools/internal/tiffstream"
@@ -30,8 +33,8 @@ import (
 type Format struct {
 	// Name is what the format is called everywhere: in Info.Format, in
 	// ToFormat, in error messages, on the command line. The formats of
-	// this package are "jpeg", "png", "webp", "gif", "bmp", "tiff" and
-	// "ico".
+	// this package are "jpeg", "png", "webp", "gif", "bmp", "tiff",
+	// "ico", "psd" (read only), "qoi" and "pnm" (Netpbm).
 	Name string
 	// Extensions are the file extensions of the format, in lower case and
 	// with the dot. The first is the one to give a new file.
@@ -382,7 +385,47 @@ var builtin = []*formatDef{
 			return encodeICO(w, src, ico.Sizes)
 		},
 		check: checks[ICOOptions]("ico"),
+	}, {
+		// Photoshop's composite image; nothing is written.
+		Format:    Format{"psd", []string{".psd", ".psb"}},
+		noProfile: true,
+		magic:     psdstream.Match,
+		open: func(in *input, env *pipeline.Env) (pipeline.Source, error) {
+			return in.openAt(env, psdstream.Open)
+		},
+	}, {
+		Format:    Format{"qoi", []string{".qoi"}},
+		noProfile: true,
+		magic:     qoistream.Match,
+		open:      func(in *input, env *pipeline.Env) (pipeline.Source, error) { return qoistream.Open(in.br, env) },
+		encode: func(w io.Writer, src pipeline.Source, o EncodeOptions) error {
+			return qoistream.Encode(w, src)
+		},
+		check: noOptions("qoi"),
+	}, {
+		// PBM, PGM, PPM, PAM and PFM are read; PGM or PPM written.
+		Format:    Format{"pnm", []string{".ppm", ".pgm", ".pbm", ".pnm"}},
+		noProfile: true,
+		magic:     pnmstream.Match,
+		open: func(in *input, env *pipeline.Env) (pipeline.Source, error) {
+			return in.openAt(env, pnmstream.Open)
+		},
+		encode: func(w io.Writer, src pipeline.Source, o EncodeOptions) error {
+			// Transparency over black, as for JPEG.
+			return pnmstream.Encode(w, ops.Flatten(src, color.Black))
+		},
+		check: noOptions("pnm"),
 	},
+}
+
+// noOptions is the check of a format that takes no options.
+func noOptions(format string) func(any) error {
+	return func(options any) error {
+		if options != nil {
+			return fmt.Errorf("goimgtools: %s output has no options, got a %T", format, options)
+		}
+		return nil
+	}
 }
 
 func jpegQuality(o JPEGOptions) int {

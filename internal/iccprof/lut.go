@@ -354,6 +354,11 @@ func (l *lut) pcsToXYZ(o [3]float64, lab bool) [3]float64 {
 		a = float64(o[1]*255) - 128
 		b = float64(o[2]*255) - 128
 	}
+	return labToXYZ(L, a, b)
+}
+
+// labToXYZ is the D50 XYZ of a CIELAB colour.
+func labToXYZ(L, a, b float64) [3]float64 {
 	fy := (L + 16) / 116
 	fx := fy + a/500
 	fz := fy - b/200
@@ -365,6 +370,11 @@ func (l *lut) pcsToXYZ(o [3]float64, lab bool) [3]float64 {
 	}
 	return [3]float64{float64(d50[0] * inv(fx)), float64(d50[1] * inv(fy)), float64(d50[2] * inv(fz))}
 }
+
+// LabToSRGB is the sRGB colour, 0 to 255 unrounded, of a CIELAB one (D50,
+// L 0 to 100), relative colorimetric and clipped to the gamut, as a Lab
+// connection space is taken to sRGB.
+func LabToSRGB(L, a, b float64) [3]float64 { return srgbOf(labToXYZ(L, a, b)) }
 
 // srgbOf takes D50 XYZ to sRGB on 0 to 255, unrounded, relative
 // colorimetric: clipped to the gamut.

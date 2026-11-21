@@ -68,7 +68,7 @@ With -text and no input file, the text itself is the image:
   goimgtools -text "Hello" -font-size 64 out.png
 
 The output format follows the extension of output (.jpg, .png, .webp, .gif,
-.bmp, .tif, .ico) unless -format is given. Operations are applied in this order:
+.bmp, .tif, .ico, .qoi, .ppm, .pgm) unless -format is given. Operations are applied in this order:
 rotate, flip, flop, trim, crop, resize, extend, grayscale, modulate, blur,
 sharpen, the -op steps (in the order given), flatten, watermark, -mark.
 

@@ -169,10 +169,10 @@ func FromSource(open func(env *pipeline.Env) (pipeline.Source, error)) *Image {
 }
 
 // ToFormat selects the output format by name: one of this package's
-// ("jpeg", "png", "webp", "gif", "bmp", "tiff", "ico") or one added with
-// RegisterFormat, also by a file extension ("jpg", ".tif"). It is for a
-// format that has no method of its own, and for programs that get the
-// format as a string.
+// ("jpeg", "png", "webp", "gif", "bmp", "tiff", "ico", "qoi",
+// "pnm") or one added with RegisterFormat, also by a file extension
+// ("jpg", ".tif"). It is for a format that has no method of its own,
+// and for programs that get the format as a string.
 //
 // options, at most one value, goes to the encoder of the format. For the
 // formats of this package it is the options type of the format's method
