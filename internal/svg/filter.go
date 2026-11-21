@@ -101,14 +101,34 @@ func (b *builder) filtered(n *node, f *node, m matrix, st style, vp viewport, ow
 		return
 	}
 	w, h := reg.Dx(), reg.Dy()
+	// The region is worked at a lower resolution when its pictures would
+	// not fit in half the memory left: a filter's result is mostly smooth.
+	sx, sy := 1.0, 1.0
+	bufs := int64(4)
+	for _, p := range f.children {
+		if strings.HasPrefix(p.name, "fe") {
+			bufs++
+		}
+	}
+	need := int64(w) * int64(h) * (16*bufs + 4*8)
+	if b.avail != nil {
+		if room := b.avail() / 2; need > room && room > 0 {
+			k := math.Sqrt(float64(room) / float64(need))
+			nw, nh := max(1, int(float64(float64(w)*k))), max(1, int(float64(float64(h)*k)))
+			sx, sy = float64(nw)/float64(w), float64(nh)/float64(h)
+			w, h = nw, nh
+		}
+	}
 	if int64(w)*int64(h) > maxFilterPixels {
 		b.err = errTooMuch
 		return
 	}
+	// The region's pixels from the device's.
+	toRegion := matrix{sx, 0, 0, sy, 0, 0}.mul(matrix{1, 0, 0, 1, -float64(reg.Min.X), -float64(reg.Min.Y)})
 	// The element alone, into the region, as a scene of its own.
 	inner := st
 	inner.opacity = 1
-	cm := matrix{1, 0, 0, 1, -float64(reg.Min.X), -float64(reg.Min.Y)}.mul(m)
+	cm := toRegion.mul(m)
 	outerSc, full := b.sc, b.full
 	b.sc = &scene{w: w, h: h, points: outerSc.points, itemCount: outerSc.itemCount, charged: outerSc.charged, imageBytes: outerSc.imageBytes}
 	b.full = image.Rect(0, 0, w, h)
@@ -136,7 +156,7 @@ func (b *builder) filtered(n *node, f *node, m matrix, st style, vp viewport, ow
 		b.release(need)
 	}
 	// The filter's primitives, on pictures of floats.
-	fc := &fctx{w: w, h: h, m: m, results: map[string]fbuf{}, reserve: b.reserve, release: b.release}
+	fc := &fctx{w: w, h: h, m: matrix{sx, 0, 0, sy, 0, 0}.mul(m), results: map[string]fbuf{}, reserve: b.reserve, release: b.release}
 	fc.linear = true
 	if v, ok := f.prop("color-interpolation-filters"); ok && strings.TrimSpace(v) == "sRGB" {
 		fc.linear = false
@@ -163,8 +183,8 @@ func (b *builder) filtered(n *node, f *node, m matrix, st style, vp viewport, ow
 	}
 	b.sc.imageBytes += 4 * px
 	// The result, as a picture at the region's place.
-	area := fillPath(flatten(rectSegs(float64(reg.Min.X), float64(reg.Min.Y), float64(w), float64(h), 0, 0), identity), identity, false)
-	sh := &shader{tile: &tileSampler{tile: res, tw: w, th: h, inv: matrix{1, 0, 0, 1, -float64(reg.Min.X), -float64(reg.Min.Y)}}}
+	area := fillPath(flatten(rectSegs(float64(reg.Min.X), float64(reg.Min.Y), float64(reg.Dx()), float64(reg.Dy()), 0, 0), identity), identity, false)
+	sh := &shader{tile: &tileSampler{tile: res, tw: w, th: h, inv: toRegion, clamp: true}}
 	if st.opacity < 1 {
 		sh.opacity = st.opacity
 	}

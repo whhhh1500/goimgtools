@@ -15,6 +15,7 @@ type tileSampler struct {
 	tile   []uint8 // premultiplied RGBA
 	tw, th int
 	inv    matrix // device to tile pixels
+	clamp  bool   // its edges held rather than repeated (a filter's result)
 }
 
 func (s *tileSampler) at(px, py float64) [4]uint8 {
@@ -23,6 +24,9 @@ func (s *tileSampler) at(px, py float64) [4]uint8 {
 	x0, y0 := math.Floor(u), math.Floor(v)
 	fx, fy := u-x0, v-y0
 	wrap := func(i float64, n int) int {
+		if s.clamp {
+			return int(math.Max(0, math.Min(float64(n-1), i)))
+		}
 		k := int(math.Mod(i, float64(n)))
 		if k < 0 {
 			k += n
