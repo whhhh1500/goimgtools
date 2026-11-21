@@ -518,7 +518,7 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 		if path := chunkPath[p.chunk]; path != nil {
 			// The glyph's middle on the path, turned with it; beyond its
 			// ends it is not drawn.
-			mid := path.start + p.x + shift + p.adv/2
+			mid := path.start + p.x + shift + float64(p.adv/2) // a product by 1/2: not to be fused
 			x, y, tx, ty, ok := path.at(mid)
 			if !ok {
 				continue
