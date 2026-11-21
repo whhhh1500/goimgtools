@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="300" height="160">
+  <defs>
+    <filter id="blur"><feGaussianBlur stdDeviation="3"/></filter>
+    <filter id="small"><feGaussianBlur stdDeviation="1.2"/></filter>
+    <filter id="shadow" x="-20%" y="-20%" width="160%" height="160%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="4"/>
+      <feOffset dx="5" dy="5" result="off"/>
+      <feFlood flood-color="#000" flood-opacity="0.5"/>
+      <feComposite in2="off" operator="in"/>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="ds"><feDropShadow dx="3" dy="3" stdDeviation="2" flood-color="navy" flood-opacity="0.6"/></filter>
+    <filter id="grey"><feColorMatrix type="saturate" values="0.1"/></filter>
+  </defs>
+  <rect x="15" y="15" width="70" height="50" fill="crimson" filter="url(#blur)"/>
+  <circle cx="150" cy="45" r="30" fill="gold" stroke="black" stroke-width="3" filter="url(#shadow)"/>
+  <rect x="220" y="20" width="60" height="45" rx="8" fill="#4c8" filter="url(#ds)"/>
+  <g filter="url(#grey)"><rect x="15" y="95" width="60" height="50" fill="red"/><rect x="45" y="110" width="60" height="40" fill="blue"/></g>
+</svg>

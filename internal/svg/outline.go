@@ -33,6 +33,13 @@ func maxScale(m matrix) float64 {
 // flatten turns path segments into polylines, close enough to the curves
 // under the transform m.
 func flatten(segs []seg, m matrix) []poly {
+	ps, _ := flattenLimit(segs, m, maxPoints)
+	return ps
+}
+
+// flattenLimit is flatten making at most limit points; ok is false when it
+// stopped there.
+func flattenLimit(segs []seg, m matrix, limit int) (_ []poly, ok bool) {
 	tol := tolerance / max(maxScale(m), 1e-12)
 	var out []poly
 	var cur *poly
@@ -47,7 +54,7 @@ func flatten(segs []seg, m matrix) []poly {
 		if cur == nil {
 			start(cx, cy)
 		}
-		if total >= maxPoints {
+		if total >= limit {
 			return
 		}
 		total++
@@ -96,8 +103,11 @@ func flatten(segs []seg, m matrix) []poly {
 				cx, cy = x, y
 			}
 		}
+		if total >= limit {
+			return out, false
+		}
 	}
-	return out
+	return out, true
 }
 
 // steps is how many lines a curve whose second differences reach k (times
@@ -137,18 +147,24 @@ type stroker struct {
 	miterLimit float64
 	path       *raster.Path
 	arcSteps   int // sides of a quarter of a round join or cap
+	points     int // the points of the pieces so far
+	limit      int // the most it may make
 }
 
 func newStroker(m matrix, width float64, cap, join int, miterLimit float64) *stroker {
 	s := &stroker{m: m, hw: width / 2, cap: cap, join: join, miterLimit: miterLimit, path: &raster.Path{Union: true}}
 	r := s.hw * maxScale(m)
-	s.arcSteps = max(2, int(math.Ceil(float64(math.Pi/2)/math.Sqrt(float64(0.1/max(r, 0.1))))))
+	s.arcSteps = min(64, max(2, int(math.Ceil(float64(math.Pi/2)/math.Sqrt(float64(0.1/max(r, 0.1)))))))
+	s.limit = maxScenePts
 	return s
 }
 
 // piece adds a polygon of user space, turned to run clockwise in device
 // space.
 func (s *stroker) piece(xy ...float64) {
+	if s.points += len(xy) / 2; s.points > s.limit {
+		return
+	}
 	d := make([]float64, len(xy))
 	for i := 0; i < len(xy); i += 2 {
 		d[i], d[i+1] = s.m.apply(xy[i], xy[i+1])

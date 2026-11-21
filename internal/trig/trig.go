@@ -183,3 +183,69 @@ func xatan(x float64) float64 {
 	z = float64(z*num) / den
 	return float64(x*z) + x
 }
+
+// Pow is x to the power y for x >= 0, the same on every processor (math.Pow
+// is the processor's own on some): exp(y ln x), the logarithm from the
+// series of atanh after taking out the exponent, the exponential from its
+// Taylor series after taking out the powers of two. Relative error about
+// 1e-15.
+func Pow(x, y float64) float64 {
+	switch {
+	case y == 0:
+		return 1
+	case math.IsNaN(x) || math.IsNaN(y) || x < 0:
+		return math.NaN()
+	case x == 0:
+		if y > 0 {
+			return 0
+		}
+		return math.Inf(1)
+	case x == 1:
+		return 1
+	}
+	return exp(float64(y * ln(x)))
+}
+
+const ln2 = 0.693147180559945309417232121458176568
+
+// ln is the natural logarithm of x > 0.
+func ln(x float64) float64 {
+	m, e := math.Frexp(x) // x = m 2^e, m in [0.5, 1)
+	if m < math.Sqrt2/2 {
+		m *= 2
+		e--
+	}
+	// ln m = 2 atanh(s), s = (m-1)/(m+1), |s| < 0.172
+	s := (m - 1) / (m + 1)
+	s2 := float64(s * s)
+	sum, term := 0.0, s
+	for k := 1; k < 40; k += 2 {
+		sum += term / float64(k)
+		term = float64(term * s2)
+		if math.Abs(term) < 1e-18 {
+			break
+		}
+	}
+	return float64(float64(e)*ln2) + float64(2*sum)
+}
+
+// exp is e to the power t.
+func exp(t float64) float64 {
+	if t > 709 {
+		return math.Inf(1)
+	}
+	if t < -745 {
+		return 0
+	}
+	k := math.Round(t / ln2)
+	r := t - float64(k*ln2) // |r| <= ln2/2
+	sum, term := 1.0, 1.0
+	for n := 1; n < 30; n++ {
+		term = float64(term*r) / float64(n)
+		sum += term
+		if math.Abs(term) < 1e-18 {
+			break
+		}
+	}
+	return math.Ldexp(sum, int(k))
+}

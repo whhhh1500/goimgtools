@@ -75,7 +75,7 @@ func TestSameOnEveryProcessor(t *testing.T) {
 		{"resize pillow translucent", clear.Clone().Resize(400, 50, ResizeOptions{Fit: FitFill, Kernel: KernelHamming, Method: MethodPillow}), "e37043c622b45c1a"},
 		{"resize libvips contain", clear.Clone().Resize(60, 60, ResizeOptions{Fit: FitContain, Kernel: KernelCubic,
 			Background: color.NRGBA{200, 10, 90, 99}, Method: MethodLibvips}), "9ff49d5906aebc1c"},
-		{"svg", FromBytes([]byte(platformSVG)).Resize(211, 0), "97652a7e74c99bc4"},
+		{"svg", FromBytes([]byte(platformSVG)).Resize(211, 0), "d3fefb0c8339d9ef"},
 	}
 	for _, c := range cases {
 		env := pipeline.NewEnv(0, t.TempDir())
@@ -205,8 +205,9 @@ const platformSVG = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http:/
     <linearGradient id="l" gradientTransform="rotate(33)"><stop offset="0.2" stop-color="teal"/><stop offset="0.9" stop-color="gold"/></linearGradient>
     <clipPath id="k"><circle cx="70" cy="30" r="22"/></clipPath>
     <mask id="m"><rect width="100" height="72" fill="#888"/></mask>
+    <filter id="f"><feDropShadow dx="1.5" dy="2" stdDeviation="1.7" flood-color="navy"/><feColorMatrix type="hueRotate" values="33"/></filter>
   </defs>
-  <rect x="3.3" y="2.7" width="40" height="30" rx="5" fill="url(#r)" stroke="#036" stroke-width="1.5"/>
+  <rect x="3.3" y="2.7" width="40" height="30" rx="5" fill="url(#r)" stroke="#036" stroke-width="1.5" filter="url(#f)"/>
   <g transform="rotate(17.5 70 30) skewX(7)" clip-path="url(#k)" opacity="0.8">
     <path d="M50 10 c10-5 30 5 40 0 s0 30-10 40 a20 15 30 0 1-30-10z" fill="url(#l)" stroke="black" stroke-width="3"/>
   </g>

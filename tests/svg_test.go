@@ -28,12 +28,12 @@ func onWhite(m image.Image) []int {
 
 // TestSVGAsLibrsvg: shapes, paths (arcs, curves, dashes, joins, caps),
 // gradients (focal, reflected, inherited), groups with opacity, CSS,
-// symbols, clip paths, masks, embedded pictures, patterns, markers and switch look
+// symbols, clip paths, masks, embedded pictures, patterns, markers, filters and switch look
 // as librsvg draws
 // them (sharp 0.35.5's PNGs): differences only along edges, where the
 // anti-aliasing differs.
 func TestSVGAsLibrsvg(t *testing.T) {
-	for _, name := range []string{"shapes", "paths", "gradients", "groups", "mask", "pattern", "marker"} {
+	for _, name := range []string{"shapes", "paths", "gradients", "groups", "mask", "pattern", "marker", "filter"} {
 		doc, err := os.ReadFile(filepath.Join("testdata", "sharp", "svg-"+name+".svg"))
 		if err != nil {
 			t.Fatal(err)

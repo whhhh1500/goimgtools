@@ -117,7 +117,7 @@ func bisect(in, out float64) float64 {
 	for d < -180 {
 		d += 360
 	}
-	return in + d/2
+	return in + float64(d/2)
 }
 
 // markers draws the markers of a path's start, middle and end vertices.

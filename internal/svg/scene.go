@@ -2,12 +2,14 @@ package svg
 
 import (
 	"errors"
+	"fmt"
 	"image"
 	"math"
 	"strings"
 
 	"github.com/whhhh1500/goimgtools/internal/raster"
 	"github.com/whhhh1500/goimgtools/internal/textsrc"
+	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
 // Items of a scene, in painting order.
@@ -59,6 +61,19 @@ const (
 	itemBytes  = 160
 )
 
+// roomPoints is how many more points the scene may take: within the limit
+// on them and the memory left; byMemory says which is the smaller.
+func (b *builder) roomPoints() (n int, byMemory bool) {
+	room := int64(maxScenePts - b.sc.points)
+	if b.avail != nil {
+		pending := int64(b.sc.points)*pointBytes + int64(b.sc.itemCount)*itemBytes - b.sc.charged
+		if m := (b.avail() - pending) / pointBytes; m < room {
+			room, byMemory = m, true
+		}
+	}
+	return int(max(0, room)), byMemory
+}
+
 // account reserves the memory the scene has grown into, a megabyte at a
 // time, so that a document that asks for too much stops early.
 func (b *builder) account() {
@@ -91,8 +106,10 @@ type builder struct {
 	masking     map[*node]bool // the masks being built, against cycles
 	patterning  map[*node]bool // and the patterns
 	marking     map[*node]bool // and the markers
+	filtering   map[*node]bool // and the filters
 	release     func(int64)
 	reserve     func(int64) error
+	avail       func() int64 // memory the budget has left
 	fontSets    map[string]*textsrc.Set
 	root        *node
 	ids         map[string]*node
@@ -197,8 +214,8 @@ func viewBoxTransform(vb [4]float64, par string, w, h float64) matrix {
 
 // build makes the scene of a document drawn at w by h pixels, its user
 // space taken there by m.
-func build(root *node, w, h int, m matrix, reserve func(int64) error, release func(int64)) (*scene, error) {
-	b := &builder{masking: map[*node]bool{}, patterning: map[*node]bool{}, marking: map[*node]bool{}, release: release, reserve: reserve, fontSets: map[string]*textsrc.Set{}, root: root, ids: map[string]*node{}, sc: &scene{w: w, h: h}, useing: map[*node]bool{}, full: image.Rect(0, 0, w, h)}
+func build(root *node, w, h int, m matrix, reserve func(int64) error, release func(int64), avail func() int64) (*scene, error) {
+	b := &builder{avail: avail, masking: map[*node]bool{}, patterning: map[*node]bool{}, marking: map[*node]bool{}, filtering: map[*node]bool{}, release: release, reserve: reserve, fontSets: map[string]*textsrc.Set{}, root: root, ids: map[string]*node{}, sc: &scene{w: w, h: h}, useing: map[*node]bool{}, full: image.Rect(0, 0, w, h)}
 	// The fonts are needed while the outlines of text are made.
 	defer func() {
 		for _, s := range b.fontSets {
@@ -287,13 +304,24 @@ func (b *builder) element(n *node, m matrix, parent style, vp viewport, cl *clip
 	if ownClip == errClip {
 		return // a reference to a clip path that clips everything away
 	}
+	f := b.filterRef(n)
 	if mk := b.maskOf(n, m, vp, st); mk != nil {
 		if mk == errMask {
 			return
 		}
 		inner := st
 		inner.opacity = 1
-		b.groupMasked(n, st, ownClip, cl, mk, func(c *clip) { b.draw(n, m, inner, vp, nil, c) })
+		b.groupMasked(n, st, ownClip, cl, mk, func(c *clip) {
+			if f != nil {
+				b.filtered(n, f, m, inner, vp, nil, c)
+				return
+			}
+			b.draw(n, m, inner, vp, nil, c)
+		})
+		return
+	}
+	if f != nil {
+		b.filtered(n, f, m, st, vp, ownClip, cl)
 		return
 	}
 	b.draw(n, m, st, vp, ownClip, cl)
@@ -604,7 +632,19 @@ func (b *builder) shape(n *node, segs []seg, m matrix, st style, vp viewport, ow
 	if b.err != nil {
 		return
 	}
-	ps := flatten(segs, m)
+	room, byMemory := b.roomPoints()
+	ps, ok := flattenLimit(segs, m, room)
+	for _, q := range ps {
+		b.sc.points += len(q.xy) / 2
+	}
+	if !ok || b.sc.points > maxScenePts {
+		b.err = b.tooMuch(byMemory)
+		return
+	}
+	b.account()
+	if b.err != nil {
+		return
+	}
 	var fill, stroke *item
 	if p := b.shader(n, st.fill, st.fillOpacity, st, segs, m, vp); p != nil {
 		path := fillPath(ps, m, st.evenOdd)
@@ -618,9 +658,22 @@ func (b *builder) shape(n *node, segs []seg, m matrix, st style, vp viewport, ow
 			lines = dashes(ps, st.dash, st.dashOffset)
 		}
 		sk := newStroker(m, st.strokeWidth, st.lineCap, st.lineJoin, st.miterLimit)
-		sk.arcSteps = min(sk.arcSteps, 256)
+		var byMemory bool
+		sk.limit, byMemory = b.roomPoints()
 		for _, q := range lines {
 			sk.stroke(q)
+			if sk.points > sk.limit {
+				break
+			}
+		}
+		if sk.points > sk.limit {
+			b.err = b.tooMuch(byMemory)
+			return
+		}
+		b.sc.points += sk.points
+		b.account()
+		if b.err != nil {
+			return
 		}
 		if !sk.path.Empty() {
 			stroke = &item{op: opShape, path: sk.path, paint: p, bounds: pathBounds(sk.path, b.full)}
@@ -762,6 +815,18 @@ func (b *builder) bboxOf(n *node, vp viewport, st style) ([4]float64, bool) {
 					minY, maxY = math.Min(minY, y), math.Max(maxY, y)
 				}
 			}
+		case "image":
+			x, _ := parseLength(k.attrs["x"], kst.fontSize, vp, axisX)
+			y, _ := parseLength(k.attrs["y"], kst.fontSize, vp, axisY)
+			w, okW := parseLength(k.attrs["width"], kst.fontSize, vp, axisX)
+			h, okH := parseLength(k.attrs["height"], kst.fontSize, vp, axisY)
+			if okW && okH && w > 0 && h > 0 {
+				for _, c := range [][2]float64{{x, y}, {x + w, y + h}, {x + w, y}, {x, y + h}} {
+					px, py := m.apply(c[0], c[1])
+					minX, maxX = math.Min(minX, px), math.Max(maxX, px)
+					minY, maxY = math.Min(minY, py), math.Max(maxY, py)
+				}
+			}
 		case "g", "a", "switch", "svg":
 			for _, c := range k.children {
 				cm := m
@@ -813,4 +878,13 @@ func hasMarkers(n *node) bool {
 		}
 	}
 	return false
+}
+
+// tooMuch is the error of a document whose outlines outgrow what is left:
+// the memory limit, or the limit on points.
+func (b *builder) tooMuch(byMemory bool) error {
+	if byMemory {
+		return fmt.Errorf("%w: the outlines of an SVG document", pipeline.ErrMemoryLimit)
+	}
+	return errTooMuch
 }

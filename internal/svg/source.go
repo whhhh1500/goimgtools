@@ -97,7 +97,11 @@ func (s *Source) start() error {
 		}
 		return nil
 	}
-	sc, err := build(s.root, s.w, s.h, m, reserve, s.env.Budget.Release)
+	avail := func() int64 { return s.env.Budget.Limit() - s.env.Budget.Used() }
+	if s.env.Budget.Limit() <= 0 {
+		avail = nil
+	}
+	sc, err := build(s.root, s.w, s.h, m, reserve, s.env.Budget.Release, avail)
 	if sc != nil {
 		s.reserved += sc.charged // reserved as the scene grew
 	}
