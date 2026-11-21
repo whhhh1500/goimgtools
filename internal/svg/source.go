@@ -103,7 +103,9 @@ func (s *Source) start() error {
 	}
 	sc, err := build(s.root, s.w, s.h, m, reserve, s.env.Budget.Release, avail)
 	if sc != nil {
-		s.reserved += sc.charged // reserved as the scene grew
+		// Reserved as the scene grew, and for its pictures: given back at
+		// Close, the build failed or not.
+		s.reserved += sc.charged + sc.imageBytes
 	}
 	if err != nil {
 		return err
@@ -113,7 +115,6 @@ func (s *Source) start() error {
 	s.env.Budget.Release(s.dataBytes)
 	s.reserved -= s.dataBytes
 	s.root = nil
-	s.reserved += sc.imageBytes // reserved as the pictures were decoded
 	layers := layersNeeded(sc.items)
 	n := pipeline.StripRows(4*int64(s.w)*int64(layers)+4*int64(s.w), s.h)
 	need := int64(n) * (4*int64(s.w)*int64(layers) + 4*int64(s.w))
