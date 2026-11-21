@@ -90,6 +90,7 @@ type builder struct {
 	imagePixels int64
 	masking     map[*node]bool // the masks being built, against cycles
 	patterning  map[*node]bool // and the patterns
+	marking     map[*node]bool // and the markers
 	release     func(int64)
 	reserve     func(int64) error
 	fontSets    map[string]*textsrc.Set
@@ -197,7 +198,7 @@ func viewBoxTransform(vb [4]float64, par string, w, h float64) matrix {
 // build makes the scene of a document drawn at w by h pixels, its user
 // space taken there by m.
 func build(root *node, w, h int, m matrix, reserve func(int64) error, release func(int64)) (*scene, error) {
-	b := &builder{masking: map[*node]bool{}, patterning: map[*node]bool{}, release: release, reserve: reserve, fontSets: map[string]*textsrc.Set{}, root: root, ids: map[string]*node{}, sc: &scene{w: w, h: h}, useing: map[*node]bool{}, full: image.Rect(0, 0, w, h)}
+	b := &builder{masking: map[*node]bool{}, patterning: map[*node]bool{}, marking: map[*node]bool{}, release: release, reserve: reserve, fontSets: map[string]*textsrc.Set{}, root: root, ids: map[string]*node{}, sc: &scene{w: w, h: h}, useing: map[*node]bool{}, full: image.Rect(0, 0, w, h)}
 	// The fonts are needed while the outlines of text are made.
 	defer func() {
 		for _, s := range b.fontSets {
@@ -328,7 +329,20 @@ func (b *builder) draw(n *node, m matrix, st style, vp viewport, ownClip, cl *cl
 		if len(segs) == 0 {
 			return
 		}
-		b.shape(n, segs, m, st, vp, ownClip, cl)
+		if n.name == "rect" || n.name == "circle" || n.name == "ellipse" || !hasMarkers(n) {
+			b.shape(n, segs, m, st, vp, ownClip, cl)
+			return
+		}
+		// Markers belong to the shape: with an opacity, a clip, they are
+		// grouped with it.
+		inner := st
+		inner.opacity = 1
+		b.group(n, st, ownClip, cl, func(c *clip) {
+			b.shape(n, segs, m, inner, vp, nil, c)
+			if st.visible {
+				b.markers(n, segs, m, inner, vp, c)
+			}
+		})
 	case "text":
 		if !st.visible && len(n.children) == 0 {
 			return
@@ -789,4 +803,14 @@ func conditionsMet(n *node) bool {
 		return false
 	}
 	return true
+}
+
+// hasMarkers reports whether an element asks for markers.
+func hasMarkers(n *node) bool {
+	for _, p := range []string{"marker-start", "marker-mid", "marker-end", "marker"} {
+		if v, ok := n.prop(p); ok && strings.HasPrefix(strings.TrimSpace(v), "url(") {
+			return true
+		}
+	}
+	return false
 }
