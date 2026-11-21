@@ -87,4 +87,4 @@ x265 单核编一张 Kodak 照片 0.36 秒、一张 3840×2160 照片 3.2 秒，
 
 ## AVIF 编码器
 
-AVIF 由 libavif 1.4.2 配 aom 3.14.1 写出（模块 `goimgtools/avif`，经 gen2brain/avif），与 avifenc、Pillow 13 用的编码器相同。默认力度（aom 速度 6，与它们相同）下文件与 Pillow 在同等 SSIMULACRA2 下一样小（4 张 Kodak 照片各以质量 30–90 写出、用 Pillow 解码，小 0.4%）；力度 7（速度 4）小 5.1%。它以 WebAssembly 单线程运行、没有 SIMD：一张 Kodak 照片默认力度约 1.5 秒，程序里第一次另加编译编码器的约 0.8 秒，Pillow 为 0.08 秒（多线程、有 SIMD）。
+AVIF 由 libavif 1.4.2 配 aom 3.14.1 写出（模块 `goimgtools/avif`），与 avifenc、Pillow 13 用的编码器相同，编译为 WebAssembly 后转写为 Go。默认力度（aom 速度 6，与它们相同）下文件与 Pillow 在同等 SSIMULACRA2 下一样小（4 张 Kodak 照片各以质量 30–90 写出、用 Pillow 解码，小 0.3%）；力度 7（速度 4）小 4.8%。它单线程运行、没有 SIMD：一张 Kodak 照片默认力度 1.1 秒，Pillow 为 0.08 秒（多线程、有 SIMD）。原先经 gen2brain/avif 在 WebAssembly 运行时里跑 libavif，要 2.4 秒（其中 0.8 秒是程序启动时编译编码器），峰值 157MB（现在 85MB；16×16 的图原为 103MB，现在 9MB）。

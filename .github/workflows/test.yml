@@ -28,8 +28,7 @@ jobs:
         run: go test -tags purego ./internal/jpegstream/... ./internal/webpstream/... ./internal/resize/... ./internal/vp8enc/... ./internal/pngstream/... ./internal/gflate/... ./internal/ops/... ./tests
 
   avif:
-    # The AVIF module (a module of its own, avif/), with the WebAssembly
-    # build of libavif only (nodynamic), as its tests expect.
+    # The AVIF module (a module of its own, avif/): libavif translated to Go.
     strategy:
       fail-fast: false
       matrix:
@@ -43,8 +42,8 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.27.x"
-      - run: go vet -tags nodynamic ./...
-      - run: go test -tags nodynamic ./...
+      - run: go vet ./...
+      - run: go test ./...
 
   heic:
     # The HEIC module (heic/), with the codec's SIMD and without (noasm),
@@ -135,8 +134,9 @@ jobs:
     # would come out differently on them: no floating-point product may be
     # fused with an addition (an explicit conversion, float64(a*b) + c,
     # rounds the product first). This lists any the compiler still fuses,
-    # in the library and in the HEIC module's encoder (Kvazaar translated
-    # from WebAssembly, whose translation converts every product).
+    # in the library and in the codecs of the HEIC and AVIF modules (Kvazaar
+    # and libavif translated from WebAssembly, whose translation converts
+    # every product).
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -146,14 +146,19 @@ jobs:
       - name: No fused multiply-add
         run: |
           bad=0
+          s=$RUNNER_TEMP/asm.txt
           for arch in arm64 ppc64le s390x riscv64 loong64; do
-            out=$(GOARCH=$arch go build -a -gcflags=-S ./... 2>&1 && cd heic && GOARCH=$arch go build -a -gcflags=-S ./internal/kvazaar 2>&1) || { echo "$out" | tail -20; exit 1; }
-            found=$(echo "$out" | grep -E '\sFN?M(ADD|SUB)[SDF]?\s' | grep -oE 'goimgtools/[^ :]+\.go:[0-9]+' | sort -u)
-            if [ -n "$found" ]; then
-              echo "::error::$arch fuses a multiplication and an addition at:"
-              echo "$found"
-              bad=1
-            fi
+            for p in .:./... heic:./internal/kvazaar avif:./internal/libavif; do
+              # The listing of a translated codec runs to millions of lines:
+              # it goes to a file, not into a variable.
+              (cd "${p%%:*}" && GOARCH=$arch go build -a -gcflags=-S "${p#*:}") > "$s" 2>&1 || { tail -20 "$s"; exit 1; }
+              found=$(grep -E '\sFN?M(ADD|SUB)[SDF]?\s' "$s" | grep -oE 'goimgtools/[^ :]+\.go:[0-9]+' | sort -u)
+              if [ -n "$found" ]; then
+                echo "::error::$arch fuses a multiplication and an addition at:"
+                echo "$found"
+                bad=1
+              fi
+            done
           done
           exit $bad
 
@@ -196,9 +201,12 @@ jobs:
       - run: |
           set -o pipefail
           GOARCH=${{ matrix.arch }} go test -exec ${{ matrix.qemu }} -timeout 120m -skip "${{ matrix.skip || '^$' }}" -v ./tests ./pipeline ./inspect ./internal/resize ./internal/ops | grep -E '^(--- (PASS|FAIL|SKIP)|FAIL|ok|panic)|^ +[^ ]+\.go:[0-9]+:'
-      # The HEIC encoder (Kvazaar translated to Go) gives the same stream.
+      # The HEIC encoder (Kvazaar translated to Go) gives the same stream,
+      # and libavif (AVIF) the same file.
       - working-directory: heic
         run: GOARCH=${{ matrix.arch }} go test -exec ${{ matrix.qemu }} -timeout 30m -v ./internal/kvazaar
+      - working-directory: avif
+        run: GOARCH=${{ matrix.arch }} go test -exec ${{ matrix.qemu }} -timeout 30m -v ./internal/libavif
 
   wasi:
     # WebAssembly, run by wasmtime: a 32-bit machine without threads.

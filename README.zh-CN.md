@@ -94,14 +94,14 @@ goimgtools batch -resize 1920x1920 -no-enlarge -quality 80 -format jpeg in_dir o
 | GIF | ✓（含动画） | ✓（含动画） | 逐行流式解码；隔行处理方式同 PNG |
 | BMP | ✓ | ✓ | 按文件偏移逐行读取 |
 | TIFF | ✓ | ✓ | 逐行流式解压；可读取 JPEG 压缩的 TIFF（libtiff、libvips、sharp 的写法） |
-| AVIF（模块 `goimgtools/avif`） | ✓（第一幅图像） | ✓ | 由编译为 WebAssembly 的 libavif 整图解码 |
+| AVIF（模块 `goimgtools/avif`） | ✓（第一幅图像：透明、EXIF、XMP、色彩配置） | ✓ | 由 libavif（转写为 Go）整图解码 |
 | HEIC（模块 `goimgtools/heic`） | ✓（主图像：网格、透明、EXIF、XMP、色彩配置） | ✓（Kvazaar 转写为 Go；超过 4 百万像素时为网格分块） | 由 gen2brain/h265（纯 Go）整图解码；编码时逐行写入各画面 |
 
 暂存区数据不超过内存上限的 1/8（默认 8MB）时驻留内存，超出部分写入临时文件，用后删除。
 
 ## 限制
 
-- AVIF 与 HEIC 由独立模块读写，以副作用方式导入即可：`github.com/whhhh1500/goimgtools/avif`（libavif 编译为 WebAssembly，无需 cgo）与 `github.com/whhhh1500/goimgtools/heic`（读取用 gen2brain/h265，纯 Go 的 HEVC 解码器；写入用 HEVC 编码器 Kvazaar，编译为 WebAssembly 再转写为 Go，无需 cgo）。两者都整图解码。
+- AVIF 与 HEIC 由独立模块读写，以副作用方式导入即可：`github.com/whhhh1500/goimgtools/avif`（libavif 配 aom、dav1d，编译为 WebAssembly 再转写为 Go，无需 cgo）与 `github.com/whhhh1500/goimgtools/heic`（读取用 gen2brain/h265，纯 Go 的 HEVC 解码器；写入用 HEVC 编码器 Kvazaar，编译为 WebAssembly 再转写为 Go，无需 cgo）。两者都整图解码。
 - JPEG 解码中的熵解码为顺序过程（自 `Threads(5)` 起反 DCT 与色彩换算交给其他核心）；多线程下它是 JPEG 解码最慢的环节。
 - 自定义的逐像素调整（`Curves` 等色阶操作之外）可用 `Pixels` 以数行代码实现（参见[扩展](docs/zh-CN/extending.md)中的灰度示例），依赖邻域像素的滤镜可实现为 `Pipe` 环节或 `Convolve` 卷积核。
 - GIF、BMP 编码为单线程（压缩 TIFF 的各条带交给其他核心压缩）；无损 WebP 的最优解析（找到匹配之后的部分）与第二遍为顺序过程，八线程时截图与图画约快一倍，照片快 1.5 倍。

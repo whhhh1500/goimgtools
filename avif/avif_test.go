@@ -12,6 +12,7 @@ import (
 
 	"github.com/whhhh1500/goimgtools"
 	"github.com/whhhh1500/goimgtools/avif"
+	"github.com/whhhh1500/goimgtools/inspect"
 )
 
 func pixels(t *testing.T, b []byte) *image.NRGBA {
@@ -53,18 +54,18 @@ func psnr(a, b *image.NRGBA) float64 {
 }
 
 // TestDecode: AVIF files are recognised (Metadata) and decoded as libavif
-// decodes them: Pillow's AVIF plugin (with exif_transpose for the irot box:
-// the image is turned upright) gives about the same pixels, its libavif
-// converting with libyuv, the WebAssembly build with libavif's own
-// bilinear chroma (39 to 48 dB apart; on a photograph Pillow's encoded,
-// Pillow's decoding is 0.5 dB closer to the original, its two conversions
-// being libyuv's both).
+// decodes them: Pillow's AVIF plugin (libavif 1.4.2, converting with
+// libyuv as here; with exif_transpose for the irot box: the image is turned
+// upright) gives the same pixels of an 8-bit file, and of a 12-bit one 48 dB
+// away (taken to 16 bits here, which goimgtools rounds to 8, where Pillow
+// has libavif convert to 8 bits).
 // test_rot.avif is from github.com/gen2brain/avif (MIT licence).
 func TestDecode(t *testing.T) {
 	for _, c := range []struct {
-		name string
-		w, h int
-	}{{"photo.avif", 150, 103}, {"test_rot.avif", 480, 640}} {
+		name  string
+		w, h  int
+		exact bool
+	}{{"photo.avif", 150, 103, true}, {"test_rot.avif", 480, 640, false}} {
 		in, err := os.ReadFile("testdata/" + c.name)
 		if err != nil {
 			t.Fatal(err)
@@ -79,7 +80,7 @@ func TestDecode(t *testing.T) {
 			t.Fatal(err)
 		}
 		want := pixels(t, ref)
-		if m.Rect != want.Rect || psnr(m, want) < 38 {
+		if m.Rect != want.Rect || psnr(m, want) < 45 || (c.exact && !bytes.Equal(m.Pix, want.Pix)) {
 			t.Errorf("%s: %v, %.1f dB from Pillow's %v", c.name, m.Rect.Size(), psnr(m, want), want.Rect.Size())
 		}
 		if m.Rect.Dx() != c.w || m.Rect.Dy() != c.h {
@@ -91,12 +92,10 @@ func TestDecode(t *testing.T) {
 	}
 }
 
-// TestEncode: written as AVIF and read back: without loss the very pixels
-// of an opaque image, and those with transparency to within what colour
-// multiplied by alpha keeps (gen2brain/avif hands libavif premultiplied
-// pixels and takes them back so: alpha exact, the colour times alpha
-// within 2 levels); with loss close, smaller than PNG, and smaller at a lower
-// quality; MaxFileSize finds a quality that fits; .avif by the file name.
+// TestEncode: written as AVIF and read back: without loss the very pixels,
+// with transparency too; with loss close, smaller than PNG, and smaller at
+// a lower quality; MaxFileSize finds a quality that fits; .avif by the
+// file name.
 func TestEncode(t *testing.T) {
 	photo, err := os.ReadFile("../tests/testdata/pillow/source.png")
 	if err != nil {
@@ -112,17 +111,8 @@ func TestEncode(t *testing.T) {
 		alpha.Pix[i], alpha.Pix[i+1], alpha.Pix[i+2], alpha.Pix[i+3] = uint8(i), uint8(i/3), 200, uint8(40+i%216)
 	}
 	got := toPNG(t, goimgtools.FromBytes(must(goimgtools.FromImage(alpha).ToFormat("avif", avif.Options{Lossless: true}).ToBytes())))
-	for i := 0; i < len(alpha.Pix); i += 4 {
-		a := int(alpha.Pix[i+3])
-		if got.Pix[i+3] != alpha.Pix[i+3] {
-			t.Fatalf("lossless with alpha: pixel %d alpha %d, was %d", i/4, got.Pix[i+3], a)
-		}
-		for k := 0; k < 3; k++ {
-			// What shows of the colour: times alpha.
-			if d := (int(got.Pix[i+k]) - int(alpha.Pix[i+k])) * a / 255; d < -2 || d > 2 {
-				t.Fatalf("lossless with alpha: pixel %d %v, was %v", i/4, got.Pix[i:i+4], alpha.Pix[i:i+4])
-			}
-		}
+	if !bytes.Equal(got.Pix, alpha.Pix) {
+		t.Error("lossless with alpha: other pixels")
 	}
 	pngSize := len(photo)
 	var last int
@@ -149,6 +139,29 @@ func TestEncode(t *testing.T) {
 		}
 	}
 	_ = color.NRGBA{}
+}
+
+// TestMetadata: the EXIF block (KeepExif), an XMP packet and a colour
+// profile are written and read back; an image the boxes turn has its EXIF
+// orientation set to upright.
+func TestMetadata(t *testing.T) {
+	jpg := must(os.ReadFile("../tests/testdata/exif-pillow.jpg"))
+	want, _, _ := inspect.ReadExif(goimgtools.FromBytes(jpg))
+	b := must(goimgtools.FromBytes(jpg).KeepExif().ToFormat("avif", nil).ToBytes())
+	kept, ok, err := inspect.ReadExif(goimgtools.FromBytes(b))
+	if err != nil || !ok || kept.Make != want.Make || kept.Model != want.Model {
+		t.Errorf("EXIF kept: %+v, %v, %v", kept, ok, err)
+	}
+	// A profile is written with the pixels and read back.
+	lut := must(os.ReadFile("../tests/testdata/icc/rgb-lut16.png"))
+	b = must(goimgtools.FromBytes(lut).ToFormat("avif", nil).ToBytes())
+	if info, err := goimgtools.FromBytes(b).Metadata(); err != nil || !info.HasICC {
+		t.Errorf("profile: %+v, %v", info, err)
+	}
+	rot := must(os.ReadFile("testdata/test_rot.avif"))
+	if info, err := goimgtools.FromBytes(rot).Metadata(); err != nil || info.Orientation > 1 {
+		t.Errorf("turned: %+v, %v", info, err)
+	}
 }
 
 func must[T any](v T, err error) T {

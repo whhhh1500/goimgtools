@@ -427,6 +427,22 @@ what it includes in its own `licenses/` directory, which goes with it:
   writing of the HEIF boxes in `container.go` is taken from its
   `heic/encode.go` and `heic/gridenc.go`, changed.
 
+## The AVIF module (`avif/`)
+
+The module `github.com/whhhh1500/goimgtools/avif` carries the notices of
+what it includes in its own `licenses/` directory, which goes with it:
+libavif 1.4.2 (BSD 2-clause, `LICENSE-LIBAVIF`, which also lists the notices
+of code libavif itself includes), aom 3.14.1 (BSD 2-clause and the Alliance
+for Open Media patent licence, `LICENSE-AOM`, `PATENTS-AOM`), dav1d 1.5.3
+(BSD 2-clause, `LICENSE-DAV1D`), libyuv (BSD 3-clause and its patent grant,
+`LICENSE-LIBYUV`, `PATENTS-LIBYUV`) and parts of wasi-libc
+(`LICENSE-WASI-LIBC`), compiled to WebAssembly with the entry points of
+`internal/libavif/build/shim.c` and translated to Go by wasm2go:
+`internal/libavif/module.go` is that translation, which
+`internal/libavif/build/build.sh` makes again. `orientation.go` maps irot
+and imir to an EXIF orientation as libavif's `avifexif.c` does (as
+gen2brain/avif, MIT licence, wrote it in Go).
+
 ## Acknowledgements (no code taken)
 
 - **gifsicle**: `internal/gifstream/optimize.go` and `localpal.go` try,
