@@ -22,6 +22,7 @@ type rowReader struct {
 	alphaAnd uint32 // AND of all pixels seen: its top byte stays 0xff while opaque
 	pal      [256]uint32
 	npal     int
+	clean    bool // fully transparent pixels become transparent black
 }
 
 func newRowReader(src pipeline.Source) (*rowReader, error) {
@@ -225,6 +226,13 @@ func (r *rowReader) next(dst []uint32) error {
 		and &= v
 	}
 	r.alphaAnd = and
+	if r.clean && and>>24 != 0xff {
+		for i, v := range dst {
+			if v>>24 == 0 {
+				dst[i] = 0
+			}
+		}
+	}
 	r.y++
 	return nil
 }

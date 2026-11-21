@@ -53,6 +53,9 @@ type alphaSpool struct {
 	// before, and which coarse sizes of difference each filter leaves.
 	r1, r2 []uint8
 	seen   [4][16]bool
+	// levels, when the plane is reduced to fewer values (alphaquant.go),
+	// maps each value to its level as rows are read back.
+	levels *[256]uint8
 
 	// Reading.
 	off  int64
@@ -246,6 +249,11 @@ func (s *alphaSpool) next(dst []uint8) error {
 		for ; n > 0; n-- {
 			dst[i] = v
 			i++
+		}
+	}
+	if m := s.levels; m != nil {
+		for i, v := range dst {
+			dst[i] = m[v]
 		}
 	}
 	return nil

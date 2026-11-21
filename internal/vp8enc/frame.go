@@ -185,6 +185,8 @@ type encoder struct {
 	dbg  *debug
 
 	effort  int
+	exact   bool // Options.Exact
+	alphaQ  int  // Options.AlphaQuality, 0 for none
 	sharp   bool // convert colours with sharp YUV (sharp.go)
 	trellis bool // quantize 4x4 blocks by trellis (trellis.go)
 	// fast: the 16x16 and chroma predictions chosen by their error
@@ -329,7 +331,7 @@ func (e *encoder) init(quality int, rr *pipeline.RowReader, src pipeline.Source)
 		e.alpha = newAlphaSpool(e.alphaStore, e.w)
 	}
 	e.conv = newConverter(e.b, w16, e.alpha)
-	e.conv.noClean = e.dbg != nil && e.dbg.noClean
+	e.conv.noClean = e.exact || e.dbg != nil && e.dbg.noClean
 	e.topY = make([]uint8, w16+4)
 	e.topU = make([]uint8, w16/2)
 	e.topV = make([]uint8, w16/2)

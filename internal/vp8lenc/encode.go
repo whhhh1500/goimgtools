@@ -53,6 +53,16 @@ type Options struct {
 	// matches are then chosen one after the other, as below it): several
 	// times faster on large images, for files a few percent larger.
 	FastParse bool
+	// Clean lets fully transparent pixels take whatever colour codes
+	// cheapest, as libwebp does without its exact setting: they are
+	// stored as transparent black, and where the predictor follows, with
+	// the colour of their prediction. Their colour cannot be seen.
+	Clean bool
+	// NearLossless, 1 to 5, lets the predictor round the residuals of
+	// pixels that differ from their neighbours to multiples of up to
+	// 1<<NearLossless (see nearlossless.go): each channel then comes back
+	// within half of that of what it was. 0 keeps every pixel.
+	NearLossless int
 }
 
 // DefaultEffort is used when Options is nil or Effort is zero.
@@ -177,6 +187,12 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 	if o != nil && o.FastParse {
 		e.p.optimal, e.p.optimalRaw = false, false
 	}
+	if o != nil {
+		if o.NearLossless < 0 || o.NearLossless > 5 {
+			return errors.New("goimgtools: webp near-lossless bits must be 0 to 5")
+		}
+		e.clean, e.nearLossless = o.Clean, o.NearLossless
+	}
 	defer e.close()
 	return e.encode(src)
 }
@@ -192,6 +208,10 @@ type encoder struct {
 	opt      *optimal    // the optimal parse, shared by the variants
 	gs       *grouperScratch
 	replay   bool // tests: the grouper replays the tokens every time, keeping nothing
+	// Options.Clean and Options.NearLossless.
+	clean        bool
+	nearLossless int
+	few          bool // at most 16 colours: the packed and the unpacked pixels race
 }
 
 func (e *encoder) reserve(n int64, what string) error {
@@ -236,6 +256,7 @@ func (e *encoder) encode(src pipeline.Source) error {
 	if err != nil {
 		return err
 	}
+	rr.clean = e.clean
 	if err := e.reserve(int64(e.w)*4, "webp row"); err != nil {
 		return err
 	}
@@ -244,8 +265,8 @@ func (e *encoder) encode(src pipeline.Source) error {
 	if rr.gray {
 		// Gray needs no palette and always gains from subtract green: red
 		// and blue become zero.
-		if rc, err = e.newRace(nil, spec{kindGray, true, sgOn, false, false}, spec{kindGray, false, sgOn, false, false},
-			spec{kindGray, true, sgOn, true, false}); err != nil {
+		if rc, err = e.newRace(nil, spec{kindGray, true, sgOn, false, false, false}, spec{kindGray, false, sgOn, false, false, false},
+			spec{kindGray, true, sgOn, true, false, false}); err != nil {
 			return err
 		}
 		for y := 0; y < e.h; y++ {
@@ -291,29 +312,44 @@ func (e *encoder) feedColour(rr *rowReader, row []uint32) (*race, error) {
 	}
 	var rc *race
 	paletted := y == e.h
+	// Near-lossless rounds the residuals of the predictor; one variant with
+	// the simple predictors stays lossless beside them, for patterns and
+	// drawings whose residuals repeat exactly, which rounding breaks (a
+	// pattern 86 bytes lossless, 1176 rounded). On photographs it falls
+	// behind at once.
+	var extra []spec
+	if e.nearLossless > 0 && len(e.p.modes) != len(modesFast) {
+		extra = []spec{{kindARGB, true, sgAuto, true, false, true}}
+	}
 	switch {
 	case !paletted:
-		specs := []spec{{kindARGB, true, sgOn, false, false}, {kindARGB, false, sgAuto, false, false},
-			{kindARGB, true, sgOff, false, false}, {kindARGB, true, sgAuto, true, false}}
+		specs := []spec{{kindARGB, true, sgOn, false, false, false}, {kindARGB, false, sgAuto, false, false, false},
+			{kindARGB, true, sgOff, false, false, false}, {kindARGB, true, sgAuto, true, false, false}}
 		if e.p.cross && int64(e.w)*int64(e.h) <= crossMaxPixels {
 			// Without subtract green: the transform takes green from red
 			// and blue itself, as much as pays (an interface picture 5.5%
 			// smaller than with subtract green decided on its blank top).
-			specs = append(specs, spec{kindARGB, true, sgOff, false, true})
+			specs = append(specs, spec{kindARGB, true, sgOff, false, true, false})
 		}
 		if testCrossOnly {
-			specs = []spec{{kindARGB, true, sgOff, false, true}}
+			specs = []spec{{kindARGB, true, sgOff, false, true, false}}
 		}
-		rc, err = e.newRace(nil, specs...)
+		rc, err = e.newRace(nil, append(specs, extra...)...)
 	case pr.n <= 16:
-		// Few enough colours to pack several pixels into one.
-		rc, err = e.newRace(pr.pal[:pr.n], spec{kindIndex, false, sgOff, false, false})
+		// Few enough colours to pack several pixels into one. The pixels
+		// unpacked, without the predictor, race against them: packing
+		// makes a repeat start and end on a whole symbol, which smooth
+		// pictures of a few levels (an alpha plane reduced to them, a
+		// mask) lose by (12 such planes 5.6% smaller, one 9%; see
+		// unpackMargin).
+		e.few = true
+		rc, err = e.newRace(pr.pal[:pr.n], spec{kindIndex, false, sgOff, false, false, false}, spec{kindARGB, false, sgAuto, false, false, false})
 	case pr.wantPalette():
-		rc, err = e.newRace(pr.pal[:pr.n], spec{kindIndex, false, sgOff, false, false}, spec{kindARGB, true, sgAuto, false, false},
-			spec{kindIndex, true, sgOff, false, false}, spec{kindARGB, false, sgAuto, false, false}, spec{kindARGB, true, sgAuto, true, false})
+		rc, err = e.newRace(pr.pal[:pr.n], append([]spec{{kindIndex, false, sgOff, false, false, false}, {kindARGB, true, sgAuto, false, false, false},
+			{kindIndex, true, sgOff, false, false, false}, {kindARGB, false, sgAuto, false, false, false}, {kindARGB, true, sgAuto, true, false, false}}, extra...)...)
 	default:
-		rc, err = e.newRace(pr.pal[:pr.n], spec{kindARGB, true, sgAuto, false, false}, spec{kindIndex, false, sgOff, false, false},
-			spec{kindIndex, true, sgOff, false, false}, spec{kindARGB, false, sgAuto, false, false}, spec{kindARGB, true, sgAuto, true, false})
+		rc, err = e.newRace(pr.pal[:pr.n], append([]spec{{kindARGB, true, sgAuto, false, false, false}, {kindIndex, false, sgOff, false, false, false},
+			{kindIndex, true, sgOff, false, false, false}, {kindARGB, false, sgAuto, false, false, false}, {kindARGB, true, sgAuto, true, false, false}}, extra...)...)
 	}
 	if err != nil {
 		return nil, err
@@ -370,6 +406,8 @@ type spec struct {
 	// cross follows the predictor with the cross-color transform (see
 	// crosscolor.go).
 	cross bool
+	// exact keeps the variant lossless when the others are near-lossless.
+	exact bool
 }
 
 const (
@@ -403,6 +441,13 @@ const raceMem = 3 << 19
 // larger, and on a large photograph, which it does not help, the variant
 // would add 2MB to the peak of memory, all variants starting together.
 const crossMaxPixels = 1 << 22
+
+// unpackMargin is how far ahead, with one Huffman group, the unpacked
+// pixels of an image of at most 16 colours have to be of the packed ones to
+// be written: the split into Huffman groups, which comes after, favours the
+// packed ones (alpha planes at an alpha quality of 50 and 20 2.7% smaller
+// with 5%, but larger than packed alone without it).
+const unpackMargin = 1.05
 
 // smallMaxPixels bounds the images whose variants also code their stream
 // with runs and copies from a row up (see frontend.rleTok): icons and
@@ -439,7 +484,13 @@ func (e *encoder) newRace(palette []uint32, specs ...spec) (*race, error) {
 		}
 		specs = keep
 	}
-	n := min(len(specs), e.p.variants, max(1, int(e.avail()/raceMem)))
+	limit := e.p.variants
+	for _, s := range specs {
+		if s.exact {
+			limit++ // beside the others, not instead of one
+		}
+	}
+	n := min(len(specs), limit, max(1, int(e.avail()/raceMem)))
 	rc := &race{e: e, next: raceFirst}
 	for i, s := range specs[:n] {
 		f, err := e.newFrontend(s, palette, n-i)
@@ -503,8 +554,12 @@ func (e *encoder) newRace(palette []uint32, specs ...spec) (*race, error) {
 }
 
 // family reports whether two variants differ only in subtract green or in
-// the predictors they try.
-func family(a, b *frontend) bool { return a.kind == b.kind && a.pred == b.pred }
+// the predictors they try. A near-lossless variant is not of the family of
+// a lossless one: which is smaller can change down the image (a smooth top
+// where rounding saves nothing), so they are only dropped by dropRatio.
+func family(a, b *frontend) bool {
+	return a.kind == b.kind && a.pred == b.pred && a.ls.q == b.ls.q
+}
 
 func (rc *race) wantsARGB() bool {
 	for _, f := range rc.alive {
@@ -585,7 +640,14 @@ func (rc *race) compare() {
 		}
 	}
 	for i, f := range rc.alive {
-		drop[i] = proj[i] > best*rc.e.p.dropRatio
+		ratio := rc.e.p.dropRatio
+		if f.exact {
+			// The lossless variant beside near-lossless ones goes on only
+			// while it is the best: it is there for the images it wins by
+			// far.
+			ratio = 1
+		}
+		drop[i] = proj[i] > best*ratio
 		for j, o := range rc.alive {
 			if j != i && family(f, o) && (fam[j] < fam[i] || fam[j] == fam[i] && j < i) {
 				drop[i] = true

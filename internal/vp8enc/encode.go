@@ -53,6 +53,15 @@ type Options struct {
 	// are chosen by measuring. Above 5 only the alpha plane gets more
 	// (see alphall.go).
 	Effort int
+	// Exact keeps the samples of fully transparent pixels as they are. By
+	// default, as libwebp does without its exact setting, those of the
+	// blocks of 8x8 pixels they share with visible ones are made smooth
+	// and those of wholly transparent blocks flat (convert.go,
+	// cleanTransparent): they cannot be seen, and code much smaller.
+	Exact bool
+	// AlphaQuality, 1 to 99, reduces the alpha plane to fewer levels
+	// before it is coded (alphaquant.go); 0 or 100 keeps it exactly.
+	AlphaQuality int
 }
 
 // DefaultQuality is used when Options is nil or Quality is 0.
@@ -119,7 +128,13 @@ func encode(w io.Writer, src pipeline.Source, o *Options, dbg *debug) error {
 	if b.Dx() > maxDimension || b.Dy() > maxDimension {
 		return fmt.Errorf("goimgtools: webp: image %dx%d is larger than %d pixels a side", b.Dx(), b.Dy(), maxDimension)
 	}
-	e := &encoder{env: pipeline.EnvOf(src), b: b, w: b.Dx(), h: b.Dy(), dbg: dbg, effort: effort}
+	e := &encoder{env: pipeline.EnvOf(src), b: b, w: b.Dx(), h: b.Dy(), dbg: dbg, effort: effort, exact: o != nil && o.Exact}
+	if o != nil && o.AlphaQuality != 0 {
+		if o.AlphaQuality < 0 || o.AlphaQuality > 100 {
+			return fmt.Errorf("goimgtools: webp alpha quality %d out of range 1..100", o.AlphaQuality)
+		}
+		e.alphaQ = o.AlphaQuality
+	}
 	e.mbw, e.mbh = (e.w+15)>>4, (e.h+15)>>4
 	defer e.release()
 	// The rows are pulled straight from the source's strips; an early end

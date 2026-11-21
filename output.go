@@ -150,9 +150,11 @@ func (m *Image) TIFF(opts ...TIFFOptions) *Image {
 
 // WebPOptions are the optional settings of WebP.
 type WebPOptions struct {
-	// Quality is 1 to 100 for lossy output; 0 means the default, 75.
+	// Quality is 1 to 100 for lossy output (and with NearLossless, how
+	// near); 0 means the default, 75.
 	Quality int
-	// Lossless keeps every pixel exactly. Quality is then not used.
+	// Lossless keeps every pixel exactly, the colour of fully transparent
+	// ones too with Exact. Quality is then not used.
 	Lossless bool
 	// Effort trades time for size: 1 is the fastest, 9 gives the smallest
 	// files; 0 means the default, 5. For lossy output, effort 5 already
@@ -174,6 +176,39 @@ type WebPOptions struct {
 	// parse (6% over 3, in 3.5 times its time); 5 adds 0.6%, in 1.7 times
 	// the time of 4, and 7 another 0.3%.
 	Effort int
+	// NearLossless writes lossless WebP whose pixels may come back a
+	// little changed where they differ from a neighbour by more than the
+	// change anyway, never in smooth areas (libwebp's near-lossless, as
+	// sharp's nearLossless and cwebp -near_lossless): Quality then says
+	// how much, 100 nothing (a lossless file), 80 to 99 a channel at most
+	// 1 level, 60 to 79 2, 40 to 59 4, 20 to 39 8 and below 16; 0 means
+	// the default, 75. Alpha 0 and 255 stay as they are. It needs no
+	// Lossless. On photographs 60 makes the file 37% smaller than lossless
+	// (6 Kodak photographs), and 2.9% smaller than cwebp -near_lossless 60
+	// (7.3% on 23 photographs, screenshots and drawings), in about twice the
+	// time of lossless, as libwebp takes; screenshots and drawings, which
+	// have few pixels to round and code well without loss, gain much less.
+	// A variant that stays lossless runs beside, and wins where a pattern
+	// repeats exactly, which rounding would break; a colour table, which
+	// images of at most 256 colours may get, stays lossless too. Animated
+	// frames are written the same way.
+	NearLossless bool
+	// Exact keeps the colour of fully transparent pixels exactly. By
+	// default, as libwebp, sharp and Pillow do, it is left to the encoder,
+	// as it cannot be seen: lossless output stores those pixels as the
+	// colour their neighbours predict, lossy output smooths them out. That
+	// makes images with transparency smaller, much smaller when what is
+	// under the transparent pixels is not flat (a cut-out photograph 27%;
+	// icons and drawings change by about 1%, either way); Exact is for
+	// images whose colour is used under the transparency too (a mask, or a
+	// texture whose alpha is replaced later).
+	Exact bool
+	// AlphaQuality, 1 to 99, makes the transparency of lossy output lossy
+	// too (libwebp's alpha_q, sharp's alphaQuality): its values are reduced
+	// to fewer levels chosen for the image (2 to 16 up to 70, up to 256 at
+	// 99; the fully transparent and the fully opaque ones stay) before they
+	// are coded. 0 and 100 keep it exactly, the default.
+	AlphaQuality int
 }
 
 // WebP selects WebP output: lossy by default, like a JPEG that can also
@@ -235,7 +270,8 @@ var ErrFileSize = errors.New("goimgtools: cannot reach the requested file size")
 // MaxFileSize makes the output at most n bytes by lowering the quality: the
 // highest quality that fits is used, never more than the one asked for with
 // JPEG or WebP (or their default). It applies to JPEG and lossy WebP
-// output, and to PNG and GIF, whose quality is their number of colours: a
+// output (and near-lossless WebP, whose quality is how near), and to PNG
+// and GIF, whose quality is their number of colours: a
 // PNG is first tried without loss, then with the most colours (at most
 // PNGOptions.Colors or GIFOptions.Colors when set) that fit, as Colors
 // reduces them. When even quality 1 (two colours) is too large the result

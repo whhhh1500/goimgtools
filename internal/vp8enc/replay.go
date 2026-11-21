@@ -639,6 +639,9 @@ func (e *encoder) write(w io.Writer) error {
 			}
 		}
 	}
+	if hasAlpha && e.alpha.levels != nil {
+		alphaHdr |= 1 << 4 // pre-processing: level reduction
+	}
 	riffSize := 4 + 8 + vp8Size + vp8Size&1
 	if hasAlpha {
 		riffSize += 8 + 10 + 8 + alphaSize + alphaSize&1

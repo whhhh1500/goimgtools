@@ -38,6 +38,12 @@ type Options struct {
 	Lossless bool
 	Quality  int
 	Effort   int
+	// NearLossless is vp8lenc.Options.NearLossless for lossless frames;
+	// Exact keeps the colour of transparent pixels (vp8lenc.Options.Clean
+	// otherwise, vp8enc.Options.Exact).
+	NearLossless int
+	Exact        bool
+	AlphaQuality int // vp8enc.Options.AlphaQuality for lossy frames
 }
 
 // maxSide is the largest canvas side: what a VP8 frame header holds (a
@@ -256,9 +262,9 @@ func (e *encoder) encode(f *frame, opaque bool) error {
 	defer file.Close()
 	var err error
 	if e.o.Lossless {
-		err = vp8lenc.Encode(file, src, &vp8lenc.Options{Effort: e.o.Effort})
+		err = vp8lenc.Encode(file, src, &vp8lenc.Options{Effort: e.o.Effort, Clean: !e.o.Exact, NearLossless: e.o.NearLossless})
 	} else {
-		err = vp8enc.Encode(file, src, &vp8enc.Options{Quality: e.o.Quality, Effort: e.o.Effort})
+		err = vp8enc.Encode(file, src, &vp8enc.Options{Quality: e.o.Quality, Effort: e.o.Effort, Exact: e.o.Exact, AlphaQuality: e.o.AlphaQuality})
 	}
 	if err != nil {
 		return err

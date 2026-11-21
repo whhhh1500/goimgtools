@@ -581,12 +581,18 @@ func (m *Image) writeAnimated(w io.Writer, f *input, env *pipeline.Env, input, f
 	var g GIFOptions
 	var wo WebPOptions
 	var po PNGOptions
+	var nl int // WebP near-lossless rounding
 	var err error
 	fixed := false
 	switch format {
 	case "webp":
 		if wo, err = optionsOf[WebPOptions](m.options, "webp"); err != nil {
 			return err
+		}
+		if wo.NearLossless {
+			if nl, err = nearLosslessBits(wo.Quality); err != nil {
+				return err
+			}
 		}
 	case "png":
 		if po, err = optionsOf[PNGOptions](m.options, "png"); err != nil {
@@ -694,7 +700,8 @@ func (m *Image) writeAnimated(w io.Writer, f *input, env *pipeline.Env, input, f
 	switch format {
 	case "webp":
 		return webpanim.Encode(w, env, webpanim.Options{
-			LoopCount: webpLoopCount(plays), Lossless: wo.Lossless, Quality: wo.Quality, Effort: wo.Effort,
+			LoopCount: webpLoopCount(plays), Lossless: wo.Lossless || wo.NearLossless, Quality: wo.Quality, Effort: wo.Effort,
+			NearLossless: nl, Exact: wo.Exact, AlphaQuality: wo.AlphaQuality,
 		}, seq.next)
 	case "png":
 		return pngstream.EncodeAnimation(w, env, pngstream.AnimOptions{

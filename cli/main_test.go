@@ -284,6 +284,13 @@ func TestNewOptions(t *testing.T) {
 	if !bytes.Equal(back, ref) {
 		t.Error("lossless WebP did not keep the pixels")
 	}
+	out = filepath.Join(dir, "n.webp")
+	must("-webp-near-lossless", "-quality", "60", in, out)
+	same("near-lossless webp", out, goimgtools.Open(in).WebP(goimgtools.WebPOptions{NearLossless: true, Quality: 60}))
+	must("-webp-lossless", "-webp-exact", in, out)
+	same("exact lossless webp", out, goimgtools.Open(in).WebP(goimgtools.WebPOptions{Lossless: true, Exact: true}))
+	must("-quality", "70", "-webp-alpha-quality", "40", in, out)
+	same("webp alpha quality", out, goimgtools.Open(in).WebP(goimgtools.WebPOptions{Quality: 70, AlphaQuality: 40}))
 
 	// The font list always ends with the built-in font.
 	list, _, err := cli("fonts")

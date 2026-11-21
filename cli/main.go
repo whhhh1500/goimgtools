@@ -113,6 +113,8 @@ type options struct {
 	gifFixed                                       *bool
 	gifLossy                                       *int
 	webpEffort                                     *int
+	webpNear, webpExact                            *bool
+	webpAlphaQ                                     *int
 	lossless, jpegOpt, jpegProg, noDither          *bool
 	jpegTrellis                                    *bool
 	jpegQuantTable                                 *int
@@ -205,6 +207,9 @@ func register(fs *flag.FlagSet) *options {
 		tileLayout:     fs.String("tile-layout", "dz", "the layout of the tiles of a .dzi or .dz output: dz (Deep Zoom), google, iiif, iiif3 or zoomify"),
 		maxSize:        fs.String("max-size", "", "make the file at most this `size` by lowering the quality (JPEG, lossy WebP) or the number of colours (PNG, GIF): 200KB, 1.5MB, or a number of bytes"),
 		lossless:       fs.Bool("webp-lossless", false, "WebP: write without loss"),
+		webpNear:       fs.Bool("webp-near-lossless", false, "WebP: lossless, but pixels that differ from a neighbour anyway may change a little (-quality how much: 100 none, 60-79 at most 2 levels a channel; default 75): photographs about a third smaller"),
+		webpExact:      fs.Bool("webp-exact", false, "WebP: keep the colour of fully transparent pixels (by default it is dropped, as libwebp does)"),
+		webpAlphaQ:     fs.Int("webp-alpha-quality", 0, "WebP (lossy): quality 1-99 of the transparency, reduced to fewer levels (2-16 up to 70); default 100, exact"),
 		webpEffort:     fs.Int("webp-effort", 0, "WebP: effort 1 (fastest) to 9 (smallest file); default 5 (for lossy, all there is but for transparency)"),
 		gifColors:      fs.Int("gif-colors", 0, "largest number of colours in a GIF, 1-256 (default 256)"),
 		gifFixed:       fs.Bool("gif-fixed-palette", false, "GIF: use the standard fixed palette instead of colours chosen for the image (faster, a much worse picture)"),
@@ -773,7 +778,7 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 	case "png":
 		im.PNG(goimgtools.PNGOptions{CompressionLevel: *o.pngLevel, Colors: *o.pngColors, NoDither: *o.noDither})
 	case "webp":
-		im.WebP(goimgtools.WebPOptions{Quality: *o.quality, Lossless: *o.lossless, Effort: *o.webpEffort})
+		im.WebP(goimgtools.WebPOptions{Quality: *o.quality, Lossless: *o.lossless, Effort: *o.webpEffort, NearLossless: *o.webpNear, Exact: *o.webpExact, AlphaQuality: *o.webpAlphaQ})
 	case "gif":
 		im.GIF(goimgtools.GIFOptions{Colors: *o.gifColors, NoDither: *o.noDither, FixedPalette: *o.gifFixed, Lossy: *o.gifLossy})
 	case "bmp":

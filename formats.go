@@ -246,14 +246,20 @@ var builtin = []*formatDef{
 				mw = webpstream.NewMetaWriter(w, pipeline.Meta{Exif: o.Exif, ICC: o.ICC, Xmp: o.Xmp})
 				w = mw
 			}
-			if wo.Lossless {
-				err = vp8lenc.Encode(w, src, &vp8lenc.Options{Effort: wo.Effort})
-			} else {
-				q := o.Quality
-				if q == 0 {
-					q = wo.Quality
+			q := o.Quality
+			if q == 0 {
+				q = wo.Quality
+			}
+			if wo.Lossless || wo.NearLossless {
+				var nl int
+				if wo.NearLossless {
+					if nl, err = nearLosslessBits(q); err != nil {
+						return err
+					}
 				}
-				err = vp8enc.Encode(w, src, &vp8enc.Options{Quality: q, Effort: wo.Effort})
+				err = vp8lenc.Encode(w, src, &vp8lenc.Options{Effort: wo.Effort, Clean: !wo.Exact, NearLossless: nl})
+			} else {
+				err = vp8enc.Encode(w, src, &vp8enc.Options{Quality: q, Effort: wo.Effort, Exact: wo.Exact, AlphaQuality: wo.AlphaQuality})
 			}
 			if err == nil && mw != nil {
 				err = mw.Finish()
@@ -263,7 +269,7 @@ var builtin = []*formatDef{
 		quality: func(options any) (int, bool) {
 			wo, _ := optionsOf[WebPOptions](options, "webp")
 			switch {
-			case wo.Lossless:
+			case wo.Lossless && !wo.NearLossless:
 				return 0, false
 			case wo.Quality == 0:
 				return 75, true
@@ -673,4 +679,17 @@ func (m *Image) outputFormat(ext, inFormat string) (string, error) {
 		return "", fmt.Errorf("goimgtools: %s can be read but not written; %s", inFormat, choose)
 	}
 	return inFormat, nil
+}
+
+// nearLosslessBits is the near-lossless rounding (vp8lenc.Options.NearLossless)
+// of WebPOptions.Quality q, 0 meaning the default: libwebp's
+// VP8LNearLosslessBits, 0 for 100.
+func nearLosslessBits(q int) (int, error) {
+	if q == 0 {
+		q = vp8enc.DefaultQuality
+	}
+	if q < 1 || q > 100 {
+		return 0, fmt.Errorf("goimgtools: webp quality %d out of range 1..100", q)
+	}
+	return 5 - q/20, nil
 }

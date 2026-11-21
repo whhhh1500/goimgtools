@@ -93,6 +93,9 @@ func (e *encoder) codeAlpha() error {
 	if e.alpha == nil || !e.alpha.transparent() {
 		return nil
 	}
+	if q := e.alphaQ; q > 0 && q < 100 {
+		e.alpha.reduceLevels(q)
+	}
 	methods := []int{alphaFilterNone}
 	switch {
 	case e.alpha.colours() <= 16:

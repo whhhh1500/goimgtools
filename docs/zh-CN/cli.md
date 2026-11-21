@@ -102,6 +102,9 @@ goimgtools -op median:3 -op normalize -op "tint:#704214" scan.jpg out.jpg
 | `-tile-size N`、`-tile-overlap N`、`-tile-layout 名称` | 输出文件名以 `.dzi`、`.dz` 或 `.zip`（写入 ZIP 压缩包）结尾时写瓦片金字塔（同 sharp 的 `tile`）：瓦片边长（256）、重叠像素（0）与布局：`dz`（Deep Zoom，默认）、`google`、`iiif`、`iiif3` 或 `zoomify`（瓦片写入以输出名去掉 `.dz` 命名的目录） |
 | `-skip-larger` | 结果不小于原文件（同格式）时保留原文件；适用于仅做压缩的任务 |
 | `-webp-lossless`、`-webp-effort N` | 无损 WebP；力度 1（最快）至 9（文件最小），默认 5。力度也作用于有损 WebP：5 已用上全部手段（5 以上只在透明通道上多做），2 耗时约减半，1 约为三分之一 |
+| `-webp-near-lossless` | 近无损 WebP，同 libwebp：按无损编码，但与邻像素本就有差别的像素各通道可略作改动，程度由 `-quality` 定（100 不改，80–99 至多差 1 级，60–79 差 2，40–59 差 4，20–39 差 8，更低差 16；默认 75）；照片比无损小约 37% |
+| `-webp-exact` | 精确保留全透明像素的颜色（默认像 libwebp、sharp、Pillow 一样丢掉，带透明的图因此更小） |
+| `-webp-alpha-quality N` | 有损 WebP：透明度的质量 1–99，取值降到较少的级数（70 以下 2–16 级），0 与 255 不变；默认（100）精确保留 |
 | `-png-level N`、`-gif-colors N`、`-gif-fixed-palette`、`-tiff-compression none\|deflate\|lzw`、`-tiff-predictor` | 各格式专用选项 |
 | `-gif-lossy N` | GIF：有损压缩，可接受的颜色差 1–255（照片类动画 16–32，带抖动的静态图 8–16；见[压缩](compression.md)） |
 | `-animated` | 处理 GIF、WebP 或 PNG 动画（APNG）的每一帧，按输出格式写为 GIF、WebP 或 PNG 动画（APNG，无损）；`-gif-colors`、`-no-dither` 适用于 GIF，WebP 的选项适用于 WebP，`-png-level` 适用于 PNG。输出为其他格式时报错 |

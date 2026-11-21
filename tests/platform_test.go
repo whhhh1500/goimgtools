@@ -141,6 +141,13 @@ func TestSameOnEveryProcessor(t *testing.T) {
 		{"png 40 colours", func() ([]byte, error) { return photo.Clone().PNG(PNGOptions{Colors: 40}).ToBytes() }, "a22a7198a696d7a8"},
 		{"webp", func() ([]byte, error) { return photo.Clone().WebP(WebPOptions{Quality: 70}).ToBytes() }, "3fd53ba37ca99645"},
 		{"webp lossless", func() ([]byte, error) { return clear.Clone().WebP(WebPOptions{Lossless: true}).ToBytes() }, "c9e3f3c7f3205db8"},
+		{"webp near-lossless", func() ([]byte, error) {
+			return photo.Clone().WebP(WebPOptions{NearLossless: true, Quality: 60}).ToBytes()
+		}, "817507837fbd19a6"},
+		// The alpha plane reduced to fewer levels by k-means in float64.
+		{"webp alpha quality", func() ([]byte, error) {
+			return clear.Clone().WebP(WebPOptions{Quality: 70, AlphaQuality: 40}).ToBytes()
+		}, "cbfe1ae15f59979d"},
 		{"invisible watermark", func() ([]byte, error) {
 			return photo.Clone().InvisibleWatermark([]byte("mark"), InvisibleWatermarkOptions{Key: "k", Kind: WatermarkScreen, Strength: 1.3}).BMP().ToBytes()
 		}, "56d395e855d48b6b"},

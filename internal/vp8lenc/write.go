@@ -99,6 +99,9 @@ func (p *plan) weighed() float64 {
 	if p.f.cross {
 		return float64(p.totalBits) * crossPlanMargin
 	}
+	if p.f.e.few && p.f.kind == kindARGB {
+		return float64(p.totalBits) * unpackMargin
+	}
 	return float64(p.totalBits)
 }
 

@@ -27,6 +27,7 @@ type frontend struct {
 	e     *encoder
 	kind  int
 	pred  bool
+	exact bool // lossless when the others are near-lossless (spec.exact)
 	w, h  int
 	sw    int   // width of the stream (smaller than w when indices are packed)
 	total int64 // pixels in the stream
@@ -54,9 +55,21 @@ type frontend struct {
 	cc       *crossColor
 	res      []uint32
 	// With the predictor: the band's residuals, and a row of scratch for
-	// each of its block rows (see flush).
+	// each of its block rows (see flush; three rows and two pixels when
+	// the variant may change pixels).
 	resBand []uint32
 	tmps    [][]uint32
+	// What the variant may change (near-lossless, transparent pixels),
+	// with the predictor: for near-lossless, the band rows' largest
+	// differences with their neighbours, and the last row of the band
+	// before as it came.
+	ls       lossy
+	maxDiffs []uint8
+	origPrev []uint32
+	// With near-lossless, the band waits for the row below its last
+	// (pending), which ahead holds until the band has gone.
+	ahead   []uint32
+	pending bool
 
 	// colour indexing
 	palette []uint32
@@ -105,6 +118,7 @@ func (f *frontend) close() {
 	}
 	f.rleTok = nil
 	f.band, f.res, f.resBand, f.tmps, f.modes, f.tok, f.ccodes, f.cc = nil, nil, nil, nil, nil, nil, nil, nil
+	f.maxDiffs, f.origPrev, f.ahead = nil, nil, nil
 	f.e.unreserve(f.mem)
 	f.mem = 0
 }
@@ -127,7 +141,7 @@ func predictorBits(w, h int64, least uint) uint {
 // newFrontend starts a variant. share is the number of variants that still
 // have to fit in the budget, this one included.
 func (e *encoder) newFrontend(s spec, palette []uint32, share int) (*frontend, error) {
-	f := &frontend{e: e, kind: s.kind, pred: s.pred, cross: s.cross && s.pred && s.kind == kindARGB, w: e.w, h: e.h, sw: e.w, modeSet: e.p.modes}
+	f := &frontend{e: e, kind: s.kind, pred: s.pred, cross: s.cross && s.pred && s.kind == kindARGB, w: e.w, h: e.h, sw: e.w, modeSet: e.p.modes, exact: s.exact}
 	if s.simple {
 		f.modeSet = modesFast
 	}
@@ -181,8 +195,13 @@ func (f *frontend) init(palette []uint32, sg int, share int64) error {
 		if f.pred {
 			tiles := func(b uint) int64 { return ((sw + 1<<b - 1) >> b) * ((h + 1<<b - 1) >> b) }
 			least := uint(2)
-			if f.kind != kindARGB {
-				least = 3 // single-channel residuals are cheap; modes weigh more
+			if f.kind != kindARGB || e.nearLossless >= 2 && !f.exact {
+				// Single-channel residuals are cheap, and so are those
+				// rounded by 4 and more: modes weigh more (with blocks of
+				// 8x8 pixels 23 photographs, screenshots and drawings 0.24%
+				// smaller than with 4x4, a photograph 1.6%; rounded by 2,
+				// 0.5% larger on photographs).
+				least = 3
 			}
 			if e.p.predBits > 0 {
 				least = max(least, e.p.predBits)
@@ -218,6 +237,20 @@ func (f *frontend) init(palette []uint32, sg int, share int64) error {
 				}
 				rows += sw*4 + tiles(f.cbits)*4 + ccBytes
 			}
+			if f.kind != kindIndex {
+				q := 1 << e.nearLossless
+				if f.exact {
+					q = 1
+				}
+				f.ls = lossy{q: q, gray: f.kind == kindGray, clean: e.clean && f.kind == kindARGB}
+			}
+			if f.ls.on() {
+				blocks := int64(f.maxRows+1<<bits-1) >> bits
+				rows += blocks * (2*sw + 2) * 4
+				if f.ls.q > 1 {
+					rows += int64(f.maxRows)*sw + 2*sw*4
+				}
+			}
 		}
 		rows += int64(f.maxRows+1) * sw * 4
 	}
@@ -239,8 +272,17 @@ func (f *frontend) init(palette []uint32, sg int, share int64) error {
 			f.cc = &crossColor{}
 		}
 		f.tmps = make([][]uint32, (f.maxRows+1<<f.bits-1)>>f.bits)
+		n := f.sw
+		if f.ls.on() {
+			n = 3*f.sw + 2
+		}
 		for i := range f.tmps {
-			f.tmps[i] = make([]uint32, f.sw)
+			f.tmps[i] = make([]uint32, n)
+		}
+		if f.ls.q > 1 {
+			f.maxDiffs = make([]uint8, f.maxRows*f.sw)
+			f.origPrev = make([]uint32, f.sw)
+			f.ahead = make([]uint32, f.sw)
 		}
 		f.modes = make([]uint8, f.tw*f.th)
 		f.passOne -= int64(len(f.modes)) + int64(len(f.ccodes))*4
@@ -331,13 +373,23 @@ func (f *frontend) feedRow(row []uint32) error {
 		}
 		return f.push(res)
 	}
-	dst := f.band[(1+f.nrows)*f.sw:][:f.sw]
+	dst := f.ahead // the band is full and waited for this row (see rowDone)
+	if !f.pending {
+		dst = f.band[(1+f.nrows)*f.sw:][:f.sw]
+	}
 	if f.sg {
 		for i, p := range row {
 			dst[i] = subGreen(p)
 		}
 	} else {
 		copy(dst, row)
+	}
+	if f.pending {
+		if err := f.flush(); err != nil {
+			return err
+		}
+		f.pending = false
+		copy(f.band[f.sw:2*f.sw], f.ahead)
 	}
 	return f.rowDone()
 }
@@ -378,6 +430,12 @@ func (f *frontend) feedIndex(idx []byte) error {
 func (f *frontend) rowDone() error {
 	f.nrows++
 	if f.nrows == f.maxRows || f.fed == f.h {
+		if f.ls.q > 1 && f.fed < f.h {
+			// Near-lossless looks at the row below each pixel: the band
+			// waits for the next row.
+			f.pending = true
+			return nil
+		}
 		return f.flush()
 	}
 	return nil
@@ -407,6 +465,11 @@ func (f *frontend) decideSG() {
 		rows := f.band[f.sw : (f.nrows+1)*f.sw]
 		for i, p := range rows {
 			rows[i] = subGreen(p)
+		}
+		if f.pending {
+			for i, p := range f.ahead {
+				f.ahead[i] = subGreen(p)
+			}
 		}
 	}
 }
@@ -470,14 +533,30 @@ func (f *frontend) flush() error {
 	cm := f.tok.cm
 	env := f.e.env
 	blocks := (f.nrows + 1<<f.bits - 1) >> f.bits
-	env.Parallel(blocks, func(i int) {
-		r0 := 1 + i<<f.bits
-		f.chooseModes(r0, min(r0+1<<f.bits, f.nrows+1), &cm, f.tmps[i])
-	})
 	off := 0
 	if f.cross {
 		off = w
 	}
+	// A variant that may change pixels makes its residuals one row after
+	// the other, each from the pixels the decoder will have; when it would
+	// change nothing in the band (cleaning transparent pixels, of which
+	// there are none), as the others.
+	if f.ls.q > 1 || f.ls.clean && f.bandTransparent() {
+		f.ls.sg = f.sg
+		if f.ls.q > 1 {
+			f.computeMaxDiffs()
+		}
+		env.Parallel(blocks, func(i int) {
+			r0 := 1 + i<<f.bits
+			f.chooseModesLossy(r0, min(r0+1<<f.bits, f.nrows+1), &cm, f.tmps[i])
+		})
+		f.lossyResiduals(off)
+		return f.sendBand(off)
+	}
+	env.Parallel(blocks, func(i int) {
+		r0 := 1 + i<<f.bits
+		f.chooseModes(r0, min(r0+1<<f.bits, f.nrows+1), &cm, f.tmps[i])
+	})
 	env.Parallel(f.nrows, func(i int) {
 		r := i + 1
 		res := f.resBand[off+i*w : off+(i+1)*w]
@@ -496,6 +575,14 @@ func (f *frontend) flush() error {
 			residuals(m, cur, up, max(tx<<f.bits, 1), min(w, (tx+1)<<f.bits), res)
 		}
 	})
+	return f.sendBand(off)
+}
+
+// sendBand puts the band's residuals (from off on in resBand) through the
+// cross-color transform if the variant has it, sends them on, and starts
+// the next band.
+func (f *frontend) sendBand(off int) error {
+	w := f.sw
 	if f.cross {
 		f.crossBand()
 	}
@@ -524,7 +611,7 @@ func (f *frontend) finish() error {
 			return err
 		}
 	}
-	f.band, f.res, f.resBand, f.tmps = nil, nil, nil, nil
+	f.band, f.res, f.resBand, f.tmps, f.maxDiffs, f.origPrev, f.ahead = nil, nil, nil, nil, nil, nil, nil
 	f.tok.head, f.tok.prev, f.tok.obuf, f.tok.opt = nil, nil, nil, nil
 	f.tok.searchers, f.tok.par = nil, nil
 	f.e.unreserve(f.passOne)
