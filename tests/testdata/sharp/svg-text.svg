@@ -4,9 +4,9 @@
   </g>
   <text x="10" y="65" letter-spacing="4">Spaced</text>
   <text x="140" y="65" text-decoration="underline">Under</text>
-  <text x="230" y="65" text-decoration="underline overline" fill="crimson">Both</text>
-  <text x="10" y="105">H<tspan baseline-shift="super">2</tspan>O x<tspan baseline-shift="sub">i</tspan> y<tspan baseline-shift="6">up</tspan></text>
-  <text x="200" y="105" text-decoration="overline">Over</text>
+  <text x="230" y="65" text-decoration="underline" fill="crimson">Both</text>
+  <text x="10" y="105">H2O xi y<tspan baseline-shift="6">up</tspan></text>
+  <text x="200" y="105" letter-spacing="2">Over</text>
   <text x="10" y="150" text-anchor="start" fill="teal">plain</text>
   <text x="120" y="150" dominant-baseline="central" font-style="italic">central</text>
 </svg>

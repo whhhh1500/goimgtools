@@ -80,6 +80,77 @@ func TestSVGAsLibrsvg(t *testing.T) {
 	}
 }
 
+// TestSVGAsChrome: what follows Chrome rather than librsvg (superscripts
+// and subscripts, overlines, word-spacing, textLength, baselines, rotated
+// characters, textPath) looks as Chrome drew it: on white, as grey,
+// blurred over two pixels so that the shades of the glyphs' edges, which
+// each rasterizer makes its own, do not count, within 1.5 levels on
+// average and 64 everywhere (a line a few pixels out is far more).
+func TestSVGAsChrome(t *testing.T) {
+	hasArial := false
+	for _, f := range SystemFonts() {
+		if strings.EqualFold(f.Family, "Arial") {
+			hasArial = true
+			break
+		}
+	}
+	if !hasArial {
+		t.Skip("Arial, the font of the document, is not installed")
+	}
+	doc, err := os.ReadFile(filepath.Join("testdata", "chrome", "svg-text.svg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := FromBytes(doc).ToImage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := Open(filepath.Join("testdata", "chrome", "svg-text.png")).ToImage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Bounds().Size() != want.Bounds().Size() {
+		t.Fatalf("%v, Chrome %v", got.Bounds().Size(), want.Bounds().Size())
+	}
+	w, h := got.Bounds().Dx(), got.Bounds().Dy()
+	blurred := func(m image.Image) []int {
+		v := onWhite(m)
+		g := make([]int, w*h)
+		for i := range g {
+			g[i] = (v[3*i] + v[3*i+1] + v[3*i+2]) / 3
+		}
+		// A box of five pixels across, then down.
+		box := func(src []int, step, n, lines, stride int) []int {
+			out := make([]int, len(src))
+			for l := 0; l < lines; l++ {
+				for i := 0; i < n; i++ {
+					sum, k := 0, 0
+					for j := max(0, i-2); j <= min(n-1, i+2); j++ {
+						sum += src[l*stride+j*step]
+						k++
+					}
+					out[l*stride+i*step] = sum / k
+				}
+			}
+			return out
+		}
+		return box(box(g, 1, w, h, w), w, h, w, 1)
+	}
+	a, b := blurred(got), blurred(want)
+	sum, worst := 0, 0
+	for i := range a {
+		d := a[i] - b[i]
+		if d < 0 {
+			d = -d
+		}
+		sum += d
+		worst = max(worst, d)
+	}
+	if mean := float64(sum) / float64(len(a)); mean > 1.5 || worst > 64 {
+		t.Errorf("mean difference %.3f, worst %d", mean, worst)
+	}
+}
+
 // TestSVG: the size from width, height and viewBox; a vector resized as
 // it is drawn, its edges as sharp as at its own size; read only; a broken
 // document is an error.

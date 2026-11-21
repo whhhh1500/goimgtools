@@ -1,0 +1,15 @@
+<svg width="420" height="300" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" font-family="Arial" font-size="20">
+  <rect width="420" height="300" fill="#fff"/>
+  <text x="10" y="30">E=mc<tspan baseline-shift="super" font-size="13">2</tspan> x<tspan baseline-shift="sub" font-size="13">i</tspan> y<tspan baseline-shift="super">n</tspan></text>
+  <text x="220" y="30" text-decoration="overline" fill="navy">Overline</text>
+  <text x="10" y="70" word-spacing="12">words spaced apart</text>
+  <text x="250" y="70" textLength="150" lengthAdjust="spacing">stretched</text>
+  <text x="10" y="110" dominant-baseline="middle">middle</text>
+  <text x="90" y="110" dominant-baseline="hanging">hanging</text>
+  <text x="190" y="110" dominant-baseline="central">central</text>
+  <text x="290" y="110" alignment-baseline="text-after-edge">after</text>
+  <text x="10" y="150" rotate="0 15 30 45 60">Turns</text>
+  <text x="120" y="150" textLength="120" lengthAdjust="spacingAndGlyphs">squeezed text</text>
+  <path id="arc" d="M30 280 Q 210 170 390 280" fill="none"/>
+  <text font-size="18"><textPath xlink:href="#arc" startOffset="50%" text-anchor="middle">along a curved path, centred</textPath></text>
+</svg>

@@ -146,6 +146,24 @@ func (b *builder) fonts(family, face string) *textsrc.Set {
 	return s
 }
 
+// fontHalfHeight is half the height (ascent and descent) of the first font
+// of a style's family at its size; 0.56 of the size without one.
+func (b *builder) fontHalfHeight(st style, face string) float64 {
+	set := b.fonts(st.fontFamily, face)
+	if set == nil || set.First() == nil {
+		return float64(0.56 * st.fontSize)
+	}
+	sf := set.First().SFNT()
+	var buf sfnt.Buffer
+	upem := fixed.Int26_6(sf.UnitsPerEm()) << 6
+	mt, err := sf.Metrics(&buf, upem, font.HintingNone)
+	if err != nil {
+		return float64(0.56 * st.fontSize)
+	}
+	u := st.fontSize / float64(sf.UnitsPerEm()) / 64
+	return float64(float64(mt.Ascent+mt.Descent)*u) / 2
+}
+
 // genericFonts are the fonts the generic families of CSS stand for, as
 // browsers choose them, the first installed of each list.
 var genericFonts = map[string][]string{
@@ -356,10 +374,14 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 		if v, ok := k.prop("baseline-shift"); ok && k != n {
 			switch v = strings.TrimSpace(v); v {
 			case "baseline":
-			case "sub":
-				ctx.shift -= float64(0.2 * kst.fontSize)
-			case "super":
-				ctx.shift += float64(0.4 * kst.fontSize)
+			case "sub", "super":
+				// Half the height of the element's font (ascent and
+				// descent), down or up, as Chrome shifts them.
+				half := b.fontHalfHeight(kst, face)
+				if v == "sub" {
+					half = -half
+				}
+				ctx.shift += half
 			default:
 				if strings.HasSuffix(v, "%") {
 					if f, err := strconv.ParseFloat(strings.TrimSuffix(v, "%"), 64); err == nil {
@@ -717,7 +739,8 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 					if !on {
 						continue
 					}
-					top := [3]float64{p.under, p.over, p.through}[kind]
+					// The overline stands on the ascent line (as Chrome draws it).
+					top := [3]float64{p.under, p.over - p.thick, p.through}[kind]
 					if !straight {
 						w := p.adv / p.sx
 						quad(d, [4][2]float64{apply(fr, 0, top), apply(fr, w, top), apply(fr, w, top+p.thick), apply(fr, 0, top+p.thick)})
