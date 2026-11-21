@@ -8,10 +8,5 @@
 *.sh   text eol=lf
 # Go fuzz corpus entries are parsed line by line: LF everywhere.
 tests/testdata/fuzz/** text eol=lf
-*.avif binary
-*.heic binary
 *.icc binary
 *.s text eol=lf
-# The HEIC module's Kvazaar build: its patch and C file as Kvazaar's sources are.
-*.patch text eol=lf
-*.c text eol=lf

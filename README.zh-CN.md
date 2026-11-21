@@ -94,15 +94,12 @@ goimgtools batch -resize 1920x1920 -no-enlarge -quality 80 -format jpeg in_dir o
 | GIF | ✓（含动画） | ✓（含动画） | 逐行流式解码；隔行处理方式同 PNG |
 | BMP | ✓ | ✓ | 按文件偏移逐行读取 |
 | TIFF | ✓ | ✓ | 逐行流式解压；可读取 JPEG 压缩的 TIFF（libtiff、libvips、sharp 的写法） |
-| AVIF（模块 `goimgtools/avif`） | ✓（第一幅图像：透明、EXIF、XMP、色彩配置） | ✓ | 由 libavif（转写为 Go）整图解码 |
-| JPEG XL（模块 `goimgtools/jxl`） | ✓（第一帧：透明、16 位、EXIF、XMP、色彩配置） | ✓（与 cjxl 的文件相同） | 由 libjxl（转写为 Go）整图解码 |
-| HEIC（模块 `goimgtools/heic`） | ✓（主图像：网格、透明、EXIF、XMP、色彩配置） | ✓（Kvazaar 转写为 Go；超过 4 百万像素时为网格分块） | 由 gen2brain/h265（纯 Go）解码：无透明的（手机照片）按瓦片行解码，其余整图解码；编码时逐行写入各画面 |
 
 暂存区数据不超过内存上限的 1/8（默认 8MB）时驻留内存，超出部分写入临时文件，用后删除。
 
 ## 限制
 
-- AVIF、HEIC 与 JPEG XL 由独立模块读写，以副作用方式导入即可：`github.com/whhhh1500/goimgtools/avif`（libavif 配 aom、dav1d，编译为 WebAssembly 再转写为 Go，无需 cgo）、`github.com/whhhh1500/goimgtools/jxl`（参考实现 libjxl，做法相同）与 `github.com/whhhh1500/goimgtools/heic`（读取用 gen2brain/h265，纯 Go 的 HEVC 解码器；写入用 HEVC 编码器 Kvazaar，编译为 WebAssembly 再转写为 Go，无需 cgo）。AVIF 与 JPEG XL 整图解码；HEIC 无透明的文件（手机照片）按瓦片行解码，其余整图解码。
+- 不支持 HEIC、AVIF 与 JPEG XL。这几种格式的编解码器（Kvazaar 与 gen2brain/h265、aom 与 dav1d、libjxl）曾以独立模块的形式转写为 Go 试过，所占内存远超本库对自己的要求：编一张 1200 万像素的照片要几百 MB（cjxl 本身开流式也要 196 至 268MB），编译要几 GB。0.2.0 的 `heic` 与 `avif` 模块不再维护。需要时可用 `RegisterFormat` 从外部加入格式（见[扩展](docs/zh-CN/extending.md)）。
 - JPEG 解码中的熵解码为顺序过程（自 `Threads(5)` 起反 DCT 与色彩换算交给其他核心）；多线程下它是 JPEG 解码最慢的环节。
 - 自定义的逐像素调整（`Curves` 等色阶操作之外）可用 `Pixels` 以数行代码实现（参见[扩展](docs/zh-CN/extending.md)中的灰度示例），依赖邻域像素的滤镜可实现为 `Pipe` 环节或 `Convolve` 卷积核。
 - GIF、BMP 编码为单线程（压缩 TIFF 的各条带交给其他核心压缩）；无损 WebP 的最优解析（找到匹配之后的部分）与第二遍为顺序过程，八线程时截图与图画约快一倍，照片快 1.5 倍。
@@ -111,7 +108,7 @@ goimgtools batch -resize 1920x1920 -no-enlarge -quality 80 -format jpeg in_dir o
 
 ## 版本
 
-API 在 0.1.0 之后定型过一次（当时改了几个名字，见[变更记录](docs/zh-CN/CHANGELOG.md)的“从 0.1.0 升级”）。此后各版本只增加 API：已导出的内容不删除、不改名、不改签名，每次推送都用 `apidiff` 核对；基础接口的签名、其选项与结果结构体的字段、各常量的值还由 `tests/api_lock_test.go` 在编译期写死。输出可能因更准确而变化（如 JPEG 文件改为 libjpeg-turbo 的字节），此类变化列在[变更记录](docs/zh-CN/CHANGELOG.md)的“升级”一节。HEIC 与 AVIF 模块同样如此，各自与每个版本的标签核对；由使用者实现的接口（`Operation`、`pipeline.Source`）不再增加方法，新能力以可选接口提供。某个版本加的隐形水印，之后的每个版本都能读出（`tests/watermark_compat_test.go` 读取 0.2.0 加的水印）。必须破坏 API 的版本将升主版本号。
+API 在 0.1.0 之后定型过一次（当时改了几个名字，见[变更记录](docs/zh-CN/CHANGELOG.md)的“从 0.1.0 升级”）。此后各版本只增加 API：已导出的内容不删除、不改名、不改签名，每次推送都用 `apidiff` 核对；基础接口的签名、其选项与结果结构体的字段、各常量的值还由 `tests/api_lock_test.go` 在编译期写死。输出可能因更准确而变化（如 JPEG 文件改为 libjpeg-turbo 的字节），此类变化列在[变更记录](docs/zh-CN/CHANGELOG.md)的“升级”一节。由使用者实现的接口（`Operation`、`pipeline.Source`）不再增加方法，新能力以可选接口提供。某个版本加的隐形水印，之后的每个版本都能读出（`tests/watermark_compat_test.go` 读取 0.2.0 加的水印）。必须破坏 API 的版本将升主版本号。
 
 ## 参与贡献
 

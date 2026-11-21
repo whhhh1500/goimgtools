@@ -27,61 +27,6 @@ jobs:
       - if: matrix.os == 'ubuntu-latest'
         run: go test -tags purego ./internal/jpegstream/... ./internal/webpstream/... ./internal/resize/... ./internal/vp8enc/... ./internal/pngstream/... ./internal/gflate/... ./internal/ops/... ./tests
 
-  avif:
-    # The AVIF module (a module of its own, avif/): libavif translated to Go.
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest]
-    runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        working-directory: avif
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.27.x"
-      - run: go vet ./...
-      - run: go test ./...
-
-  jxl:
-    # The JPEG XL module (jxl/): libjxl translated to Go.
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest]
-    runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        working-directory: jxl
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.27.x"
-      - run: go vet ./...
-      - run: go test ./...
-
-  heic:
-    # which must give the same pixels.
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest]
-        tags: ["", noasm]
-    runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        working-directory: heic
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.27.x"
-      - run: go vet -tags "${{ matrix.tags }}" ./...
-      - run: go test -tags "${{ matrix.tags }}" ./...
-
   oldest-go:
     # The oldest Go the module supports, the go line of go.mod. Its
     # compress/flate is the one before Go 1.27 rewrote it, so PNG files
@@ -111,8 +56,7 @@ jobs:
     # No exported name of the last release may change incompatibly: its tag
     # (or commit) is in .github/api-base, the last tag without the file.
     # apidiff (golang.org/x/exp) compares the exported API of the whole
-    # module with it, and that of the HEIC and AVIF modules with their tags
-    # of the same release (heic/v..., avif/v...).
+    # module with it.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -137,22 +81,6 @@ jobs:
             echo "::error::incompatible API changes since $tag"
             fail=1
           fi
-          for m in heic avif jxl; do
-            if ! git rev-parse -q --verify "refs/tags/$m/$tag" > /dev/null; then
-              echo "$m: no tag $m/$tag"
-              continue
-            fi
-            git worktree add -q "$RUNNER_TEMP/old-$m" "$m/$tag"
-            (cd "$RUNNER_TEMP/old-$m/$m" && apidiff -m -w "$RUNNER_TEMP/old-$m.api" "github.com/whhhh1500/goimgtools/$m")
-            (cd "$m" && apidiff -m -w "$RUNNER_TEMP/new-$m.api" "github.com/whhhh1500/goimgtools/$m")
-            echo "$m since $m/$tag:"
-            apidiff -m "$RUNNER_TEMP/old-$m.api" "$RUNNER_TEMP/new-$m.api" | grep -v '^Ignoring internal' || true
-            bad=$(apidiff -m -incompatible "$RUNNER_TEMP/old-$m.api" "$RUNNER_TEMP/new-$m.api" | grep -v '^Ignoring internal' || true)
-            if [ -n "$bad" ]; then
-              echo "::error::incompatible API changes in $m since $m/$tag"
-              fail=1
-            fi
-          done
           exit $fail
 
   bits32:
@@ -169,11 +97,7 @@ jobs:
     # LoongArch) may round a*b+c once instead of twice, and the same image
     # would come out differently on them: no floating-point product may be
     # fused with an addition (an explicit conversion, float64(a*b) + c,
-    # rounds the product first). This lists any the compiler still fuses,
-    # in the library, in the HEIC module's colour conversion, and in the
-    # codecs of the HEIC, AVIF and JPEG XL modules (Kvazaar, libavif and
-    # libjxl translated from WebAssembly, whose translation converts every
-    # product).
+    # rounds the product first). This lists any the compiler still fuses.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -185,17 +109,13 @@ jobs:
           bad=0
           s=$RUNNER_TEMP/asm.txt
           for arch in arm64 ppc64le s390x riscv64 loong64; do
-            for p in .:./... heic:. heic:./internal/kvazaar avif:./internal/libavif jxl:./internal/libjxl; do
-              # The listing of a translated codec runs to millions of lines:
-              # it goes to a file, not into a variable.
-              (cd "${p%%:*}" && GOARCH=$arch go build -a -gcflags=-S "${p#*:}") > "$s" 2>&1 || { tail -20 "$s"; exit 1; }
-              found=$(grep -E '\sFN?M(ADD|SUB)[SDF]?\s' "$s" | grep -oE 'goimgtools/[^ :]+\.go:[0-9]+' | sort -u)
-              if [ -n "$found" ]; then
-                echo "::error::$arch fuses a multiplication and an addition at:"
-                echo "$found"
-                bad=1
-              fi
-            done
+            GOARCH=$arch go build -a -gcflags=-S ./... > "$s" 2>&1 || { tail -20 "$s"; exit 1; }
+            found=$(grep -E '\sFN?M(ADD|SUB)[SDF]?\s' "$s" | grep -oE 'goimgtools/[^ :]+\.go:[0-9]+' | sort -u)
+            if [ -n "$found" ]; then
+              echo "::error::$arch fuses a multiplication and an addition at:"
+              echo "$found"
+              bad=1
+            fi
           done
           exit $bad
 
@@ -238,17 +158,6 @@ jobs:
       - run: |
           set -o pipefail
           GOARCH=${{ matrix.arch }} go test -exec ${{ matrix.qemu }} -timeout 120m -skip "${{ matrix.skip || '^$' }}" -v ./tests ./pipeline ./inspect ./internal/resize ./internal/ops | grep -E '^(--- (PASS|FAIL|SKIP)|FAIL|ok|panic)|^ +[^ ]+\.go:[0-9]+:'
-      # The HEIC encoder (Kvazaar translated to Go) gives the same stream,
-      # HEIC files decoded a row of tiles at a time the same pixels, and
-      # libavif (AVIF) and libjxl (JPEG XL) the same file.
-      - working-directory: heic
-        run: |
-          GOARCH=${{ matrix.arch }} go test -exec ${{ matrix.qemu }} -timeout 30m -v ./internal/kvazaar
-          GOARCH=${{ matrix.arch }} go test -exec ${{ matrix.qemu }} -timeout 30m -v -run 'TestStreamSameAsWhole|TestStreamTurned|TestStreamDeep' .
-      - working-directory: avif
-        run: GOARCH=${{ matrix.arch }} go test -exec ${{ matrix.qemu }} -timeout 30m -v ./internal/libavif
-      - working-directory: jxl
-        run: GOARCH=${{ matrix.arch }} go test -exec ${{ matrix.qemu }} -timeout 30m -v ./internal/libjxl
 
   wasi:
     # WebAssembly, run by wasmtime: a 32-bit machine without threads.
