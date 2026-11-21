@@ -21,6 +21,7 @@ import (
 	"math"
 
 	"github.com/whhhh1500/goimgtools/internal/iccprof"
+	"github.com/whhhh1500/goimgtools/internal/trig"
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
@@ -845,7 +846,7 @@ func encode16(v float64) uint16 {
 	if v <= 0.0031308 {
 		v *= 12.92
 	} else {
-		v = float64(1.055*math.Pow(v, 1/2.4)) - 0.055
+		v = float64(1.055*trig.Pow(v, 1/2.4)) - 0.055 // the same on every processor
 	}
 	return uint16(math.Round(float64(v * 65535)))
 }

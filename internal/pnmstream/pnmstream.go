@@ -16,6 +16,7 @@ import (
 	"math"
 	"strconv"
 
+	"github.com/whhhh1500/goimgtools/internal/trig"
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
@@ -361,6 +362,9 @@ func (s *stream) Next() (image.Image, error) {
 // value maps a stored value to the output's range.
 func (s *stream) value(v int) (int, error) {
 	if v > s.h.maxval {
+		if s.text == nil && s.scale != nil {
+			return int(s.scale[s.h.maxval]), nil // binary: held at the top, as Pillow does
+		}
 		return 0, fmt.Errorf("goimgtools: pnm: a value of %d above the maximum %d", v, s.h.maxval)
 	}
 	if s.scale != nil {
@@ -524,7 +528,7 @@ func encode16(v float64) uint16 {
 	if v <= 0.0031308 {
 		v *= 12.92
 	} else {
-		v = float64(1.055*math.Pow(v, 1/2.4)) - 0.055
+		v = float64(1.055*trig.Pow(v, 1/2.4)) - 0.055 // the same on every processor
 	}
 	return uint16(math.Round(float64(v * 65535)))
 }

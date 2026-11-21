@@ -227,7 +227,8 @@ func pixelOf(p []byte, bits int, alpha bool) color.NRGBA {
 	return color.NRGBA{p[2], p[1], p[0], a}
 }
 
-func five(v uint16) uint8 { v &= 31; return uint8(v<<3 | v>>2) }
+// five widens 5 bits as Pillow does (BGR;5): v * 255 / 31, rounded down.
+func five(v uint16) uint8 { v &= 31; return uint8(uint32(v) * 255 / 31) }
 
 func (s *stream) Env() *pipeline.Env      { return s.env }
 func (s *stream) Bounds() image.Rectangle { return image.Rect(0, 0, s.h.w, s.h.h) }
