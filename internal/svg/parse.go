@@ -118,7 +118,10 @@ func parse(data []byte, reserve func(int64) error) (*node, error) {
 		case xml.CharData:
 			if len(stack) > 0 {
 				top := stack[len(stack)-1]
-				if len(top.text) < 1<<20 {
+				// Only a style element's is read: kept for others, the text
+				// between the elements of a large document added up again
+				// and again.
+				if top.name == "style" && len(top.text) < 1<<20 {
 					top.text += string(t)
 				}
 				// In text, character data keeps its place among the tspans.

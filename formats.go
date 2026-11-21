@@ -468,8 +468,14 @@ var builtin = []*formatDef{
 			if size > svg.MaxBytes {
 				return nil, errors.New("goimgtools: svg: the document is larger than 64MB")
 			}
+			// Reserved before it is read; Open takes the reservation over.
+			if err := env.Budget.Reserve(size, "svg document"); err != nil {
+				return nil, err
+			}
 			data := make([]byte, size)
-			if _, err := ra.ReadAt(data, 0); err != nil && err != io.EOF {
+			_, err = ra.ReadAt(data, 0)
+			env.Budget.Release(size)
+			if err != nil && err != io.EOF {
 				return nil, err
 			}
 			s, err := svg.Open(data, env)
@@ -993,11 +999,28 @@ func encodeICNS(w io.Writer, src pipeline.Source, sizes []int) error {
 func init() {
 	// The pictures of SVG image elements, read as any input is (but SVG,
 	// against a document holding itself), within what the SVG has left.
-	svg.DecodeImage = func(data []byte, maxPixels int64) (*image.NRGBA, error) {
-		if svg.Match(data) || maxPixels < 1 {
+	svg.DecodeImage = func(data []byte, o svg.DecodeOptions) (*image.NRGBA, error) {
+		if svg.Match(data) || o.MaxPixels < 1 {
 			return nil, errors.New("goimgtools: svg: an image element holds no picture this package draws")
 		}
-		m, err := FromBytes(data).LimitInputPixels(maxPixels).ToImage()
+		info, err := FromBytes(data).MemoryLimit(o.Memory).Metadata()
+		if err != nil {
+			return nil, err
+		}
+		in := FromBytes(data).MemoryLimit(o.Memory)
+		w, h := info.Width, info.Height
+		if o.Fit != nil {
+			if tw, th := o.Fit(w, h); tw > 0 && th > 0 && (tw < w || th < h) {
+				w, h = min(tw, w), min(th, h)
+				// The average of the pixels each covers, as librsvg (cairo)
+				// shrinks pictures.
+				in = in.Resize(w, h, ResizeOptions{Fit: FitFill, Kernel: KernelBox})
+			}
+		}
+		if int64(w)*int64(h) > o.MaxPixels {
+			return nil, ErrPixelLimit
+		}
+		m, err := in.ToImage()
 		if err != nil {
 			return nil, err
 		}

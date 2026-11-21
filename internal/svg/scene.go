@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image"
 	"math"
+	"slices"
 	"strings"
 
 	"github.com/whhhh1500/goimgtools/internal/raster"
@@ -22,6 +23,7 @@ const (
 type item struct {
 	op     int
 	path   *raster.Path
+	dx, dy float64 // where the path is drawn: moved by this many pixels
 	paint  *shader
 	clip   *clip
 	bounds image.Rectangle // the device pixels it can touch
@@ -36,6 +38,7 @@ type item struct {
 type mask struct {
 	items  []item
 	region *clip
+	alpha  bool // mask-type: alpha, the alpha of the content (else its luminance)
 }
 
 // clip is the coverage of a clip path: the union of its shapes.
@@ -116,6 +119,8 @@ type builder struct {
 	sc          *scene
 	err         error
 	useing      map[*node]bool // the use elements being expanded, against cycles
+	outlines    map[*node]*outline
+	clipText    func(segs []seg, m matrix) // set while the text of a clip path is laid out: takes its outlines
 	depth       int
 	full        image.Rectangle
 }
@@ -336,8 +341,8 @@ func (b *builder) draw(n *node, m matrix, st style, vp viewport, ownClip, cl *cl
 				// The first child whose conditions hold.
 				for _, k := range n.children {
 					switch k.name {
-					case "#text", "title", "desc", "metadata":
-						continue
+					case "#text", "title", "desc", "metadata", "foreignObject":
+						continue // nothing to draw here: the next may be
 					}
 					if conditionsMet(k) {
 						b.element(k, m, st, vp, c)
@@ -584,6 +589,22 @@ func (b *builder) clipOf(n *node, m matrix, vp viewport, st style, outer *clip) 
 			b.sc.points += countPoints(segs)
 			c.paths = append(c.paths, p)
 			c.bounds = c.bounds.Union(pathBounds(p, b.full))
+		case "text":
+			// Its glyphs' outlines, as it would draw them.
+			rule := s.evenOdd
+			if r, ok := k.prop("clip-rule"); ok {
+				rule = strings.TrimSpace(r) == "evenodd"
+			} else if r, ok := cp.prop("clip-rule"); ok {
+				rule = strings.TrimSpace(r) == "evenodd"
+			}
+			b.clipText = func(segs []seg, m matrix) {
+				p := fillPath(flatten(segs, m), m, rule)
+				b.sc.points += countPoints(segs)
+				c.paths = append(c.paths, p)
+				c.bounds = c.bounds.Union(pathBounds(p, b.full))
+			}
+			b.text(k, km, s, vp, nil, nil)
+			b.clipText = nil
 		}
 	}
 	for _, k := range cp.children {
@@ -618,65 +639,154 @@ func pathBounds(p *raster.Path, full image.Rectangle) image.Rectangle {
 	return image.Rect(x0, y0, x1, y1).Intersect(full)
 }
 
+// outline is the fill and the stroke of a shape drawn through a use or a
+// marker, kept for the next time it is drawn: where the matrix differs only
+// by its move (the markers of a plot), the outlines are the same, moved,
+// and its points are not made and held again.
+type outline struct {
+	segs       []seg
+	a, b, c, d float64 // the matrix but for its move
+	fill       outlinePart
+	evenOdd    bool
+	stroke     outlinePart
+	width      float64
+	cap, join  int
+	miterLimit float64
+	dash       []float64
+	dashOffset float64
+	nonScaling bool
+}
+
+// outlinePart is an outline and the move of the matrix it was made by.
+type outlinePart struct {
+	path *raster.Path
+	e, f float64
+}
+
+// shapeItem is the item of a shape's outline, moved by (dx, dy).
+func (b *builder) shapeItem(path *raster.Path, dx, dy float64, p *shader) *item {
+	x0, y0, x1, y1 := path.BoundsAt(dx, dy)
+	return &item{op: opShape, path: path, dx: dx, dy: dy, paint: p, bounds: image.Rect(x0, y0, x1, y1).Intersect(b.full)}
+}
+
 // shape draws a shape's fill, then its stroke.
 func (b *builder) shape(n *node, segs []seg, m matrix, st style, vp viewport, own, outer *clip) {
+	if b.clipText != nil {
+		b.clipText(segs, m)
+		return
+	}
 	if !st.visible || st.opacity <= 0 {
 		return
 	}
-	b.sc.points += countPoints(segs)
-	if b.sc.points > maxScenePts {
-		b.err = errTooMuch
+	fp := b.shader(n, st.fill, st.fillOpacity, st, segs, m, vp)
+	var sp *shader
+	if st.strokeWidth > 0 {
+		sp = b.shader(n, st.stroke, st.strokeOpacity, st, segs, m, vp)
+	}
+	if fp == nil && sp == nil {
 		return
 	}
-	b.account()
-	if b.err != nil {
-		return
-	}
-	room, byMemory := b.roomPoints()
-	ps, ok := flattenLimit(segs, m, room)
-	for _, q := range ps {
-		b.sc.points += len(q.xy) / 2
-	}
-	if !ok || b.sc.points > maxScenePts {
-		b.err = b.tooMuch(byMemory)
-		return
-	}
-	b.account()
-	if b.err != nil {
-		return
+	// The outlines made the last time it was drawn, if they serve.
+	o := b.outlines[n]
+	if o != nil && (o.a != m.a || o.b != m.b || o.c != m.c || o.d != m.d || !slices.Equal(o.segs, segs)) {
+		o = nil
 	}
 	var fill, stroke *item
-	if p := b.shader(n, st.fill, st.fillOpacity, st, segs, m, vp); p != nil {
-		path := fillPath(ps, m, st.evenOdd)
-		if !path.Empty() {
-			fill = &item{op: opShape, path: path, paint: p, bounds: pathBounds(path, b.full)}
-		}
+	if fp != nil && o != nil && o.fill.path != nil && o.evenOdd == st.evenOdd {
+		fill = b.shapeItem(o.fill.path, float64(m.e-o.fill.e), float64(m.f-o.fill.f), fp)
+		fp = nil
 	}
-	if p := b.shader(n, st.stroke, st.strokeOpacity, st, segs, m, vp); p != nil && st.strokeWidth > 0 {
-		lines := ps
-		if st.dash != nil {
-			lines = dashes(ps, st.dash, st.dashOffset)
-		}
-		sk := newStroker(m, st.strokeWidth, st.lineCap, st.lineJoin, st.miterLimit)
-		var byMemory bool
-		sk.limit, byMemory = b.roomPoints()
-		for _, q := range lines {
-			sk.stroke(q)
-			if sk.points > sk.limit {
-				break
+	if sp != nil && o != nil && o.stroke.path != nil && o.width == st.strokeWidth && o.cap == st.lineCap && o.join == st.lineJoin &&
+		o.miterLimit == st.miterLimit && slices.Equal(o.dash, st.dash) && o.dashOffset == st.dashOffset && o.nonScaling == st.nonScalingStroke {
+		stroke = b.shapeItem(o.stroke.path, float64(m.e-o.stroke.e), float64(m.f-o.stroke.f), sp)
+		sp = nil
+	}
+	if fp != nil || sp != nil {
+		// Kept for the next time, when drawn through a use or a marker.
+		keep := len(b.useing) > 0 || len(b.marking) > 0
+		if keep && o == nil {
+			if old := b.outlines[n]; old != nil {
+				b.sc.points -= countPoints(old.segs)
 			}
+			o = &outline{segs: segs, a: m.a, b: m.b, c: m.c, d: m.d}
+			b.sc.points += countPoints(segs) // held while the document is built
+			if b.outlines == nil {
+				b.outlines = map[*node]*outline{}
+			}
+			b.outlines[n] = o
 		}
-		if sk.points > sk.limit {
-			b.err = b.tooMuch(byMemory)
+		b.sc.points += countPoints(segs)
+		if b.sc.points > maxScenePts {
+			b.err = errTooMuch
 			return
 		}
-		b.sc.points += sk.points
 		b.account()
 		if b.err != nil {
 			return
 		}
-		if !sk.path.Empty() {
-			stroke = &item{op: opShape, path: sk.path, paint: p, bounds: pathBounds(sk.path, b.full)}
+		room, byMemory := b.roomPoints()
+		ps, ok := flattenLimit(segs, m, room)
+		b.sc.points -= countPoints(segs) // the segments give way to their points
+		for _, q := range ps {
+			b.sc.points += len(q.xy) / 2
+		}
+		if !ok || b.sc.points > maxScenePts {
+			b.err = b.tooMuch(byMemory)
+			return
+		}
+		b.account()
+		if b.err != nil {
+			return
+		}
+		if fp != nil {
+			path := fillPath(ps, m, st.evenOdd)
+			if !path.Empty() {
+				fill = b.shapeItem(path, 0, 0, fp)
+				if keep {
+					o.fill, o.evenOdd = outlinePart{path, m.e, m.f}, st.evenOdd
+				}
+			}
+		}
+		if sp != nil {
+			lines, sm := ps, m
+			if st.nonScalingStroke {
+				// Stroked in device space: its width and dashes in pixels.
+				lines, sm = deviceLines(ps, m), identity
+			}
+			if st.dash != nil {
+				room, byMemory := b.roomPoints()
+				var ok bool
+				if lines, ok = dashes(lines, st.dash, st.dashOffset, room); !ok {
+					b.err = b.tooMuch(byMemory)
+					return
+				}
+			}
+			sk := newStroker(sm, st.strokeWidth, st.lineCap, st.lineJoin, st.miterLimit)
+			var byMemory bool
+			sk.limit, byMemory = b.roomPoints()
+			for _, q := range lines {
+				sk.stroke(q)
+				if sk.points > sk.limit {
+					break
+				}
+			}
+			if sk.points > sk.limit {
+				b.err = b.tooMuch(byMemory)
+				return
+			}
+			b.sc.points += sk.points
+			b.account()
+			if b.err != nil {
+				return
+			}
+			if !sk.path.Empty() {
+				stroke = b.shapeItem(sk.path, 0, 0, sp)
+				if keep {
+					o.stroke = outlinePart{sk.path, m.e, m.f}
+					o.width, o.cap, o.join, o.miterLimit = st.strokeWidth, st.lineCap, st.lineJoin, st.miterLimit
+					o.dash, o.dashOffset, o.nonScaling = st.dash, st.dashOffset, st.nonScalingStroke
+				}
+			}
 		}
 	}
 	if fill == nil && stroke == nil {
@@ -700,8 +810,12 @@ func (b *builder) shape(n *node, segs []seg, m matrix, st style, vp viewport, ow
 		b.add(*it)
 		return
 	}
+	parts := []*item{fill, stroke}
+	if st.strokeFirst {
+		parts[0], parts[1] = stroke, fill
+	}
 	b.group(n, st, own, outer, func(c *clip) {
-		for _, it := range []*item{fill, stroke} {
+		for _, it := range parts {
 			it.clip = c
 			if c != nil {
 				it.bounds = it.bounds.Intersect(c.bounds)
@@ -780,6 +894,9 @@ func (b *builder) maskOf(n *node, m matrix, vp viewport, st style) *mask {
 	}
 	region := fillPath(flatten(rectSegs(rx, ry, rw, rh, 0, 0), m), m, false)
 	mk := &mask{region: &clip{paths: []*raster.Path{region}, bounds: pathBounds(region, b.full)}}
+	if v, ok := mn.prop("mask-type"); ok && strings.TrimSpace(v) == "alpha" {
+		mk.alpha = true
+	}
 	cm := m
 	if mn.attrs["maskContentUnits"] == "objectBoundingBox" {
 		if !hasBox || bx[2] <= 0 || bx[3] <= 0 {
@@ -853,9 +970,14 @@ func (b *builder) bboxOf(n *node, vp viewport, st style) ([4]float64, bool) {
 }
 
 // conditionsMet evaluates an element's conditional attributes: it asks for
-// no extension (none is supported) and, if it names languages, English.
+// no extension and no feature (as librsvg, none is taken for supported: a
+// switch then falls back from the foreignObject of draw.io's labels to
+// their text) and, if it names languages, English.
 func conditionsMet(n *node) bool {
 	if _, ok := n.attrs["requiredExtensions"]; ok {
+		return false
+	}
+	if _, ok := n.attrs["requiredFeatures"]; ok {
 		return false
 	}
 	if langs, ok := n.attrs["systemLanguage"]; ok {

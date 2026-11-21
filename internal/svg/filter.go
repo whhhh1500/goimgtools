@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/whhhh1500/goimgtools/internal/csscolor"
+	"github.com/whhhh1500/goimgtools/internal/raster"
 	"github.com/whhhh1500/goimgtools/internal/trig"
 )
 
@@ -140,6 +141,10 @@ func (b *builder) filtered(n *node, f *node, m matrix, st style, vp viewport, ow
 		return
 	}
 	px := int64(w) * int64(h)
+	if err := b.reserve(4 * px); err != nil {
+		b.err = err
+		return
+	}
 	src := make([]uint8, 4*px)
 	if len(sub.items) > 0 {
 		layers := layersNeeded(sub.items)
@@ -157,6 +162,10 @@ func (b *builder) filtered(n *node, f *node, m matrix, st style, vp viewport, ow
 	}
 	// The filter's primitives, on pictures of floats.
 	fc := &fctx{w: w, h: h, m: matrix{sx, 0, 0, sy, 0, 0}.mul(m), results: map[string]fbuf{}, reserve: b.reserve, release: b.release}
+	defer fc.end()
+	// Worked at a lower resolution, a filter that puts the element itself
+	// on top (a drop shadow) leaves it out, to draw it after, sharp.
+	fc.under = (sx < 1 || sy < 1) && sourceOnTop(f)
 	fc.linear = true
 	if v, ok := f.prop("color-interpolation-filters"); ok && strings.TrimSpace(v) == "sRGB" {
 		fc.linear = false
@@ -166,7 +175,9 @@ func (b *builder) filtered(n *node, f *node, m matrix, st style, vp viewport, ow
 	} else {
 		fc.unit = [2]float64{1, 1}
 	}
-	if err := fc.begin(src); err != nil {
+	err := fc.begin(src)
+	b.release(4 * px) // src
+	if err != nil {
 		b.err = err
 		return
 	}
@@ -185,6 +196,20 @@ func (b *builder) filtered(n *node, f *node, m matrix, st style, vp viewport, ow
 	// The result, as a picture at the region's place.
 	area := fillPath(flatten(rectSegs(float64(reg.Min.X), float64(reg.Min.Y), float64(reg.Dx()), float64(reg.Dy()), 0, 0), identity), identity, false)
 	sh := &shader{tile: &tileSampler{tile: res, tw: w, th: h, inv: toRegion, clamp: true}}
+	if fc.under {
+		// The result, then the element over it within the region, as a
+		// group of the element's opacity and clip.
+		b.group(n, st, own, outer, func(c *clip) {
+			it := item{op: opShape, path: area, paint: sh, bounds: pathBounds(area, b.full), clip: c}
+			if c != nil {
+				it.bounds = it.bounds.Intersect(c.bounds)
+			}
+			b.add(it)
+			regClip := &clip{paths: []*raster.Path{area}, bounds: pathBounds(area, b.full)}
+			b.draw(n, m, inner, vp, regClip, c)
+		})
+		return
+	}
 	if st.opacity < 1 {
 		sh.opacity = st.opacity
 	}
@@ -209,6 +234,55 @@ type fctx struct {
 	reserve  func(int64) error
 	release  func(int64)
 	reserved int64
+	under    bool // the last primitive leaves out the source it puts on top
+}
+
+// sourceOnTop reports whether the last primitive of a filter puts the
+// element itself (SourceGraphic) over the rest, as drop shadows do.
+func sourceOnTop(f *node) bool {
+	var last *node
+	count := 0
+	for _, p := range f.children {
+		if drawnPrimitive(p.name) {
+			last = p
+			count++
+		}
+	}
+	if last == nil {
+		return false
+	}
+	isSource := func(name string) bool {
+		name = strings.TrimSpace(name)
+		return name == "SourceGraphic" || name == "" && count == 1
+	}
+	switch last.name {
+	case "feMerge":
+		var top *node
+		for _, mn := range last.children {
+			if mn.name == "feMergeNode" {
+				top = mn
+			}
+		}
+		return top != nil && isSource(top.attrs["in"])
+	case "feBlend":
+		mode := strings.TrimSpace(last.attrs["mode"])
+		return (mode == "" || mode == "normal") && isSource(last.attrs["in"])
+	case "feComposite":
+		op := strings.TrimSpace(last.attrs["operator"])
+		return (op == "" || op == "over") && isSource(last.attrs["in"])
+	case "feDropShadow":
+		return isSource(last.attrs["in"])
+	}
+	return false
+}
+
+// drawnPrimitive reports whether run draws a primitive of that name.
+func drawnPrimitive(name string) bool {
+	switch name {
+	case "feGaussianBlur", "feOffset", "feFlood", "feComposite", "feMerge", "feColorMatrix", "feBlend", "feDropShadow", "feComponentTransfer":
+		return true
+	}
+	return false
 }
 
 func (c *fctx) alloc() (fbuf, error) {
@@ -351,9 +425,16 @@ func (c *fctx) num(n *node, name string, def float64, axis int) float64 {
 
 // run applies the primitives in order and returns the last result.
 func (c *fctx) run(f *node, vp viewport, st style) (fbuf, error) {
-	for _, p := range f.children {
+	lastAt := -1
+	for i, p := range f.children {
+		if drawnPrimitive(p.name) {
+			lastAt = i
+		}
+	}
+	for i, p := range f.children {
 		var out fbuf
 		var err error
+		under := c.under && i == lastAt
 		switch p.name {
 		case "feGaussianBlur":
 			out, err = c.blur(p)
@@ -362,15 +443,23 @@ func (c *fctx) run(f *node, vp viewport, st style) (fbuf, error) {
 		case "feFlood":
 			out, err = c.flood(p, vp, st)
 		case "feComposite":
-			out, err = c.composite(p)
+			if under {
+				out, err = c.input(p.attrs["in2"]) // what it goes over
+			} else {
+				out, err = c.composite(p)
+			}
 		case "feMerge":
-			out, err = c.merge(p)
+			out, err = c.merge(p, under)
 		case "feColorMatrix":
 			out, err = c.colorMatrix(p)
 		case "feBlend":
-			out, err = c.blend(p)
+			if under {
+				out, err = c.input(p.attrs["in2"])
+			} else {
+				out, err = c.blend(p)
+			}
 		case "feDropShadow":
-			out, err = c.dropShadow(p, vp, st)
+			out, err = c.dropShadow(p, vp, st, under)
 		case "feComponentTransfer":
 			out, err = c.transfer(p)
 		default:
@@ -389,7 +478,7 @@ func (c *fctx) run(f *node, vp viewport, st style) (fbuf, error) {
 
 // devScale is how much the transform stretches lengths along x and y.
 func (c *fctx) devScale() (float64, float64) {
-	return math.Hypot(c.m.a, c.m.b), math.Hypot(c.m.c, c.m.d)
+	return hypot(c.m.a, c.m.b), hypot(c.m.c, c.m.d)
 }
 
 func (c *fctx) blur(p *node) (fbuf, error) {
@@ -629,15 +718,22 @@ func (c *fctx) composite(p *node) (fbuf, error) {
 	return out, nil
 }
 
-func (c *fctx) merge(p *node) (fbuf, error) {
+// merge puts its inputs over one another; under, all but the last.
+func (c *fctx) merge(p *node, under bool) (fbuf, error) {
 	out, err := c.alloc()
 	if err != nil {
 		return nil, err
 	}
+	nodes := make([]*node, 0, len(p.children))
 	for _, mn := range p.children {
-		if mn.name != "feMergeNode" {
-			continue
+		if mn.name == "feMergeNode" {
+			nodes = append(nodes, mn)
 		}
+	}
+	if under && len(nodes) > 0 {
+		nodes = nodes[:len(nodes)-1]
+	}
+	for _, mn := range nodes {
 		in, err := c.input(mn.attrs["in"])
 		if err != nil {
 			return nil, err
@@ -756,7 +852,8 @@ func (c *fctx) blend(p *node) (fbuf, error) {
 	return out, nil
 }
 
-func (c *fctx) dropShadow(p *node, vp viewport, st style) (fbuf, error) {
+// dropShadow puts the input over its shadow; under, the shadow alone.
+func (c *fctx) dropShadow(p *node, vp viewport, st style, under bool) (fbuf, error) {
 	in, err := c.input(p.attrs["in"])
 	if err != nil {
 		return nil, err
@@ -788,6 +885,10 @@ func (c *fctx) dropShadow(p *node, vp viewport, st style) (fbuf, error) {
 		var sh [4]float32
 		for q := 0; q < 4; q++ {
 			sh[q] = float32(col[q] * sa)
+		}
+		if under {
+			out[i], out[i+1], out[i+2], out[i+3] = sh[0], sh[1], sh[2], sh[3]
+			continue
 		}
 		ia := 1 - in[i+3]
 		for q := 0; q < 4; q++ {

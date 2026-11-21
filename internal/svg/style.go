@@ -376,11 +376,13 @@ type style struct {
 	color                      color.NRGBA
 	visible                    bool
 	fontSize                   float64
+	strokeFirst                bool // paint-order: the stroke before the fill
 	// Not inherited:
-	opacity     float64
-	display     bool
-	stopColor   color.NRGBA
-	stopOpacity float64
+	opacity          float64
+	display          bool
+	stopColor        color.NRGBA
+	stopOpacity      float64
+	nonScalingStroke bool // vector-effect: non-scaling-stroke
 }
 
 func initialStyle() style {
@@ -407,7 +409,7 @@ func opacityValue(s string, def float64) float64 {
 // for lengths in percentages.
 func computeStyle(n *node, parent style, vp viewport) style {
 	s := parent
-	s.opacity, s.display, s.stopColor, s.stopOpacity = 1, true, color.NRGBA{0, 0, 0, 255}, 1
+	s.opacity, s.display, s.stopColor, s.stopOpacity, s.nonScalingStroke = 1, true, color.NRGBA{0, 0, 0, 255}, 1, false
 	get := func(name string) (string, bool) {
 		v, ok := n.prop(name)
 		if ok && strings.TrimSpace(v) == "inherit" {
@@ -461,6 +463,23 @@ func computeStyle(n *node, parent style, vp viewport) style {
 		case "square":
 			s.lineCap = capSquare
 		}
+	}
+	if v, ok := get("paint-order"); ok {
+		// The parts named come first, the others after in their usual
+		// order (fill, stroke, markers).
+		fill, stroke := -1, -1
+		for i, f := range strings.Fields(v) {
+			switch f {
+			case "fill":
+				fill = i
+			case "stroke":
+				stroke = i
+			}
+		}
+		s.strokeFirst = stroke >= 0 && (fill < 0 || stroke < fill)
+	}
+	if v, ok := n.prop("vector-effect"); ok {
+		s.nonScalingStroke = strings.TrimSpace(v) == "non-scaling-stroke"
 	}
 	if v, ok := get("stroke-linejoin"); ok {
 		switch strings.TrimSpace(v) {

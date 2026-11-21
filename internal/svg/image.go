@@ -2,18 +2,33 @@ package svg
 
 import (
 	"encoding/base64"
+	"errors"
+	"fmt"
 	"image"
 	"math"
 	"net/url"
 	"strings"
 
 	"github.com/whhhh1500/goimgtools/internal/raster"
+	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
 // DecodeImage decodes the picture of an image element, a data URI's
-// bytes, as non-premultiplied RGBA; reserve takes the memory it is held in.
-// The package that reads files sets it; without it images are not drawn.
-var DecodeImage func(data []byte, maxPixels int64) (*image.NRGBA, error)
+// bytes, as non-premultiplied RGBA. The package that reads files sets it;
+// without it images are not drawn.
+var DecodeImage func(data []byte, o DecodeOptions) (*image.NRGBA, error)
+
+// DecodeOptions is what DecodeImage is asked for.
+type DecodeOptions struct {
+	// Fit gives the size to decode a picture of w x h pixels at: smaller
+	// where it is drawn much smaller (a resize, better than sampling it,
+	// and less to hold). Nil: its own size.
+	Fit func(w, h int) (int, int)
+	// MaxPixels bounds the pixels of the decoded picture.
+	MaxPixels int64
+	// Memory bounds the memory decoding takes (0: the default limit).
+	Memory int64
+}
 
 // maxImagePixels bounds the pictures an SVG holds, all together.
 const maxImagePixels = 64 << 20
@@ -92,40 +107,88 @@ func (b *builder) image(n *node, m matrix, st style, vp viewport, own, outer *cl
 	if !ok {
 		href, ok = n.attr("xlink:href")
 	}
+	// The picture's bytes, held while it is decoded: fewer than the
+	// characters of the URI (base64 and percent-encoding are longer).
+	held := int64(len(href))
+	if err := b.reserve(held); err != nil {
+		b.err = err
+		return
+	}
+	defer b.release(held)
 	data, ok := dataURI(href)
 	if !ok || len(data) == 0 {
 		return
 	}
-	pic, err := DecodeImage(data, maxImagePixels-b.imagePixels)
+	x, _ := parseLength(n.attrs["x"], st.fontSize, vp, axisX)
+	y, _ := parseLength(n.attrs["y"], st.fontSize, vp, axisY)
+	w0, okW := parseLength(attrOr(n, "width", "auto"), st.fontSize, vp, axisX)
+	h0, okH := parseLength(attrOr(n, "height", "auto"), st.fontSize, vp, axisY)
+	// placed is the transform of a picture of iw x ih to the device, and
+	// the rectangle it is fitted into.
+	placed := func(iw, ih float64) (pm matrix, w, h float64) {
+		w, h = w0, h0
+		switch {
+		case !okW && !okH:
+			w, h = iw, ih
+		case !okW:
+			w = h * iw / ih
+		case !okH:
+			h = w * ih / iw
+		}
+		// The picture fitted into the rectangle as preserveAspectRatio says.
+		fit := viewBoxTransform([4]float64{0, 0, iw, ih}, n.attrs["preserveAspectRatio"], w, h)
+		return m.mul(matrix{1, 0, 0, 1, x, y}).mul(fit), w, h
+	}
+	var iw, ih float64 // the picture's own size
+	o := DecodeOptions{MaxPixels: maxImagePixels - b.imagePixels}
+	o.Fit = func(pw, ph int) (int, int) {
+		iw, ih = float64(pw), float64(ph)
+		pm, w, h := placed(iw, ih)
+		if !(w > 0) || !(h > 0) {
+			return pw, ph
+		}
+		// Shrunk to less than half along an axis of the picture: decoded
+		// at the size it is drawn.
+		tw, th := pw, ph
+		if sx := math.Sqrt(float64(pm.a*pm.a) + float64(pm.b*pm.b)); sx < 0.5 {
+			tw = max(1, int(math.Ceil(float64(iw*sx))))
+		}
+		if sy := math.Sqrt(float64(pm.c*pm.c) + float64(pm.d*pm.d)); sy < 0.5 {
+			th = max(1, int(math.Ceil(float64(ih*sy))))
+		}
+		return tw, th
+	}
+	if b.avail != nil {
+		pending := int64(b.sc.points)*pointBytes + int64(b.sc.itemCount)*itemBytes - b.sc.charged
+		if o.Memory = b.avail() - pending; o.Memory < 1 {
+			b.err = fmt.Errorf("%w: the pictures of an SVG document", pipeline.ErrMemoryLimit)
+			return
+		}
+	}
+	pic, err := DecodeImage(data, o)
+	if errors.Is(err, pipeline.ErrMemoryLimit) {
+		b.err = err // not skipped as a broken picture is: the document is not drawn
+		return
+	}
 	if err != nil || pic == nil {
 		return
 	}
-	iw, ih := float64(pic.Rect.Dx()), float64(pic.Rect.Dy())
-	b.imagePixels += int64(iw * ih)
-	if err := b.reserve(4 * int64(iw*ih)); err != nil {
+	px := int64(pic.Rect.Dx()) * int64(pic.Rect.Dy())
+	if iw == 0 {
+		iw, ih = float64(pic.Rect.Dx()), float64(pic.Rect.Dy())
+	}
+	b.imagePixels += px
+	if err := b.reserve(4 * px); err != nil {
 		b.err = err
 		return
 	}
-	b.sc.imageBytes += 4 * int64(iw*ih)
-	x, _ := parseLength(n.attrs["x"], st.fontSize, vp, axisX)
-	y, _ := parseLength(n.attrs["y"], st.fontSize, vp, axisY)
-	w, okW := parseLength(attrOr(n, "width", "auto"), st.fontSize, vp, axisX)
-	h, okH := parseLength(attrOr(n, "height", "auto"), st.fontSize, vp, axisY)
-	switch {
-	case !okW && !okH:
-		w, h = iw, ih
-	case !okW:
-		w = h * iw / ih
-	case !okH:
-		h = w * ih / iw
-	}
+	b.sc.imageBytes += 4 * px
+	pm, w, h := placed(iw, ih)
 	if !(w > 0) || !(h > 0) {
 		return
 	}
-	// The picture fitted into the rectangle as preserveAspectRatio says.
-	fit := viewBoxTransform([4]float64{0, 0, iw, ih}, n.attrs["preserveAspectRatio"], w, h)
-	pm := m.mul(matrix{1, 0, 0, 1, x, y}).mul(fit)
-	inv, ok := pm.invert()
+	// From the decoded picture's pixels, which may be fewer.
+	inv, ok := pm.mul(matrix{iw / float64(pic.Rect.Dx()), 0, 0, ih / float64(pic.Rect.Dy()), 0, 0}).invert()
 	if !ok {
 		return
 	}

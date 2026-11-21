@@ -75,7 +75,7 @@ func TestSameOnEveryProcessor(t *testing.T) {
 		{"resize pillow translucent", clear.Clone().Resize(400, 50, ResizeOptions{Fit: FitFill, Kernel: KernelHamming, Method: MethodPillow}), "e37043c622b45c1a"},
 		{"resize libvips contain", clear.Clone().Resize(60, 60, ResizeOptions{Fit: FitContain, Kernel: KernelCubic,
 			Background: color.NRGBA{200, 10, 90, 99}, Method: MethodLibvips}), "9ff49d5906aebc1c"},
-		{"svg", FromBytes([]byte(platformSVG)).Resize(211, 0), "d3fefb0c8339d9ef"},
+		{"svg", FromBytes([]byte(platformSVG)).Resize(211, 0), "1161a8155ece6704"},
 	}
 	for _, c := range cases {
 		env := pipeline.NewEnv(0, t.TempDir())

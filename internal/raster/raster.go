@@ -91,6 +91,16 @@ func (p *Path) Bounds() (x0, y0, x1, y1 int) {
 	return int(floorDiv(p.minX, one)), int(floorDiv(p.minY, one)), int(floorDiv(p.maxX, one)) + 1, int(floorDiv(p.maxY, one)) + 1
 }
 
+// BoundsAt is the rectangle of pixels the path moved by (dx, dy) pixels
+// can touch, as RenderAt draws it.
+func (p *Path) BoundsAt(dx, dy float64) (x0, y0, x1, y1 int) {
+	if p.Empty() {
+		return 0, 0, 0, 0
+	}
+	ox, oy := fix(dx), fix(dy)
+	return int(floorDiv(p.minX+ox, one)), int(floorDiv(p.minY+oy, one)), int(floorDiv(p.maxX+ox, one)) + 1, int(floorDiv(p.maxY+oy, one)) + 1
+}
+
 func floorDiv(a, b int64) int64 {
 	q := a / b
 	if a%b != 0 && (a < 0) != (b < 0) {
@@ -122,6 +132,17 @@ type Cells struct {
 // Render writes the coverage of the path, 0 to 255, of the pixels of rows
 // y0 to y0+h-1 and columns x0 to x0+w-1 into dst, stride bytes a row.
 func (p *Path) Render(dst []uint8, stride, x0, y0, w, h int, c *Cells) {
+	p.render(dst, stride, x0, y0, w, h, 0, 0, c)
+}
+
+// RenderAt is Render of the path moved by (dx, dy) pixels (to the nearest
+// 1/256): one outline drawn in many places.
+func (p *Path) RenderAt(dst []uint8, stride, x0, y0, w, h int, dx, dy float64, c *Cells) {
+	p.render(dst, stride, x0, y0, w, h, fix(dx), fix(dy), c)
+}
+
+// render renders the path moved by (ox, oy), in 1/256 of a pixel.
+func (p *Path) render(dst []uint8, stride, x0, y0, w, h int, ox, oy int64, c *Cells) {
 	for r := 0; r < h; r++ {
 		clear(dst[r*stride : r*stride+w])
 	}
@@ -136,21 +157,22 @@ func (p *Path) Render(dst []uint8, stride, x0, y0, w, h int, c *Cells) {
 	for r := 0; r < h; r++ {
 		y := int64(y0 + r)
 		top, bot := y*one, (y+1)*one
-		if bot <= p.minY || top >= p.maxY || hi <= p.minX || lo > p.maxX {
+		if bot <= p.minY+oy || top >= p.maxY+oy || hi <= p.minX+ox || lo > p.maxX+ox {
 			continue
 		}
 		clear(cover)
 		clear(area)
 		var left int64 // the cover of what lies left of x0
 		if p.Union {
-			left = p.unionRow(cover, area, int64(x0), lo, hi, top, bot, c)
+			left = p.unionRow(cover, area, int64(x0), lo, hi, top, bot, ox, oy, c)
 		} else {
 			for k, ct := range p.contours {
-				if p.spans[k][1] <= top || p.spans[k][0] >= bot {
+				if p.spans[k][1]+oy <= top || p.spans[k][0]+oy >= bot {
 					continue
 				}
 				for i := range ct {
 					a, b := ct[i], ct[(i+1)%len(ct)]
+					a.x, a.y, b.x, b.y = a.x+ox, a.y+oy, b.x+ox, b.y+oy
 					if a.y == b.y {
 						continue
 					}
@@ -251,17 +273,18 @@ const (
 	maxBands = 256 // and no more bands than this in a row
 )
 
-// unionRow adds the boundary of the union of the contours within the row
-// from top to bot to the cells, and returns the cover of what lies left of
-// the columns.
-func (p *Path) unionRow(cover, area []int64, x0, lo, hi, top, bot int64, c *Cells) (left int64) {
+// unionRow adds the boundary of the union of the contours, moved by (ox,
+// oy), within the row from top to bot to the cells, and returns the cover
+// of what lies left of the columns.
+func (p *Path) unionRow(cover, area []int64, x0, lo, hi, top, bot, ox, oy int64, c *Cells) (left int64) {
 	es, ev := c.edges[:0], c.events[:0]
 	for k, ct := range p.contours {
-		if p.spans[k][1] <= top || p.spans[k][0] >= bot {
+		if p.spans[k][1]+oy <= top || p.spans[k][0]+oy >= bot {
 			continue
 		}
 		for i := range ct {
 			a, b := ct[i], ct[(i+1)%len(ct)]
+			a.x, a.y, b.x, b.y = a.x+ox, a.y+oy, b.x+ox, b.y+oy
 			e := edge{ax: a.x, ay: a.y, bx: b.x, by: b.y, dir: 1}
 			if a.y > b.y {
 				e = edge{ax: b.x, ay: b.y, bx: a.x, by: a.y, dir: -1}

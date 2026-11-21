@@ -88,13 +88,14 @@ func (r *renderer) clearRows(l []uint8, rows image.Rectangle, y0 int) {
 	}
 }
 
-// coverage renders a path over rows (a rectangle within the band) into
-// cov, its clip applied; a nil path covers everything.
-func (r *renderer) coverage(p *raster.Path, c *clip, rows image.Rectangle) []uint8 {
+// coverage renders a path, moved by (dx, dy), over rows (a rectangle
+// within the band) into cov, its clip applied; a nil path covers
+// everything.
+func (r *renderer) coverage(p *raster.Path, dx, dy float64, c *clip, rows image.Rectangle) []uint8 {
 	w, h := rows.Dx(), rows.Dy()
 	cov := r.cov[:w*h]
 	if p != nil {
-		p.Render(cov, w, rows.Min.X, rows.Min.Y, w, h, &r.cells)
+		p.RenderAt(cov, w, rows.Min.X, rows.Min.Y, w, h, dx, dy, &r.cells)
 	} else {
 		for i := range cov {
 			cov[i] = 255
@@ -120,7 +121,7 @@ func (r *renderer) coverage(p *raster.Path, c *clip, rows image.Rectangle) []uin
 // paint draws a shape over the layer.
 func (r *renderer) paint(dst []uint8, it *item, rows image.Rectangle, y0 int) {
 	w := r.sc.w
-	cov := r.coverage(it.path, it.clip, rows)
+	cov := r.coverage(it.path, it.dx, it.dy, it.clip, rows)
 	rw := rows.Dx()
 	for y := rows.Min.Y; y < rows.Max.Y; y++ {
 		row := dst[4*(y-y0)*w:]
@@ -165,14 +166,17 @@ func (r *renderer) putDown(it *item, rows image.Rectangle, y0, n, depth int) {
 		ml := r.pool[depth+1][:4*w*n]
 		r.clearRows(ml, rows, y0)
 		r.draw(it.mask.items, depth+1, y0, n)
-		mcov := r.coverage(nil, it.mask.region, rows)
+		mcov := r.coverage(nil, 0, 0, it.mask.region, rows)
 		mask = r.mcov[:rw*rows.Dy()]
 		for y := rows.Min.Y; y < rows.Max.Y; y++ {
 			for i := 0; i < rw; i++ {
 				p := ml[4*((y-y0)*w+rows.Min.X+i):]
 				// Rec. 709 luminance of the premultiplied colour: the
-				// luminance times the alpha.
+				// luminance times the alpha; or the alpha alone.
 				l := (2125*uint32(p[0]) + 7154*uint32(p[1]) + 721*uint32(p[2]) + 5000) / 10000
+				if it.mask.alpha {
+					l = uint32(p[3])
+				}
 				j := (y-rows.Min.Y)*rw + i
 				mask[j] = uint8(mul255(min(255, l), uint32(mcov[j])))
 			}
@@ -180,7 +184,7 @@ func (r *renderer) putDown(it *item, rows image.Rectangle, y0, n, depth int) {
 	}
 	src, dst := r.pool[depth][:4*w*n], r.pool[depth-1][:4*w*n]
 	k := uint32(float64(it.opacity*255) + 0.5)
-	cov := r.coverage(nil, it.clip, rows)
+	cov := r.coverage(nil, 0, 0, it.clip, rows)
 	for y := rows.Min.Y; y < rows.Max.Y; y++ {
 		o := 4 * (y - y0) * w
 		j0 := (y - rows.Min.Y) * rw

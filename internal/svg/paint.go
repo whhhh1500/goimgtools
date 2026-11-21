@@ -323,7 +323,7 @@ func (b *builder) gradient(g *node, opacity float64, st style, segs []seg, m mat
 			return solidShader(c, float64(s.a*opacity))
 		}
 		// A focal point outside the circle is brought just inside it (SVG 1.1).
-		if d := math.Hypot(gr.fx-gr.cx, gr.fy-gr.cy); d > float64(gr.r*0.999) {
+		if d := hypot(gr.fx-gr.cx, gr.fy-gr.cy); d > float64(gr.r*0.999) {
 			k := float64(gr.r*0.999) / d
 			gr.fx, gr.fy = gr.cx+float64((gr.fx-gr.cx)*k), gr.cy+float64((gr.fy-gr.cy)*k)
 		}
