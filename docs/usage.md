@@ -34,6 +34,7 @@ err := goimgtools.Open("in.jpg").
 |---|---|
 | `Open(path)` / `FromBytes(b)` / `FromReader(r)` | A file, bytes in memory, a stream |
 | `Text(text, TextOptions{...})` | Renders text as an image, for use as a watermark or as output in its own right (see [Text](#text)) |
+| `Blank(width, height, colour)` | An image of one colour (sharp's `create`, Pillow's `Image.new`): a canvas to `Composite` pictures and text onto; a translucent colour gives transparency. Its rows are made as they are read: no memory of its size |
 | `FromImage(img)` | An `image.Image` already in memory |
 | `FromSource(open)` | A caller-supplied pixel stream, such as a computed image or pixels read from another source (see [Extending](extending.md)) |
 
