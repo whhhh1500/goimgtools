@@ -1,5 +1,7 @@
 package bidi
 
+import "unicode"
+
 // The forms of the letters of Arabic and Persian, from Unicode's Arabic
 // Presentation Forms: isolated, final, initial, medial (0: none). A letter
 // with initial and medial forms joins on both sides; one without, only to
@@ -57,16 +59,21 @@ var lamAlef = map[rune][2]rune{
 	0x0627: {0xFEFB, 0xFEFC},
 }
 
-// transparent reports whether r, a mark set on a letter, lets the letters
-// on either side join.
+// transparent reports whether r lets the letters on either side join: a
+// mark set on a letter or a format character (Unicode's joining type T:
+// general categories Mn, Me and Cf), but for the zero width non-joiner,
+// which parts them, and the joiner, which joins.
 func transparent(r rune) bool {
-	return r >= 0x064B && r <= 0x065F || r == 0x0670 || r >= 0x06D6 && r <= 0x06ED
+	if r == 0x200C || r == 0x200D {
+		return false
+	}
+	return unicode.In(r, unicode.Mn, unicode.Me, unicode.Cf)
 }
 
 // joinsBoth reports whether r joins to the letters on both sides (tatweel
-// too); joinsBefore, to the one before it.
+// and the zero width joiner too); joinsBefore, to the one before it.
 func joinsBoth(r rune) bool {
-	if r == 0x0640 {
+	if r == 0x0640 || r == 0x200D {
 		return true
 	}
 	f, ok := arabicForms[r]
@@ -74,7 +81,7 @@ func joinsBoth(r rune) bool {
 }
 
 func joinsBefore(r rune) bool {
-	if r == 0x0640 {
+	if r == 0x0640 || r == 0x200D {
 		return true
 	}
 	f, ok := arabicForms[r]

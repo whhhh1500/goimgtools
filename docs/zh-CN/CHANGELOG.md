@@ -6,7 +6,8 @@
 
 ### 新增
 
-- 从右向左书写的文字（`Text()`、水印与 SVG）：阿拉伯文与波斯文字母按前后字母连写（用 Unicode 的表现形式，带阿拉伯文的字体都有；lam 与 alef 合成连字），每行按 Unicode 双向算法排成所见次序（弱类型与中性类型、隐含层级与重排；从右向左文字中的数字保持原序；括号镜像），段落方向取第一个强字符（SVG 中按 `direction` 属性，它也翻转 `text-anchor`）。Windows 的后备字体加入带阿拉伯文与希伯来文的字体（Segoe UI、Tahoma）。与 Chrome 对照，阿拉伯文、希伯来文与混排各行的字迹范围相差不超过两个像素（阿拉伯文、拉丁文与数字混排的一行不超过五个：Chrome 用字体自带的规则连写）。
+- 从右向左书写的文字（`Text()`、水印与 SVG）：阿拉伯文与波斯文字母按前后字母连写（用 Unicode 的表现形式，带阿拉伯文的字体都有；lam 与 alef 合成连字；零宽不连字符断开连写，零宽连字符保持连写），每行按完整的 Unicode 双向算法排成所见次序（显式嵌入、强制方向与隔离，成对括号，镜像字形；移植自 golang.org/x/text 所收的 Unicode 参考实现，Unicode 17 的 BidiTest.txt 全部 770,241 例、BidiCharacterTest.txt 全部 91,707 例顺序都对），层级在整段上解析后再断行，段落方向取隔离之外的第一个强字符（SVG 中按 `direction` 属性，它也翻转 `text-anchor`）。Windows 的后备字体加入带阿拉伯文与希伯来文的字体（Segoe UI、Tahoma）。与 Chrome 对照，阿拉伯文、希伯来文与混排各行的字迹范围相差不超过两个像素（阿拉伯文、拉丁文与数字混排的一行不超过五个：Chrome 用字体自带的规则连写）；句末带括号短语、含隔离、强制方向或从右向左标记的各行不超过一个像素。
+- 不显示的字符（零宽连接符与不连接符、方向标记、嵌入与隔离、变体选择符如表情后的 FE0F、标签字符、零宽空格、软连字符）在 `Text()`、水印与 SVG 中不占宽度、不画方框，与 HarfBuzz、Chrome 一致；此前会画出字体里的字形或缺字方框，变体选择符还占一个空格宽。`Text()` 设了宽度时可在零宽空格处断行，也可在软连字符处断行，断开处显示连字符。
 - `Pages(images)`（`goimgtools pages 图片... out.pdf`）：多页 PDF，每张图一页、按顺序，各自按自己的配方在写到它那一页时读取，无论多少页内存只占一页；当作图像读取时是第一页。各页的操作与设置（Resize、Density、ToProfile 等）设在该页的图上，设在整份文档上会报错；文档或任一页上的 WithContext 都能中止它。命令行的最后一个参数须以 .pdf 结尾，以免忘写 PDF 名时覆盖了图片。
 - `ToProfile(icc)`（`-profile p3|adobe-rgb|文件.icc`），同 sharp 的 `withIccProfile`：把颜色转换到由原色与色调曲线描述的 RGB 配置并随输出写入；输入有自己的配置时直接从它转换，sRGB 表现不了的颜色得以保留（Display P3 的红转到 Adobe RGB 是 LittleCMS 的 (239, 0, 0)，而不是经 sRGB 裁剪后的 (219, 0, 0)）；在 32³ 个颜色上与 LittleCMS 相差不超过 1 级；结果每通道 8 位，同 `ToSRGB`。`ProfileDisplayP3()` 与 `ProfileAdobeRGB()` 给出这两个色彩空间的配置。用于瓦片或 `Animated` 保留的动画时报错。
 - ICNS，macOS 的图标文件（`ICNS(ICNSOptions{Sizes})`、`.icns`、`-icns-sizes`）：写出为不超过原图的各标准尺寸的正方形 PNG，图像按比例放入、居中、四周透明（Pillow 会把图拉伸到每个尺寸、一直到 1024），每个类型同时充当一半尺寸的 Retina 图，带目录，同 iconutil 的写法；读取最大的一张，PNG 的或旧式行程编码 RGB 加遮罩的，与 Pillow 逐像素相同。

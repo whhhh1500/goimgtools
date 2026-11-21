@@ -249,23 +249,32 @@ func (s *source) layout(text string, o Options) error {
 		var pen fixed.Int26_6
 		prev, prevFont := rune(-1), -1
 		brk, brkWidth := -1, fixed.Int26_6(0) // a place the line may end: glyph count, width there
+		// The font of the hyphen a line broken at brk ends with (at a soft
+		// hyphen); -1 for none.
+		brkHyphen := -1
 		// A paragraph with text of right-to-left scripts: its Arabic letters
-		// joined, each of its lines put in the order it is seen.
+		// joined, the levels of its characters resolved, each of its lines
+		// put in the order it is seen. start is the character a line starts
+		// at.
 		rtl, base := false, false
+		var levels []int8
+		start := 0
 		flush := func() {
+			taken := len(cur.glyphs) // characters of the paragraph this line takes
 			// Spaces at the end of a line take no room.
 			for n := len(cur.glyphs); n > 0 && cur.glyphs[n-1].r == ' '; n-- {
 				cur.glyphs = cur.glyphs[:n-1]
 				cur.width = cur.glyphs0End(n-1, s)
 			}
 			if rtl {
-				s.reorder(&cur, base)
+				s.reorder(&cur, levels[start:start+len(cur.glyphs)], base)
 			}
+			start += taken
 			s.lines = append(s.lines, cur)
-			cur, pen, prev, prevFont, brk = line{}, 0, -1, -1, -1
+			cur, pen, prev, prevFont, brk, brkHyphen = line{}, 0, -1, -1, -1, -1
 		}
 		// Control characters draw nothing and are left out, so that glyph
-		// k of a line is always character k of it.
+		// k of a line is always character start+k of the paragraph.
 		runes := []rune(strings.Map(func(r rune) rune {
 			if r < 0x20 || r == 0x7f {
 				return -1
@@ -275,9 +284,32 @@ func (s *source) layout(text string, o Options) error {
 		if rtl = bidi.HasRTL(runes); rtl {
 			runes, _ = bidi.Shape(runes)
 			base = bidi.BaseRTL(runes)
+			levels = bidi.Levels(runes, base)
 		}
 		for i := 0; i < len(runes); i++ {
 			r := runes[i]
+			if bidi.Ignorable(r) {
+				// Drawn as nothing and taking no room, in no font of its own;
+				// kept for the order of the line (marks of direction).
+				fi := max(prevFont, 0)
+				if _, err := s.face(fi, o.Size); err != nil {
+					return err
+				}
+				cur.glyphs = append(cur.glyphs, glyph{font: fi, r: r, x: pen})
+				switch r {
+				case 0x200B: // zero width space: a place to break
+					brk, brkWidth, brkHyphen = len(cur.glyphs), pen, -1
+				case 0x00AD: // soft hyphen: a place to break, with a hyphen
+					hf, adv, err := s.hyphen(fi, o.Size)
+					if err != nil {
+						return err
+					}
+					if pen+adv <= limit {
+						brk, brkWidth, brkHyphen = len(cur.glyphs), pen+adv, hf
+					}
+				}
+				continue
+			}
 			fi, err := s.set.pick(r)
 			if err != nil {
 				return err
@@ -303,20 +335,28 @@ func (s *source) layout(text string, o Options) error {
 					back := len(cur.glyphs) - brk
 					cur.glyphs, cur.width = cur.glyphs[:brk], brkWidth
 					i -= back
+					if brkHyphen >= 0 {
+						cur.glyphs[brk-1].font, cur.glyphs[brk-1].r = brkHyphen, '-'
+						if !used[brkHyphen] {
+							used[brkHyphen] = true
+							m := s.faces[brkHyphen].Metrics()
+							ascent, descent = max(ascent, m.Ascent), max(descent, m.Descent)
+						}
+					}
 				}
 				flush()
 				i--
 				continue
 			}
 			if breakable(r) && len(cur.glyphs) > 0 {
-				brk, brkWidth = len(cur.glyphs), pen
+				brk, brkWidth, brkHyphen = len(cur.glyphs), pen, -1
 			}
 			cur.glyphs = append(cur.glyphs, glyph{font: fi, r: r, x: x})
 			pen = x + adv
 			cur.width = pen
 			prev, prevFont = r, fi
 			if r == ' ' || breakable(r) {
-				brk, brkWidth = len(cur.glyphs), pen
+				brk, brkWidth, brkHyphen = len(cur.glyphs), pen, -1
 			}
 		}
 		flush()
@@ -343,20 +383,29 @@ func (s *source) layout(text string, o Options) error {
 	return nil
 }
 
-// reorder puts the glyphs of a line in the order they are seen (rtl: of a
-// paragraph that runs right to left), and places them again.
-func (s *source) reorder(l *line, rtl bool) {
+// reorder puts the glyphs of a line in the order they are seen (lv: the
+// levels of its characters; rtl: of a paragraph that runs right to left),
+// and places them again.
+func (s *source) reorder(l *line, lv []int8, rtl bool) {
 	rs := make([]rune, len(l.glyphs))
 	for i, g := range l.glyphs {
 		rs[i] = g.r
 	}
-	order, mirrored := bidi.Visual(rs, rtl)
+	order, mirrored := bidi.Reorder(rs, lv, rtl)
 	out := make([]glyph, len(order))
 	var pen fixed.Int26_6
 	prev, prevFont := rune(-1), -1
 	for i, k := range order {
 		g := l.glyphs[k]
-		g.r = mirrored[k]
+		// A mirrored glyph its font does not have stays as it is.
+		if m := mirrored[k]; m != g.r && s.set.fonts[g.font].has(&s.set.buf, m) {
+			g.r = m
+		}
+		if bidi.Ignorable(g.r) {
+			g.x = pen
+			out[i] = g
+			continue
+		}
 		face := s.faces[g.font]
 		x := pen
 		if prevFont == g.font {
@@ -371,12 +420,32 @@ func (s *source) reorder(l *line, rtl bool) {
 	l.glyphs, l.width = out, pen
 }
 
+// hyphen is the font of the hyphen shown where a line breaks at a soft
+// hyphen (that of the text before it when it has one), and its advance.
+func (s *source) hyphen(fi int, size float64) (int, fixed.Int26_6, error) {
+	if !s.set.fonts[fi].has(&s.set.buf, '-') {
+		var err error
+		if fi, err = s.set.pick('-'); err != nil {
+			return 0, 0, err
+		}
+	}
+	face, err := s.face(fi, size)
+	if err != nil {
+		return 0, 0, err
+	}
+	adv, _ := face.GlyphAdvance('-')
+	return fi, adv, nil
+}
+
 // glyphs0End is the width of the line's first n glyphs.
 func (l line) glyphs0End(n int, s *source) fixed.Int26_6 {
 	if n == 0 {
 		return 0
 	}
 	g := l.glyphs[n-1]
+	if bidi.Ignorable(g.r) {
+		return g.x
+	}
 	adv, _ := s.faces[g.font].GlyphAdvance(g.r)
 	return g.x + adv
 }
@@ -453,7 +522,7 @@ func (s *source) drawLine(i int) {
 	glyphs := func(dst draw.Image, src image.Image) {
 		d := font.Drawer{Dst: dst, Src: src}
 		for _, g := range l.glyphs {
-			if g.r == ' ' {
+			if g.r == ' ' || bidi.Ignorable(g.r) {
 				continue
 			}
 			d.Face = s.faces[g.font]

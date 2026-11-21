@@ -270,10 +270,11 @@ goimgtools.Text("First line\nSecond line Mixed", goimgtools.TextOptions{
 ```
 
 - **Fonts**: `Fonts` is a list tried in order for each character; if a font lacks a character, the next font is used. Each entry is a font file (`.ttf`, `.otf`, `.ttc`; for a collection file, `filename#1` selects the second font) or the name of an installed system font. `FontData` supplies font data held in memory.
-- **Default fonts**: if none are specified, common Chinese fonts installed on the system are used first, with the built-in Go Regular (which has no Chinese glyphs) last. `DefaultFonts()` lists the default order on the current system; `SystemFonts()` lists all fonts installed on the system.
+- **Default fonts**: if none are specified, common Chinese fonts installed on the system are used first, then the built-in Go Regular (which has no Chinese glyphs), then fonts of symbols and other scripts found in their usual places (on Windows Segoe UI, Tahoma, Segoe UI Symbol and Emoji, Nirmala UI, ...), each opened only when a character needs it. `DefaultFonts()` lists the default order on the current system; `SystemFonts()` lists all fonts installed on the system.
 - **Layout**: font size, colour (an alpha component gives semi-transparent text), background colour (transparent by default), automatic line wrapping at `Width`, left / centre / right alignment, line spacing, padding.
 - **Stroke / shadow**: `StrokeWidth`, `StrokeColor`; `ShadowColor`, `ShadowX`, `ShadowY`, `ShadowBlur` (a zero offset with blur produces a glow). The image is enlarged automatically to accommodate these effects.
-- **Limitations**: right-to-left text, text requiring ligature shaping, and vertical text are not supported. A character absent from all fonts is drawn as a missing-glyph box.
+- **Right-to-left text**: a paragraph holding Arabic, Hebrew or other right-to-left text runs the way its first strong character does, and each line is put in the order it is seen by the Unicode Bidirectional Algorithm (embeddings, overrides, isolates, paired brackets, mirrored glyphs); Arabic and Persian letters are joined through Unicode's presentation forms, lam and alef as their ligature. Characters drawn as nothing (joiners, marks of direction, variation selectors, the soft hyphen where no line breaks at it) take no room.
+- **Limitations**: shaping is not done by the tables of the font, so scripts whose letters change their shape or order by them (Devanagari and the other scripts of India, ligatures of Arabic beyond lam-alef) are drawn letter by letter; vertical text is not supported. A character absent from all fonts is drawn as a missing-glyph box.
 
 Font memory usage:
 

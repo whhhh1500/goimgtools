@@ -586,6 +586,9 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 		}
 		penX += c.dx
 		penY += c.dy
+		if bidi.Ignorable(c.r) {
+			continue // drawn as nothing, taking no room
+		}
 		set := b.fonts(c.family, c.face)
 		if set == nil {
 			continue
