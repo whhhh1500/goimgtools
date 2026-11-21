@@ -110,7 +110,7 @@ goimgtools batch -resize 1920x1920 -no-enlarge -quality 80 -format jpeg in_dir o
 
 ## 版本
 
-API 在 0.1.0 之后定型过一次（当时改了几个名字，见[变更记录](docs/zh-CN/CHANGELOG.md)的“从 0.1.0 升级”）。此后各版本只增加 API：已导出的内容不删除、不改名、不改签名，每次推送都用 `apidiff` 核对；基础接口的签名、其选项与结果结构体的字段、各常量的值还由 `tests/api_lock_test.go` 在编译期写死。输出可能因更准确而变化（如 JPEG 文件改为 libjpeg-turbo 的字节），此类变化列在[变更记录](docs/zh-CN/CHANGELOG.md)的“升级”一节。某个版本加的隐形水印，之后的每个版本都能读出（`tests/watermark_compat_test.go` 读取 0.2.0 加的水印）。必须破坏 API 的版本将升主版本号。
+API 在 0.1.0 之后定型过一次（当时改了几个名字，见[变更记录](docs/zh-CN/CHANGELOG.md)的“从 0.1.0 升级”）。此后各版本只增加 API：已导出的内容不删除、不改名、不改签名，每次推送都用 `apidiff` 核对；基础接口的签名、其选项与结果结构体的字段、各常量的值还由 `tests/api_lock_test.go` 在编译期写死。输出可能因更准确而变化（如 JPEG 文件改为 libjpeg-turbo 的字节），此类变化列在[变更记录](docs/zh-CN/CHANGELOG.md)的“升级”一节。HEIC 与 AVIF 模块同样如此，各自与每个版本的标签核对；由使用者实现的接口（`Operation`、`pipeline.Source`）不再增加方法，新能力以可选接口提供。某个版本加的隐形水印，之后的每个版本都能读出（`tests/watermark_compat_test.go` 读取 0.2.0 加的水印）。必须破坏 API 的版本将升主版本号。
 
 ## 参与贡献
 

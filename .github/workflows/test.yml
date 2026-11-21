@@ -94,7 +94,8 @@ jobs:
     # No exported name of the last release may change incompatibly: its tag
     # (or commit) is in .github/api-base, the last tag without the file.
     # apidiff (golang.org/x/exp) compares the exported API of the whole
-    # module with it.
+    # module with it, and that of the HEIC and AVIF modules with their tags
+    # of the same release (heic/v..., avif/v...).
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -114,10 +115,28 @@ jobs:
           apidiff -m -w "$RUNNER_TEMP/new.api" github.com/whhhh1500/goimgtools
           apidiff -m "$RUNNER_TEMP/old.api" "$RUNNER_TEMP/new.api" | grep -v '^Ignoring internal' || true
           bad=$(apidiff -m -incompatible "$RUNNER_TEMP/old.api" "$RUNNER_TEMP/new.api" | grep -v '^Ignoring internal' || true)
+          fail=0
           if [ -n "$bad" ]; then
             echo "::error::incompatible API changes since $tag"
-            exit 1
+            fail=1
           fi
+          for m in heic avif; do
+            if ! git rev-parse -q --verify "refs/tags/$m/$tag" > /dev/null; then
+              echo "$m: no tag $m/$tag"
+              continue
+            fi
+            git worktree add -q "$RUNNER_TEMP/old-$m" "$m/$tag"
+            (cd "$RUNNER_TEMP/old-$m/$m" && apidiff -m -w "$RUNNER_TEMP/old-$m.api" "github.com/whhhh1500/goimgtools/$m")
+            (cd "$m" && apidiff -m -w "$RUNNER_TEMP/new-$m.api" "github.com/whhhh1500/goimgtools/$m")
+            echo "$m since $m/$tag:"
+            apidiff -m "$RUNNER_TEMP/old-$m.api" "$RUNNER_TEMP/new-$m.api" | grep -v '^Ignoring internal' || true
+            bad=$(apidiff -m -incompatible "$RUNNER_TEMP/old-$m.api" "$RUNNER_TEMP/new-$m.api" | grep -v '^Ignoring internal' || true)
+            if [ -n "$bad" ]; then
+              echo "::error::incompatible API changes in $m since $m/$tag"
+              fail=1
+            fi
+          done
+          exit $fail
 
   bits32:
     runs-on: ubuntu-latest
