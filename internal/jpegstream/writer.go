@@ -253,8 +253,9 @@ type encoder struct {
 	// deadZone, when set, is how far from zero (in 1/100000 of a step) an
 	// AC coefficient of each table must be to be kept (QuantTableJpegli).
 	deadZone *[2]int64
-	// trellis is set for Options.Trellis.
-	trellis bool
+	// trellis is set for Options.Trellis, dering for
+	// Options.OvershootDeringing.
+	trellis, dering bool
 	// hY and vY are the sampling factors of Y in a colour image: 2 and 2
 	// for 4:2:0, 2 and 1 for 4:2:2, 1 and 1 for 4:4:4 (Cb and Cr 1 and 1).
 	hY, vY int
@@ -433,6 +434,14 @@ type qblock [blockSize]int16
 // quantize transforms b (in place, unless with AVX2) and quantizes it with
 // table q into zz.
 func (e *encoder) quantize(b *block, q quantIndex, zz *qblock) {
+	if e.dering && dering(b, int32(e.quant[q][0])) {
+		// Samples above 255: the 16-bit lanes of the SIMD transform could
+		// overflow where the integer one does not, and the file must be
+		// the same on every processor.
+		fdct(b)
+		e.quantizeCoefs(b, q, zz)
+		return
+	}
 	if useSIMD && e.deadZone == nil {
 		fdctQuant(e, b, q, zz)
 		return
@@ -970,6 +979,9 @@ func (e *encoder) quantBlocks(src pipeline.Source, first image.Image, sink func(
 						// the same unit.
 						buf[k] = qblock{0: buf[k-1][0]}
 					case e.trellis:
+						if e.dering {
+							dering(b, int32(e.quant[q][0]))
+						}
 						fdct(b)
 						dcs[k] = tt[q].trellisBlock(b, &buf[k])
 					default:
@@ -1259,6 +1271,11 @@ type Options struct {
 	// (qtables_jpegli.go). 0, the tables of the JPEG standard, is what the
 	// standard library uses.
 	QuantTable int
+	// OvershootDeringing gives the pixels at the largest value of a block
+	// that also has other values, above it along a smooth curve, before the
+	// transform, as mozjpeg does (deringing.go): less ringing beside dark
+	// text and lines on white.
+	OvershootDeringing bool
 }
 
 // The colour sampling of Options.Subsampling.
@@ -1296,6 +1313,7 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 	}
 	var e encoder
 	e.trellis = o != nil && o.Trellis
+	e.dering = o != nil && o.OvershootDeringing
 	e.hY, e.vY = 2, 2
 	if o != nil {
 		switch o.Subsampling {

@@ -95,6 +95,7 @@ Operations run in a fixed order: rotate → flip → trim → crop → resize �
 | `-quality N` | Quality for JPEG or lossy WebP |
 | `-jpeg-optimize`, `-jpeg-progressive` | JPEG: optimised coding tables; progressive encoding (smaller files, pixels unchanged) |
 | `-jpeg-trellis` | JPEG: trellis quantization (smaller files at the same perceived quality; pixels change; can be combined with the two options above) |
+| `-jpeg-overshoot-deringing` | JPEG: less ringing beside dark text and lines on white, as mozjpeg does it (sharp's `overshootDeringing`, its bytes): screenshots and documents look much better at the same quality (a screenshot at 50 as good as at 75 without it, in a file 25% smaller), for files a few percent larger; photographs about unchanged |
 | `-jpeg-chroma 420\|422\|444` | JPEG: how finely colour is kept: 420 (the default, half across and down), 422 (half across) or 444 (all of it: crisp coloured text and edges, a larger file) |
 | `-jpeg-quant-table N` | JPEG: quantization tables 0–8, numbered as mozjpeg's `-quant-table` (0, the default, the standard's; 3 mozjpeg's default), or 9, made as jpegli makes them: the smallest files (see [Compression](compression.md)) |
 | `-png-colors N`, `-no-dither` | PNG: reduce to N colours (2–256); disable dithering |

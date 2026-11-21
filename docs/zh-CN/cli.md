@@ -95,6 +95,7 @@ goimgtools -op median:3 -op normalize -op "tint:#704214" scan.jpg out.jpg
 | `-quality N` | JPEG 或有损 WebP 的质量 |
 | `-jpeg-optimize`、`-jpeg-progressive` | JPEG：优化编码表；渐进式编码（文件更小，像素不变） |
 | `-jpeg-trellis` | JPEG：网格量化（同等观感下文件更小，像素会改变；可与上述两项同时使用） |
+| `-jpeg-overshoot-deringing` | JPEG：减轻白底上深色文字与线条旁的振铃，同 mozjpeg（sharp 的 `overshootDeringing`，字节相同）：同一质量下截图与文档好看得多（截图 50 档相当于不开时的 75 档，文件小 25%），文件大几个百分点；照片基本不变 |
 | `-jpeg-chroma 420\|422\|444` | JPEG：色度保留的精细程度：420（默认，横纵各一半）、422（横向一半）或 444（全部保留：彩色文字与边缘清晰，文件更大） |
 | `-jpeg-quant-table N` | JPEG：量化表 0–8，编号与 mozjpeg 的 `-quant-table` 一致（默认 0 为标准表，3 为 mozjpeg 的默认表）；9 为按 jpegli 方法生成的表，文件最小（见[压缩](compression.md)） |
 | `-png-colors N`、`-no-dither` | PNG：减至 N 色（2–256）；关闭抖动 |

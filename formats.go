@@ -186,7 +186,7 @@ var builtin = []*formatDef{
 			src = ops.Flatten(src, color.Black)
 			return jpegstream.Encode(w, src, &jpegstream.Options{Quality: q, Exif: o.Exif, ICC: o.ICC, Xmp: o.Xmp, Density: o.Density,
 				Optimize: jo.Optimize, Progressive: jo.Progressive, Trellis: jo.Trellis, QuantTable: int(jo.QuantTable),
-				Subsampling: int(jo.ChromaSubsampling)})
+				Subsampling: int(jo.ChromaSubsampling), OvershootDeringing: jo.OvershootDeringing})
 		},
 		quality: func(options any) (int, bool) {
 			jo, _ := optionsOf[JPEGOptions](options, "jpeg")

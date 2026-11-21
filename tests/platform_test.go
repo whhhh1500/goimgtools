@@ -134,6 +134,10 @@ func TestSameOnEveryProcessor(t *testing.T) {
 		{"jpeg 4:2:2 trellis", func() ([]byte, error) {
 			return photo.Clone().JPEG(JPEGOptions{Quality: 77, Optimize: true, Trellis: true, ChromaSubsampling: Chroma422}).ToBytes()
 		}, "12036896ee7978f7"},
+		// The curve over white pixels in float32.
+		{"jpeg overshoot deringing", func() ([]byte, error) {
+			return FromImage(textLike(320, 200)).JPEG(JPEGOptions{Quality: 60, OvershootDeringing: true}).ToBytes()
+		}, "4ffc6e9031741e03"},
 		{"jpeg quant table 3", func() ([]byte, error) {
 			return photo.Clone().JPEG(JPEGOptions{Quality: 77, QuantTable: QuantTableImageMagick}).ToBytes()
 		}, "39b0657868638dd1"},

@@ -116,7 +116,7 @@ type options struct {
 	webpNear, webpExact                            *bool
 	webpAlphaQ                                     *int
 	lossless, jpegOpt, jpegProg, noDither          *bool
-	jpegTrellis                                    *bool
+	jpegTrellis, jpegDering                        *bool
 	jpegQuantTable                                 *int
 	jpegChroma                                     *string
 	animated, keepExif, stripICC, toSRGB           *bool
@@ -195,6 +195,7 @@ func register(fs *flag.FlagSet) *options {
 		jpegOpt:        fs.Bool("jpeg-optimize", false, "JPEG: build the coding tables for this image (a smaller file, the same pixels)"),
 		jpegProg:       fs.Bool("jpeg-progressive", false, "JPEG: write a progressive file (smaller still, the same pixels)"),
 		jpegTrellis:    fs.Bool("jpeg-trellis", false, "JPEG: trellis quantization as mozjpeg does it (smaller at about the same look; other pixels)"),
+		jpegDering:     fs.Bool("jpeg-overshoot-deringing", false, "JPEG: less ringing beside dark text and lines on white, as mozjpeg (sharp's overshootDeringing): screenshots look much better at the same quality, for files a few percent larger"),
 		jpegChroma:     fs.String("jpeg-chroma", "420", "JPEG: how finely colour is kept: 420 (half across and down, the default), 422 (half across) or 444 (all of it: crisp coloured text and edges, a larger file)"),
 		jpegQuantTable: fs.Int("jpeg-quant-table", 0, "JPEG: quantization tables: 0-8 numbered as mozjpeg's -quant-table (0 the standard's, as the standard library; 3 mozjpeg's default), 9 made as jpegli makes them (the smallest files)"),
 		pngColors:      fs.Int("png-colors", 0, "PNG: reduce to this many colours, 2-256, chosen for the image (a much smaller, lossy file)"),
@@ -773,7 +774,7 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 		if !ok {
 			return nil, fmt.Errorf("-jpeg-chroma: %q is not 420, 422 or 444", *o.jpegChroma)
 		}
-		im.JPEG(goimgtools.JPEGOptions{Quality: *o.quality, Optimize: *o.jpegOpt, Progressive: *o.jpegProg, Trellis: *o.jpegTrellis, QuantTable: goimgtools.QuantTable(*o.jpegQuantTable),
+		im.JPEG(goimgtools.JPEGOptions{Quality: *o.quality, Optimize: *o.jpegOpt, Progressive: *o.jpegProg, Trellis: *o.jpegTrellis, OvershootDeringing: *o.jpegDering, QuantTable: goimgtools.QuantTable(*o.jpegQuantTable),
 			ChromaSubsampling: chroma})
 	case "png":
 		im.PNG(goimgtools.PNGOptions{CompressionLevel: *o.pngLevel, Colors: *o.pngColors, NoDither: *o.noDither})
