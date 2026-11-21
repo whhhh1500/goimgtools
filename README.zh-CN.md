@@ -27,7 +27,7 @@ goimgtools 是纯 Go 实现的流式图像处理库与命令行工具。图像�
 - **并行**：`Threads(n)` 启用多核处理，输出与单线程逐字节一致。
 - **健壮性**：运行期 panic 转为错误返回；输入与输出像素数设有上限；支持 `context` 取消；持续进行模糊测试。
 - **可扩展**：支持自定义操作、输入源、文件格式与插值滤镜；按名称注册操作；通过钩子改写内置行为；可构建包含自定义操作的命令行程序。
-- **纯 Go**：不依赖 cgo；依赖仅有 `golang.org/x/image`，以及字体解析所需的 `x/text`、检测处理器指令集的 `x/sys`。
+- **纯 Go**：不依赖 cgo；依赖仅有 `golang.org/x/image`，以及字体解析与 Unicode 双向类别所需的 `x/text`、检测处理器指令集的 `x/sys`。
 
 ## 安装
 
@@ -124,4 +124,4 @@ API 在 0.1.0 之后定型过一次（当时改了几个名字，见[变更记�
 
 ## 许可
 
-本项目采用 MIT 许可（[LICENSE](LICENSE)）。改写自 Go 标准库与 `golang.org/x/image` 的代码沿用其 BSD 许可（[licenses/LICENSE-GO](licenses/LICENSE-GO)）；移植自 libjpeg-turbo 的部分（JPEG 解码的反 DCT 与上采样，编码的正 DCT、颜色转换与下采样）及移植自 mozjpeg 的网格量化沿用其许可（[licenses/LICENSE-LIBJPEG-TURBO](licenses/LICENSE-LIBJPEG-TURBO)）；移植自 Pillow 的模糊与反锐化掩模沿用其 MIT-CMU 许可（[licenses/LICENSE-PILLOW](licenses/LICENSE-PILLOW)）；移植自 libwebp 的有损 WebP 编码部分与 WebP 解码的颜色换算沿用其 BSD 许可及专利授权（[licenses/LICENSE-LIBWEBP](licenses/LICENSE-LIBWEBP)）；依 jpegli 生成的 JPEG 量化表沿用其 BSD 许可（[licenses/LICENSE-JPEGLI](licenses/LICENSE-JPEGLI)）；移植自 libdeflate 的 DEFLATE 压缩器沿用其 MIT 许可（[licenses/LICENSE-LIBDEFLATE](licenses/LICENSE-LIBDEFLATE)），其中参照 zopfli 的分块沿用 Apache 2.0 许可（[licenses/LICENSE-ZOPFLI](licenses/LICENSE-ZOPFLI)），参照 oxipng 的 PNG 行滤波搜索沿用其 MIT 许可（[licenses/LICENSE-OXIPNG](licenses/LICENSE-OXIPNG)）。各文件的来源详见 [licenses/THIRD-PARTY.md](licenses/THIRD-PARTY.md)。
+本项目采用 MIT 许可（[LICENSE](LICENSE)）。改写自 Go 标准库、`golang.org/x/image` 与 `golang.org/x/text` 的代码沿用其 BSD 许可（[licenses/LICENSE-GO](licenses/LICENSE-GO)）；移植自 libjpeg-turbo 的部分（JPEG 解码的反 DCT 与上采样，编码的正 DCT、颜色转换与下采样）及移植自 mozjpeg 的网格量化沿用其许可（[licenses/LICENSE-LIBJPEG-TURBO](licenses/LICENSE-LIBJPEG-TURBO)）；移植自 Pillow 的模糊与反锐化掩模沿用其 MIT-CMU 许可（[licenses/LICENSE-PILLOW](licenses/LICENSE-PILLOW)）；移植自 libwebp 的有损 WebP 编码部分与 WebP 解码的颜色换算沿用其 BSD 许可及专利授权（[licenses/LICENSE-LIBWEBP](licenses/LICENSE-LIBWEBP)）；依 jpegli 生成的 JPEG 量化表沿用其 BSD 许可（[licenses/LICENSE-JPEGLI](licenses/LICENSE-JPEGLI)）；移植自 libdeflate 的 DEFLATE 压缩器沿用其 MIT 许可（[licenses/LICENSE-LIBDEFLATE](licenses/LICENSE-LIBDEFLATE)），其中参照 zopfli 的分块沿用 Apache 2.0 许可（[licenses/LICENSE-ZOPFLI](licenses/LICENSE-ZOPFLI)），参照 oxipng 的 PNG 行滤波搜索沿用其 MIT 许可（[licenses/LICENSE-OXIPNG](licenses/LICENSE-OXIPNG)）。各文件的来源详见 [licenses/THIRD-PARTY.md](licenses/THIRD-PARTY.md)。
