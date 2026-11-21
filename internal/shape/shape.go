@@ -1,0 +1,283 @@
+// Package shape shapes text by the tables of its font, as HarfBuzz does
+// (through its port to Go in github.com/go-text/typesetting): the letters
+// of scripts that join, reorder or stack (Arabic, the scripts of India,
+// Thai, Tibetan, Myanmar, Khmer, ...) put in the forms and places the font
+// gives them, marks set on their letters, ligatures made.
+//
+// A font is read for it through a table directory of its own that lists
+// only the tables shaping needs, so its outlines, pictures and other
+// tables are never read: a collection of Chinese fonts that would take
+// 40MB to parse whole takes under 1MB.
+package shape
+
+import (
+	"bytes"
+	"encoding/binary"
+	"errors"
+	"io"
+	"sort"
+	"unicode"
+
+	"github.com/go-text/typesetting/font"
+	ot "github.com/go-text/typesetting/font/opentype"
+	"github.com/go-text/typesetting/harfbuzz"
+	"github.com/go-text/typesetting/language"
+)
+
+// tables are those read for shaping: the character map, the advances and
+// what the font's layout features are made of (OpenType's and Apple's).
+var tables = map[string]bool{
+	"cmap": true, "head": true, "hhea": true, "maxp": true, "hmtx": true, "OS/2": true, "post": true,
+	"GSUB": true, "GPOS": true, "GDEF": true, "kern": true,
+	"morx": true, "kerx": true, "trak": true, "ankr": true, "feat": true,
+}
+
+// MaxBytes is the most a font's shaping tables may hold; a font with more
+// is not shaped (no font of the systems this was tried on comes near).
+const MaxBytes = 16 << 20
+
+// Face is the shaping tables of a font.
+type Face struct {
+	font *harfbuzz.Font
+	// Bytes is the memory it is counted as: three times its tables, as
+	// measured (a parsed table takes up to 2.5 times its bytes).
+	Bytes int64
+}
+
+// view is a font made of the tables shaping needs: a table directory at
+// its start, then the tables, read from where they are in the file.
+type view struct {
+	r    io.ReaderAt
+	head []byte
+	segs []segment
+	size int64
+	pos  int64
+}
+
+type segment struct{ at, n, from int64 }
+
+func (v *view) ReadAt(p []byte, off int64) (int, error) {
+	n := 0
+	for n < len(p) {
+		o := off + int64(n)
+		switch {
+		case o < int64(len(v.head)):
+			n += copy(p[n:], v.head[o:])
+		default:
+			i := sort.Search(len(v.segs), func(i int) bool { return v.segs[i].at+v.segs[i].n > o })
+			if i == len(v.segs) {
+				return n, io.EOF
+			}
+			s := v.segs[i]
+			if o < s.at { // the padding before a table
+				k := min(int64(len(p)-n), s.at-o)
+				clear(p[n : n+int(k)])
+				n += int(k)
+				continue
+			}
+			k := min(int64(len(p)-n), s.at+s.n-o)
+			m, err := v.r.ReadAt(p[n:n+int(k)], s.from+o-s.at)
+			n += m
+			if err != nil && m < int(k) {
+				return n, err
+			}
+		}
+	}
+	return n, nil
+}
+
+func (v *view) Read(p []byte) (int, error) {
+	n, err := v.ReadAt(p, v.pos)
+	v.pos += int64(n)
+	return n, err
+}
+
+func (v *view) Seek(off int64, whence int) (int64, error) {
+	switch whence {
+	case io.SeekStart:
+		v.pos = off
+	case io.SeekCurrent:
+		v.pos += off
+	case io.SeekEnd:
+		v.pos = v.size + off
+	}
+	return v.pos, nil
+}
+
+func read(r io.ReaderAt, off int64, n int) ([]byte, error) {
+	b := make([]byte, n)
+	if _, err := r.ReadAt(b, off); err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
+// Open reads the shaping tables of font number index of a font or
+// collection file. err is set for a font that cannot be shaped with.
+func Open(r io.ReaderAt, index int) (f *Face, err error) {
+	defer func() {
+		if recover() != nil {
+			f, err = nil, errors.New("shape: the font's tables cannot be read")
+		}
+	}()
+	hdr, err := read(r, 0, 12)
+	if err != nil {
+		return nil, err
+	}
+	base := int64(0)
+	if string(hdr[:4]) == "ttcf" {
+		n := int(binary.BigEndian.Uint32(hdr[8:]))
+		if index < 0 || index >= n {
+			return nil, errors.New("shape: no such font in the collection")
+		}
+		o, err := read(r, 12+4*int64(index), 4)
+		if err != nil {
+			return nil, err
+		}
+		base = int64(binary.BigEndian.Uint32(o))
+		if hdr, err = read(r, base, 12); err != nil {
+			return nil, err
+		}
+	}
+	n := int(binary.BigEndian.Uint16(hdr[4:]))
+	recs, err := read(r, base+12, 16*n)
+	if err != nil {
+		return nil, err
+	}
+	type table struct {
+		rec       []byte
+		off, size int64
+	}
+	var keep []table
+	var total int64
+	for i := 0; i < n; i++ {
+		rec := recs[16*i : 16*i+16]
+		if !tables[string(rec[:4])] {
+			continue
+		}
+		t := table{rec: rec, off: int64(binary.BigEndian.Uint32(rec[8:])), size: int64(binary.BigEndian.Uint32(rec[12:]))}
+		keep = append(keep, t)
+		total += t.size
+	}
+	if total > MaxBytes {
+		return nil, errors.New("shape: the font's tables are too large")
+	}
+	sort.Slice(keep, func(i, j int) bool { return string(keep[i].rec[:4]) < string(keep[j].rec[:4]) })
+	v := &view{r: r, head: make([]byte, 12+16*len(keep))}
+	copy(v.head, hdr[:4]) // the font's kind (TrueType or CFF outlines)
+	binary.BigEndian.PutUint16(v.head[4:], uint16(len(keep)))
+	at := (int64(len(v.head)) + 3) &^ 3
+	for i, t := range keep {
+		rec := v.head[12+16*i:]
+		copy(rec, t.rec[:8]) // tag and checksum
+		binary.BigEndian.PutUint32(rec[8:], uint32(at))
+		binary.BigEndian.PutUint32(rec[12:], uint32(t.size))
+		v.segs = append(v.segs, segment{at: at, n: t.size, from: t.off})
+		at += (t.size + 3) &^ 3
+	}
+	v.size = at
+	ld, err := ot.NewLoader(v)
+	if err != nil {
+		return nil, err
+	}
+	ft, err := font.NewFont(ld)
+	if err != nil {
+		return nil, err
+	}
+	return &Face{font: harfbuzz.NewFont(font.NewFace(ft)), Bytes: 3 * total}, nil
+}
+
+// OpenData is Open for a font held in memory.
+func OpenData(data []byte, index int) (*Face, error) {
+	return Open(bytes.NewReader(data), index)
+}
+
+// Glyph is a glyph of shaped text, in the units of the font's em square,
+// y up.
+type Glyph struct {
+	ID uint16
+	// Cluster is the place in the text of the first character of the
+	// cluster the glyph is of: the characters that make it, which are
+	// drawn and placed together.
+	Cluster int
+	// XAdvance is how far it moves the pen; XOffset, YOffset where it is
+	// drawn from the pen.
+	XAdvance, XOffset, YOffset int32
+}
+
+var undetermined = language.NewLanguage("und")
+
+// Shaper shapes text; its buffers are kept from one text to the next.
+type Shaper struct {
+	buf *harfbuzz.Buffer
+}
+
+// Shape shapes rs[start:end], of one script and font, the rest of rs being
+// its context; right to left when rtl. The glyphs come in the order they
+// are seen, left to right. ok is false when the font's tables could not
+// shape it.
+func (s *Shaper) Shape(f *Face, rs []rune, start, end int, rtl bool) (gs []Glyph, ok bool) {
+	defer func() {
+		if recover() != nil {
+			gs, ok = nil, false
+		}
+	}()
+	if s.buf == nil {
+		s.buf = harfbuzz.NewBuffer()
+	} else {
+		s.buf.Clear()
+	}
+	s.buf.AddRunes(rs, start, end-start)
+	// A language of its own, so the guess does not take the process's from
+	// its environment: the same text is shaped the same anywhere.
+	s.buf.Props.Language = undetermined
+	s.buf.GuessSegmentProperties()
+	s.buf.Props.Direction = harfbuzz.LeftToRight
+	if rtl {
+		s.buf.Props.Direction = harfbuzz.RightToLeft
+	}
+	s.buf.Shape(f.font, nil)
+	gs = make([]Glyph, len(s.buf.Info))
+	for i, in := range s.buf.Info {
+		p := s.buf.Pos[i]
+		gs[i] = Glyph{ID: uint16(in.Glyph), Cluster: in.Cluster, XAdvance: p.XAdvance, XOffset: p.XOffset, YOffset: p.YOffset}
+	}
+	return gs, true
+}
+
+// Needs reports whether r is shaped by the tables of its font: a letter of
+// a script whose letters join, reorder or stack, or a mark set on a letter
+// (which the font places). Latin, Greek, Cyrillic, Chinese, Japanese,
+// Korean and the like are laid out letter by letter, as without shaping.
+func Needs(r rune) bool {
+	switch {
+	case r < 0x0300:
+		return false
+	case r >= 0x2E80 && r <= 0xA4CF, r >= 0xAC00 && r <= 0xD7FF, r >= 0xF900 && r <= 0xFAFF, r >= 0xFF00 && r <= 0xFFEF, r >= 0x20000:
+		return unicode.Is(unicode.Mn, r)
+	}
+	return unicode.In(r, unicode.Mn, unicode.Me) || unicode.In(r, complexScripts...)
+}
+
+// complexScripts are those whose letters join, reorder or stack: those
+// HarfBuzz has a shaper of their own for.
+var complexScripts = []*unicode.RangeTable{
+	// Arabic and the scripts that join as it does.
+	unicode.Arabic, unicode.Syriac, unicode.Thaana, unicode.Nko, unicode.Mandaic, unicode.Mongolian,
+	unicode.Phags_Pa, unicode.Manichaean, unicode.Psalter_Pahlavi, unicode.Adlam, unicode.Hanifi_Rohingya,
+	unicode.Sogdian, unicode.Old_Uyghur,
+	// India's.
+	unicode.Devanagari, unicode.Bengali, unicode.Gurmukhi, unicode.Gujarati, unicode.Oriya, unicode.Tamil,
+	unicode.Telugu, unicode.Kannada, unicode.Malayalam,
+	// Those of South-East Asia, the Himalayas and the others HarfBuzz's
+	// universal shaper is for.
+	unicode.Sinhala, unicode.Thai, unicode.Lao, unicode.Tibetan, unicode.Myanmar, unicode.Khmer,
+	unicode.Balinese, unicode.Batak, unicode.Brahmi, unicode.Buginese, unicode.Buhid, unicode.Chakma,
+	unicode.Cham, unicode.Dives_Akuru, unicode.Dogra, unicode.Grantha, unicode.Gunjala_Gondi, unicode.Hanunoo,
+	unicode.Javanese, unicode.Kaithi, unicode.Kayah_Li, unicode.Kharoshthi, unicode.Khojki, unicode.Khudawadi,
+	unicode.Lepcha, unicode.Limbu, unicode.Mahajani, unicode.Makasar, unicode.Marchen, unicode.Masaram_Gondi,
+	unicode.Meetei_Mayek, unicode.Modi, unicode.Nandinagari, unicode.New_Tai_Lue, unicode.Newa, unicode.Rejang,
+	unicode.Saurashtra, unicode.Sharada, unicode.Siddham, unicode.Soyombo, unicode.Sundanese,
+	unicode.Syloti_Nagri, unicode.Tagalog, unicode.Tagbanwa, unicode.Tai_Tham, unicode.Tai_Viet,
+	unicode.Takri, unicode.Tirhuta, unicode.Zanabazar_Square, unicode.Ahom, unicode.Bhaiksuki,
+}

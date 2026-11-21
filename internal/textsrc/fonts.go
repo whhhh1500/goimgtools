@@ -17,6 +17,8 @@ import (
 
 	"golang.org/x/image/font/gofont/goregular"
 	"golang.org/x/image/font/sfnt"
+
+	"github.com/whhhh1500/goimgtools/internal/shape"
 )
 
 // FontInfo describes one font: a font file, or one font of a collection
@@ -52,6 +54,11 @@ type Font struct {
 	Info FontInfo
 	f    *sfnt.Font
 	file *os.File // kept open: glyphs are read from it on demand
+	data []byte   // a font held in memory
+	// The shaping tables, read the first time text of a script that needs
+	// them is laid out in the font.
+	shaping    *shape.Face
+	shapeTried bool
 }
 
 // Close releases the font file.
@@ -64,6 +71,12 @@ func (f *Font) Close() {
 
 // SFNT is the parsed font, for its outlines and metrics.
 func (f *Font) SFNT() *sfnt.Font { return f.f }
+
+// Has reports whether the font has a glyph for r.
+func (f *Font) Has(r rune) bool {
+	var buf sfnt.Buffer
+	return f.has(&buf, r)
+}
 
 // has reports whether the font has a glyph for r.
 func (f *Font) has(buf *sfnt.Buffer, r rune) bool {
@@ -98,7 +111,7 @@ func builtIn() *Font {
 	if err != nil {
 		panic(err) // the embedded font is known to be valid
 	}
-	return &Font{Info: FontInfo{Family: "Go", Style: "Regular", Full: BuiltIn}, f: f}
+	return &Font{Info: FontInfo{Family: "Go", Style: "Regular", Full: BuiltIn}, f: f, data: goregular.TTF}
 }
 
 // openFile opens font number index of a font file. Only the tables that
@@ -163,7 +176,7 @@ func OpenData(data []byte) (*Font, error) {
 	if err != nil {
 		return nil, fmt.Errorf("goimgtools: not a font: %w", err)
 	}
-	return &Font{Info: describe(f, "", 0), f: f}, nil
+	return &Font{Info: describe(f, "", 0), f: f, data: data}, nil
 }
 
 // Open loads the font spec names: the built-in font, a font file

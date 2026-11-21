@@ -25,6 +25,7 @@ rows at a time instead of on a whole image; the pixel arithmetic is theirs.
 | `internal/vp8enc/tables.go` (tables fixed by the VP8 format) | `golang.org/x/image/vp8` |
 | `internal/gflate` (the compressor, as it is; `ResetDict` and the loads of `load_store_unsafe.go` added) | `compress/flate` of Go 1.27 |
 | `internal/bidi/uax9.go` (the Unicode Bidirectional Algorithm for a paragraph; no checks of the input, the bracket pairs sorted once) | `golang.org/x/text/unicode/bidi` (`core.go`, `bracket.go`), a port of Unicode's reference implementation |
+| `internal/textsrc/shaping.go` (`drawGlyph`: a glyph of shaped text drawn by its index, rasterized as a face draws a character) | `golang.org/x/image/font/opentype` (`Face.Glyph`) |
 
 ## Independent JPEG Group's library and libjpeg-turbo
 
@@ -407,6 +408,12 @@ Gill. Released into the public domain. No Warranty, Use at your own risk."
 with the integer arithmetic of apngdis (by Max Stepin, the author of APNG;
 zlib licence), rewritten in Go; nothing of its files is included.
 
+## Noto Sans Devanagari (a font for the tests)
+
+SIL Open Font License 1.1, copyright Google Inc. The full text is in
+`LICENSE-OFL-NOTO`, next to this file. `internal/shape/testdata/NotoSansDevanagari-subset.ttf`
+is the font cut down (with fontTools' pyftsubset, its layout features kept) to the characters of the
+texts the tests shape. It is used by the tests only.
 ## Acknowledgements (no code taken)
 
 - **gifsicle**: `internal/gifstream/optimize.go` and `localpal.go` try,

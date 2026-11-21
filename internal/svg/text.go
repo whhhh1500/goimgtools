@@ -32,6 +32,7 @@ type tchar struct {
 	anchor     int // start, middle, end
 	whitespace bool
 	tctx       *textCtx
+	sh         *svgShape // shaped by its font's tables
 }
 
 // textCtx is what a text element or tspan passes on to its characters and
@@ -160,17 +161,27 @@ func rightToLeft(chars []tchar) []tchar {
 	if !bidi.HasRTL(rs) {
 		return chars
 	}
-	shaped, keep := bidi.Shape(rs)
-	out := make([]tchar, len(shaped))
+	// Letters its font did not shape take their presentation forms.
+	forms, keep := bidi.Shape(rs)
+	form := make([]rune, len(rs))
+	for i := range form {
+		form[i] = -1 // an alef taken into a lam-alef ligature
+	}
 	for i, k := range keep {
-		out[i] = chars[k]
-		out[i].r = shaped[i]
+		form[k] = forms[i]
+	}
+	out := make([]tchar, 0, len(chars))
+	for k, c := range chars {
+		if c.sh == nil {
+			if form[k] < 0 {
+				continue
+			}
+			c.r = form[k]
+		}
+		out = append(out, c)
 	}
 	for s := 0; s < len(out); {
-		e := s + 1
-		for e < len(out) && out[e].x == nil && out[e].y == nil && out[e].tctx.path == out[s].tctx.path {
-			e++
-		}
+		e := chunkEnd(out, s)
 		seg := make([]rune, e-s)
 		for i := range seg {
 			seg[i] = out[s+i].r
@@ -181,7 +192,9 @@ func rightToLeft(chars []tchar) []tchar {
 			first := was[0]
 			for i, k := range order {
 				c := was[k]
-				c.r = mirrored[k]
+				if c.sh == nil { // shaped glyphs are mirrored by the shaping
+					c.r = mirrored[k]
+				}
 				c.x, c.y = nil, nil
 				if i == 0 {
 					c.x, c.y = first.x, first.y
@@ -537,6 +550,7 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 	if len(chars) == 0 {
 		return
 	}
+	b.shapeChars(chars)
 	chars = rightToLeft(chars)
 	// Lay out: chunks start where a character is placed absolutely, and
 	// where a path starts.
@@ -554,8 +568,13 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 		thick   float64
 		over    float64
 		through float64
+		// A glyph of a shaped cluster: where it is drawn from the pen
+		// (y down); extra for those after the cluster's first, which share
+		// its pen, advance and frame.
+		gx, gy float64
+		extra  bool
 	}
-	var out []placed
+	var out, extra []placed
 	var buf sfnt.Buffer
 	penX, penY := 0.0, 0.0
 	chunk := 0
@@ -586,27 +605,40 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 		}
 		penX += c.dx
 		penY += c.dy
-		if bidi.Ignorable(c.r) {
+		if c.sh != nil && !c.sh.head {
+			continue // drawn with the first of its cluster
+		}
+		if c.sh == nil && bidi.Ignorable(c.r) {
 			continue // drawn as nothing, taking no room
 		}
 		set := b.fonts(c.family, c.face)
 		if set == nil {
 			continue
 		}
-		f, err := set.Pick(c.r)
-		if err != nil || f == nil {
+		var f *textsrc.Font
+		if c.sh != nil {
+			f = c.sh.font
+		} else if f, _ = set.Pick(c.r); f == nil {
 			continue
 		}
 		sf := f.SFNT()
 		upem := fixed.Int26_6(sf.UnitsPerEm()) << 6
-		gi, err := sf.GlyphIndex(&buf, c.r)
-		if err != nil {
-			continue
-		}
 		scale := c.st.fontSize / float64(sf.UnitsPerEm())
-		if prevFont == f {
-			if k, err := sf.Kern(&buf, prev, gi, upem, font.HintingNone); err == nil {
-				penX += float64(float64(float64(k)/64) * scale)
+		var gi sfnt.GlyphIndex
+		if c.sh != nil {
+			if len(c.sh.glyphs) == 0 {
+				continue
+			}
+			gi = sfnt.GlyphIndex(c.sh.glyphs[0].ID)
+		} else {
+			var err error
+			if gi, err = sf.GlyphIndex(&buf, c.r); err != nil {
+				continue
+			}
+			if prevFont == f {
+				if k, err := sf.Kern(&buf, prev, gi, upem, font.HintingNone); err == nil {
+					penX += float64(float64(float64(k)/64) * scale)
+				}
 			}
 		}
 		p := placed{c: c, f: f, gi: gi, x: penX, y: penY, chunk: chunk, sx: 1}
@@ -649,7 +681,24 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 			p.under = -float64(float64(post.UnderlinePosition) * mscale)
 		}
 		adv := 0.0
-		if a, err := sf.GlyphAdvance(&buf, gi, upem, font.HintingNone); err == nil {
+		if c.sh != nil {
+			// The cluster's advance, its glyphs placed from its pen.
+			pen := int32(0)
+			for k, g := range c.sh.glyphs {
+				if k > 0 {
+					q := p
+					q.gi, q.extra = sfnt.GlyphIndex(g.ID), true
+					q.gx = float64(float64(pen+g.XOffset) * scale)
+					q.gy = -float64(float64(g.YOffset) * scale)
+					extra = append(extra, q)
+				} else {
+					p.gx = float64(float64(g.XOffset) * scale)
+					p.gy = -float64(float64(g.YOffset) * scale)
+				}
+				pen += g.XAdvance
+			}
+			adv = float64(float64(pen) * scale)
+		} else if a, err := sf.GlyphAdvance(&buf, gi, upem, font.HintingNone); err == nil {
 			adv = float64(float64(float64(a)/64) * scale)
 		}
 		adv += c.tctx.letter
@@ -660,7 +709,15 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 		penX += adv
 		p.end = penX
 		out = append(out, p)
+		for _, q := range extra {
+			q.adv, q.end = p.adv, p.end
+			out = append(out, q)
+		}
+		extra = extra[:0]
 		prev, prevFont = gi, f
+		if c.sh != nil {
+			prevFont = nil // kerned by the tables
+		}
 	}
 	// textLength: the advances of the text element made to add up to it,
 	// by spacing or by stretching the glyphs too.
@@ -670,21 +727,35 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 			if w > 0 {
 				stretch := strings.TrimSpace(n.attrs["lengthAdjust"]) == "spacingAndGlyphs"
 				k := l / w
-				// Spaced, the extra between the characters (as Chrome).
+				// Spaced, the extra between the characters (as Chrome), a
+				// shaped cluster's glyphs moving with it.
+				clusters := 0
+				for _, p := range out {
+					if !p.extra {
+						clusters++
+					}
+				}
 				delta := 0.0
-				if len(out) > 1 {
-					delta = (l - w) / float64(len(out)-1)
+				if clusters > 1 {
+					delta = (l - w) / float64(clusters-1)
 				}
 				start := chunkStart[out[0].chunk]
-				for i := range out {
-					p := &out[i]
+				i := -1
+				for j := range out {
+					p := &out[j]
+					if p.extra {
+						h := out[j-1]
+						p.x, p.adv, p.sx, p.end = h.x, h.adv, h.sx, h.end
+						continue
+					}
+					i++
 					if stretch {
 						p.x = start + float64((p.x-start)*k)
 						p.adv = float64(p.adv * k)
 						p.sx = k
 					} else {
 						p.x += float64(float64(i) * delta)
-						if i < len(out)-1 {
+						if i < clusters-1 {
 							p.adv += delta
 						}
 					}
@@ -791,7 +862,7 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 			}
 		}
 		for i, p := range out {
-			if !drawn[i] {
+			if !drawn[i] || p.extra {
 				continue
 			}
 			fr := frames[i]
@@ -859,7 +930,7 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 		scale := p.c.st.fontSize / float64(sf.UnitsPerEm()) / 64
 		fr := frames[i]
 		pt := func(q fixed.Point26_6) [2]float64 {
-			return apply(fr, float64(float64(q.X)*scale), float64(float64(q.Y)*scale))
+			return apply(fr, p.gx+float64(float64(q.X)*scale), p.gy+float64(float64(q.Y)*scale))
 		}
 		for _, g := range gsegs {
 			switch g.Op {

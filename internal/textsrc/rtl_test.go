@@ -16,8 +16,8 @@ func TestRightToLeft(t *testing.T) {
 	}{
 		{"שלום 123", []rune("123 םולש")},
 		{"abc אבג", []rune("abc גבא")},
-		// سلام: meem isolated, lam-alef final, seen initial, seen left to right.
-		{"سلام", []rune{0xFEE1, 0xFEFC, 0xFEB3}},
+		// سلام, shaped by its font: its clusters seen right to left.
+		{"سلام", []rune("مالس")},
 	} {
 		src, err := New(c.text, Options{Size: 20}, pipeline.NewEnv(0, ""))
 		if err != nil {
@@ -27,17 +27,83 @@ func TestRightToLeft(t *testing.T) {
 		if len(s.lines) != 1 {
 			t.Fatalf("%q: %d lines", c.text, len(s.lines))
 		}
+		if c.text == "سلام" && !s.set.fonts[s.lines[0].glyphs[0].font].has(&s.set.buf, 'س') {
+			t.Log("no font with Arabic")
+			src.Close()
+			continue
+		}
 		var got []rune
 		for i, g := range s.lines[0].glyphs {
 			got = append(got, g.r)
 			if i > 0 && g.x < s.lines[0].glyphs[i-1].x {
 				t.Errorf("%q: glyph %d at %v, left of the one before", c.text, i, g.x)
 			}
+			if g.sh != nil && g.sh.head && len(g.sh.glyphs) == 0 {
+				t.Errorf("%q: cluster %d has no glyph", c.text, i)
+			}
 		}
 		if string(got) != string(c.want) {
 			t.Errorf("%q: laid out %q, want %q", c.text, string(got), string(c.want))
 		}
 		src.Close()
+	}
+}
+
+// TestShaped: Devanagari in a font with its tables is shaped: a cluster of
+// several characters is drawn by its first, the conjunct's glyph is not a
+// letter's own, and a line breaks only between clusters.
+func TestShaped(t *testing.T) {
+	font := []string{"../shape/testdata/NotoSansDevanagari-subset.ttf"}
+	src, err := New("नमस्ते", Options{Size: 40, Fonts: font}, pipeline.NewEnv(0, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := src.(*source)
+	gs := s.lines[0].glyphs
+	heads, drawn := 0, 0
+	for i, g := range gs {
+		if g.sh == nil {
+			t.Fatalf("character %d not shaped", i)
+		}
+		if g.sh.head {
+			heads++
+			drawn += len(g.sh.glyphs)
+		}
+	}
+	// न, म, the half form of स, then ते: four clusters, five glyphs.
+	if len(gs) != 6 || heads != 4 || drawn != 5 || gs[3].sh.head || gs[5].sh.head {
+		t.Errorf("%d characters, %d clusters, %d glyphs", len(gs), heads, drawn)
+	}
+	if id, _ := s.set.fonts[0].f.GlyphIndex(&s.set.buf, 'स'); gs[2].sh.glyphs[0].id == id {
+		t.Error("स् drawn as स")
+	}
+	width := s.lines[0].width
+	src.Close()
+	// At a width of three clusters, the line breaks before the one that
+	// does not fit, never inside a cluster.
+	src, err = New("नमस्ते नमस्ते", Options{Size: 40, Fonts: font, Width: width.Ceil()}, pipeline.NewEnv(0, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, l := range src.(*source).lines {
+		if g := l.glyphs[0]; g.sh != nil && !g.sh.head {
+			t.Error("a line starts inside a cluster")
+		}
+	}
+	if n := len(src.(*source).lines); n != 2 {
+		t.Errorf("%d lines", n)
+	}
+	src.Close()
+}
+
+// TestArabicForms: where a font cannot shape, Arabic letters take their
+// presentation forms, as before shaping; the alef of a lam-alef ligature
+// is drawn as nothing.
+func TestArabicForms(t *testing.T) {
+	rs := []rune("سلام")
+	arabicForms(rs, 0, len(rs))
+	if want := []rune{0xFEB3, 0xFEFC, 0xFEFF, 0xFEE1}; string(rs) != string(want) {
+		t.Errorf("%U, want %U", rs, want)
 	}
 }
 

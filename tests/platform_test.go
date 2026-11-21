@@ -76,6 +76,9 @@ func TestSameOnEveryProcessor(t *testing.T) {
 		{"resize libvips contain", clear.Clone().Resize(60, 60, ResizeOptions{Fit: FitContain, Kernel: KernelCubic,
 			Background: color.NRGBA{200, 10, 90, 99}, Method: MethodLibvips}), "9ff49d5906aebc1c"},
 		{"svg", FromBytes([]byte(platformSVG)).Resize(211, 0), "8bcc505bc7c70c99"},
+		// Text shaped by its font's tables: Devanagari's conjuncts and marks.
+		{"shaped text", Text("नमस्ते क्षत्रिय हिन्दी", TextOptions{Fonts: []string{shapedFont}, Size: 37.3}), "b7b51b60806667d3"},
+		{"shaped svg", FromBytes([]byte(shapedSVG)), "bec51a52c180107c"},
 	}
 	for _, c := range cases {
 		env := pipeline.NewEnv(0, t.TempDir())
@@ -196,6 +199,13 @@ func TestSameOnEveryProcessor(t *testing.T) {
 func animationBytes(t *testing.T) []byte {
 	return encodeAll(t, movingAnimation(120, 90, 5, true))
 }
+
+// shapedFont is Noto Sans Devanagari cut down to a few words.
+const shapedFont = "../internal/shape/testdata/NotoSansDevanagari-subset.ttf"
+
+const shapedSVG = `<svg xmlns="http://www.w3.org/2000/svg" width="230" height="70">
+<text x="8" y="44" font-size="29.5" font-family="'` + shapedFont + `'" rotate="3" letter-spacing="0.7">नमस्ते <tspan dy="-4" fill="#a20">कि</tspan> दुनिया</text>
+</svg>`
 
 // platformSVG draws arcs, curves, turns, gradients, dashes, joins, a clip
 // and a mask: all of SVG's floating point.

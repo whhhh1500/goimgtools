@@ -13,6 +13,7 @@ import (
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/opentype"
 	"golang.org/x/image/math/fixed"
+	"golang.org/x/image/vector"
 
 	"github.com/whhhh1500/goimgtools/internal/bidi"
 	"github.com/whhhh1500/goimgtools/pipeline"
@@ -58,6 +59,7 @@ type glyph struct {
 	font int
 	r    rune
 	x    fixed.Int26_6 // from the start of the line
+	sh   *shaped       // of shaped text: the cluster's glyphs; nil laid out by itself
 }
 
 type line struct {
@@ -94,6 +96,9 @@ type source struct {
 	shadowR   int
 	maskA     *image.Alpha // the line's shape
 	maskB     *image.Alpha // its outline or its shadow
+	size      float64
+	gmask     image.Alpha // a glyph of shaped text, drawn
+	grast     *vector.Rasterizer
 	tmp       []uint8
 	reserved  int64
 	closed    bool
@@ -134,7 +139,7 @@ func New(text string, o Options, env *pipeline.Env) (pipeline.Source, error) {
 	if strings.TrimSpace(text) == "" {
 		return nil, errors.New("goimgtools: there is no text to draw")
 	}
-	s := &source{env: env, align: o.Align, stroke: o.StrokeWidth}
+	s := &source{env: env, align: o.Align, stroke: o.StrokeWidth, size: o.Size}
 	// How far the effects reach. The image grows by that much on every
 	// side, so nothing of them is cut off.
 	s.m = int(math.Ceil(o.StrokeWidth))
@@ -282,13 +287,22 @@ func (s *source) layout(text string, o Options) error {
 			return r
 		}, para))
 		if rtl = bidi.HasRTL(runes); rtl {
-			runes, _ = bidi.Shape(runes)
 			base = bidi.BaseRTL(runes)
 			levels = bidi.Levels(runes, base)
 		}
+		// Text of scripts that join, reorder or stack is shaped by the
+		// tables of its font.
+		shapedAt, err := s.shapeParagraph(runes, levels, o.Size)
+		if err != nil {
+			return err
+		}
 		for i := 0; i < len(runes); i++ {
 			r := runes[i]
-			if bidi.Ignorable(r) {
+			var sh *shaped
+			if shapedAt != nil {
+				sh = shapedAt[i]
+			}
+			if sh == nil && bidi.Ignorable(r) {
 				// Drawn as nothing and taking no room, in no font of its own;
 				// kept for the order of the line (marks of direction).
 				fi := max(prevFont, 0)
@@ -310,8 +324,10 @@ func (s *source) layout(text string, o Options) error {
 				}
 				continue
 			}
-			fi, err := s.set.pick(r)
-			if err != nil {
+			var fi int
+			if sh != nil {
+				fi = sh.font
+			} else if fi, err = s.set.pick(r); err != nil {
 				return err
 			}
 			face, err := s.face(fi, o.Size)
@@ -323,12 +339,19 @@ func (s *source) layout(text string, o Options) error {
 				m := face.Metrics()
 				ascent, descent = max(ascent, m.Ascent), max(descent, m.Descent)
 			}
-			adv, _ := face.GlyphAdvance(r)
 			x := pen
-			if prevFont == fi {
-				x += face.Kern(prev, r)
+			var adv fixed.Int26_6
+			if sh != nil {
+				// A cluster of shaped text: its first character carries it,
+				// kerned by the font's tables.
+				adv = sh.adv
+			} else {
+				adv, _ = face.GlyphAdvance(r)
+				if prevFont == fi {
+					x += face.Kern(prev, r)
+				}
 			}
-			if x+adv > limit && len(cur.glyphs) > 0 && r != ' ' {
+			if x+adv > limit && len(cur.glyphs) > 0 && r != ' ' && (sh == nil || sh.head) {
 				// The line is full. End it at the last allowed place, and
 				// lay the characters after that place out again.
 				if brk > 0 {
@@ -348,14 +371,16 @@ func (s *source) layout(text string, o Options) error {
 				i--
 				continue
 			}
-			if breakable(r) && len(cur.glyphs) > 0 {
+			if sh == nil && breakable(r) && len(cur.glyphs) > 0 {
 				brk, brkWidth, brkHyphen = len(cur.glyphs), pen, -1
 			}
-			cur.glyphs = append(cur.glyphs, glyph{font: fi, r: r, x: x})
+			cur.glyphs = append(cur.glyphs, glyph{font: fi, r: r, x: x, sh: sh})
 			pen = x + adv
 			cur.width = pen
 			prev, prevFont = r, fi
-			if r == ' ' || breakable(r) {
+			if sh != nil {
+				prev, prevFont = -1, -1 // no kerning but the tables'
+			} else if r == ' ' || breakable(r) {
 				brk, brkWidth, brkHyphen = len(cur.glyphs), pen, -1
 			}
 		}
@@ -397,6 +422,16 @@ func (s *source) reorder(l *line, lv []int8, rtl bool) {
 	prev, prevFont := rune(-1), -1
 	for i, k := range order {
 		g := l.glyphs[k]
+		if g.sh != nil {
+			// Shaped text: its clusters come in the order they are seen,
+			// their glyphs within them too (and mirrored) as the shaping
+			// gave them.
+			g.x = pen
+			pen += g.sh.adv
+			prev, prevFont = -1, -1
+			out[i] = g
+			continue
+		}
 		// A mirrored glyph its font does not have stays as it is.
 		if m := mirrored[k]; m != g.r && s.set.fonts[g.font].has(&s.set.buf, m) {
 			g.r = m
@@ -443,6 +478,9 @@ func (l line) glyphs0End(n int, s *source) fixed.Int26_6 {
 		return 0
 	}
 	g := l.glyphs[n-1]
+	if g.sh != nil {
+		return g.x + g.sh.adv
+	}
 	if bidi.Ignorable(g.r) {
 		return g.x
 	}
@@ -522,6 +560,13 @@ func (s *source) drawLine(i int) {
 	glyphs := func(dst draw.Image, src image.Image) {
 		d := font.Drawer{Dst: dst, Src: src}
 		for _, g := range l.glyphs {
+			if g.sh != nil {
+				for _, sg := range g.sh.glyphs {
+					dot := fixed.Point26_6{X: start + g.x + sg.dx, Y: fixed.I(top+s.ascent) + sg.dy}
+					s.drawGlyph(dst, src, g.font, sg.id, dot, s.size)
+				}
+				continue
+			}
 			if g.r == ' ' || bidi.Ignorable(g.r) {
 				continue
 			}
