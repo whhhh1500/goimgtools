@@ -28,8 +28,8 @@ func chunkEnd(chars []tchar, s int) int {
 
 // shapeChars shapes the characters of scripts that join, reorder or stack
 // by the tables of their fonts, in their logical order: a run of one font,
-// one element, one level and no placing of its own after its first
-// character at a time.
+// one level and no placing of its own after its first character at a
+// time, across elements (a cluster is painted as its first character).
 func (b *builder) shapeChars(chars []tchar) {
 	rs := make([]rune, len(chars))
 	for i, c := range chars {
@@ -83,7 +83,7 @@ func (b *builder) shapeChars(chars []tchar) {
 		j := i + 1
 		for j < len(chars) && need[j] && fonts[j] == fonts[i] && levels[j] == levels[i] {
 			c := &chars[j]
-			if c.node != first.node || c.tctx.path != first.tctx.path || c.x != nil || c.y != nil || c.dx != 0 || c.dy != 0 ||
+			if c.tctx.path != first.tctx.path || c.x != nil || c.y != nil || c.dx != 0 || c.dy != 0 ||
 				c.rotSet != first.rotSet || c.rot != first.rot {
 				break
 			}

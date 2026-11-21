@@ -94,6 +94,15 @@ func TestShaped(t *testing.T) {
 		t.Errorf("%d lines", n)
 	}
 	src.Close()
+	// A zero width space between shaped words is still a place to break.
+	src, err = New("नमस्ते​नमस्ते", Options{Size: 40, Fonts: font, Width: (width * 3 / 2).Ceil()}, pipeline.NewEnv(0, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ls := src.(*source).lines; len(ls) != 2 || len(ls[0].glyphs) != 7 {
+		t.Errorf("at a zero width space: %d lines, the first of %d characters", len(ls), len(ls[0].glyphs))
+	}
+	src.Close()
 }
 
 // TestArabicForms: where a font cannot shape, Arabic letters take their

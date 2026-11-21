@@ -105,13 +105,16 @@ func NeedsShaping(rs []rune) []bool {
 		return nil
 	}
 	// Characters drawn as nothing between two that are shaped go with
-	// them (the joiners and non-joiners of Persian and of India's scripts).
+	// them (the joiners and non-joiners of Persian and of India's scripts),
+	// but for the zero width space and the soft hyphen, where a line may
+	// break (Thai marks its words with zero width spaces).
+	between := func(r rune) bool { return bidi.Ignorable(r) && r != 0x200B && r != 0x00AD }
 	for i := 0; i < n; i++ {
-		if !bidi.Ignorable(rs[i]) || i == 0 || !need[i-1] {
+		if !between(rs[i]) || i == 0 || !need[i-1] {
 			continue
 		}
 		j := i
-		for j < n && bidi.Ignorable(rs[j]) {
+		for j < n && between(rs[j]) {
 			j++
 		}
 		if j < n && need[j] {
