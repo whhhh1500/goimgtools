@@ -93,7 +93,7 @@ goimgtools batch -resize 1920x1920 -no-enlarge -quality 80 -format jpeg in_dir o
 | WebP | ✓ (animation: the first frame) | ✓ (lossy, lossless, animation) | Lossy: streaming by macroblock row; lossless: only the maximum back-reference window defined by the format (about 4.2MB) is retained |
 | GIF | ✓ (including animation) | ✓ (including animation) | Row-by-row streaming; interlaced images handled as for PNG |
 | BMP | ✓ | ✓ | Rows read by file offset |
-| TIFF | ✓ | ✓ | Row-by-row streaming decompression; JPEG-compressed TIFFs (as libtiff, libvips and sharp write them) are read |
+| TIFF | ✓ | ✓ | Row-by-row streaming decompression; JPEG-compressed TIFFs (as libtiff, libvips and sharp write them) are read and written |
 | ICO | ✓ (and CUR: the largest image) | ✓ (one or several sizes, as PNG) | The largest image: a PNG one streamed, a bitmap one (at most 256×256) whole; several sizes are each resized from the image kept in working storage |
 
 Staged data is kept in memory up to 1/8 of the memory limit (8MB by default); beyond that it is written to temporary files, which are deleted after use.

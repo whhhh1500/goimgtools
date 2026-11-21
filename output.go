@@ -171,6 +171,13 @@ const (
 	TIFFNone    TIFFCompression = iota // uncompressed, the default
 	TIFFDeflate                        // zlib
 	TIFFLZW                            // LZW, as libtiff writes it
+	// TIFFJPEG is JPEG, as libtiff writes it for libvips and sharp (whose
+	// TIFFs are JPEG by default): lossy, far smaller for photographs;
+	// colour as YCbCr at half the width and height below quality 90 and
+	// in full from there, as libvips writes it, grey as grey, every strip a
+	// JPEG stream sharing its tables. It cannot keep transparency: an image
+	// with transparent pixels is an error (Flatten it first).
+	TIFFJPEG
 )
 
 // TIFFOptions are the optional settings of TIFF.
@@ -182,6 +189,9 @@ type TIFFOptions struct {
 	// (sharp's predictor "horizontal", its default). It does nothing for
 	// uncompressed and paletted images.
 	Predictor bool
+	// Quality is the JPEG quality of TIFFJPEG, 1 to 100; 0 means 80, as
+	// sharp's.
+	Quality int
 }
 
 // TIFF selects TIFF output.

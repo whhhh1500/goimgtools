@@ -72,8 +72,11 @@ const (
 	// tXMP holds the XMP packet (XMLPacket).
 	tXMP = 700
 	// tJPEGTables holds the tables the JPEG-compressed blocks share.
-	tJPEGTables   = 347
-	tSampleFormat = 339
+	tJPEGTables = 347
+	// tYCbCrSubSampling and tReferenceBlackWhite describe YCbCr samples.
+	tYCbCrSubSampling    = 530
+	tReferenceBlackWhite = 532
+	tSampleFormat        = 339
 )
 
 // Compression types (defined in various places in the spec and supplements).
@@ -139,6 +142,7 @@ const (
 	LZW
 	CCITTGroup3
 	CCITTGroup4
+	JPEG // goimgtools addition: written by encodeJPEG (jpegwrite.go)
 )
 
 // specValue returns the compression type constant from the TIFF spec that

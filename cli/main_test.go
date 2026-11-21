@@ -298,6 +298,9 @@ func TestNewOptions(t *testing.T) {
 	out = filepath.Join(dir, "fav.ico")
 	must("-ico-sizes", "32, 16", in, out)
 	same("ico sizes", out, goimgtools.Open(in).ICO(goimgtools.ICOOptions{Sizes: []int{32, 16}}))
+	out = filepath.Join(dir, "j.tif")
+	must("-tiff-compression", "jpeg", "-quality", "70", in, out)
+	same("tiff jpeg", out, goimgtools.Open(in).TIFF(goimgtools.TIFFOptions{Compression: goimgtools.TIFFJPEG, Quality: 70}))
 
 	// The font list always ends with the built-in font.
 	list, _, err := cli("fonts")

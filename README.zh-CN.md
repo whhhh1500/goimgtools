@@ -93,7 +93,7 @@ goimgtools batch -resize 1920x1920 -no-enlarge -quality 80 -format jpeg in_dir o
 | WebP | ✓（动画：第一帧） | ✓（有损、无损、动画） | 有损按宏块行流式解码；无损仅保留格式规定的最大回溯窗口（约 4.2MB） |
 | GIF | ✓（含动画） | ✓（含动画） | 逐行流式解码；隔行处理方式同 PNG |
 | BMP | ✓ | ✓ | 按文件偏移逐行读取 |
-| TIFF | ✓ | ✓ | 逐行流式解压；可读取 JPEG 压缩的 TIFF（libtiff、libvips、sharp 的写法） |
+| TIFF | ✓ | ✓ | 逐行流式解压；可读写 JPEG 压缩的 TIFF（libtiff、libvips、sharp 的写法） |
 | ICO | ✓（含 CUR：取最大的一张） | ✓（一个或多个尺寸，以 PNG 存） | 取最大的一张：PNG 项流式解码，位图项（至多 256×256）整张解码；多尺寸时把图存入工作存储，逐个尺寸缩放 |
 
 暂存区数据不超过内存上限的 1/8（默认 8MB）时驻留内存，超出部分写入临时文件，用后删除。

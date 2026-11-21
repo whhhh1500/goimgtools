@@ -147,6 +147,9 @@ type Options struct {
 	// that describe the picture go into the file's (exif.go), with the
 	// directories they point to.
 	Exif []byte
+	// Quality is the JPEG quality of JPEG compression, 1 to 100; 0 means
+	// DefaultJPEGQuality.
+	Quality int
 }
 
 var (
@@ -310,6 +313,9 @@ func writePix(w io.Writer, pix []byte, nrows, length, stride int) error {
 // It does not close src. If it returns an error, what was written to w is
 // not a valid image and must be discarded.
 func Encode(w io.Writer, src pipeline.Source, o *Options) error {
+	if o != nil && o.Compression == JPEG {
+		return encodeJPEG(w, src, o)
+	}
 	b := src.Bounds()
 	dx, dy := b.Dx(), b.Dy()
 	if dx <= 0 || dy <= 0 {

@@ -117,7 +117,7 @@ err := goimgtools.Open("in.jpg").
 | `GIF(GIFOptions{Colors, NoDither, FixedPalette})` | 最多 256 色，按图像内容选取；`FixedPalette` 改用标准库的固定调色板 |
 | `BMP()` | |
 | `ICO(ICOOptions{Sizes})` | 图标（favicon.ico）：图像原样（至多 256×256），或给 `Sizes`（如 `[]int{16, 32, 48, 256}`），把图像按比例缩放到每个尺寸以内（Lanczos3，同 Pillow），每个尺寸存为带透明的 PNG。读取 ICO 或 CUR 时取其中最大的一张 |
-| `TIFF(TIFFOptions{Compression, Predictor})` | 不压缩、`TIFFDeflate` 或 `TIFFLZW`（libtiff 的写法）；`Predictor` 把每个样本存为与左侧像素之差（水平差分），照片压缩效果好得多（即 sharp 的 `predictor: "horizontal"`；一张 2400 万像素照片：LZW 82 → 52MB，Deflate 67 → 45MB）。像素数据超过 1MB 的压缩图像按约 1MB 一条分条带写入 |
+| `TIFF(TIFFOptions{Compression, Predictor, Quality})` | 不压缩、`TIFFDeflate`、`TIFFLZW`（libtiff 的写法）或 `TIFFJPEG`（有损，同 libtiff 为 libvips 与 sharp 写的方式，sharp 的 TIFF 默认即 JPEG：`Quality` 低于 90 时 YCbCr 4:2:0，90 起 4:4:4，灰度图存灰度；`Quality` 0 即 80；不能带透明）；`Predictor` 把每个样本存为与左侧像素之差（水平差分），照片压缩效果好得多（即 sharp 的 `predictor: "horizontal"`；一张 2400 万像素照片：LZW 82 → 52MB，Deflate 67 → 45MB）。像素数据超过 1MB 的压缩图像按约 1MB 一条分条带写入 |
 | `ToFormat(name, 选项)` | 按名称选择输出格式（`"jpeg"`、`"png"`、`".tif"`……，以及已注册的格式）；选项为该格式的选项结构体，可省略 |
 | `MaxFileSize(n)` | 输出不超过 n 字节：自动选用满足该限制的最高质量（JPEG、有损 WebP，以及提供 `Quality` 的注册格式）；PNG 与 GIF 选用能满足的最多颜色数（PNG 先试无损）。与 `Animated()` 同用于动画时返回包装了 `errors.ErrUnsupported` 的错误；单帧 GIF 按静态图像处理 |
 | `ToFile(path)` / `ToWriter(w)` / `ToBytes()` | 执行并写出。`ToFile` 未指定格式时按扩展名确定；仅当全程成功时才生成文件 |

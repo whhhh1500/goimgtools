@@ -346,10 +346,25 @@ var builtin = []*formatDef{
 				out.Compression = tiffstream.Deflate
 			case TIFFLZW:
 				out.Compression = tiffstream.LZW
+			case TIFFJPEG:
+				out.Compression, out.Quality = tiffstream.JPEG, to.Quality
+				if o.Quality > 0 {
+					out.Quality = o.Quality
+				}
 			default:
 				return errors.New("goimgtools: unknown TIFF compression")
 			}
 			return tiffstream.Encode(w, src, out)
+		},
+		quality: func(options any) (int, bool) {
+			to, _ := optionsOf[TIFFOptions](options, "tiff")
+			if to.Compression != TIFFJPEG {
+				return 0, false
+			}
+			if to.Quality == 0 {
+				return tiffstream.DefaultJPEGQuality, true
+			}
+			return to.Quality, true
 		},
 		check: checks[TIFFOptions]("tiff"),
 	}, {

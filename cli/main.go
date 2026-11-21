@@ -193,7 +193,7 @@ func register(fs *flag.FlagSet) *options {
 		wmAngle:         fs.Float64("watermark-angle", 0, "turn the watermark clockwise by this many `degrees`"),
 		wmPivot:         fs.String("watermark-pivot", "", "the `point` of the watermark it turns around, given like -watermark-anchor (default: the anchor)"),
 		offset:          fs.String("offset", "", "move the watermark `X,Y` pixels from its anchor (negative moves left / up); default is a 24 pixel margin"),
-		quality:         fs.Int("quality", 0, "JPEG or lossy WebP quality 1-100 (default 80 for JPEG, 75 for WebP)"),
+		quality:         fs.Int("quality", 0, "JPEG, lossy WebP or JPEG-compressed TIFF quality 1-100 (default 80 for JPEG and TIFF, 75 for WebP)"),
 		jpegOpt:         fs.Bool("jpeg-optimize", false, "JPEG: build the coding tables for this image (a smaller file, the same pixels)"),
 		jpegProg:        fs.Bool("jpeg-progressive", false, "JPEG: write a progressive file (smaller still, the same pixels)"),
 		jpegTrellis:     fs.Bool("jpeg-trellis", false, "JPEG: trellis quantization as mozjpeg does it (smaller at about the same look; other pixels)"),
@@ -218,7 +218,7 @@ func register(fs *flag.FlagSet) *options {
 		gifColors:       fs.Int("gif-colors", 0, "largest number of colours in a GIF, 1-256 (default 256)"),
 		gifFixed:        fs.Bool("gif-fixed-palette", false, "GIF: use the standard fixed palette instead of colours chosen for the image (faster, a much worse picture)"),
 		gifLossy:        fs.Int("gif-lossy", 0, "GIF: lossy compression, the colour difference 1-255 it may accept (16-32 for photographic animations: 24-48% smaller; 8-16 for dithered stills); 0 keeps every pixel"),
-		tiffComp:        fs.String("tiff-compression", "none", "TIFF compression: none, deflate or lzw"),
+		tiffComp:        fs.String("tiff-compression", "none", "TIFF compression: none, deflate, lzw or jpeg (lossy, -quality, default 80; no transparency)"),
 		tiffPredictor:   fs.Bool("tiff-predictor", false, "TIFF: store each sample as its difference from the pixel to its left (horizontal predictor): photographs compress much better with deflate or lzw"),
 		animated:        fs.Bool("animated", false, "process every frame of an animated GIF, WebP or PNG and write an animated GIF, WebP or PNG (APNG); only what changes is stored (GIF: one palette for all frames, -gif-colors, -no-dither); another output format is an error"),
 		keepExif:        fs.Bool("keep-exif", false, "copy the EXIF block (camera, date, GPS) to the output"),
@@ -795,11 +795,11 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 		im.BMP()
 	case "tiff":
 		c, ok := map[string]goimgtools.TIFFCompression{"none": goimgtools.TIFFNone, "deflate": goimgtools.TIFFDeflate,
-			"lzw": goimgtools.TIFFLZW}[strings.ToLower(*o.tiffComp)]
+			"lzw": goimgtools.TIFFLZW, "jpeg": goimgtools.TIFFJPEG}[strings.ToLower(*o.tiffComp)]
 		if !ok {
-			return nil, fmt.Errorf("-tiff-compression: want none, deflate or lzw, got %q", *o.tiffComp)
+			return nil, fmt.Errorf("-tiff-compression: want none, deflate, lzw or jpeg, got %q", *o.tiffComp)
 		}
-		im.TIFF(goimgtools.TIFFOptions{Compression: c, Predictor: *o.tiffPredictor})
+		im.TIFF(goimgtools.TIFFOptions{Compression: c, Predictor: *o.tiffPredictor, Quality: *o.quality})
 	case "ico":
 		var sizes []int
 		for _, s := range strings.Split(*o.icoSizes, ",") {
