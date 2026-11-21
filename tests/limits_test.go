@@ -61,6 +61,8 @@ func decodeAny(t *testing.T, what string, b []byte) image.Image {
 		m, err = refPNM(b)
 	case bytes.HasSuffix(b, []byte("TRUEVISION-XFILE.\x00")):
 		m, err = refTGA(b)
+	case bytes.HasPrefix(b, []byte("%PDF")):
+		m, err = refPDF(b)
 	default:
 		m, err = tiff.Decode(bytes.NewReader(b))
 	}
@@ -84,6 +86,7 @@ var outputs = map[string]func(*Image) *Image{
 	"qoi":              func(m *Image) *Image { return m.QOI() },
 	"pnm":              func(m *Image) *Image { return m.PNM() },
 	"tga":              func(m *Image) *Image { return m.TGA() },
+	"pdf":              func(m *Image) *Image { return m.PDF() },
 	"tiff":             func(m *Image) *Image { return m.TIFF() },
 	"tiff deflate":     func(m *Image) *Image { return m.TIFF(TIFFOptions{Compression: TIFFDeflate}) },
 	"webp":             func(m *Image) *Image { return m.WebP() },
@@ -112,6 +115,9 @@ func TestSmallestImages(t *testing.T) {
 				}
 				if got := decodeAny(t, what, b).Bounds().Size(); got != size {
 					t.Errorf("%s: the file is %v", what, got)
+				}
+				if out == "pdf" {
+					continue // written only
 				}
 				// And read by this package again, into another format.
 				back, err := FromBytes(b).PNG().ToBytes()
@@ -678,6 +684,9 @@ func TestAwkwardReaders(t *testing.T) {
 func TestReaderFailsLate(t *testing.T) {
 	src := photoLike(700, 500)
 	for name, choose := range outputs {
+		if name == "pdf" {
+			continue // written only
+		}
 		data, err := choose(FromImage(src)).ToBytes()
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)

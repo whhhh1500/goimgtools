@@ -186,6 +186,27 @@ func (m *Image) PNM() *Image { m.format, m.options = "pnm", nil; return m }
 // byte.
 func (m *Image) TGA() *Image { m.format, m.options = "tga", nil; return m }
 
+// PDFOptions are the settings of PDF output.
+type PDFOptions struct {
+	// Quality, 1 to 100, stores the picture as a JPEG of that quality,
+	// much smaller for a photograph; 0 (the default) stores it without
+	// loss.
+	Quality int
+}
+
+// PDF selects PDF output: a document of one page the size of the image at
+// its resolution (72 dots per inch when it records none, so a pixel is a
+// point), the picture stored without loss (Flate, rows filtered as PNG
+// filters them) or as a JPEG (PDFOptions.Quality), its transparency as a
+// soft mask and its colour profile kept. The document is written as the
+// image is read; the soft mask waits in working storage until the colours
+// are done.
+func (m *Image) PDF(opts ...PDFOptions) *Image {
+	m.atMostOne("PDF", len(opts))
+	m.format, m.options = "pdf", first(opts)
+	return m
+}
+
 // TIFFCompression is how TIFF output is compressed.
 type TIFFCompression int
 

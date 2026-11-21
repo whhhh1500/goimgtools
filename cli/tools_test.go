@@ -199,10 +199,10 @@ func TestFormats(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if len(lines) != 12 {
+	if len(lines) != 13 {
 		t.Fatalf("formats printed %d lines:\n%s", len(lines), out)
 	}
-	if !strings.Contains(out, "psd    .psd .psb      read\n") || !strings.Contains(out, "svg    .svg           read\n") {
+	if !strings.Contains(out, "psd    .psd .psb      read\n") || !strings.Contains(out, "svg    .svg           read\n") || !strings.Contains(out, "pdf    .pdf           write\n") {
 		t.Errorf("no line for psd, read only:\n%s", out)
 	}
 	for _, name := range []string{"jpeg", "png", "webp", "gif", "bmp", "tiff", "ico", "qoi", "pnm", "tga"} {

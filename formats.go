@@ -19,6 +19,7 @@ import (
 	"github.com/whhhh1500/goimgtools/internal/jpegstream"
 	"github.com/whhhh1500/goimgtools/internal/ops"
 	"github.com/whhhh1500/goimgtools/internal/pngstream"
+	"github.com/whhhh1500/goimgtools/internal/pdfwrite"
 	"github.com/whhhh1500/goimgtools/internal/pnmstream"
 	"github.com/whhhh1500/goimgtools/internal/psdstream"
 	"github.com/whhhh1500/goimgtools/internal/qoistream"
@@ -38,8 +39,8 @@ type Format struct {
 	// Name is what the format is called everywhere: in Info.Format, in
 	// ToFormat, in error messages, on the command line. The formats of
 	// this package are "jpeg", "png", "webp", "gif", "bmp", "tiff",
-	// "ico", "psd" (read only), "qoi", "pnm" (Netpbm), "tga" and "svg" (read
-	// only).
+	// "ico", "psd" (read only), "qoi", "pnm" (Netpbm), "tga", "pdf" (written
+	// only) and "svg" (read only).
 	Name string
 	// Extensions are the file extensions of the format, in lower case and
 	// with the dot. The first is the one to give a new file.
@@ -420,6 +421,25 @@ var builtin = []*formatDef{
 			return pnmstream.Encode(w, ops.Flatten(src, color.Black))
 		},
 		check: noOptions("pnm"),
+	}, {
+		// Written only: a document of one page.
+		Format: Format{"pdf", []string{".pdf"}},
+		encode: func(w io.Writer, src pipeline.Source, o EncodeOptions) error {
+			po, err := optionsOf[PDFOptions](o.Options, "pdf")
+			if err != nil {
+				return err
+			}
+			q := po.Quality
+			if o.Quality > 0 {
+				q = o.Quality
+			}
+			return pdfwrite.Encode(w, src, &pdfwrite.Options{Quality: q, Density: o.Density, ICC: o.ICC})
+		},
+		quality: func(options any) (int, bool) {
+			po, _ := optionsOf[PDFOptions](options, "pdf")
+			return po.Quality, po.Quality > 0
+		},
+		check: checks[PDFOptions]("pdf"),
 	}, {
 		// Drawn at its own size, or at the one the resize asks for.
 		Format: Format{"svg", []string{".svg"}},

@@ -68,7 +68,7 @@ With -text and no input file, the text itself is the image:
   goimgtools -text "Hello" -font-size 64 out.png
 
 The output format follows the extension of output (.jpg, .png, .webp, .gif,
-.bmp, .tif, .ico, .qoi, .ppm, .pgm, .tga) unless -format is given. Operations are applied in this order:
+.bmp, .tif, .ico, .qoi, .ppm, .pgm, .tga, .pdf) unless -format is given. Operations are applied in this order:
 rotate, flip, flop, trim, crop, resize, extend, grayscale, modulate, blur,
 sharpen, the -op steps (in the order given), flatten, watermark, -mark.
 
@@ -198,7 +198,7 @@ func register(fs *flag.FlagSet) *options {
 		wmAngle:         fs.Float64("watermark-angle", 0, "turn the watermark clockwise by this many `degrees`"),
 		wmPivot:         fs.String("watermark-pivot", "", "the `point` of the watermark it turns around, given like -watermark-anchor (default: the anchor)"),
 		offset:          fs.String("offset", "", "move the watermark `X,Y` pixels from its anchor (negative moves left / up); default is a 24 pixel margin"),
-		quality:         fs.Int("quality", 0, "JPEG, lossy WebP or JPEG-compressed TIFF quality 1-100 (default 80 for JPEG and TIFF, 75 for WebP)"),
+		quality:         fs.Int("quality", 0, "JPEG, lossy WebP, JPEG-compressed TIFF or PDF quality 1-100 (default 80 for JPEG and TIFF, 75 for WebP; a PDF without it is lossless)"),
 		jpegOpt:         fs.Bool("jpeg-optimize", false, "JPEG: build the coding tables for this image (a smaller file, the same pixels)"),
 		jpegProg:        fs.Bool("jpeg-progressive", false, "JPEG: write a progressive file (smaller still, the same pixels)"),
 		jpegTrellis:     fs.Bool("jpeg-trellis", false, "JPEG: trellis quantization as mozjpeg does it (smaller at about the same look; other pixels)"),
@@ -840,6 +840,8 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 			sizes = append(sizes, n)
 		}
 		im.ICO(goimgtools.ICOOptions{Sizes: sizes})
+	case "pdf":
+		im.PDF(goimgtools.PDFOptions{Quality: *o.quality})
 	}
 	// (A name without a known extension: the library reports it.)
 	return im, nil
