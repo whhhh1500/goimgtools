@@ -142,18 +142,19 @@ func TestIgnorable(t *testing.T) {
 func TestBreakAtInvisible(t *testing.T) {
 	for _, c := range []struct {
 		text string
+		room string // the width of the line: room for it, no more (in any font)
 		want []string
 	}{
-		{"aaaa​bbbb", []string{"aaaa​", "bbbb"}},
-		{"aaaa­bbbb", []string{"aaaa-", "bbbb"}},
+		{"aaaa​aaaa", "aaaa", []string{"aaaa​", "aaaa"}},
+		{"aaaa­bbbb", "aaaa-", []string{"aaaa-", "bbbb"}},
 		// Where the line does not break, the soft hyphen shows nothing.
-		{"aa­b", []string{"aa­b"}},
+		{"aa­b", "aaaa-", []string{"aa­b"}},
 	} {
-		probe, err := New("aaaab", Options{Size: 30}, pipeline.NewEnv(0, ""))
+		probe, err := New(c.room, Options{Size: 30}, pipeline.NewEnv(0, ""))
 		if err != nil {
 			t.Fatal(err)
 		}
-		w := probe.(*source).lines[0].width.Ceil() // room for four letters and a hyphen, not eight
+		w := probe.(*source).lines[0].width.Ceil()
 		probe.Close()
 		src, err := New(c.text, Options{Size: 30, Width: w}, pipeline.NewEnv(0, ""))
 		if err != nil {
