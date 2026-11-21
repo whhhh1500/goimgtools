@@ -114,7 +114,7 @@ type options struct {
 	tileSize, tileOverlap                          *int
 	tileLayout                                     *string
 	quality, pngLevel, pngColors, gifColors        *int
-	icoSizes, icnsSizes, frameDelay                *string
+	icoSizes, icnsSizes, frameDelay, profile       *string
 	loop                                           *int
 	gifFixed                                       *bool
 	gifLossy                                       *int
@@ -206,6 +206,7 @@ func register(fs *flag.FlagSet) *options {
 		jpegChroma:      fs.String("jpeg-chroma", "420", "JPEG: how finely colour is kept: 420 (half across and down, the default), 422 (half across) or 444 (all of it: crisp coloured text and edges, a larger file)"),
 		jpegQuantTable:  fs.Int("jpeg-quant-table", 0, "JPEG: quantization tables: 0-8 numbered as mozjpeg's -quant-table (0 the standard's, as the standard library; 3 mozjpeg's default), 9 made as jpegli makes them (the smallest files)"),
 		pngColors:       fs.Int("png-colors", 0, "PNG: reduce to this many colours, 2-256, chosen for the image (a much smaller, lossy file)"),
+		profile:         fs.String("profile", "", "convert the colours into this ICC profile and write it: p3 (Display P3), adobe-rgb (Adobe RGB 1998) or a profile file"),
 		icnsSizes:       fs.String("icns-sizes", "", "ICNS: the sizes of the icons to write, among 16,32,64,128,256,512,1024, the image fitted into each (default: the standard sizes up to the image's)"),
 		icoSizes:        fs.String("ico-sizes", "", "ICO: the sizes of the icons to write, such as 16,32,48,256, the image fitted to each (default: the image as it is, at most 256x256)"),
 		noDither:        fs.Bool("no-dither", false, "no dithering when colours are reduced (-png-colors, GIF output, -animated)"),
@@ -803,6 +804,19 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 	kind, err := o.outputKind(out)
 	if err != nil {
 		return nil, err
+	}
+	switch p := strings.ToLower(strings.TrimSpace(*o.profile)); p {
+	case "":
+	case "p3", "display-p3":
+		im.ToProfile(goimgtools.ProfileDisplayP3())
+	case "adobe-rgb", "adobergb", "adobe":
+		im.ToProfile(goimgtools.ProfileAdobeRGB())
+	default:
+		icc, err := os.ReadFile(*o.profile)
+		if err != nil {
+			return nil, fmt.Errorf("-profile: %w", err)
+		}
+		im.ToProfile(icc)
 	}
 	switch kind {
 	case "jpeg":

@@ -6,6 +6,7 @@
 
 ### 新增
 
+- `ToProfile(icc)`（`-profile p3|adobe-rgb|文件.icc`），同 sharp 的 `withIccProfile`：把颜色转换到由原色与色调曲线描述的 RGB 配置并随输出写入；输入有自己的配置时直接从它转换，sRGB 表现不了的颜色得以保留（Display P3 的红转到 Adobe RGB 是 LittleCMS 的 (239, 0, 0)，而不是经 sRGB 裁剪后的 (219, 0, 0)）；在 32³ 个颜色上与 LittleCMS 相差不超过 1 级。`ProfileDisplayP3()` 与 `ProfileAdobeRGB()` 给出这两个色彩空间的配置。
 - ICNS，macOS 的图标文件（`ICNS(ICNSOptions{Sizes})`、`.icns`、`-icns-sizes`）：写出为不超过原图的各标准尺寸的正方形 PNG，图像按比例放入、居中、四周透明（Pillow 会把图拉伸到每个尺寸、一直到 1024），每个类型同时充当一半尺寸的 Retina 图，带目录，同 iconutil 的写法；读取最大的一张，PNG 的或旧式行程编码 RGB 加遮罩的，与 Pillow 逐像素相同。
 - PDF 输出（`PDF(PDFOptions{Quality})`、`.pdf`，`-quality` 得 JPEG 页面）：单页，页面大小按图像分辨率，图像无损存储（Flate，逐行按 PNG 的方式滤波）或存为 JPEG，透明作为软蒙版，保留颜色配置；边读图像边写（软蒙版暂存于工作存储）。pdfium 渲染结果与原图相差不超过 1 级。
 - SVG 输入（`.svg`）：用本包的抗锯齿光栅化器逐条带渲染，内存与渲染尺寸无关。支持形状与路径（弧线、曲线）、变换、嵌套视口与 viewBox、填充（非零、奇偶）与描边（虚线；斜接、圆、斜切连接；平头、圆头、方头端点）、线性与径向渐变（焦点、延展方式、单位、继承）、形状与组的不透明度、CSS（style 属性与样式表：类型、类、id、后代与子选择器）、use 与 symbol、switch、剪切路径、亮度蒙版、图案、标记、用已安装字体排版的 text 与 tspan（粗体、斜体、对齐、字距、缺字回退）和内嵌图片（data URI；不读外部文件）。链首的缩放直接按目标尺寸渲染矢量，同 sharp 任意倍数清晰。与 librsvg（sharp 0.35.5）相比只在边缘有差异（八个测试文档平均差 0.04–0.27 级，模糊 1.0 级）。滤镜：高斯模糊、偏移、填色、合成（含 arithmetic）、合并、颜色矩阵、混合、投影与分量传递，按规范在线性光中计算（其他滤镜原语原样传递输入）。要求过多（use 层层相乘）的文档在内存上限处停止。

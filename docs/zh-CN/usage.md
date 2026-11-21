@@ -123,6 +123,7 @@ err := goimgtools.Open("in.jpg").
 | `BMP()` | |
 | `QOI()` | QOI（"Quite OK Image"）：无损、8 位、RGB 或 RGBA，读写速度接近直接复制像素；文件与参考编码器相同（与 Pillow 相同，只是颜色空间标为 sRGB） |
 | `TGA()` | Truevision TGA（Targa），游戏贴图常用：RLE 压缩、自上而下；灰度、调色板（至多 256 色）或真彩（不透明 24 位，带透明 32 位）；与 Pillow 以 compression `"tga_rle"`、orientation 1 写出的文件逐字节相同 |
+| `ToProfile(icc)` | 把颜色转换到 ICC 配置 `icc` 的色彩空间（须是由原色与色调曲线描述的 RGB 配置：`ProfileDisplayP3()`、`ProfileAdobeRGB()` 或文件中的），并随输出写入；输入有自己的配置时直接从它转换，sRGB 表现不了的颜色得以保留；与 LittleCMS 相差不超过 1 级 |
 | `ICNS(ICNSOptions{Sizes})` | macOS 图标：不超过原图的各标准尺寸（或给 `Sizes`，取自 16、32、64、128、256、512、1024）的正方形 PNG，图像按比例放入、居中，四周透明；每张同时充当一半尺寸的 Retina 图；带目录，同 iconutil 的写法 |
 | `PDF(PDFOptions{Quality})` | 单页 PDF，页面大小按图像分辨率（无分辨率时 72 dpi，一个像素一点）：图像无损存储（Flate，逐行按 PNG 的方式滤波），或给 `Quality` 存为 JPEG；透明作为软蒙版；保留颜色配置。pdfium 渲染结果与原图相差不超过 1 级 |
 | `PNM()` | Netpbm，同 Pillow 的写法：灰度图写 PGM（P5），其余写 PPM（P6），图像有 16 位时每值 16 位；透明部分铺黑底（同 JPEG） |

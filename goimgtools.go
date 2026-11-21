@@ -123,6 +123,7 @@ type Image struct {
 	delays     []time.Duration // FrameDelay
 	keepXmp    bool
 	stripICC   bool
+	toProfile  []byte  // see ToProfile
 	density    float64 // to record in the output (0: none), when densitySet
 	densitySet bool
 	err        error

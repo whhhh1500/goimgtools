@@ -474,6 +474,9 @@ type Transform struct {
 	lin   [3][256]float64
 	m     [3][3]float64
 	gamma [gammaSteps + 1]uint8
+	// enc, for a conversion into a profile (Between): each channel's
+	// value of its light, in place of gamma's sRGB.
+	enc *[3][gammaSteps + 1]uint8
 	// ident is set when the conversion changes no value.
 	ident bool
 }
@@ -536,6 +539,8 @@ func (t *Transform) Convert(r, g, b uint8) (uint8, uint8, uint8) {
 			out[i] = 0
 		case v >= 1:
 			out[i] = 255
+		case t.enc != nil:
+			out[i] = t.enc[i][int(float64(v*gammaSteps)+0.5)]
 		default:
 			out[i] = t.gamma[int(float64(v*gammaSteps)+0.5)]
 		}

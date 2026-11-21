@@ -119,10 +119,71 @@ func (m *Image) Density(dpi float64) *Image {
 // through libvips's CMYK profile, as sharp does.)
 func (m *Image) ToSRGB() *Image { m.toSRGB = true; return m }
 
+// ToProfile converts the colours of the image into the colour space of the
+// ICC profile icc at the end of the recipe, and writes the profile with
+// the output: from the input's profile when it is one of primaries and
+// tone curves (directly, so that colours sRGB cannot show are kept), from
+// sRGB otherwise (an input's other profile taken to sRGB first). The
+// profile must be an RGB one of primaries and tone curves, such as
+// ProfileDisplayP3 and ProfileAdobeRGB give; the rendering is relative
+// colorimetric, as LittleCMS converts, to within one level. For an output
+// format that cannot carry a profile (GIF, BMP, ICO, QOI, ...) it is an
+// error.
+func (m *Image) ToProfile(icc []byte) *Image {
+	p, err := iccprof.Parse(icc)
+	if err == nil {
+		_, err = iccprof.Between(nil, p)
+	}
+	if err != nil {
+		return m.fail(fmt.Errorf("goimgtools: ToProfile: %w", err))
+	}
+	m.toProfile = append([]byte(nil), icc...)
+	return m
+}
+
+// ProfileDisplayP3 returns an ICC profile of Display P3 (the colour space
+// of Apple's displays and of the photographs of its phones): DCI-P3
+// primaries, the white of D65 and the tone curve of sRGB.
+func ProfileDisplayP3() []byte {
+	return iccprof.RGBProfile("Display P3", [2]float64{0.680, 0.320}, [2]float64{0.265, 0.690}, [2]float64{0.150, 0.060}, [2]float64{0.3127, 0.3290}, 0)
+}
+
+// ProfileAdobeRGB returns an ICC profile of Adobe RGB (1998), a space for
+// print wider than sRGB in the greens and cyans: its primaries, the white
+// of D65 and a gamma of 563/256.
+func ProfileAdobeRGB() []byte {
+	return iccprof.RGBProfile("Adobe RGB (1998)", [2]float64{0.64, 0.33}, [2]float64{0.21, 0.71}, [2]float64{0.15, 0.06}, [2]float64{0.3127, 0.3290}, 563.0/256)
+}
+
 // manageColour converts src to sRGB when its profile asks for it: on
-// ToSRGB, or for an output format that cannot carry the profile. It
-// returns the source to encode and the profile to write.
+// ToSRGB, or for an output format that cannot carry the profile; or into
+// the profile of ToProfile. It returns the source to encode and the
+// profile to write.
 func (m *Image) manageColour(src pipeline.Source, icc []byte, format string) (pipeline.Source, []byte) {
+	if len(m.toProfile) > 0 {
+		target, err := iccprof.Parse(m.toProfile)
+		if err != nil {
+			return src, icc // ToProfile checked it
+		}
+		var from *iccprof.Profile
+		if len(icc) > 0 {
+			if p, err := iccprof.Parse(icc); err == nil {
+				if _, err := iccprof.Between(p, target); err == nil {
+					from = p
+				} else if t := p.ToSRGB(); !t.Identity() && p.Channels() == 3 {
+					src = ops.ToSRGB(src, t)
+				} else if p.Channels() == 1 {
+					if t := p.ToSRGB(); !t.Identity() {
+						src = ops.ToSRGB(src, t)
+					}
+				}
+			}
+		}
+		if t, err := iccprof.Between(from, target); err == nil {
+			src = ops.ToSRGB(src, t)
+		}
+		return src, m.toProfile
+	}
 	if len(icc) == 0 {
 		return src, icc
 	}
@@ -760,6 +821,10 @@ func (m *Image) write(w io.Writer, ext string) (err error) {
 			f.Close()
 			return err
 		}
+	}
+	if def := formatNamed(format); len(m.toProfile) > 0 && def != nil && def.noProfile {
+		f.Close()
+		return fmt.Errorf("goimgtools: ToProfile: %s output cannot carry a colour profile", format)
 	}
 	src, closer, inFormat, meta, err := m.buildFrom(env, true, f, inFormat, false, m.takesYCbCr(format))
 	if err != nil {
