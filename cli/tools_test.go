@@ -484,3 +484,26 @@ func TestCompareSSIM(t *testing.T) {
 		t.Errorf("printed %q, %v; SSIM %.5f", out, err, s)
 	}
 }
+
+// TestPages: several images as the pages of one PDF.
+func TestPages(t *testing.T) {
+	dir := t.TempDir()
+	a, b := filepath.Join(dir, "a.png"), filepath.Join(dir, "b.png")
+	if err := goimgtools.Blank(30, 20, color.White).ToFile(a); err != nil {
+		t.Fatal(err)
+	}
+	if err := goimgtools.Blank(10, 40, color.Black).ToFile(b); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "doc.pdf")
+	if stdout, _, err := cli("pages", a, b, out); err != nil || !strings.Contains(stdout, "2 pages") {
+		t.Fatalf("%s %v", stdout, err)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil || !bytes.Contains(data, []byte("/Count 2")) {
+		t.Errorf("document: %v", err)
+	}
+	if _, _, err := cli("pages", out); err == nil {
+		t.Error("one argument accepted")
+	}
+}

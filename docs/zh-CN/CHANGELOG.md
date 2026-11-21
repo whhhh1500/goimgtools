@@ -6,6 +6,7 @@
 
 ### 新增
 
+- `Pages(images)`（`goimgtools pages 图片... out.pdf`）：多页 PDF，每张图一页、按顺序，各自按自己的配方在写到它那一页时读取，无论多少页内存只占一页；当作图像读取时是第一页。
 - `ToProfile(icc)`（`-profile p3|adobe-rgb|文件.icc`），同 sharp 的 `withIccProfile`：把颜色转换到由原色与色调曲线描述的 RGB 配置并随输出写入；输入有自己的配置时直接从它转换，sRGB 表现不了的颜色得以保留（Display P3 的红转到 Adobe RGB 是 LittleCMS 的 (239, 0, 0)，而不是经 sRGB 裁剪后的 (219, 0, 0)）；在 32³ 个颜色上与 LittleCMS 相差不超过 1 级。`ProfileDisplayP3()` 与 `ProfileAdobeRGB()` 给出这两个色彩空间的配置。
 - ICNS，macOS 的图标文件（`ICNS(ICNSOptions{Sizes})`、`.icns`、`-icns-sizes`）：写出为不超过原图的各标准尺寸的正方形 PNG，图像按比例放入、居中、四周透明（Pillow 会把图拉伸到每个尺寸、一直到 1024），每个类型同时充当一半尺寸的 Retina 图，带目录，同 iconutil 的写法；读取最大的一张，PNG 的或旧式行程编码 RGB 加遮罩的，与 Pillow 逐像素相同。
 - PDF 输出（`PDF(PDFOptions{Quality})`、`.pdf`，`-quality` 得 JPEG 页面）：单页，页面大小按图像分辨率，图像无损存储（Flate，逐行按 PNG 的方式滤波）或存为 JPEG，透明作为软蒙版，保留颜色配置；边读图像边写（软蒙版暂存于工作存储）。pdfium 渲染结果与原图相差不超过 1 级。

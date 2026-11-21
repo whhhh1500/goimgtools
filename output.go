@@ -776,6 +776,9 @@ func (m *Image) write(w io.Writer, ext string) (err error) {
 	if m.err != nil {
 		return m.err
 	}
+	if m.pages != nil {
+		return m.writePages(w, ext)
+	}
 	if m.ctx != nil {
 		if err := m.ctx.Err(); err != nil {
 			return err

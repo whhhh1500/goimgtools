@@ -254,3 +254,33 @@ func placeholder(args []string, stdout, stderr io.Writer) error {
 	}
 	return nil
 }
+
+// pages writes several images as the pages of one PDF document.
+func pages(args []string, stdout, stderr io.Writer) error {
+	fl := flag.NewFlagSet("goimgtools pages", flag.ContinueOnError)
+	fl.SetOutput(stderr)
+	quality := fl.Int("quality", 0, "store each page as a JPEG of this quality, 1-100 (default: without loss)")
+	fl.Usage = func() {
+		fmt.Fprint(stderr, "usage: goimgtools pages [-quality n] image... out.pdf\n\nWrites the images as the pages of one PDF document, in order, each page\nas large as its image at its resolution. Each image is read while its\npage is written.\n\n")
+		fl.PrintDefaults()
+	}
+	if err := fl.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if fl.NArg() < 2 {
+		return errors.New("pages: need at least one image and the PDF to write")
+	}
+	in, out := fl.Args()[:fl.NArg()-1], fl.Arg(fl.NArg()-1)
+	imgs := make([]*goimgtools.Image, len(in))
+	for i, f := range in {
+		imgs[i] = goimgtools.Open(f)
+	}
+	if err := goimgtools.Pages(imgs).PDF(goimgtools.PDFOptions{Quality: *quality}).ToFile(out); err != nil {
+		return fmt.Errorf("pages: %w", err)
+	}
+	fmt.Fprintf(stdout, "%s: %d pages\n", out, len(in))
+	return nil
+}

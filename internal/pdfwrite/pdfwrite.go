@@ -60,8 +60,52 @@ type noClose struct{ pipeline.Source }
 
 func (noClose) Close() error { return nil }
 
-// Encode writes src as a PDF document. src is not closed.
+// Encode writes src as a PDF document of one page. src is not closed.
 func Encode(w io.Writer, src pipeline.Source, o *Options) error {
+	d := NewDocument(w)
+	if err := d.AddPage(src, o); err != nil {
+		return err
+	}
+	return d.Close()
+}
+
+// Document is a PDF document written a page at a time.
+type Document struct {
+	c       *counter
+	offsets []int64
+	kids    []int
+	next    int // the next object's number
+}
+
+// The catalog and the tree of pages are objects 1 and 2; the tree is
+// written last, when its pages are known.
+const (
+	catalog = 1
+	pages   = 2
+)
+
+// NewDocument starts a document on w.
+func NewDocument(w io.Writer) *Document {
+	d := &Document{c: &counter{w: bufio.NewWriterSize(w, 64<<10)}, next: 3}
+	d.c.printf("%%PDF-1.4\n%%\xe2\xe3\xcf\xd3\n")
+	d.obj(catalog)
+	d.c.printf("<< /Type /Catalog /Pages %d 0 R >>\nendobj\n", pages)
+	return d
+}
+
+func (d *Document) obj(n int) {
+	for len(d.offsets) < n {
+		d.offsets = append(d.offsets, 0)
+	}
+	d.offsets[n-1] = d.c.n
+	d.c.printf("%d 0 obj\n", n)
+}
+
+func (d *Document) alloc() int { d.next++; return d.next - 1 }
+
+// AddPage writes a page of src, as large as it is at its resolution. src
+// is not closed.
+func (d *Document) AddPage(src pipeline.Source, o *Options) error {
 	if o == nil {
 		o = &Options{}
 	}
@@ -85,41 +129,26 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 		return err
 	}
 	defer env.Budget.Release(zlibs << 20)
-	c := &counter{w: bufio.NewWriterSize(w, 64<<10)}
-	var offsets []int64
-	obj := func(n int) {
-		for len(offsets) < n {
-			offsets = append(offsets, 0)
-		}
-		offsets[n-1] = c.n
-		c.printf("%d 0 obj\n", n)
+	c := d.c
+	page, contents, picture, pictureLen := d.alloc(), d.alloc(), d.alloc(), d.alloc()
+	var mask, maskLen, profile int
+	if alpha {
+		mask, maskLen = d.alloc(), d.alloc()
 	}
-	const (
-		catalog = 1 + iota
-		pages
-		page
-		contents
-		picture
-		pictureLen
-		mask
-		maskLen
-		profile
-	)
+	if len(o.ICC) > 0 {
+		profile = d.alloc()
+	}
+	d.kids = append(d.kids, page)
 	dpi := o.Density
 	if !(dpi > 0) {
 		dpi = 72
 	}
 	pw, ph := float64(b.Dx())*72/dpi, float64(b.Dy())*72/dpi
-	c.printf("%%PDF-1.4\n%%\xe2\xe3\xcf\xd3\n")
-	obj(catalog)
-	c.printf("<< /Type /Catalog /Pages %d 0 R >>\nendobj\n", pages)
-	obj(pages)
-	c.printf("<< /Type /Pages /Kids [%d 0 R] /Count 1 >>\nendobj\n", page)
-	obj(page)
+	d.obj(page)
 	c.printf("<< /Type /Page /Parent %d 0 R /MediaBox [0 0 %s %s] /Resources << /XObject << /Im0 %d 0 R >> /ProcSet [/PDF /ImageC /ImageB] >> /Contents %d 0 R >>\nendobj\n",
 		pages, num(pw), num(ph), picture, contents)
 	draw := fmt.Sprintf("q %s 0 0 %s 0 0 cm /Im0 Do Q\n", num(pw), num(ph))
-	obj(contents)
+	d.obj(contents)
 	c.printf("<< /Length %d >>\nstream\n%sendstream\nendobj\n", len(draw), draw)
 	channels := 3
 	space := "/DeviceRGB"
@@ -127,7 +156,7 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 		channels, space = 1, "/DeviceGray"
 	}
 	if len(o.ICC) > 0 {
-		obj(profile)
+		d.obj(profile)
 		var zb bufferWriter
 		zw := zlib.NewWriter(&zb)
 		zw.Write(o.ICC)
@@ -138,7 +167,7 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 		space = fmt.Sprintf("[/ICCBased %d 0 R]", profile)
 	}
 	// The picture.
-	obj(picture)
+	d.obj(picture)
 	c.printf("<< /Type /XObject /Subtype /Image /Width %d /Height %d /ColorSpace %s /BitsPerComponent 8 ", b.Dx(), b.Dy(), space)
 	if o.Quality > 0 {
 		c.printf("/Filter /DCTDecode ")
@@ -174,13 +203,13 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 	}
 	length := c.n - start
 	c.printf("\nendstream\nendobj\n")
-	obj(pictureLen)
+	d.obj(pictureLen)
 	c.printf("%d\nendobj\n", length)
 	if alpha {
 		if err := maskZ.Close(); err != nil {
 			return err
 		}
-		obj(mask)
+		d.obj(mask)
 		c.printf("<< /Type /XObject /Subtype /Image /Width %d /Height %d /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors 1 /BitsPerComponent 8 /Columns %d >> /Length %d 0 R >>\nstream\n",
 			b.Dx(), b.Dy(), b.Dx(), maskLen)
 		start := c.n
@@ -189,20 +218,38 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 		}
 		length := c.n - start
 		c.printf("\nendstream\nendobj\n")
-		obj(maskLen)
+		d.obj(maskLen)
 		c.printf("%d\nendobj\n", length)
 	}
+	return c.err
+}
+
+// Close writes the tree of pages and the cross-reference table.
+func (d *Document) Close() error {
+	c := d.c
+	if len(d.kids) == 0 {
+		return errors.New("goimgtools: pdf: a document of no page")
+	}
+	d.obj(pages)
+	c.printf("<< /Type /Pages /Kids [")
+	for i, k := range d.kids {
+		if i > 0 {
+			c.printf(" ")
+		}
+		c.printf("%d 0 R", k)
+	}
+	c.printf("] /Count %d >>\nendobj\n", len(d.kids))
 	// The cross-reference table: every object, in order.
 	xref := c.n
-	c.printf("xref\n0 %d\n0000000000 65535 f \n", len(offsets)+1)
-	for _, off := range offsets {
+	c.printf("xref\n0 %d\n0000000000 65535 f \n", len(d.offsets)+1)
+	for _, off := range d.offsets {
 		if off == 0 {
 			c.printf("0000000000 65535 f \n")
 			continue
 		}
 		c.printf("%010d 00000 n \n", off)
 	}
-	c.printf("trailer\n<< /Size %d /Root %d 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(offsets)+1, catalog, xref)
+	c.printf("trailer\n<< /Size %d /Root %d 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(d.offsets)+1, catalog, xref)
 	if c.err != nil {
 		return c.err
 	}

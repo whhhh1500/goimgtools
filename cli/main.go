@@ -54,6 +54,7 @@ const usage = `usage:
                                         finding duplicates (-similar bits)
   goimgtools placeholder file...        the BlurHash and ThumbHash of each
                                         image, blurred placeholders for pages
+  goimgtools pages image... out.pdf     the images as the pages of one PDF
   goimgtools exif file...               camera, time and place from the EXIF
                                         block
   goimgtools readmark -key K file...    the invisible mark (-mark) of each
@@ -275,6 +276,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 			return hash(args[1:], stdout, stderr)
 		case "placeholder":
 			return placeholder(args[1:], stdout, stderr)
+		case "pages":
+			return pages(args[1:], stdout, stderr)
 		case "exif":
 			return exifInfo(args[1:], stdout, stderr)
 		case "readmark":
