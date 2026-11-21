@@ -123,15 +123,27 @@ func (r *renderer) paint(dst []uint8, it *item, rows image.Rectangle, y0 int) {
 	w := r.sc.w
 	cov := r.coverage(it.path, it.dx, it.dy, it.clip, rows)
 	rw := rows.Dx()
+	sh := it.paint
+	solid := sh.img == nil && sh.tile == nil && sh.grad == nil // one colour: asked once
 	for y := rows.Min.Y; y < rows.Max.Y; y++ {
 		row := dst[4*(y-y0)*w:]
 		cr := cov[(y-rows.Min.Y)*rw:][:rw]
+		if solid {
+			s := sh.solid
+			for i, c := range cr {
+				if c != 0 {
+					x := rows.Min.X + i
+					over(row[4*x:4*x+4:4*x+4], s, uint32(c))
+				}
+			}
+			continue
+		}
 		for i, c := range cr {
 			if c == 0 {
 				continue
 			}
 			x := rows.Min.X + i
-			s := it.paint.at(x, y)
+			s := sh.at(x, y)
 			over(row[4*x:4*x+4:4*x+4], s, uint32(c))
 		}
 	}

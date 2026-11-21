@@ -21,6 +21,7 @@ import (
 	"cmp"
 	"math"
 	"slices"
+	"sync"
 )
 
 // one is a pixel in the units of the coordinates.
@@ -41,6 +42,43 @@ type Path struct {
 	// EvenOdd, with Union, covers what an odd number of contours wind
 	// around, rather than what any number but none does.
 	EvenOdd bool
+	// Its edges by their tops, made when the path is first rendered, for
+	// a row to look only at those that cross it: each the contour and the
+	// edge's place in it, contour<<32 | place (8 bytes an edge), which is
+	// also their order in the path.
+	byTopOnce  sync.Once
+	byTop      []uint64
+	byTopCount int // the contours then
+}
+
+// edgeEnds are the ends of edge e (contour<<32 | place), as stored.
+func (p *Path) edgeEnds(e uint64) (a, b pt) {
+	ct := p.contours[e>>32]
+	i := int(e & 0xffffffff)
+	return ct[i], ct[(i+1)%len(ct)]
+}
+
+// edgeOrder is the edges that are not level, in the order of their tops
+// (and, for equal tops, theirs in the path).
+func (p *Path) edgeOrder() []uint64 {
+	build := func() []uint64 {
+		var order []uint64
+		for k, ct := range p.contours {
+			for i := range ct {
+				if ct[i].y != ct[(i+1)%len(ct)].y {
+					order = append(order, uint64(k)<<32|uint64(i))
+				}
+			}
+		}
+		topOf := func(e uint64) int64 { a, b := p.edgeEnds(e); return min(a.y, b.y) }
+		slices.SortStableFunc(order, func(a, b uint64) int { return cmp.Compare(topOf(a), topOf(b)) })
+		return order
+	}
+	p.byTopOnce.Do(func() { p.byTop, p.byTopCount = build(), len(p.contours) })
+	if p.byTopCount != len(p.contours) {
+		return build() // contours added after it was first rendered
+	}
+	return p.byTop
 }
 
 // Add adds a closed contour through the points (x, y pairs, in pixels).
@@ -127,6 +165,7 @@ type Cells struct {
 	edges       []edge
 	events      []int64
 	act         []int32
+	rows        []uint64 // the edges that cross the row, in their order in the path
 }
 
 // Render writes the coverage of the path, 0 to 255, of the pixels of rows
@@ -154,24 +193,46 @@ func (p *Path) render(dst []uint8, stride, x0, y0, w, h int, ox, oy int64, c *Ce
 	}
 	cover, area := c.cover[:w], c.area[:w]
 	lo, hi := int64(x0)*one, int64(x0+w)*one
+	// The edges crossing the row, kept going down: those whose top is
+	// above its bottom come in, those whose bottom is above its top go; in
+	// their order in the path, as they were added up before.
+	order := p.edgeOrder()
+	act, next := c.rows[:0], 0
 	for r := 0; r < h; r++ {
 		y := int64(y0 + r)
 		top, bot := y*one, (y+1)*one
 		if bot <= p.minY+oy || top >= p.maxY+oy || hi <= p.minX+ox || lo > p.maxX+ox {
 			continue
 		}
+		for next < len(order) {
+			e := order[next]
+			a, b := p.edgeEnds(e)
+			if min(a.y, b.y)+oy >= bot {
+				break
+			}
+			next++
+			if max(a.y, b.y)+oy <= top {
+				continue // above this row, and so all below it
+			}
+			at, _ := slices.BinarySearch(act, e)
+			act = slices.Insert(act, at, e)
+		}
+		kept := act[:0]
+		for _, e := range act {
+			if a, b := p.edgeEnds(e); max(a.y, b.y)+oy > top {
+				kept = append(kept, e)
+			}
+		}
+		act = kept
 		clear(cover)
 		clear(area)
 		var left int64 // the cover of what lies left of x0
 		if p.Union {
-			left = p.unionRow(cover, area, int64(x0), lo, hi, top, bot, ox, oy, c)
+			left = p.unionRow(cover, area, int64(x0), lo, hi, top, bot, ox, oy, act, c)
 		} else {
-			for k, ct := range p.contours {
-				if p.spans[k][1]+oy <= top || p.spans[k][0]+oy >= bot {
-					continue
-				}
-				for i := range ct {
-					a, b := ct[i], ct[(i+1)%len(ct)]
+			for _, e := range act {
+				{
+					a, b := p.edgeEnds(e)
 					a.x, a.y, b.x, b.y = a.x+ox, a.y+oy, b.x+ox, b.y+oy
 					if a.y == b.y {
 						continue
@@ -208,6 +269,7 @@ func (p *Path) render(dst []uint8, stride, x0, y0, w, h int, ox, oy int64, c *Ce
 			out[x] = uint8(min(255, v>>9))
 		}
 	}
+	c.rows = act
 }
 
 // row adds an edge piece within one row of pixels, from (x1, fy1) to (x2,
@@ -276,14 +338,11 @@ const (
 // unionRow adds the boundary of the union of the contours, moved by (ox,
 // oy), within the row from top to bot to the cells, and returns the cover
 // of what lies left of the columns.
-func (p *Path) unionRow(cover, area []int64, x0, lo, hi, top, bot, ox, oy int64, c *Cells) (left int64) {
+func (p *Path) unionRow(cover, area []int64, x0, lo, hi, top, bot, ox, oy int64, act []uint64, c *Cells) (left int64) {
 	es, ev := c.edges[:0], c.events[:0]
-	for k, ct := range p.contours {
-		if p.spans[k][1]+oy <= top || p.spans[k][0]+oy >= bot {
-			continue
-		}
-		for i := range ct {
-			a, b := ct[i], ct[(i+1)%len(ct)]
+	for _, k := range act {
+		{
+			a, b := p.edgeEnds(k)
 			a.x, a.y, b.x, b.y = a.x+ox, a.y+oy, b.x+ox, b.y+oy
 			e := edge{ax: a.x, ay: a.y, bx: b.x, by: b.y, dir: 1}
 			if a.y > b.y {
