@@ -141,9 +141,14 @@ func decode(in goimgtools.Input, env *pipeline.Env) (pipeline.Source, error) {
 	if cfg.Width <= 0 || cfg.Height <= 0 {
 		return nil, fmt.Errorf("%w: avif: the image has no pixels", goimgtools.ErrFormat)
 	}
-	// The pixels, 8 bytes each at most (more than 8 bits), are held whole,
-	// and once more while they are turned upright.
-	need := int64(cfg.Width) * int64(cfg.Height) * 8
+	// The decoded pixels: 4 bytes each, 8 above 8 bits. (While the codec
+	// works it holds its planes, and while the image is turned upright a
+	// second copy; neither is counted.)
+	bpp := int64(4)
+	if cfg.Depth > 8 {
+		bpp = 8
+	}
+	need := int64(cfg.Width) * int64(cfg.Height) * bpp
 	if err := env.Budget.Reserve(need, "avif image"); err != nil {
 		return nil, err
 	}

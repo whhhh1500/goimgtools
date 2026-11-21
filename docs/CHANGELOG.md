@@ -26,6 +26,9 @@ English | [中文](zh-CN/CHANGELOG.md)
 - PNG level 9: the search for each row's filter looks at 256 earlier positions for a match instead of 16 (level 8 is unchanged): 17 screenshots, photographs and game artwork 0.05% smaller, in 15% more time; 0.21% larger than ECT `-9` instead of 0.26%.
 - Colour reduction (GIF, PNG with a palette) shares its k-means passes out with `Threads(4)` and above; the result is the same. The 24 Kodak photographs to GIF: 2.0s on six threads against 3.0s; a 6000×4000 JPEG shrunk to 1536 and written as GIF, 0.38s against 0.56s.
 
+### Fixed
+
+- HEIC and AVIF images were counted in the memory limit at 8 bytes a pixel whatever their depth, so that a phone photograph of 12 megapixels could not be read under the default limit of 64MB ("heic image needs 97542144 bytes"); 8-bit images are counted at the 4 bytes a pixel they take (a 12-megapixel HEIC now converts to JPEG, PNG or WebP at the default limit, the process peaking at 103MB with the decoder's own planes).
 ## 0.2.0 (2026-11-20)
 
 ### Upgrading from 0.1.0

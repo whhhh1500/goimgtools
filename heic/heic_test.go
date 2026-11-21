@@ -221,6 +221,12 @@ func TestLarge(t *testing.T) {
 			t.Errorf("%d threads, limit %d: other bytes", c.threads, c.limit)
 		}
 	}
+	// A photograph of 9 megapixels (8 bits) is read under the default
+	// memory limit, its pixels counted at 4 bytes each.
+	nine := must(goimgtools.FromBytes(photo).Resize(3000, 3000, goimgtools.ResizeOptions{Fit: goimgtools.FitFill}).ToFormat("heic", heic.Options{Effort: 1}).ToBytes())
+	if _, err := goimgtools.FromBytes(nine).JPEG().ToBytes(); err != nil {
+		t.Errorf("9 megapixels under the default limit: %v", err)
+	}
 	// Transparency, an odd size, without loss and at 4:4:4.
 	alpha := must(goimgtools.FromBytes(big).Resize(2599, 0).Rotate(0.5).PNG().ToBytes())
 	asrc := toPNG(t, goimgtools.FromBytes(alpha))

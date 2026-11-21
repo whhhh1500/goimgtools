@@ -50,6 +50,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"image/color"
 	"io"
 
 	gheic "github.com/gen2brain/h265/heic"
@@ -199,7 +200,15 @@ func decode(in goimgtools.Input, env *pipeline.Env) (pipeline.Source, error) {
 	if cfg.Width <= 0 || cfg.Height <= 0 {
 		return nil, fmt.Errorf("%w: heic: the image has no pixels", goimgtools.ErrFormat)
 	}
-	need := int64(cfg.Width) * int64(cfg.Height) * 8
+	// The decoded pixels: 4 bytes each, 8 above 8 bits. (A 12-megapixel
+	// photograph takes 48MB; while the decoder works and turns the image
+	// upright it holds its planes and a second copy besides, which are not
+	// counted.)
+	bpp := int64(4)
+	if cfg.ColorModel == color.NRGBA64Model || cfg.ColorModel == color.RGBA64Model {
+		bpp = 8
+	}
+	need := int64(cfg.Width) * int64(cfg.Height) * bpp
 	if err := env.Budget.Reserve(need, "heic image"); err != nil {
 		return nil, err
 	}
