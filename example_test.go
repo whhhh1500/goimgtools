@@ -488,3 +488,42 @@ func ExampleImage_Curves() {
 	fmt.Println(img.Bounds().Size())
 	// Output: (64,48)
 }
+
+// Shapes with smooth edges, one over the other.
+func ExampleImage_Draw() {
+	img, err := goimgtools.Blank(200, 120, color.White).Draw(
+		goimgtools.Rect(10, 10, 120, 60).Rounded(8).Fill(color.NRGBA{255, 204, 0, 255}).Stroke(color.Black, 2),
+		goimgtools.Circle(150, 70, 40).Fill(color.NRGBA{40, 90, 220, 160}),
+		goimgtools.Line(10, 110, 190, 90).Stroke(color.NRGBA{200, 30, 30, 255}, 3),
+	).ToImage()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	r, g, b, _ := img.At(40, 40).RGBA()
+	fmt.Println(r>>8, g>>8, b>>8)
+	// Output: 255 204 0
+}
+
+// Thumbnails in a grid, three to a row, on white.
+func ExampleJoin() {
+	var thumbs []*goimgtools.Image
+	for i := 0; i < 5; i++ {
+		thumbs = append(thumbs, goimgtools.FromBytes(picture(640, 480)).Resize(160, 160))
+	}
+	sheet := goimgtools.Join(thumbs, goimgtools.JoinOptions{Across: 3, Gap: 8, Background: color.White, Align: goimgtools.Center})
+	w, h, err := sheet.OutputSize()
+	fmt.Println(w, h, err)
+	// Output: 496 248 <nil>
+}
+
+// The smallest JPEG that still measures an SSIM of 0.98 against the image.
+func ExampleImage_MinSSIM() {
+	out, err := goimgtools.FromBytes(picture(320, 240)).JPEG().MinSSIM(0.98).ToBytes()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println(len(out) > 0)
+	// Output: true
+}

@@ -54,3 +54,25 @@ func ExampleCompare() {
 	// false true true <nil>
 	// identical <nil>
 }
+
+// Placeholders a page shows while the image loads.
+func ExampleBlurHash() {
+	img := goimgtools.FromBytes(picture(640, 480))
+	b, err := inspect.BlurHash(img, 4, 3)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	th, _ := inspect.ThumbHash(img)
+	fmt.Println(len(b), len(th) >= 5)
+	// Output: 28 true
+}
+
+// How alike a JPEG looks to its original.
+func ExampleSSIM() {
+	orig := picture(160, 120)
+	jpeg, _ := goimgtools.FromBytes(orig).JPEG(goimgtools.JPEGOptions{Quality: 90}).ToBytes()
+	s, err := inspect.SSIM(goimgtools.FromBytes(orig), goimgtools.FromBytes(jpeg))
+	fmt.Println(s > 0.98, err)
+	// Output: true <nil>
+}
