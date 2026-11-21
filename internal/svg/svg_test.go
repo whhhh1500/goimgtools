@@ -94,6 +94,9 @@ func FuzzOpen(f *testing.F) {
 	f.Add([]byte(`<svg viewBox="0 0 1 1"><use href="#a"/><g id="a"><use href="#a"/></g></svg>`))
 	f.Add([]byte(`<svg width="24" height="16"><filter id="f"><feTurbulence baseFrequency=".2" numOctaves="2" stitchTiles="stitch" result="t"/><feMorphology radius="1" operator="dilate" in="SourceGraphic"/><feConvolveMatrix order="3" kernelMatrix="0 1 0 1 -4 1 0 1 0" edgeMode="wrap"/><feDisplacementMap in2="t" scale="4" xChannelSelector="R"/><feTile x="2" y="2" width="5" height="5"/><feDiffuseLighting in="SourceAlpha" surfaceScale="3"><fePointLight x="4" y="4" z="9"/></feDiffuseLighting><feSpecularLighting specularExponent="8"><feSpotLight x="1" y="1" z="5" pointsAtX="9" limitingConeAngle="40"/></feSpecularLighting><feImage href="#c" x="1" width="9"/></filter><circle id="c" cx="8" cy="8" r="5" filter="url(#f)"/></svg>`))
 	f.Add([]byte(`<svg width="40" height="20" font-size="8" letter-spacing="1"><path id="p" d="M0 15 Q20 0 40 15"/><text text-decoration="underline line-through overline"><textPath href="#p" startOffset="10%">ab c</textPath></text><text x="1" y="9" rotate="10 -20" textLength="30" lengthAdjust="spacingAndGlyphs" dominant-baseline="central">x<tspan baseline-shift="super" word-spacing="2">y z</tspan></text></svg>`))
+	// Text shaped by its font's tables: clusters moved, turned, coloured
+	// apart, stretched; right to left.
+	f.Add([]byte(`<svg width="60" height="30" font-size="12" font-family="'` + testFont + `'"><text x="1" y="12" dx="0 2 2" rotate="0 5" textLength="50">नमस्ते <tspan fill="red">क्ष</tspan>ि ◌ा</text><text x="58" y="26" direction="rtl" letter-spacing="1">abc אב (क) ‏١٢</text></svg>`))
 	f.Fuzz(func(t *testing.T, data []byte) {
 		env := pipeline.NewEnv(16<<20, "")
 		s, err := Open(data, env)
