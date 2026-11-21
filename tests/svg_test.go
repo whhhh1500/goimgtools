@@ -33,7 +33,7 @@ func onWhite(m image.Image) []int {
 // them (sharp 0.35.5's PNGs): differences only along edges, where the
 // anti-aliasing differs.
 func TestSVGAsLibrsvg(t *testing.T) {
-	for _, name := range []string{"shapes", "paths", "gradients", "groups", "mask", "pattern", "marker", "filter", "filter2"} {
+	for _, name := range []string{"shapes", "paths", "gradients", "groups", "mask", "pattern", "marker", "filter", "filter2", "text"} {
 		doc, err := os.ReadFile(filepath.Join("testdata", "sharp", "svg-"+name+".svg"))
 		if err != nil {
 			t.Fatal(err)

@@ -377,6 +377,13 @@ type style struct {
 	visible                    bool
 	fontSize                   float64
 	strokeFirst                bool // paint-order: the stroke before the fill
+	// Of text: font-family, -weight and -style, text-anchor,
+	// letter-spacing, word-spacing and dominant-baseline.
+	fontFamily       string
+	bold, italic     bool
+	anchor           int
+	letterSp, wordSp float64
+	baseline         int
 	// Not inherited:
 	opacity          float64
 	display          bool
@@ -420,6 +427,50 @@ func computeStyle(n *node, parent style, vp viewport) style {
 	if v, ok := get("font-size"); ok {
 		if f, ok := parseLength(v, parent.fontSize, vp, axisDiag); ok && f > 0 {
 			s.fontSize = f
+		}
+	}
+	if v, ok := get("font-family"); ok {
+		s.fontFamily = v
+	}
+	if v, ok := get("font-weight"); ok {
+		switch strings.TrimSpace(v) {
+		case "bold", "bolder", "600", "700", "800", "900":
+			s.bold = true
+		case "normal", "lighter", "100", "200", "300", "400", "500":
+			s.bold = false
+		}
+	}
+	if v, ok := get("font-style"); ok {
+		switch strings.TrimSpace(v) {
+		case "italic", "oblique":
+			s.italic = true
+		case "normal":
+			s.italic = false
+		}
+	}
+	if v, ok := get("text-anchor"); ok {
+		switch strings.TrimSpace(v) {
+		case "middle":
+			s.anchor = anchorMiddle
+		case "end":
+			s.anchor = anchorEnd
+		case "start":
+			s.anchor = anchorStart
+		}
+	}
+	if v, ok := get("letter-spacing"); ok {
+		if f, ok := spacing(v, s, vp); ok {
+			s.letterSp = f
+		}
+	}
+	if v, ok := get("word-spacing"); ok {
+		if f, ok := spacing(v, s, vp); ok {
+			s.wordSp = f
+		}
+	}
+	if v, ok := get("dominant-baseline"); ok {
+		if bl, ok := baselineOf(v); ok {
+			s.baseline = bl
 		}
 	}
 	if v, ok := get("color"); ok {

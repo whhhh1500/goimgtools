@@ -1,0 +1,12 @@
+<svg width="360" height="170" xmlns="http://www.w3.org/2000/svg" font-family="Arial" font-size="20">
+  <g font-weight="bold" fill="navy">
+    <text x="10" y="30">Bold from the group</text>
+  </g>
+  <text x="10" y="65" letter-spacing="4">Spaced</text>
+  <text x="140" y="65" text-decoration="underline">Under</text>
+  <text x="230" y="65" text-decoration="underline overline" fill="crimson">Both</text>
+  <text x="10" y="105">H<tspan baseline-shift="super">2</tspan>O x<tspan baseline-shift="sub">i</tspan> y<tspan baseline-shift="6">up</tspan></text>
+  <text x="200" y="105" text-decoration="overline">Over</text>
+  <text x="10" y="150" text-anchor="start" fill="teal">plain</text>
+  <text x="120" y="150" dominant-baseline="central" font-style="italic">central</text>
+</svg>

@@ -125,7 +125,7 @@ func parse(data []byte, reserve func(int64) error) (*node, error) {
 					top.text += string(t)
 				}
 				// In text, character data keeps its place among the tspans.
-				if top.name == "text" || top.name == "tspan" || top.name == "a" {
+				if top.name == "text" || top.name == "tspan" || top.name == "a" || top.name == "textPath" {
 					count++
 					top.children = append(top.children, &node{name: "#text", text: string(t), parent: top, attrs: map[string]string{}})
 				}
