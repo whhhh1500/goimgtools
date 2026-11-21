@@ -59,6 +59,8 @@ func decodeAny(t *testing.T, what string, b []byte) image.Image {
 		m, err = refQOI(b)
 	case bytes.HasPrefix(b, []byte("P5")), bytes.HasPrefix(b, []byte("P6")):
 		m, err = refPNM(b)
+	case bytes.HasSuffix(b, []byte("TRUEVISION-XFILE.\x00")):
+		m, err = refTGA(b)
 	default:
 		m, err = tiff.Decode(bytes.NewReader(b))
 	}
@@ -81,6 +83,7 @@ var outputs = map[string]func(*Image) *Image{
 	"bmp":              func(m *Image) *Image { return m.BMP() },
 	"qoi":              func(m *Image) *Image { return m.QOI() },
 	"pnm":              func(m *Image) *Image { return m.PNM() },
+	"tga":              func(m *Image) *Image { return m.TGA() },
 	"tiff":             func(m *Image) *Image { return m.TIFF() },
 	"tiff deflate":     func(m *Image) *Image { return m.TIFF(TIFFOptions{Compression: TIFFDeflate}) },
 	"webp":             func(m *Image) *Image { return m.WebP() },

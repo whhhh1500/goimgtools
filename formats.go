@@ -22,6 +22,7 @@ import (
 	"github.com/whhhh1500/goimgtools/internal/qoistream"
 	"github.com/whhhh1500/goimgtools/internal/quant"
 	"github.com/whhhh1500/goimgtools/internal/resize"
+	"github.com/whhhh1500/goimgtools/internal/tgastream"
 	"github.com/whhhh1500/goimgtools/internal/tiffstream"
 	"github.com/whhhh1500/goimgtools/internal/vp8enc"
 	"github.com/whhhh1500/goimgtools/internal/vp8lenc"
@@ -34,7 +35,7 @@ type Format struct {
 	// Name is what the format is called everywhere: in Info.Format, in
 	// ToFormat, in error messages, on the command line. The formats of
 	// this package are "jpeg", "png", "webp", "gif", "bmp", "tiff",
-	// "ico", "psd" (read only), "qoi" and "pnm" (Netpbm).
+	// "ico", "psd" (read only), "qoi", "pnm" (Netpbm) and "tga".
 	Name string
 	// Extensions are the file extensions of the format, in lower case and
 	// with the dot. The first is the one to give a new file.
@@ -415,6 +416,18 @@ var builtin = []*formatDef{
 			return pnmstream.Encode(w, ops.Flatten(src, color.Black))
 		},
 		check: noOptions("pnm"),
+	}, {
+		// Last: a TGA file has no signature, only a header that makes sense.
+		Format:    Format{"tga", []string{".tga"}},
+		noProfile: true,
+		magic:     tgastream.Match,
+		open: func(in *input, env *pipeline.Env) (pipeline.Source, error) {
+			return in.openAt(env, tgastream.Open)
+		},
+		encode: func(w io.Writer, src pipeline.Source, o EncodeOptions) error {
+			return tgastream.Encode(w, src)
+		},
+		check: noOptions("tga"),
 	},
 }
 

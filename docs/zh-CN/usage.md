@@ -122,6 +122,7 @@ err := goimgtools.Open("in.jpg").
 | `GIF(GIFOptions{Colors, NoDither, FixedPalette})` | 最多 256 色，按图像内容选取；`FixedPalette` 改用标准库的固定调色板 |
 | `BMP()` | |
 | `QOI()` | QOI（"Quite OK Image"）：无损、8 位、RGB 或 RGBA，读写速度接近直接复制像素；文件与参考编码器相同（与 Pillow 相同，只是颜色空间标为 sRGB） |
+| `TGA()` | Truevision TGA（Targa），游戏贴图常用：RLE 压缩、自上而下；灰度、调色板（至多 256 色）或真彩（不透明 24 位，带透明 32 位）；与 Pillow 以 compression `"tga_rle"`、orientation 1 写出的文件逐字节相同 |
 | `PNM()` | Netpbm，同 Pillow 的写法：灰度图写 PGM（P5），其余写 PPM（P6），图像有 16 位时每值 16 位；透明部分铺黑底（同 JPEG） |
 | `ICO(ICOOptions{Sizes})` | 图标（favicon.ico）：图像原样（至多 256×256），或给 `Sizes`（如 `[]int{16, 32, 48, 256}`），把图像按比例缩放到每个尺寸以内（Lanczos3，同 Pillow），每个尺寸存为带透明的 PNG。读取 ICO 或 CUR 时取其中最大的一张 |
 | `TIFF(TIFFOptions{Compression, Predictor, Quality})` | 不压缩、`TIFFDeflate`、`TIFFLZW`（libtiff 的写法）或 `TIFFJPEG`（有损，同 libtiff 为 libvips 与 sharp 写的方式，sharp 的 TIFF 默认即 JPEG：`Quality` 低于 90 时 YCbCr 4:2:0，90 起 4:4:4，灰度图存灰度；`Quality` 0 即 80；不能带透明）；`Predictor` 把每个样本存为与左侧像素之差（水平差分），照片压缩效果好得多（即 sharp 的 `predictor: "horizontal"`；一张 2400 万像素照片：LZW 82 → 52MB，Deflate 67 → 45MB）。像素数据超过 1MB 的压缩图像按约 1MB 一条分条带写入 |

@@ -178,6 +178,14 @@ func (m *Image) QOI() *Image { m.format, m.options = "qoi", nil; return m }
 // also PBM, PAM (with transparency) and PFM, in text or binary.
 func (m *Image) PNM() *Image { m.format, m.options = "pnm", nil; return m }
 
+// TGA selects Truevision TGA (Targa) output, the format of game textures:
+// run-length compressed, top row first, grey for a grey image,
+// colour-mapped for one of at most 256 colours, otherwise true colour, 24
+// bits when the image is known to be opaque and 32 with alpha otherwise;
+// as Pillow writes it with compression "tga_rle" and orientation 1, to the
+// byte.
+func (m *Image) TGA() *Image { m.format, m.options = "tga", nil; return m }
+
 // TIFFCompression is how TIFF output is compressed.
 type TIFFCompression int
 

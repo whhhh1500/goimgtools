@@ -6,6 +6,7 @@
 
 ### 新增
 
+- TGA（Truevision Targa，`TGA()`、`.tga`），游戏贴图常用：读取调色板、15 到 32 位真彩与灰度图，未压缩或 RLE 压缩（允许一个包跨到下一行），任意角起始，遵从 TGA 2.0 扩展区的 alpha 属性（无 alpha 或预乘）；16 位像素只在头部给了 1 个属性位时把该位当不透明度，置位为不透明（Pillow 不看头部，置位即当透明）。写出为 RLE 压缩、自上而下，与 Pillow 以 compression `"tga_rle"`、orientation 1 写出的文件逐字节相同。
 - QOI（"Quite OK Image"，`QOI()`、`.qoi`）：无损 RGB 或 RGBA，流式读写，文件与参考编码器和 Pillow 逐字节相同（只是颜色空间标为 sRGB，Pillow 需指定才这样标）。
 - Netpbm（`PNM()`、`.ppm`、`.pgm`、`.pbm`、`.pnm`）：读取文本或二进制的 PBM、PGM、PPM，以及 PAM（带透明）与 PFM，任意最大值按 Pillow 的方式缩放（超过 255 时缩放到 16 位，Pillow 对彩色只留 8 位）；写出灰度图为 PGM、其余为 PPM，与 Pillow 逐字节相同，图像有 16 位时写 16 位；透明部分铺黑底（同 JPEG）。
 - 读取 Photoshop 文件 PSD 与 PSB（`.psd`、`.psb`）：Photoshop 随图层一起保存的合成图（不读各图层），各种颜色模式（位图、灰度、索引、RGB、CMYK 按其配置文件转换（同其他 CMYK 文件）、多通道与双色调按灰度、Lab 转 sRGB），1、8、16、32 位（32 位文档是线性光，按 sRGB 曲线编码），不压缩或 PackBits 压缩，带颜色配置文件、EXIF、XMP 与分辨率，从文件逐条读取。透明通道按 psd-tools 的规则找（作为存储选区的第四通道不当透明），并去掉 Photoshop 垫在下面的白底。Pillow 只读 8 位 PSD，把 RGB 文件的任何第四通道都当透明、不去白底，且读带额外通道（带专色的 CMYK）的 PackBits 合成图时位置算错；在 psd-tools 测试用的 82 个它能读的文件上，除这几处差异外像素与 Pillow 相同。专色通道不叠加到合成图上。
