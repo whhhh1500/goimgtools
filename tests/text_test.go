@@ -239,8 +239,21 @@ func TestTextMemory(t *testing.T) {
 // installed, that Chinese text is drawn with it by default.
 func TestFontsOfThisSystem(t *testing.T) {
 	def := DefaultFonts()
-	if len(def) == 0 || def[len(def)-1].Name != "Go Regular" || def[len(def)-1].File != "" {
-		t.Fatalf("DefaultFonts = %+v; the built-in font must be last", def)
+	// The built-in font is among them, after the Chinese ones and before
+	// those of symbols and other scripts.
+	builtIn := -1
+	for i, f := range def {
+		if f.Name == "Go Regular" && f.File == "" {
+			builtIn = i
+		}
+	}
+	if builtIn < 0 {
+		t.Fatalf("DefaultFonts = %+v; the built-in font must be among them", def)
+	}
+	for _, f := range def[:builtIn] {
+		if !f.Chinese {
+			t.Errorf("%s comes before the built-in font, but is not a Chinese font", f.Name)
+		}
 	}
 	t.Logf("default fonts: %+v", def)
 	sys := SystemFonts()
@@ -256,7 +269,10 @@ func TestFontsOfThisSystem(t *testing.T) {
 		t.Skip("no Chinese font on this system")
 	}
 	// Each default with a file is also in the system list, and can be asked for by name.
-	for _, f := range def[:len(def)-1] {
+	for _, f := range def {
+		if f.File == "" {
+			continue
+		}
 		found := false
 		for _, s := range sys {
 			found = found || s.File == f.File
