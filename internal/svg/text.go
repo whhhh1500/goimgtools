@@ -11,6 +11,7 @@ import (
 	"golang.org/x/image/font/sfnt"
 	"golang.org/x/image/math/fixed"
 
+	"github.com/whhhh1500/goimgtools/internal/bidi"
 	"github.com/whhhh1500/goimgtools/internal/textsrc"
 	"github.com/whhhh1500/goimgtools/internal/trig"
 )
@@ -144,6 +145,53 @@ func (b *builder) fonts(family, face string) *textsrc.Set {
 	}
 	b.fontSets[key] = s
 	return s
+}
+
+// rightToLeft lays out text of right-to-left scripts: Arabic letters
+// joined (lam and alef as their ligature, the alef's character going), and
+// each chunk (from a character placed absolutely, or a path, to the next)
+// holding such text put in the order it is seen, its direction that of
+// the direction property, its place given to the character seen first.
+func rightToLeft(chars []tchar) []tchar {
+	rs := make([]rune, len(chars))
+	for i, c := range chars {
+		rs[i] = c.r
+	}
+	if !bidi.HasRTL(rs) {
+		return chars
+	}
+	shaped, keep := bidi.Shape(rs)
+	out := make([]tchar, len(shaped))
+	for i, k := range keep {
+		out[i] = chars[k]
+		out[i].r = shaped[i]
+	}
+	for s := 0; s < len(out); {
+		e := s + 1
+		for e < len(out) && out[e].x == nil && out[e].y == nil && out[e].tctx.path == out[s].tctx.path {
+			e++
+		}
+		seg := make([]rune, e-s)
+		for i := range seg {
+			seg[i] = out[s+i].r
+		}
+		if bidi.HasRTL(seg) {
+			order, mirrored := bidi.Visual(seg, out[s].st.rtl)
+			was := append([]tchar(nil), out[s:e]...)
+			first := was[0]
+			for i, k := range order {
+				c := was[k]
+				c.r = mirrored[k]
+				c.x, c.y = nil, nil
+				if i == 0 {
+					c.x, c.y = first.x, first.y
+				}
+				out[s+i] = c
+			}
+		}
+		s = e
+	}
+	return out
 }
 
 // fontHalfHeight is half the height (ascent and descent) of the first font
@@ -489,6 +537,7 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 	if len(chars) == 0 {
 		return
 	}
+	chars = rightToLeft(chars)
 	// Lay out: chunks start where a character is placed absolutely, and
 	// where a path starts.
 	type placed struct {
@@ -647,7 +696,17 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 	for _, p := range out {
 		ends[p.chunk] = p.end
 		if _, ok := anchors[p.chunk]; !ok {
-			anchors[p.chunk] = p.c.anchor
+			a := p.c.anchor
+			if p.c.st.rtl {
+				// Right to left, the start is the right end.
+				switch a {
+				case anchorStart:
+					a = anchorEnd
+				case anchorEnd:
+					a = anchorStart
+				}
+			}
+			anchors[p.chunk] = a
 		}
 	}
 	// Each glyph's frame: where its origin goes and its axes, across and

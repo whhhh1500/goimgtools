@@ -396,6 +396,7 @@ type style struct {
 	anchor           int
 	letterSp, wordSp float64
 	baseline         int
+	rtl              bool // direction: rtl
 	// CSS custom properties (--name), inherited; shared until an element
 	// declares its own.
 	vars map[string]string
@@ -632,6 +633,14 @@ func computeStyle(n *node, parent style, vp viewport) style {
 	if v, ok := get("dominant-baseline"); ok {
 		if bl, ok := baselineOf(v); ok {
 			s.baseline = bl
+		}
+	}
+	if v, ok := get("direction"); ok {
+		switch strings.TrimSpace(v) {
+		case "rtl":
+			s.rtl = true
+		case "ltr":
+			s.rtl = false
 		}
 	}
 	if v, ok := get("color"); ok {

@@ -14,6 +14,7 @@ import (
 	"golang.org/x/image/font/opentype"
 	"golang.org/x/image/math/fixed"
 
+	"github.com/whhhh1500/goimgtools/internal/bidi"
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
@@ -248,11 +249,17 @@ func (s *source) layout(text string, o Options) error {
 		var pen fixed.Int26_6
 		prev, prevFont := rune(-1), -1
 		brk, brkWidth := -1, fixed.Int26_6(0) // a place the line may end: glyph count, width there
+		// A paragraph with text of right-to-left scripts: its Arabic letters
+		// joined, each of its lines put in the order it is seen.
+		rtl, base := false, false
 		flush := func() {
 			// Spaces at the end of a line take no room.
 			for n := len(cur.glyphs); n > 0 && cur.glyphs[n-1].r == ' '; n-- {
 				cur.glyphs = cur.glyphs[:n-1]
 				cur.width = cur.glyphs0End(n-1, s)
+			}
+			if rtl {
+				s.reorder(&cur, base)
 			}
 			s.lines = append(s.lines, cur)
 			cur, pen, prev, prevFont, brk = line{}, 0, -1, -1, -1
@@ -265,6 +272,10 @@ func (s *source) layout(text string, o Options) error {
 			}
 			return r
 		}, para))
+		if rtl = bidi.HasRTL(runes); rtl {
+			runes, _ = bidi.Shape(runes)
+			base = bidi.BaseRTL(runes)
+		}
 		for i := 0; i < len(runes); i++ {
 			r := runes[i]
 			fi, err := s.set.pick(r)
@@ -330,6 +341,34 @@ func (s *source) layout(text string, o Options) error {
 		return fmt.Errorf("goimgtools: the text image would be %dx%d, more than %d pixels a side", s.w, s.h, MaxSide)
 	}
 	return nil
+}
+
+// reorder puts the glyphs of a line in the order they are seen (rtl: of a
+// paragraph that runs right to left), and places them again.
+func (s *source) reorder(l *line, rtl bool) {
+	rs := make([]rune, len(l.glyphs))
+	for i, g := range l.glyphs {
+		rs[i] = g.r
+	}
+	order, mirrored := bidi.Visual(rs, rtl)
+	out := make([]glyph, len(order))
+	var pen fixed.Int26_6
+	prev, prevFont := rune(-1), -1
+	for i, k := range order {
+		g := l.glyphs[k]
+		g.r = mirrored[k]
+		face := s.faces[g.font]
+		x := pen
+		if prevFont == g.font {
+			x += face.Kern(prev, g.r)
+		}
+		g.x = x
+		adv, _ := face.GlyphAdvance(g.r)
+		pen = x + adv
+		prev, prevFont = g.r, g.font
+		out[i] = g
+	}
+	l.glyphs, l.width = out, pen
 }
 
 // glyphs0End is the width of the line's first n glyphs.

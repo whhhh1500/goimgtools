@@ -303,7 +303,7 @@ func fallbackFiles() []string {
 	case "windows":
 		dir := filepath.Join(os.Getenv("WINDIR"), "Fonts")
 		var out []string
-		for _, f := range []string{"seguisym.ttf", "seguiemj.ttf", "seguihis.ttf", "Nirmala.ttf", "ebrima.ttf", "gadugi.ttf",
+		for _, f := range []string{"segoeui.ttf", "tahoma.ttf", "seguisym.ttf", "seguiemj.ttf", "seguihis.ttf", "Nirmala.ttf", "ebrima.ttf", "gadugi.ttf",
 			"LeelawUI.ttf", "malgun.ttf", "YuGothR.ttc", "himalaya.ttf", "monbaiti.ttf", "taile.ttf", "sylfaen.ttf", "arialuni.ttf"} {
 			out = append(out, filepath.Join(dir, f))
 		}
