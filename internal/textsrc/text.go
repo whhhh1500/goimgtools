@@ -169,7 +169,10 @@ func New(text string, o Options, env *pipeline.Env) (pipeline.Source, error) {
 		// A font, plus the buffers its glyphs are drawn in: a coverage
 		// accumulator and a mask the size of the largest glyph, which grow
 		// with the square of the text size (measured: 5.5MB at 1000 pixels).
-		n += int64(6 * o.Size * o.Size)
+		// (A font's shaping tables are counted as they are.)
+		if n == FontBytes {
+			n += int64(6 * o.Size * o.Size)
+		}
 		if err := env.Budget.Reserve(n, "font"); err != nil {
 			return err
 		}
@@ -347,7 +350,7 @@ func (s *source) layout(text string, o Options) error {
 				adv = sh.adv
 			} else {
 				adv, _ = face.GlyphAdvance(r)
-				if prevFont == fi {
+				if prevFont == fi && prev >= 0 {
 					x += face.Kern(prev, r)
 				}
 			}
@@ -379,7 +382,7 @@ func (s *source) layout(text string, o Options) error {
 			cur.width = pen
 			prev, prevFont = r, fi
 			if sh != nil {
-				prev, prevFont = -1, -1 // no kerning but the tables'
+				prev = -1 // no kerning but the tables'; its font for what follows drawn as nothing
 			} else if r == ' ' || breakable(r) {
 				brk, brkWidth, brkHyphen = len(cur.glyphs), pen, -1
 			}

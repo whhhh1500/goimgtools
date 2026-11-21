@@ -64,7 +64,9 @@ var lamAlef = map[rune][2]rune{
 // general categories Mn, Me and Cf), but for the zero width non-joiner,
 // which parts them, and the joiner, which joins.
 func transparent(r rune) bool {
-	if r == 0x200C || r == 0x200D {
+	// The non-joiners, and the format characters that stand before numbers
+	// and do not join (joining type U).
+	if r == 0x200C || r == 0x200D || r >= 0x0600 && r <= 0x0605 || r == 0x06DD || r == 0x08E2 {
 		return false
 	}
 	return unicode.In(r, unicode.Mn, unicode.Me, unicode.Cf)
