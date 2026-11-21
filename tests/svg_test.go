@@ -6,6 +6,7 @@ import (
 	"image/color"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	. "github.com/whhhh1500/goimgtools"
@@ -33,7 +34,19 @@ func onWhite(m image.Image) []int {
 // them (sharp 0.35.5's PNGs): differences only along edges, where the
 // anti-aliasing differs.
 func TestSVGAsLibrsvg(t *testing.T) {
+	// The text is set in Arial, as librsvg drew it: where that is not
+	// installed (Linux, mostly), another font draws it.
+	hasArial := false
+	for _, f := range SystemFonts() {
+		if strings.EqualFold(f.Family, "Arial") {
+			hasArial = true
+			break
+		}
+	}
 	for _, name := range []string{"shapes", "paths", "gradients", "groups", "mask", "pattern", "marker", "filter", "filter2", "text"} {
+		if name == "text" && !hasArial {
+			continue
+		}
 		doc, err := os.ReadFile(filepath.Join("testdata", "sharp", "svg-"+name+".svg"))
 		if err != nil {
 			t.Fatal(err)
