@@ -58,7 +58,7 @@ func inverseCurve(c *curve, out *[gammaSteps + 1]uint8) {
 	}
 	k := 0
 	for i := range out {
-		y := float64(i) / gammaSteps
+		y := float64(float64(i) / gammaSteps) // a product by 1/gammaSteps, not to be fused with y - lo
 		for k < n && fwd[k] < y {
 			k++
 		}
