@@ -12,6 +12,7 @@
 - `WebPOptions.Exact`（`-webp-exact`）精确保留全透明像素的颜色，同 libwebp 的 `exact`（见「变更」）。
 - `Boolean(operand, op)` 与 `Bandbool(op)`（`BoolAnd`、`BoolOr`、`BoolEor`），同 sharp 的 `boolean` 与 `bandbool`：每个像素的红绿蓝与同尺寸图像（逐行同步读取）对应像素逐位运算，或自身三个通道逐位运算后成灰；透明不变。
 - `JoinChannel(mask)`，同 sharp 的 `joinChannel`：把同尺寸图像的灰度作为透明通道（与原有透明相乘），即 `ExtractChannel(ChannelAlpha)` 的逆操作；蒙版与图像逐行同步读取，与两者的条带切分无关。
+- 供 `Do` 与 `-op` 用的具名操作：`rect`、`ellipse`、`circle`、`polygon`、`line`（先给数字，再给 `fill=颜色`、`stroke=颜色`、`width=宽度`，矩形还可 `radius=半径`），以及 `bandbool:and|or|eor`；`goimgtools ops` 列出它们。例：`-op rect:10,10,100,60,fill=#ffcc00,stroke=black,width=3,radius=8`。
 - `Draw(shapes...)`：矩形（可圆角）、椭圆与圆、多边形、线与多段折线（圆角连接、方头），带填充与描边，同 Pillow 的 ImageDraw 而边缘平滑：每个像素按图形覆盖它的比例上色，算法同 FreeType 的平滑光栅化（`internal/raster`：以 1/256 像素为单位的整数运算，边与行、列的交点都由两端点直接求得，所以任意分带、任意处理器结果相同；曲线化为折线，误差在 1/20 像素内，余弦来自 `internal/trig`）。白底黑图形时，小数边界矩形覆盖的像素灰度与其覆盖比例相差不超过 1.5 级；半径 30 的圆面积误差 0.3%。不论图和图形多大只占几行的内存。
 - `MinSSIM(s)`（`-min-ssim`）：SSIM 不低于 `s` 的最小文件，同 jpeg-recompress 的找法：对质量区间二分，取解码后测得达标的最低质量（PNG、GIF 为最少颜色数）（JPEG、WebP、PNG 上与逐个尝试得到的文件相同）；没指定质量时最高搜到 100。Kodak 照片在 80 质量时只有 0.95–0.97，所以 0.98 要更高质量（83–162KB，而 80 质量为 49–105KB）；文档截图 0.98 比 80 质量小 22%，0.97 小 37%；这些耗时 0.3–0.9 秒。适用于 JPEG、有损 WebP、PNG、GIF 与 JPEG 压缩的 TIFF。
 - `inspect.SSIM(a, b)`（`goimgtools compare -ssim`）：两张图的结构相似度，算法同 Wang 等的参考实现 `ssim_index`（11×11、σ 1.5 的高斯窗及其常数，在窗口放得下的位置取平均；在 Rec. 601 亮度上计算，透明处铺白），照片与其 JPEG、模糊版的值与参考实现在小数点后十位一致；按几行一次读取（11 行的五个和），不融合运算，各处理器结果相同。
