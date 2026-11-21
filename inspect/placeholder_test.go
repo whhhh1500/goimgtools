@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"image"
 	"image/color"
-	"math"
 	"testing"
 )
 
@@ -53,23 +52,6 @@ func TestPlaceholders(t *testing.T) {
 	for _, c := range [][2]int{{1, 1}, {9, 9}, {1, 9}} {
 		if got, n := blurHash(phImages()["gradient"], c[0], c[1]), 4+2*c[0]*c[1]; len(got) != n {
 			t.Errorf("%dx%d components: %d characters, want %d", c[0], c[1], len(got), n)
-		}
-	}
-}
-
-// TestCosPi: within a few ulps of math.Cos (of the angle brought into
-// [0, pi] first: math.Pi*k/n itself is off by more for large k/n).
-func TestCosPi(t *testing.T) {
-	for n := 1; n <= 200; n++ {
-		for k := -3 * n; k <= 3*n; k++ {
-			r := ((k % (2 * n)) + 2*n) % (2 * n)
-			if r > n {
-				r = 2*n - r
-			}
-			want := math.Cos(math.Pi * float64(r) / float64(n))
-			if got := cosPi(k, n); math.Abs(got-want) > 1e-15 {
-				t.Fatalf("cos(pi*%d/%d) = %v, want %v", k, n, got, want)
-			}
 		}
 	}
 }

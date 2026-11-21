@@ -8,6 +8,7 @@ import (
 	"math"
 
 	"github.com/whhhh1500/goimgtools"
+	"github.com/whhhh1500/goimgtools/internal/trig"
 )
 
 // Placeholders: short codes of a picture's colours that a page shows,
@@ -79,9 +80,9 @@ func blurHash(m *image.NRGBA, cx, cy int) string {
 			}
 			var f [3]float64
 			for x := 0; x < w; x++ {
-				bx := float64(norm * cosPi(i*x, w))
+				bx := float64(norm * trig.CosPi(i*x, w))
 				for y := 0; y < h; y++ {
-					basis := float64(bx * cosPi(j*y, h))
+					basis := float64(bx * trig.CosPi(j*y, h))
 					p := m.Pix[y*m.Stride+4*x:]
 					f[0] += float64(basis * srgbLinear[p[0]])
 					f[1] += float64(basis * srgbLinear[p[1]])
@@ -209,10 +210,10 @@ func thumbHash(m *image.NRGBA) []byte {
 			for cx := 0; cx*ny < nx*(ny-cy); cx++ {
 				f := 0.0
 				for x := 0; x < w; x++ {
-					fx[x] = cosPi(cx*(2*x+1), 2*w)
+					fx[x] = trig.CosPi(cx*(2*x+1), 2*w)
 				}
 				for y := 0; y < h; y++ {
-					fy := cosPi(cy*(2*y+1), 2*h)
+					fy := trig.CosPi(cy*(2*y+1), 2*h)
 					for x := 0; x < w; x++ {
 						f += float64(float64(ch[x+y*w]*fx[x]) * fy)
 					}
@@ -276,46 +277,4 @@ func thumbHash(m *image.NRGBA) []byte {
 		}
 	}
 	return hash
-}
-
-// cosPi is cos(pi*k/n) for whole k and n > 0, by symmetry from a polynomial
-// on [0, pi/4] (Cephes' coefficients, as Go's math package has them) with
-// every product rounded before it is added.
-func cosPi(k, n int) float64 {
-	k %= 2 * n
-	if k < 0 {
-		k += 2 * n
-	}
-	if k > n {
-		k = 2*n - k // cos(pi*k/n) = cos(2pi - pi*k/n)
-	}
-	sign := 1.0
-	if 2*k > n {
-		k, sign = n-k, -1 // cos(pi - x) = -cos(x)
-	}
-	// Now 0 <= pi*k/n <= pi/2.
-	if 4*k > n {
-		// cos(x) = sin(pi/2 - x), the argument below pi/4.
-		return sign * sinPoly(float64(math.Pi*float64(n-2*k))/float64(2*n))
-	}
-	return sign * cosPoly(float64(math.Pi*float64(k))/float64(n))
-}
-
-// sinPoly and cosPoly are sin and cos of x in [0, pi/4].
-func sinPoly(x float64) float64 {
-	z := float64(x * x)
-	p := 1.58962301576546568060e-10
-	for _, c := range [...]float64{-2.50507477628578072866e-8, 2.75573136213857245213e-6, -1.98412698295895385996e-4, 8.33333333332211858878e-3, -1.66666666666666307295e-1} {
-		p = float64(p*z) + c
-	}
-	return x + float64(float64(x*z)*p)
-}
-
-func cosPoly(x float64) float64 {
-	z := float64(x * x)
-	p := -1.13585365213876817300e-11
-	for _, c := range [...]float64{2.08757008419747316778e-9, -2.75573141792967388112e-7, 2.48015872888517045348e-5, -1.38888888888730564116e-3, 4.16666666666665929218e-2} {
-		p = float64(p*z) + c
-	}
-	return 1.0 - float64(0.5*z) + float64(float64(z*z)*p)
 }

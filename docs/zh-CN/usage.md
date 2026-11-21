@@ -84,6 +84,7 @@ err := goimgtools.Open("in.jpg").
 | `EnsureAlpha(alpha)` | 为不含透明的图像加上给定不透明度（0–1）的透明通道（值为 alpha·255 舍去小数，与 sharp 的 `ensureAlpha` 逐字节一致）；已含透明的图像保持不变 |
 | `RemoveAlpha()` | 去掉透明度：每个像素显示其存储的颜色（sharp 的 `removeAlpha`）；与 `Flatten` 不同，不与背景色混合 |
 | `Composite(overlay, CompositeOptions{...})` | 图像叠加 / 水印（见[水印](#水印)） |
+| `Draw(shapes...)` | 按顺序把图形画到图上，边缘平滑（抗锯齿），同 Pillow 的 ImageDraw：`Rect(x, y, w, h)`（`.Rounded(r)` 圆角）、`Ellipse(cx, cy, rx, ry)`、`Circle(cx, cy, r)`、`Polygon(x1, y1, x2, y2, ...)`、`Line(x1, y1, x2, y2)`、`Polyline(...)`，各可加 `.Fill(颜色)` 与 `.Stroke(颜色, 宽度)`。坐标以像素计、可带小数（一个像素占 x 到 x+1）；每个像素按图形覆盖它的比例上色，以整数运算求得，各处理器结果相同；不论图多大只占几行的内存 |
 | `InvisibleWatermark(mark, InvisibleWatermarkOptions{Kind, Key, Strength, Density})` | 隐形地藏入 1–32 个字节，用 `inspect.ReadWatermark` 与密钥读回，不需要原图；`WatermarkBlind` 经得起对文件的处理，`WatermarkScreen` 还经得起对着屏幕拍照（见[隐形水印](watermark.md)） |
 | `Animated()` | 处理 GIF、WebP 或 PNG 动画（APNG）的每一帧并输出 GIF、WebP 或 PNG 动画（APNG）。WebP 的各帧按 libwebp 动画解码器的方式绘制（混合与否、清除与否），逐像素一致；APNG 的各帧按其规范绘制。静态图像不受影响；无法保留的动画（输出为其他格式）返回包装了 `errors.ErrUnsupported` 的错误。WebP 第一帧完整存储，之后各帧仅存储变化的矩形区域。GIF 的所有帧共用一套按画面内容选取的调色板（`GIFOptions` 的 `Colors`、`NoDither` 依然有效；颜色数不超过该值时原样保留），自第二帧起仅存储变化的部分（见[压缩](compression.md)）。APNG 为无损：所有帧共不超过 256 种颜色时共用一套调色板，否则为 RGB 或 RGBA；之后各帧存储与其底图不同的矩形（前一帧保留、清除或撤销，按 apngopt 的方法选择），原样写入或把未变像素设为透明后叠加，取最小者；`CompressionLevel` 有效，`Colors` 不适用（报错） |
 | `Loop(n)`、`FrameDelay(d...)` | 配合 `Animated()`：动画播放的次数（`0` 为无限）与每帧显示的时长（一个值用于全部帧，或逐帧给出，最后一个用于其余帧），取代输入的设置，同 sharp 的 `loop` 与 `delay` |
