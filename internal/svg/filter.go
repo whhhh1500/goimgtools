@@ -102,27 +102,76 @@ func (b *builder) filtered(n *node, f *node, m matrix, st style, vp viewport, ow
 		return
 	}
 	w, h := reg.Dx(), reg.Dy()
-	// The region is worked at a lower resolution when its pictures would
-	// not fit in half the memory left: a filter's result is mostly smooth.
+	// The primitives are worked a band of rows at a time, each band with
+	// as many rows above and below as they reach (all of them summed): only
+	// the element's picture, those of feImage and the result are held
+	// whole, as bytes. The region is worked at a lower resolution only when
+	// even a band of a few rows would not fit in half the memory left; and
+	// whole when a primitive needs it all (feTile, a convolution that wraps).
 	sx, sy := 1.0, 1.0
-	bufs := int64(4)
+	bufs := filterBufs(f)
+	images := 0
 	for _, p := range f.children {
-		if strings.HasPrefix(p.name, "fe") {
-			bufs++
+		if p.name == "feImage" {
+			images++
 		}
 	}
-	need := int64(w) * int64(h) * (16*bufs + 4*8)
-	if b.avail != nil {
-		if room := b.avail() / 2; need > room && room > 0 {
-			k := math.Sqrt(float64(room) / float64(need))
-			nw, nh := max(1, int(float64(float64(w)*k))), max(1, int(float64(float64(h)*k)))
-			sx, sy = float64(nw)/float64(w), float64(nh)/float64(h)
-			w, h = nw, nh
+	bufs += int64(images)
+	unit := [2]float64{1, 1}
+	if primBox {
+		unit = [2]float64{bx[2], bx[3]}
+	}
+	halo0 := filterHalo(f, m, unit)
+	// plan is the band height for a region of w by h at scale k, and
+	// whether it fits.
+	plan := func(w, h int, k float64) (int, bool) {
+		px := int64(w) * int64(h)
+		if b.avail == nil {
+			return h, true
+		}
+		room := b.avail() / 2
+		fixed := 4 * px * int64(2+images)
+		perRow := int64(w) * (16*bufs + 32)
+		if halo0 < 0 {
+			return h, fixed+int64(h)*perRow <= room
+		}
+		halo := int(math.Ceil(float64(halo0)*k)) + 1
+		if fixed+int64(h)*perRow <= room {
+			return h, true
+		}
+		rows := (room-fixed)/perRow - 2*int64(halo)
+		if rows >= int64(max(16, halo)) {
+			return int(min(int64(h), rows)), true
+		}
+		return 0, false
+	}
+	bandH, ok := plan(w, h, 1)
+	for k := 1.0; !ok && w > 1 && h > 1; {
+		if b.avail != nil {
+			// The scale at which the whole would fit, then smaller still
+			// until a band does.
+			need := int64(w) * int64(h) * (16*bufs + 32 + 4*int64(2+images))
+			if room := b.avail() / 2; room > 0 && k == 1 {
+				k = math.Min(0.95, math.Sqrt(float64(room)/float64(need)))
+			} else {
+				k = float64(k * 0.8)
+			}
+		}
+		nw, nh := max(1, int(float64(float64(reg.Dx())*k))), max(1, int(float64(float64(reg.Dy())*k)))
+		sx, sy = float64(nw)/float64(reg.Dx()), float64(nh)/float64(reg.Dy())
+		w, h = nw, nh
+		bandH, ok = plan(w, h, k)
+		if k < 1e-3 {
+			break
 		}
 	}
-	if int64(w)*int64(h) > maxFilterPixels {
+	if !ok || int64(w)*int64(h) > maxFilterPixels {
 		b.err = errTooMuch
 		return
+	}
+	halo := 0
+	if bandH < h {
+		halo = int(math.Ceil(float64(halo0)*sy)) + 1
 	}
 	// The region's pixels from the device's.
 	toRegion := matrix{sx, 0, 0, sy, 0, 0}.mul(matrix{1, 0, 0, 1, -float64(reg.Min.X), -float64(reg.Min.Y)})
@@ -136,33 +185,20 @@ func (b *builder) filtered(n *node, f *node, m matrix, st style, vp viewport, ow
 		b.err = err
 		return
 	}
-	// The filter's primitives, on pictures of floats.
-	fc := &fctx{w: w, h: h, m: matrix{sx, 0, 0, sy, 0, 0}.mul(m), results: map[string]fbuf{}, reserve: b.reserve, release: b.release,
-		full: cm, region: [4]float64{rx, ry, rw, rh}, bbox: bx, primBox: primBox, fontSize: st.fontSize, vp: vp, work: [2]float64{sx, sy},
-		rects: map[string]image.Rectangle{}, lastRect: image.Rect(0, 0, w, h), images: map[*node]fbuf{}}
-	defer fc.end()
-	fc.linear = true
+	defer b.release(4 * px) // src
+	linear := true
 	if v, ok := f.prop("color-interpolation-filters"); ok && strings.TrimSpace(v) == "sRGB" {
-		fc.linear = false
+		linear = false
 	}
 	// Worked at a lower resolution, a filter that puts the element itself
 	// on top (a drop shadow) leaves it out, to draw it after, sharp. Drawn
 	// after, it is laid on in sRGB: in linear light only an element of
 	// opaque paint, which shows the difference at its edges alone.
-	fc.under = (sx < 1 || sy < 1) && sourceOnTop(f) && (!fc.linear || paintsOpaque(n, inner, vp, 0))
-	if primBox {
-		fc.unit = [2]float64{bx[2], bx[3]}
-	} else {
-		fc.unit = [2]float64{1, 1}
-	}
-	err = fc.begin(src)
-	b.release(4 * px) // src
-	if err != nil {
-		b.err = err
-		return
-	}
+	under := (sx < 1 || sy < 1) && sourceOnTop(f) && (!linear || paintsOpaque(n, inner, vp, 0))
 	// The pictures of feImage: a picture of a data URI in the subregion, or
 	// an element of the document, drawn as the element is.
+	pictures := map[*node][]uint8{}
+	defer func() { b.release(4 * px * int64(len(pictures))) }()
 	for _, p := range f.children {
 		if p.name != "feImage" {
 			continue
@@ -220,30 +256,50 @@ func (b *builder) filtered(n *node, f *node, m matrix, st style, vp viewport, ow
 			b.err = err
 			return
 		}
-		buf, err := fc.fromBytes(pic)
-		b.release(4 * px) // pic
-		if err != nil {
-			b.err = err
-			return
-		}
-		fc.images[p] = buf
+		pictures[p] = pic
 	}
-	out, err := fc.run(f, vp, st)
-	if err != nil {
-		b.err = err
-		return
-	}
-	res := fc.finish(out)
-	fc.end()
+	// The result, as bytes, made a band at a time.
 	if err := b.reserve(4 * px); err != nil {
 		b.err = err
 		return
 	}
 	b.sc.imageBytes += 4 * px
+	res := make([]uint8, 4*px)
+	for y0 := 0; y0 < h; y0 += bandH {
+		top, bot := max(0, y0-halo), min(h, y0+bandH+halo)
+		bh := bot - top
+		// The primitives on pictures of floats, rows top to bot.
+		fc := &fctx{w: w, h: bh, m: matrix{sx, 0, 0, sy, 0, 0}.mul(m), results: map[string]fbuf{}, reserve: b.reserve, release: b.release,
+			full: matrix{1, 0, 0, 1, 0, -float64(top)}.mul(cm), region: [4]float64{rx, ry, rw, rh}, bbox: bx, primBox: primBox, fontSize: st.fontSize, vp: vp, work: [2]float64{sx, sy},
+			whole: image.Rect(0, -top, w, h-top), rects: map[string]image.Rectangle{}, images: map[*node]fbuf{},
+			linear: linear, under: under, unit: unit}
+		fc.lastRect = fc.whole
+		err := fc.begin(src[4*w*top : 4*w*bot])
+		for p, pic := range pictures {
+			if err != nil {
+				break
+			}
+			fc.images[p], err = fc.fromBytes(pic[4*w*top : 4*w*bot])
+		}
+		var out fbuf
+		if err == nil {
+			out, err = fc.run(f, vp, st)
+		}
+		if err != nil {
+			fc.end()
+			b.err = err
+			return
+		}
+		rows := fc.finish(out)
+		n := min(bandH, h-y0)
+		copy(res[4*w*y0:4*w*(y0+n)], rows[4*w*(y0-top):4*w*(y0-top+n)])
+		fc.end()
+	}
+	fcUnder := under
 	// The result, as a picture at the region's place.
 	area := fillPath(flatten(rectSegs(float64(reg.Min.X), float64(reg.Min.Y), float64(reg.Dx()), float64(reg.Dy()), 0, 0), identity), identity, false)
 	sh := &shader{tile: &tileSampler{tile: res, tw: w, th: h, inv: toRegion, clamp: true}}
-	if fc.under {
+	if fcUnder {
 		// The result, then the element over it within the region, as a
 		// group of the element's opacity and clip.
 		b.group(n, st, own, outer, func(c *clip) {
@@ -288,17 +344,30 @@ func (b *builder) renderRegion(w, h int, draw func()) ([]uint8, error) {
 	}
 	pic := make([]uint8, 4*px)
 	if len(sub.items) > 0 {
+		// Drawn a band of rows at a time, as many as a quarter of the
+		// memory left holds (a pixel's coverage is the same in any band).
 		layers := layersNeeded(sub.items)
-		need := int64(layers)*4*px + 4*px
+		perRow := int64(w) * (4*int64(layers) + 4)
+		rows := h
+		if b.avail != nil {
+			if room := b.avail() / 4; room/perRow < int64(h) {
+				rows = int(max(1, room/perRow))
+			}
+		}
+		need := perRow * int64(rows)
 		if err := b.reserve(need); err != nil {
 			b.release(4 * px) // pic
 			return nil, err
 		}
-		r := &renderer{sc: sub, n: h, cov: make([]uint8, px), ccov: make([]uint8, px), tmp: make([]uint8, px), mcov: make([]uint8, px)}
+		n := w * rows
+		r := &renderer{sc: sub, n: rows, cov: make([]uint8, n), ccov: make([]uint8, n), tmp: make([]uint8, n), mcov: make([]uint8, n)}
 		for i := 0; i < layers; i++ {
-			r.pool = append(r.pool, make([]uint8, 4*px))
+			r.pool = append(r.pool, make([]uint8, 4*n))
 		}
-		copy(pic, r.band(0, h))
+		for y := 0; y < h; y += rows {
+			k := min(rows, h-y)
+			copy(pic[4*w*y:], r.band(y, k))
+		}
 		b.release(need)
 	}
 	return pic, nil
@@ -316,7 +385,8 @@ type fctx struct {
 	reserve  func(int64) error
 	release  func(int64)
 	reserved int64
-	under    bool // the last primitive leaves out the source it puts on top
+	owned    map[*float32]bool // the pictures made, by their first value
+	under    bool              // the last primitive leaves out the source it puts on top
 	// For primitives placed in user space: the transform from it to the
 	// region's pixels, the filter region (x, y, width, height), the
 	// element's bounding box, whether primitive units are fractions of it,
@@ -328,6 +398,7 @@ type fctx struct {
 	fontSize float64
 	vp       viewport
 	work     [2]float64                 // the region's pixels to the device's, across and down (1 at full resolution)
+	whole    image.Rectangle            // the filter region in the pixels of this band
 	rects    map[string]image.Rectangle // the subregions of the results
 	lastRect image.Rectangle            // and of the last one
 	images   map[*node]fbuf             // the pictures of feImage
@@ -434,7 +505,32 @@ func (c *fctx) alloc() (fbuf, error) {
 		return nil, err
 	}
 	c.reserved += 4 * n
-	return make(fbuf, n), nil
+	b := make(fbuf, n)
+	if c.owned == nil {
+		c.owned = map[*float32]bool{}
+	}
+	if n > 0 {
+		c.owned[&b[0]] = true
+	}
+	return b, nil
+}
+
+// freeAllBut gives back every picture made but those kept.
+func (c *fctx) freeAllBut(keep ...fbuf) {
+	held := map[*float32]bool{}
+	for _, b := range keep {
+		if len(b) > 0 {
+			held[&b[0]] = true
+		}
+	}
+	n := int64(16 * c.w * c.h)
+	for p := range c.owned {
+		if !held[p] {
+			delete(c.owned, p)
+			c.release(n)
+			c.reserved -= n
+		}
+	}
 }
 
 func (c *fctx) end() { c.release(c.reserved); c.reserved = 0 }
@@ -583,6 +679,8 @@ func (c *fctx) run(f *node, vp viewport, st style) (fbuf, error) {
 			lastAt = i
 		}
 	}
+	readers := lastReaders(f)
+	outs := map[int]fbuf{} // the results still to be read
 	for i, p := range f.children {
 		var out fbuf
 		var err error
@@ -591,6 +689,7 @@ func (c *fctx) run(f *node, vp viewport, st style) (fbuf, error) {
 		if drawnPrimitive(p.name) {
 			r = c.subregion(p, inputsOf(p))
 		}
+		band := image.Rect(0, 0, c.w, c.h)
 		switch p.name {
 		case "feGaussianBlur":
 			out, err = c.blur(p)
@@ -640,7 +739,7 @@ func (c *fctx) run(f *node, vp viewport, st style) (fbuf, error) {
 		if err != nil {
 			return nil, err
 		}
-		if r != image.Rect(0, 0, c.w, c.h) {
+		if r.Intersect(band) != band {
 			// Only its subregion: on a copy, the result may be an input's.
 			cp, err := c.alloc()
 			if err != nil {
@@ -655,8 +754,85 @@ func (c *fctx) run(f *node, vp viewport, st style) (fbuf, error) {
 			c.results[name] = out
 			c.rects[name] = r
 		}
+		// The pictures no primitive still to come reads are given back.
+		outs[i] = out
+		keep := []fbuf{c.source, out}
+		for k, b := range outs {
+			if readers[k] > i {
+				keep = append(keep, b)
+			} else if k != i {
+				delete(outs, k)
+			}
+		}
+		for _, b := range c.images {
+			keep = append(keep, b)
+		}
+		c.freeAllBut(keep...)
+		for name, b := range c.results {
+			if len(b) > 0 && !c.owned[&b[0]] && &b[0] != &c.source[0] {
+				delete(c.results, name) // read by none to come
+			}
+		}
 	}
 	return c.last, nil
+}
+
+// lastReaders gives, for each primitive of a filter (by its place among
+// the children), the place of the last one that reads its result: by its
+// name, or as the one before it (no in). The pictures of those read by none
+// to come can go.
+func lastReaders(f *node) map[int]int {
+	last := map[int]int{}
+	named := map[string]int{}
+	prev := -1
+	for i, p := range f.children {
+		if !drawnPrimitive(p.name) {
+			continue
+		}
+		for _, in := range inputsOf(p) {
+			switch in = strings.TrimSpace(in); in {
+			case "":
+				if prev >= 0 {
+					last[prev] = i
+				}
+			case "SourceGraphic", "SourceAlpha", "BackgroundImage", "BackgroundAlpha", "FillPaint", "StrokePaint":
+			default:
+				if k, ok := named[in]; ok {
+					last[k] = i
+				}
+			}
+		}
+		if r := strings.TrimSpace(p.attrs["result"]); r != "" {
+			named[r] = i
+		}
+		prev = i
+	}
+	return last
+}
+
+// filterBufs is how many pictures of floats a filter holds at once at
+// most: the source, the results some primitive to come reads, and what one
+// primitive makes for itself (three: a temporary, its result, the copy of
+// a subregion).
+func filterBufs(f *node) int64 {
+	readers := lastReaders(f)
+	most := 0
+	var live []int
+	for i, p := range f.children {
+		if !drawnPrimitive(p.name) {
+			continue
+		}
+		kept := live[:0]
+		for _, k := range live {
+			if readers[k] >= i {
+				kept = append(kept, k)
+			}
+		}
+		live = kept
+		most = max(most, len(live))
+		live = append(live, i)
+	}
+	return int64(most) + 4
 }
 
 // devScale is how much the transform stretches lengths along x and y.

@@ -131,6 +131,8 @@ func SystemFonts() []FontInfo { return fontInfos(textsrc.System()) }
 // DefaultFonts lists, in the order they are tried, the fonts Text uses for
 // characters that TextOptions.Fonts does not cover, or for everything when
 // no font is named: Chinese-capable fonts found in their usual places on
-// this system, then the built-in Go Regular font (Latin, Greek and
-// Cyrillic only). It does not read the other fonts of the system.
+// this system, then fonts of symbols and other scripts found in theirs
+// (opened only for a character the fonts before them lack), then the
+// built-in Go Regular font (Latin, Greek and Cyrillic only). It does not
+// read the other fonts of the system.
 func DefaultFonts() []FontInfo { return fontInfos(textsrc.Defaults()) }

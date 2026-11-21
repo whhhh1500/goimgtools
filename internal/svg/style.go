@@ -384,6 +384,9 @@ type style struct {
 	anchor           int
 	letterSp, wordSp float64
 	baseline         int
+	// CSS custom properties (--name), inherited; shared until an element
+	// declares its own.
+	vars map[string]string
 	// Not inherited:
 	opacity          float64
 	display          bool
@@ -396,6 +399,54 @@ func initialStyle() style {
 	return style{fill: paint{kind: paintColor, c: color.NRGBA{0, 0, 0, 255}}, stroke: paint{kind: paintNone},
 		fillOpacity: 1, strokeOpacity: 1, strokeWidth: 1, miterLimit: 4, color: color.NRGBA{0, 0, 0, 255},
 		visible: true, fontSize: 16, opacity: 1, display: true, stopColor: color.NRGBA{0, 0, 0, 255}, stopOpacity: 1}
+}
+
+// resolveVars puts in each var(--name[, fallback]) of v the custom
+// property's value, or else its fallback; false when one has neither (the
+// property is then as if not given).
+func resolveVars(v string, vars map[string]string, depth int) (string, bool) {
+	if depth > 16 {
+		return "", false // custom properties that refer to each other
+	}
+	var out strings.Builder
+	for {
+		i := strings.Index(v, "var(")
+		if i < 0 {
+			out.WriteString(v)
+			return out.String(), true
+		}
+		out.WriteString(v[:i])
+		// Its closing parenthesis.
+		level, j := 0, i+4
+		for ; j < len(v); j++ {
+			if v[j] == '(' {
+				level++
+			} else if v[j] == ')' {
+				if level == 0 {
+					break
+				}
+				level--
+			}
+		}
+		if j >= len(v) {
+			return "", false
+		}
+		name, fallback, hasFallback := strings.Cut(v[i+4:j], ",")
+		val, ok := vars[strings.TrimSpace(name)]
+		if !ok {
+			if !hasFallback {
+				return "", false
+			}
+			val = strings.TrimSpace(fallback)
+		}
+		if strings.Contains(val, "var(") {
+			if val, ok = resolveVars(val, vars, depth+1); !ok {
+				return "", false
+			}
+		}
+		out.WriteString(val)
+		v = v[j+1:]
+	}
 }
 
 // opacityValue reads a number or a percentage, clamped to 0 to 1.
@@ -417,15 +468,76 @@ func opacityValue(s string, def float64) float64 {
 func computeStyle(n *node, parent style, vp viewport) style {
 	s := parent
 	s.opacity, s.display, s.stopColor, s.stopOpacity, s.nonScalingStroke = 1, true, color.NRGBA{0, 0, 0, 255}, 1, false
+	// The custom properties it declares, in the style sheets and its style
+	// attribute (which wins).
+	var own [][2]string
+	for k, d := range n.sheet {
+		if strings.HasPrefix(k, "--") {
+			own = append(own, [2]string{k, d.value})
+		}
+	}
+	if st, ok := n.attrs["style"]; ok && strings.Contains(st, "--") {
+		for _, d := range declarations(st) {
+			if strings.HasPrefix(d[0], "--") {
+				own = append(own, [2]string{d[0], d[1]})
+			}
+		}
+	}
+	if len(own) > 0 {
+		vars := make(map[string]string, len(parent.vars)+len(own))
+		for k, v := range parent.vars {
+			vars[k] = v
+		}
+		for _, kv := range own {
+			vars[kv[0]] = strings.TrimSpace(kv[1])
+		}
+		s.vars = vars
+	}
 	get := func(name string) (string, bool) {
 		v, ok := n.prop(name)
+		if ok && strings.Contains(v, "var(") {
+			v, ok = resolveVars(v, s.vars, 0)
+		}
 		if ok && strings.TrimSpace(v) == "inherit" {
 			return "", false
 		}
 		return v, ok
 	}
 	if v, ok := get("font-size"); ok {
-		if f, ok := parseLength(v, parent.fontSize, vp, axisDiag); ok && f > 0 {
+		// A percentage or em of the parent's size; the keywords of CSS.
+		v = strings.TrimSpace(v)
+		f, ok := 0.0, false
+		switch v {
+		case "xx-small":
+			f, ok = 9, true
+		case "x-small":
+			f, ok = 10, true
+		case "small":
+			f, ok = 13, true
+		case "medium":
+			f, ok = 16, true
+		case "large":
+			f, ok = 18, true
+		case "x-large":
+			f, ok = 24, true
+		case "xx-large":
+			f, ok = 32, true
+		case "xxx-large":
+			f, ok = 48, true
+		case "larger":
+			f, ok = float64(parent.fontSize*1.2), true
+		case "smaller":
+			f, ok = parent.fontSize/1.2, true
+		default:
+			if pct, found := strings.CutSuffix(v, "%"); found {
+				if p, err := strconv.ParseFloat(strings.TrimSpace(pct), 64); err == nil {
+					f, ok = float64(p/100*parent.fontSize), true
+				}
+			} else {
+				f, ok = parseLength(v, parent.fontSize, vp, axisDiag)
+			}
+		}
+		if ok && f > 0 && f < 1e6 {
 			s.fontSize = f
 		}
 	}

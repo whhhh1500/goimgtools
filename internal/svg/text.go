@@ -83,16 +83,40 @@ func (b *builder) fonts(family, face string) *textsrc.Set {
 		return s
 	}
 	var specs []string
-	for _, f := range strings.Split(family, ",") {
-		f = strings.Trim(strings.TrimSpace(f), `"'`)
-		switch strings.ToLower(f) {
-		case "", "serif", "sans-serif", "monospace", "cursive", "fantasy", "system-ui":
-			continue // the default fonts stand for these
-		}
+	try := func(f string) bool {
 		for _, name := range []string{f + face, f} {
 			if fo, err := textsrc.Open(name); err == nil {
 				fo.Close()
 				specs = append(specs, name)
+				return true
+			}
+		}
+		return false
+	}
+	// The families named, the generic ones as the fonts browsers use for
+	// them; after them all, as CSS says, the default, serif.
+	generic := false
+	for _, f := range strings.Split(family, ",") {
+		f = strings.Trim(strings.TrimSpace(f), `"'`)
+		if names, ok := genericFonts[strings.ToLower(f)]; ok {
+			for _, n := range names {
+				if try(n) {
+					generic = true
+					break
+				}
+			}
+			if generic {
+				break // the list ends at a generic family
+			}
+			continue
+		}
+		if f != "" {
+			try(f)
+		}
+	}
+	if !generic {
+		for _, n := range genericFonts["serif"] {
+			if try(n) {
 				break
 			}
 		}
@@ -103,6 +127,17 @@ func (b *builder) fonts(family, face string) *textsrc.Set {
 	}
 	b.fontSets[key] = s
 	return s
+}
+
+// genericFonts are the fonts the generic families of CSS stand for, as
+// browsers choose them, the first installed of each list.
+var genericFonts = map[string][]string{
+	"serif":      {"Times New Roman", "Times", "Liberation Serif", "DejaVu Serif", "Noto Serif", "Tinos"},
+	"sans-serif": {"Arial", "Helvetica", "Liberation Sans", "DejaVu Sans", "Noto Sans", "Arimo"},
+	"system-ui":  {"Segoe UI", "San Francisco", "Helvetica Neue", "Cantarell", "Ubuntu", "DejaVu Sans", "Arial"},
+	"monospace":  {"Consolas", "Courier New", "Menlo", "Courier", "Liberation Mono", "DejaVu Sans Mono", "Noto Sans Mono", "Cousine"},
+	"cursive":    {"Comic Sans MS", "Apple Chancery", "URW Chancery L", "Comic Neue"},
+	"fantasy":    {"Impact", "Papyrus", "Luminari"},
 }
 
 // spacing reads letter-spacing or word-spacing: normal is none.

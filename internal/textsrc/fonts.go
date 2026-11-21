@@ -296,6 +296,30 @@ func knownFiles() []string {
 	}
 }
 
+// fallbackFiles are fonts of symbols and of more scripts, tried, after the
+// default fonts, for a character none of those has: opened only then.
+func fallbackFiles() []string {
+	switch runtime.GOOS {
+	case "windows":
+		dir := filepath.Join(os.Getenv("WINDIR"), "Fonts")
+		var out []string
+		for _, f := range []string{"seguisym.ttf", "seguiemj.ttf", "seguihis.ttf", "Nirmala.ttf", "ebrima.ttf", "gadugi.ttf",
+			"LeelawUI.ttf", "malgun.ttf", "YuGothR.ttc", "himalaya.ttf", "monbaiti.ttf", "taile.ttf", "sylfaen.ttf", "arialuni.ttf"} {
+			out = append(out, filepath.Join(dir, f))
+		}
+		return out
+	case "darwin":
+		return []string{"/System/Library/Fonts/Apple Symbols.ttf", "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+			"/Library/Fonts/Arial Unicode.ttf", "/System/Library/Fonts/Supplemental/STIXTwoMath.otf"}
+	}
+	return []string{
+		"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+		"/usr/share/fonts/truetype/noto/NotoSansSymbols-Regular.ttf", "/usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf",
+		"/usr/share/fonts/noto/NotoSansSymbols-Regular.ttf", "/usr/share/fonts/noto/NotoSansSymbols2-Regular.ttf",
+		"/usr/share/fonts/google-noto/NotoSansSymbols-Regular.ttf", "/usr/share/fonts/google-noto/NotoSansSymbols2-Regular.ttf",
+	}
+}
+
 var (
 	defaultsOnce sync.Once
 	defaultFonts []FontInfo
@@ -304,7 +328,8 @@ var (
 // Defaults lists the fonts text is drawn with when none is named, in the
 // order they are tried for each character: the Chinese-capable fonts found
 // in their usual places on this system (or, if none is there, the first
-// such font among all installed ones), and last the built-in font.
+// such font among all installed ones), the fonts of symbols and other
+// scripts found in theirs, and last the built-in font.
 func Defaults() []FontInfo {
 	defaultsOnce.Do(func() {
 		for _, path := range knownFiles() {
@@ -336,6 +361,17 @@ func Defaults() []FontInfo {
 			}
 			if !found {
 				pick(func(f FontInfo) bool { return f.CJK })
+			}
+		}
+		// Then fonts of symbols and other scripts, for characters the
+		// fonts above lack (they are opened only for such a character).
+		for _, path := range fallbackFiles() {
+			if st, err := os.Stat(path); err != nil || st.IsDir() {
+				continue
+			}
+			if f, err := openFile(path, 0); err == nil {
+				defaultFonts = append(defaultFonts, f.Info)
+				f.Close()
 			}
 		}
 		defaultFonts = append(defaultFonts, builtIn().Info)

@@ -19,7 +19,7 @@ import (
 // without any, the union of those of its inputs (the whole region for the
 // image of the element, and for a primitive of no input).
 func (c *fctx) subregion(p *node, inputs []string) image.Rectangle {
-	whole := image.Rect(0, 0, c.w, c.h)
+	whole := c.whole // the region, in the pixels of the band worked on
 	_, hx := p.attrs["x"]
 	_, hy := p.attrs["y"]
 	_, hw := p.attrs["width"]
@@ -104,6 +104,76 @@ func finiteNum(s string) (float64, bool) {
 	return v, true
 }
 
+// filterHalo is how many rows above and below the primitives of a filter
+// reach, all together, in the device's pixels: what a band must take in
+// beyond its own rows; -1 when one needs the whole region (feTile, a
+// convolution that wraps around its edges).
+func filterHalo(f *node, m matrix, unit [2]float64) int {
+	ky := hypot(m.c, m.d) // a length of user space down the page, in pixels
+	blurReach := func(sd float64) int {
+		d := float64(float64(sd*unit[1]) * ky)
+		if !(d > 0) {
+			return 0
+		}
+		if d < 2 {
+			return int(math.Ceil(float64(3*d))) + 1
+		}
+		size := int(math.Floor(float64(d*3*math.Sqrt(2*math.Pi)/4) + 0.5))
+		return 3*(size/2+1) + 1
+	}
+	num := func(p *node, name string, def float64) float64 {
+		if v, ok := finiteNum(p.attrs[name]); ok {
+			return v
+		}
+		return def
+	}
+	lastOf := func(v []float64, def float64) float64 {
+		if len(v) == 0 {
+			return def
+		}
+		return v[len(v)-1]
+	}
+	total := 0
+	for _, p := range f.children {
+		var r float64
+		switch p.name {
+		case "feGaussianBlur":
+			sd, _ := numbers(p.attrs["stdDeviation"])
+			r = float64(blurReach(lastOf(sd, 0)))
+		case "feDropShadow":
+			sd, _ := numbers(attrOr(p, "stdDeviation", "2"))
+			dx, dy := float64(num(p, "dx", 2)*unit[0]), float64(num(p, "dy", 2)*unit[1])
+			r = float64(blurReach(lastOf(sd, 2))) + math.Abs(float64(m.b*dx)+float64(m.d*dy)) + 1
+		case "feOffset":
+			dx, dy := float64(num(p, "dx", 0)*unit[0]), float64(num(p, "dy", 0)*unit[1])
+			r = math.Abs(float64(m.b*dx)+float64(m.d*dy)) + 1
+		case "feMorphology":
+			rad, _ := numbers(p.attrs["radius"])
+			r = math.Ceil(float64(float64(lastOf(rad, 0)*unit[1])*ky)) + 1
+		case "feConvolveMatrix":
+			if strings.TrimSpace(p.attrs["edgeMode"]) == "wrap" {
+				return -1
+			}
+			order, _ := numbers(attrOr(p, "order", "3"))
+			r = math.Min(64, lastOf(order, 3)) + 1
+		case "feDisplacementMap":
+			r = math.Ceil(float64(float64(math.Abs(num(p, "scale", 0))*unit[1])*ky)/2) + 1
+		case "feDiffuseLighting", "feSpecularLighting":
+			r = 1
+		case "feTile":
+			return -1
+		}
+		if !(r >= 0 && r < 1e6) {
+			return -1
+		}
+		total += int(r)
+		if total > 1<<20 {
+			return -1
+		}
+	}
+	return total
+}
+
 // inputsOf names the inputs of a primitive.
 func inputsOf(p *node) []string {
 	switch p.name {
@@ -125,9 +195,6 @@ func inputsOf(p *node) []string {
 
 // clip clears the pixels of b outside r.
 func (c *fctx) clip(b fbuf, r image.Rectangle) {
-	if r == image.Rect(0, 0, c.w, c.h) {
-		return
-	}
 	for y := 0; y < c.h; y++ {
 		row := b[4*y*c.w : 4*(y+1)*c.w]
 		if y < r.Min.Y || y >= r.Max.Y {
@@ -336,8 +403,8 @@ func (c *fctx) turbulence(p *node, r image.Rectangle) (fbuf, error) {
 		stitch = &turbStitch{width: w, height: h, wrapX: int(float64(tx*fx)) + turbPerlinN + w, wrapY: int(float64(ty*fy)) + turbPerlinN + h}
 	}
 	t := newTurbulence(int64(seed))
-	for y := r.Min.Y; y < r.Max.Y; y++ {
-		for x := r.Min.X; x < r.Max.X; x++ {
+	for y := max(r.Min.Y, 0); y < min(r.Max.Y, c.h); y++ {
+		for x := max(r.Min.X, 0); x < min(r.Max.X, c.w); x++ {
 			ux, uy := inv.apply(float64(x), float64(y))
 			var px [4]float32
 			for ch := 0; ch < 4; ch++ {
@@ -639,16 +706,20 @@ func (c *fctx) tile(p *node, r image.Rectangle) (fbuf, error) {
 		if rr, ok := c.rects[name]; ok {
 			t = rr
 		} else {
-			t = image.Rect(0, 0, c.w, c.h)
+			t = c.whole
 		}
 	}
 	if t.Empty() {
 		return out, nil
 	}
+	t = t.Intersect(image.Rect(0, 0, c.w, c.h))
+	if t.Empty() {
+		return out, nil
+	}
 	tw, th := t.Dx(), t.Dy()
-	for y := r.Min.Y; y < r.Max.Y; y++ {
+	for y := max(r.Min.Y, 0); y < min(r.Max.Y, c.h); y++ {
 		sy := t.Min.Y + ((y-t.Min.Y)%th+th)%th
-		for x := r.Min.X; x < r.Max.X; x++ {
+		for x := max(r.Min.X, 0); x < min(r.Max.X, c.w); x++ {
 			sx := t.Min.X + ((x-t.Min.X)%tw+tw)%tw
 			copy(out[4*(y*c.w+x):4*(y*c.w+x)+4], in[4*(sy*c.w+sx):4*(sy*c.w+sx)+4])
 		}
