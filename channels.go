@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"image/color"
 	"io"
 	"math"
 	"strconv"
@@ -291,7 +292,8 @@ type maskRows struct {
 	strip  image.Image // the mask's strip being read, its rows from y on
 	y      int         // the next row of the mask
 	dy     int         // image row minus mask row
-	grey   []uint8
+	grey   []uint8     // a row: grey levels, or RGBA with rgba
+	rgba   bool
 	held   int64
 	closed bool
 }
@@ -311,12 +313,24 @@ func (g *maskRows) row(y int) ([]uint8, error) {
 		g.strip = s
 	}
 	if g.grey == nil {
-		if err := g.env.Budget.Reserve(int64(g.w), "mask row"); err != nil {
+		n := g.w
+		if g.rgba {
+			n *= 4
+		}
+		if err := g.env.Budget.Reserve(int64(n), "mask row"); err != nil {
 			return nil, err
 		}
-		g.held, g.grey = int64(g.w), make([]uint8, g.w)
+		g.held, g.grey = int64(n), make([]uint8, n)
 	}
 	sb := g.strip.Bounds()
+	if g.rgba {
+		// The pixels as non-premultiplied RGBA.
+		for x := 0; x < g.w; x++ {
+			c := color.NRGBAModel.Convert(g.strip.At(sb.Min.X+x, want)).(color.NRGBA)
+			g.grey[4*x], g.grey[4*x+1], g.grey[4*x+2], g.grey[4*x+3] = c.R, c.G, c.B, c.A
+		}
+		return g.grey, nil
+	}
 	if p, ok := g.strip.(*image.Gray); ok {
 		copy(g.grey, p.Pix[p.PixOffset(sb.Min.X, want):][:g.w])
 		return g.grey, nil
@@ -356,4 +370,94 @@ func (j *joinSource) Close() error {
 		err = merr
 	}
 	return err
+}
+
+// BoolOp is a bitwise operation of Boolean and Bandbool.
+type BoolOp int
+
+const (
+	BoolAnd BoolOp = iota // bits set in both
+	BoolOr                // bits set in either
+	BoolEor               // bits set in one only (exclusive or)
+)
+
+func (op BoolOp) apply(a, b uint8) uint8 {
+	switch op {
+	case BoolAnd:
+		return a & b
+	case BoolOr:
+		return a | b
+	}
+	return a ^ b
+}
+
+// Boolean sets the red, green and blue of every pixel to the bitwise
+// operation op of them and those of the pixel of operand, an image of the
+// same size, as sharp's boolean; the transparency stays the image's. Both
+// are read a few rows at a time, side by side.
+func (m *Image) Boolean(operand *Image, op BoolOp) *Image {
+	if operand == nil {
+		return m.fail(errors.New("goimgtools: Boolean needs an operand"))
+	}
+	if op < BoolAnd || op > BoolEor {
+		return m.fail(errors.New("goimgtools: unknown Boolean operation"))
+	}
+	return m.add(booleanOp{operand, op})
+}
+
+// booleanOp is Boolean as a step of the chain.
+type booleanOp struct {
+	operand *Image
+	op      BoolOp
+}
+
+func (o booleanOp) apply(src pipeline.Source, r *run) (pipeline.Source, error) {
+	if r.sizeOnly {
+		return src, nil
+	}
+	env := pipeline.EnvOf(src)
+	os, closer, _, _, err := o.operand.build(env, false)
+	if err != nil {
+		return nil, fmt.Errorf("operand: %w", err)
+	}
+	b, ob := src.Bounds(), os.Bounds()
+	if b.Size() != ob.Size() {
+		os.Close()
+		closer.Close()
+		return nil, fmt.Errorf("goimgtools: Boolean: the operand is %dx%d, the image %dx%d", ob.Dx(), ob.Dy(), b.Dx(), b.Dy())
+	}
+	g := &maskRows{src: os, closer: closer, env: env, w: b.Dx(), y: ob.Min.Y, dy: b.Min.Y - ob.Min.Y, rgba: true}
+	out := pipeline.Map(src, func(s *image.NRGBA) error {
+		w := s.Rect.Dx()
+		for y := s.Rect.Min.Y; y < s.Rect.Max.Y; y++ {
+			row, err := g.row(y)
+			if err != nil {
+				return fmt.Errorf("operand: %w", err)
+			}
+			px := s.Pix[s.PixOffset(s.Rect.Min.X, y):][:4*w]
+			for x := 0; x < w; x++ {
+				for k := 0; k < 3; k++ {
+					px[4*x+k] = o.op.apply(px[4*x+k], row[4*x+k])
+				}
+			}
+		}
+		return nil
+	})
+	return &joinSource{Source: out, mask: g}, nil
+}
+
+// Bandbool makes every pixel grey, the bitwise operation op of its red,
+// green and blue (red op green op blue), as sharp's bandbool; the
+// transparency stays.
+func (m *Image) Bandbool(op BoolOp) *Image {
+	if op < BoolAnd || op > BoolEor {
+		return m.fail(errors.New("goimgtools: unknown Bandbool operation"))
+	}
+	return m.Pixels(func(s *image.NRGBA) error {
+		for i := 0; i < len(s.Pix); i += 4 {
+			v := op.apply(op.apply(s.Pix[i], s.Pix[i+1]), s.Pix[i+2])
+			s.Pix[i], s.Pix[i+1], s.Pix[i+2] = v, v, v
+		}
+		return nil
+	})
 }

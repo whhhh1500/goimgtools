@@ -57,3 +57,47 @@ func TestJoinChannel(t *testing.T) {
 		t.Error("nil: no error")
 	}
 }
+
+// TestBooleanAndBandbool: bitwise operations of two images, channel by
+// channel, and of a pixel's channels; transparency stays.
+func TestBooleanAndBandbool(t *testing.T) {
+	a := noisyPhoto(53, 41, true)
+	bimg := noisyPhoto(53, 41, false)
+	for i := 0; i < len(bimg.Pix); i += 4 {
+		bimg.Pix[i] ^= 0x5a
+	}
+	for _, op := range []BoolOp{BoolAnd, BoolOr, BoolEor} {
+		got := drawn(t, FromSource(func(env *pipeline.Env) (pipeline.Source, error) {
+			return testutil.ChoppedEnv(a, 5, env), nil
+		}).Boolean(FromImage(bimg), op))
+		for i := 0; i < len(a.Pix); i += 4 {
+			if a.Pix[i+3] == 0 {
+				continue
+			}
+			for k := 0; k < 3; k++ {
+				x, y := a.Pix[i+k], bimg.Pix[i+k]
+				want := map[BoolOp]uint8{BoolAnd: x & y, BoolOr: x | y, BoolEor: x ^ y}[op]
+				if got.Pix[i+k] != want || got.Pix[i+3] != a.Pix[i+3] {
+					t.Fatalf("op %d pixel %d channel %d: %d, want %d", op, i/4, k, got.Pix[i+k], want)
+				}
+			}
+		}
+		g := drawn(t, FromImage(a).Bandbool(op))
+		for i := 0; i < len(a.Pix); i += 4 {
+			if a.Pix[i+3] == 0 {
+				continue
+			}
+			r, gg, b := a.Pix[i], a.Pix[i+1], a.Pix[i+2]
+			want := map[BoolOp]uint8{BoolAnd: r & gg & b, BoolOr: r | gg | b, BoolEor: r ^ gg ^ b}[op]
+			if g.Pix[i] != want || g.Pix[i+1] != want || g.Pix[i+2] != want || g.Pix[i+3] != a.Pix[i+3] {
+				t.Fatalf("bandbool %d pixel %d: %v, want %d", op, i/4, g.Pix[i:i+4], want)
+			}
+		}
+	}
+	for _, bad := range []*Image{FromImage(a).Boolean(nil, BoolAnd), FromImage(a).Boolean(FromImage(bimg), 7), FromImage(a).Bandbool(-1),
+		FromImage(a).Boolean(Blank(10, 10, color.White), BoolOr)} {
+		if _, err := bad.PNG().ToBytes(); err == nil {
+			t.Error("no error")
+		}
+	}
+}

@@ -82,6 +82,7 @@ Where this library can work an operation out the way libvips (and so sharp) or P
 | `Unflatten()` | Makes white pixels transparent (those whose grey, as sharp's, is 255); after `Threshold`, every pixel at or above the threshold. Byte-for-byte identical to sharp's `unflatten` |
 | `ExtractChannel(c)` | A greyscale image of one channel: `ChannelRed`, `ChannelGreen`, `ChannelBlue` or `ChannelAlpha` (sharp's `extractChannel`) |
 | `JoinChannel(mask)` | Takes the grey of `mask`, an image of the same size, as the alpha channel (multiplied with the image's own), as sharp's `joinChannel`: the inverse of `ExtractChannel(ChannelAlpha)`. Both are read a few rows at a time |
+| `Boolean(operand, op)`, `Bandbool(op)` | Bitwise `BoolAnd`, `BoolOr` or `BoolEor` of the red, green and blue of each pixel with those of an image of the same size, or of a pixel's own three (made grey), as sharp's `boolean` and `bandbool`; the transparency stays |
 | `EnsureAlpha(alpha)` | An image without transparency gets an alpha channel of the given opacity, 0–1 (trunc(alpha·255), as sharp's `ensureAlpha`, byte for byte); an image with transparency keeps it |
 | `RemoveAlpha()` | Drops the transparency: every pixel shows the colour it stores (sharp's `removeAlpha`); unlike `Flatten`, nothing is blended with a background |
 | `Composite(overlay, CompositeOptions{...})` | Composites an overlay or watermark (see [Watermarks](#watermarks)) |
