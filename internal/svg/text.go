@@ -1,6 +1,9 @@
 package svg
 
 import (
+	"os"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -84,6 +87,16 @@ func (b *builder) fonts(family, face string) *textsrc.Set {
 	}
 	var specs []string
 	try := func(f string) bool {
+		// The usual files of the fonts generic families stand for, without
+		// a look through all the system's fonts.
+		if paths, ok := knownFontFiles[f]; ok {
+			for _, p := range paths[faceIndex(face)] {
+				if st, err := os.Stat(p); err == nil && !st.IsDir() {
+					specs = append(specs, p)
+					return true
+				}
+			}
+		}
 		for _, name := range []string{f + face, f} {
 			if fo, err := textsrc.Open(name); err == nil {
 				fo.Close()
@@ -94,11 +107,19 @@ func (b *builder) fonts(family, face string) *textsrc.Set {
 		return false
 	}
 	// The families named, the generic ones as the fonts browsers use for
-	// them; after them all, as CSS says, the default, serif.
+	// them, those of other systems as what browsers put for them
+	// (Helvetica: Arial); after them all, as CSS says, the default, serif.
 	generic := false
 	for _, f := range strings.Split(family, ",") {
 		f = strings.Trim(strings.TrimSpace(f), `"'`)
-		if names, ok := genericFonts[strings.ToLower(f)]; ok {
+		if f != "" && try(f) {
+			continue
+		}
+		lf := strings.ToLower(f)
+		if g, ok := fontAliases[lf]; ok {
+			lf = g
+		}
+		if names, ok := genericFonts[lf]; ok {
 			for _, n := range names {
 				if try(n) {
 					generic = true
@@ -108,10 +129,6 @@ func (b *builder) fonts(family, face string) *textsrc.Set {
 			if generic {
 				break // the list ends at a generic family
 			}
-			continue
-		}
-		if f != "" {
-			try(f)
 		}
 	}
 	if !generic {
@@ -138,6 +155,55 @@ var genericFonts = map[string][]string{
 	"monospace":  {"Consolas", "Courier New", "Menlo", "Courier", "Liberation Mono", "DejaVu Sans Mono", "Noto Sans Mono", "Cousine"},
 	"cursive":    {"Comic Sans MS", "Apple Chancery", "URW Chancery L", "Comic Neue"},
 	"fantasy":    {"Impact", "Papyrus", "Luminari"},
+}
+
+// fontAliases are families of other systems, and what browsers draw them
+// with where they are not installed.
+var fontAliases = map[string]string{
+	"helvetica": "sans-serif", "helvetica neue": "sans-serif", "arial": "sans-serif", "verdana": "sans-serif",
+	"lucida grande": "sans-serif", "geneva": "sans-serif", "tahoma": "sans-serif", "segoe ui": "system-ui",
+	"-apple-system": "system-ui", "blinkmacsystemfont": "system-ui",
+	"times": "serif", "times new roman": "serif", "georgia": "serif", "palatino": "serif",
+	"courier": "monospace", "courier new": "monospace", "monaco": "monospace", "menlo": "monospace", "consolas": "monospace",
+}
+
+// knownFontFiles are where Windows keeps the fonts generic families stand
+// for, by face: regular, bold, italic, bold italic.
+var knownFontFiles = func() map[string][4][]string {
+	if runtime.GOOS != "windows" {
+		return nil
+	}
+	dir := filepath.Join(os.Getenv("WINDIR"), "Fonts")
+	f := func(names ...string) [4][]string {
+		var out [4][]string
+		for i, n := range names {
+			out[i] = []string{filepath.Join(dir, n)}
+		}
+		return out
+	}
+	return map[string][4][]string{
+		"Times New Roman": f("times.ttf", "timesbd.ttf", "timesi.ttf", "timesbi.ttf"),
+		"Arial":           f("arial.ttf", "arialbd.ttf", "ariali.ttf", "arialbi.ttf"),
+		"Consolas":        f("consola.ttf", "consolab.ttf", "consolai.ttf", "consolaz.ttf"),
+		"Courier New":     f("cour.ttf", "courbd.ttf", "couri.ttf", "courbi.ttf"),
+		"Segoe UI":        f("segoeui.ttf", "segoeuib.ttf", "segoeuii.ttf", "segoeuiz.ttf"),
+		"Comic Sans MS":   f("comic.ttf", "comicbd.ttf", "comici.ttf", "comicz.ttf"),
+		"Impact":          f("impact.ttf", "impact.ttf", "impact.ttf", "impact.ttf"),
+	}
+}()
+
+// faceIndex is the place of a face among regular, bold, italic and bold
+// italic.
+func faceIndex(face string) int {
+	switch face {
+	case " Bold":
+		return 1
+	case " Italic":
+		return 2
+	case " Bold Italic":
+		return 3
+	}
+	return 0
 }
 
 // spacing reads letter-spacing or word-spacing: normal is none.
@@ -171,8 +237,8 @@ func baselineOf(v string) (int, bool) {
 }
 
 // pathFor flattens the path a textPath refers to, in the text's user
-// space.
-func (b *builder) pathFor(k *node, st style, vp viewport) *textPathInfo {
+// space, as finely as the text's transform m to the device needs.
+func (b *builder) pathFor(k *node, m matrix, st style, vp viewport) *textPathInfo {
 	href, ok := k.attr("href")
 	if !ok {
 		href, ok = k.attr("xlink:href")
@@ -197,7 +263,7 @@ func (b *builder) pathFor(k *node, st style, vp viewport) *textPathInfo {
 		}
 	}
 	segs := shapeSegs(t, computeStyle(t, st, vp), vp)
-	ps, ok := flattenLimit(segs, tm, maxPoints/16)
+	ps, ok := flattenLimit(segs, m.mul(tm), maxPoints/16)
 	if !ok || len(ps) == 0 {
 		return nil
 	}
@@ -268,6 +334,7 @@ func (p *textPathInfo) at(s float64) (x, y, ux, uy float64, ok bool) {
 // as its style says, with the lines of its decorations.
 func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *clip) {
 	var chars []tchar
+	preserve := n.attrs["xml:space"] == "preserve"
 	var walk func(k *node, kst style, ctx textCtx)
 	walk = func(k *node, kst style, ctx textCtx) {
 		// The inherited properties of text come with the style (from the
@@ -281,7 +348,7 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 			face += " Italic"
 		}
 		ctx.letter, ctx.word, ctx.baseline = kst.letterSp, kst.wordSp, kst.baseline
-		if v, ok := k.prop("alignment-baseline"); ok && k != n {
+		if v, ok := k.prop("alignment-baseline"); ok { // on text too, as Chrome (D3's charts put it there)
 			if bl, ok := baselineOf(v); ok {
 				ctx.baseline = bl
 			}
@@ -321,7 +388,7 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 			}
 		}
 		if k.name == "textPath" {
-			ctx.path = b.pathFor(k, kst, vp)
+			ctx.path = b.pathFor(k, m, kst, vp)
 			if ctx.path == nil {
 				return // a path that is not there: its text is not drawn
 			}
@@ -334,8 +401,23 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 		rots, _ := numbers(k.attrs["rotate"])
 		first := len(chars)
 		kctx := ctx
+		// White space is collapsed as the characters are added (newlines
+		// dropped, tabs made spaces, a space after a space or at the start
+		// dropped), so that the positions go to the characters that stay.
 		addText := func(s string) {
 			for _, r := range s {
+				switch r {
+				case '\n', '\r':
+					if !preserve {
+						continue
+					}
+					r = ' '
+				case '\t':
+					r = ' '
+				}
+				if !preserve && r == ' ' && (len(chars) == 0 || chars[len(chars)-1].r == ' ') {
+					continue
+				}
 				chars = append(chars, tchar{r: r, st: kst, node: k, family: family, face: face, anchor: anchor, tctx: &kctx})
 			}
 		}
@@ -376,7 +458,12 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 	}
 	st.opacity = 1 // the group's, see element
 	walk(n, st, textCtx{})
-	chars = collapseSpace(chars, n.attrs["xml:space"] == "preserve")
+	if !preserve {
+		// The spaces at the end.
+		for len(chars) > 0 && chars[len(chars)-1].r == ' ' {
+			chars = chars[:len(chars)-1]
+		}
+	}
 	if len(chars) == 0 {
 		return
 	}
@@ -449,9 +536,17 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 			}
 		}
 		p := placed{c: c, f: f, gi: gi, x: penX, y: penY, chunk: chunk, sx: 1}
-		// The font's lines, in its units of 1/64.
-		u := float64(scale / 64)
-		if mt, err := sf.Metrics(&buf, upem, font.HintingNone); err == nil {
+		// The lines of the set's first font, in its units of 1/64, whatever
+		// font draws the character (as Chrome: a line of mixed scripts keeps
+		// one baseline and one underline).
+		msf, mupem, mscale := sf, upem, scale
+		if first := set.First(); first != nil {
+			msf = first.SFNT()
+			mupem = fixed.Int26_6(msf.UnitsPerEm()) << 6
+			mscale = c.st.fontSize / float64(msf.UnitsPerEm())
+		}
+		u := float64(mscale / 64)
+		if mt, err := msf.Metrics(&buf, mupem, font.HintingNone); err == nil {
 			asc, desc, xh := float64(mt.Ascent), float64(mt.Descent), float64(mt.XHeight)
 			if !(xh > 0) {
 				xh = float64(asc / 2)
@@ -475,9 +570,9 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 		}
 		p.thick = float64(c.st.fontSize / 14)
 		p.under = float64(c.st.fontSize / 10)
-		if post := sf.PostTable(); post != nil && post.UnderlineThickness > 0 {
-			p.thick = float64(float64(post.UnderlineThickness) * scale)
-			p.under = -float64(float64(post.UnderlinePosition) * scale)
+		if post := msf.PostTable(); post != nil && post.UnderlineThickness > 0 {
+			p.thick = float64(float64(post.UnderlineThickness) * mscale)
+			p.under = -float64(float64(post.UnderlinePosition) * mscale)
 		}
 		adv := 0.0
 		if a, err := sf.GlyphAdvance(&buf, gi, upem, font.HintingNone); err == nil {
@@ -501,7 +596,11 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 			if w > 0 {
 				stretch := strings.TrimSpace(n.attrs["lengthAdjust"]) == "spacingAndGlyphs"
 				k := l / w
-				delta := (l - w) / float64(len(out))
+				// Spaced, the extra between the characters (as Chrome).
+				delta := 0.0
+				if len(out) > 1 {
+					delta = (l - w) / float64(len(out)-1)
+				}
 				start := chunkStart[out[0].chunk]
 				for i := range out {
 					p := &out[i]
@@ -511,7 +610,9 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 						p.sx = k
 					} else {
 						p.x += float64(float64(i) * delta)
-						p.adv += delta
+						if i < len(out)-1 {
+							p.adv += delta
+						}
 					}
 					p.end = p.x + p.adv
 				}
@@ -707,35 +808,6 @@ func lengths(s string, st style, vp viewport, axis int) []float64 {
 	for _, f := range splitList(s) {
 		if v, ok := parseLength(f, st.fontSize, vp, axis); ok {
 			out = append(out, v)
-		}
-	}
-	return out
-}
-
-// collapseSpace applies SVG's default white space handling: newlines
-// dropped, tabs made spaces, runs of spaces made one, leading and trailing
-// ones dropped (the positions of the characters dropped go to the next).
-func collapseSpace(cs []tchar, preserve bool) []tchar {
-	out := cs[:0:0]
-	for _, c := range cs {
-		switch c.r {
-		case '\n', '\r':
-			if preserve {
-				c.r = ' '
-			} else {
-				continue
-			}
-		case '\t':
-			c.r = ' '
-		}
-		if !preserve && c.r == ' ' && (len(out) == 0 || out[len(out)-1].r == ' ') {
-			continue
-		}
-		out = append(out, c)
-	}
-	if !preserve {
-		for len(out) > 0 && out[len(out)-1].r == ' ' {
-			out = out[:len(out)-1]
 		}
 	}
 	return out

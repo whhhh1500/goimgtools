@@ -121,7 +121,7 @@ func (b *builder) filtered(n *node, f *node, m matrix, st style, vp viewport, ow
 	if primBox {
 		unit = [2]float64{bx[2], bx[3]}
 	}
-	halo0 := filterHalo(f, m, unit)
+	halo0, haloPx := filterHalo(f, m, unit)
 	// plan is the band height for a region of w by h at scale k, and
 	// whether it fits.
 	plan := func(w, h int, k float64) (int, bool) {
@@ -135,7 +135,7 @@ func (b *builder) filtered(n *node, f *node, m matrix, st style, vp viewport, ow
 		if halo0 < 0 {
 			return h, fixed+int64(h)*perRow <= room
 		}
-		halo := int(math.Ceil(float64(halo0)*k)) + 1
+		halo := int(math.Ceil(float64(halo0)*k)) + haloPx + 1
 		if fixed+int64(h)*perRow <= room {
 			return h, true
 		}
@@ -146,24 +146,21 @@ func (b *builder) filtered(n *node, f *node, m matrix, st style, vp viewport, ow
 		return 0, false
 	}
 	bandH, ok := plan(w, h, 1)
-	for k := 1.0; !ok && w > 1 && h > 1; {
-		if b.avail != nil {
-			// The scale at which the whole would fit, then smaller still
-			// until a band does.
-			need := int64(w) * int64(h) * (16*bufs + 32 + 4*int64(2+images))
-			if room := b.avail() / 2; room > 0 && k == 1 {
-				k = math.Min(0.95, math.Sqrt(float64(room)/float64(need)))
-			} else {
-				k = float64(k * 0.8)
+	// Smaller, a tenth at a time (no more than the largest region allows),
+	// until a band fits.
+	for k := 1.0; (!ok || int64(w)*int64(h) > maxFilterPixels) && k > 1e-3; {
+		if k == 1 {
+			k = 0.95
+			if a := int64(reg.Dx()) * int64(reg.Dy()); a > maxFilterPixels {
+				k = math.Min(k, math.Sqrt(float64(maxFilterPixels)/float64(a)))
 			}
+		} else {
+			k = float64(k * 0.9)
 		}
 		nw, nh := max(1, int(float64(float64(reg.Dx())*k))), max(1, int(float64(float64(reg.Dy())*k)))
 		sx, sy = float64(nw)/float64(reg.Dx()), float64(nh)/float64(reg.Dy())
 		w, h = nw, nh
 		bandH, ok = plan(w, h, k)
-		if k < 1e-3 {
-			break
-		}
 	}
 	if !ok || int64(w)*int64(h) > maxFilterPixels {
 		b.err = errTooMuch
@@ -171,7 +168,7 @@ func (b *builder) filtered(n *node, f *node, m matrix, st style, vp viewport, ow
 	}
 	halo := 0
 	if bandH < h {
-		halo = int(math.Ceil(float64(halo0)*sy)) + 1
+		halo = int(math.Ceil(float64(halo0)*sy)) + haloPx + 1
 	}
 	// The region's pixels from the device's.
 	toRegion := matrix{sx, 0, 0, sy, 0, 0}.mul(matrix{1, 0, 0, 1, -float64(reg.Min.X), -float64(reg.Min.Y)})
@@ -885,6 +882,13 @@ func (c *fctx) gauss(in fbuf, dx, dy float64) (fbuf, error) {
 	}
 	pass(dx, w, h, func(y, x int) int { return 4 * (y*w + x) })
 	pass(dy, h, w, func(x, y int) int { return 4 * (y*w + x) })
+	// What the running sums leave where nothing is (a millionth or so)
+	// is nothing: divided by an alpha of that, it would be a colour.
+	for i, v := range out {
+		if v < 1.0/65536 {
+			out[i] = 0
+		}
+	}
 	return out, nil
 }
 

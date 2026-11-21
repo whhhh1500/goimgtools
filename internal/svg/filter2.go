@@ -105,10 +105,12 @@ func finiteNum(s string) (float64, bool) {
 }
 
 // filterHalo is how many rows above and below the primitives of a filter
-// reach, all together, in the device's pixels: what a band must take in
-// beyond its own rows; -1 when one needs the whole region (feTile, a
-// convolution that wraps around its edges).
-func filterHalo(f *node, m matrix, unit [2]float64) int {
+// reach, all together: in the device's pixels, those of lengths (which a
+// lower resolution makes fewer), and in the region's own pixels, those of
+// kernels (a convolution's, a lighting's); what a band must take in beyond
+// its own rows. -1 when one needs the whole region (feTile, a convolution
+// that wraps around its edges).
+func filterHalo(f *node, m matrix, unit [2]float64) (int, int) {
 	ky := hypot(m.c, m.d) // a length of user space down the page, in pixels
 	blurReach := func(sd float64) int {
 		d := float64(float64(sd*unit[1]) * ky)
@@ -133,7 +135,7 @@ func filterHalo(f *node, m matrix, unit [2]float64) int {
 		}
 		return v[len(v)-1]
 	}
-	total := 0
+	total, pixels := 0, 0
 	for _, p := range f.children {
 		var r float64
 		switch p.name {
@@ -152,26 +154,28 @@ func filterHalo(f *node, m matrix, unit [2]float64) int {
 			r = math.Ceil(float64(float64(lastOf(rad, 0)*unit[1])*ky)) + 1
 		case "feConvolveMatrix":
 			if strings.TrimSpace(p.attrs["edgeMode"]) == "wrap" {
-				return -1
+				return -1, 0
 			}
 			order, _ := numbers(attrOr(p, "order", "3"))
-			r = math.Min(64, lastOf(order, 3)) + 1
+			pixels += int(math.Min(64, math.Max(0, lastOf(order, 3)))) + 1
+			continue
 		case "feDisplacementMap":
 			r = math.Ceil(float64(float64(math.Abs(num(p, "scale", 0))*unit[1])*ky)/2) + 1
 		case "feDiffuseLighting", "feSpecularLighting":
-			r = 1
+			pixels++
+			continue
 		case "feTile":
-			return -1
+			return -1, 0
 		}
 		if !(r >= 0 && r < 1e6) {
-			return -1
+			return -1, 0
 		}
 		total += int(r)
 		if total > 1<<20 {
-			return -1
+			return -1, 0
 		}
 	}
-	return total
+	return total, pixels
 }
 
 // inputsOf names the inputs of a primitive.

@@ -33,10 +33,14 @@ type compound struct {
 	tag     string // "" for any
 	id      string
 	classes []string
+	root    bool // :root, the document's element
 }
 
 func (c compound) matches(n *node) bool {
 	if c.tag != "" && c.tag != n.name {
+		return false
+	}
+	if c.root && n.parent != nil {
 		return false
 	}
 	if c.id != "" && n.attrs["id"] != c.id {
@@ -128,6 +132,11 @@ func parseSelector(src string) (selector, bool) {
 				c.id = part[1:]
 				s.spec += 10000
 			case ':', '[':
+				if part == ":root" {
+					c.root = true
+					s.spec += 100 // a pseudo-class counts as a class
+					continue
+				}
 				return s, false
 			default:
 				if strings.ContainsAny(part, ":[]()") {
@@ -159,7 +168,10 @@ func declarations(src string) [][3]string {
 		if !ok {
 			continue
 		}
-		k = strings.ToLower(strings.TrimSpace(k))
+		k = strings.TrimSpace(k)
+		if !strings.HasPrefix(k, "--") {
+			k = strings.ToLower(k) // custom properties keep their case
+		}
 		v = strings.TrimSpace(v)
 		imp := ""
 		if i := strings.Index(strings.ToLower(v), "!important"); i >= 0 {
@@ -401,6 +413,14 @@ func initialStyle() style {
 		visible: true, fontSize: 16, opacity: 1, display: true, stopColor: color.NRGBA{0, 0, 0, 255}, stopOpacity: 1}
 }
 
+// parseFloatOr reads a number, or def.
+func parseFloatOr(s string, def float64) float64 {
+	if v, err := strconv.ParseFloat(strings.TrimSpace(s), 64); err == nil {
+		return v
+	}
+	return def
+}
+
 // resolveVars puts in each var(--name[, fallback]) of v the custom
 // property's value, or else its fallback; false when one has neither (the
 // property is then as if not given).
@@ -502,6 +522,35 @@ func computeStyle(n *node, parent style, vp viewport) style {
 			return "", false
 		}
 		return v, ok
+	}
+	// The font shorthand: [style] [variant] [weight] size[/line-height]
+	// family, its parts as their own properties (which, given, win).
+	if v, ok := get("font"); ok {
+		fields := strings.Fields(v)
+		for i, f := range fields {
+			lf := strings.ToLower(f)
+			switch lf {
+			case "italic", "oblique":
+				s.italic = true
+				continue
+			case "bold", "bolder", "600", "700", "800", "900":
+				s.bold = true
+				continue
+			case "normal", "small-caps", "lighter", "100", "200", "300", "400", "500":
+				continue
+			}
+			size, _, _ := strings.Cut(f, "/")
+			if fs, ok := parseLength(size, parent.fontSize, vp, axisDiag); ok && fs > 0 {
+				if strings.HasSuffix(size, "%") {
+					fs = float64(parseFloatOr(strings.TrimSuffix(size, "%"), 100) / 100 * parent.fontSize)
+				}
+				s.fontSize = fs
+				if i+1 < len(fields) {
+					s.fontFamily = strings.Join(fields[i+1:], " ")
+				}
+			}
+			break
+		}
 	}
 	if v, ok := get("font-size"); ok {
 		// A percentage or em of the parent's size; the keywords of CSS.

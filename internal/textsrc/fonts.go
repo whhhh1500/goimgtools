@@ -328,8 +328,8 @@ var (
 // Defaults lists the fonts text is drawn with when none is named, in the
 // order they are tried for each character: the Chinese-capable fonts found
 // in their usual places on this system (or, if none is there, the first
-// such font among all installed ones), the fonts of symbols and other
-// scripts found in theirs, and last the built-in font.
+// such font among all installed ones), the built-in font, and last the
+// fonts of symbols and other scripts found in their usual places.
 func Defaults() []FontInfo {
 	defaultsOnce.Do(func() {
 		for _, path := range knownFiles() {
@@ -363,8 +363,10 @@ func Defaults() []FontInfo {
 				pick(func(f FontInfo) bool { return f.CJK })
 			}
 		}
+		defaultFonts = append(defaultFonts, builtIn().Info)
 		// Then fonts of symbols and other scripts, for characters the
-		// fonts above lack (they are opened only for such a character).
+		// fonts above lack (they are opened only for such a character):
+		// after the built-in font, so that what it draws stays as it is.
 		for _, path := range fallbackFiles() {
 			if st, err := os.Stat(path); err != nil || st.IsDir() {
 				continue
@@ -374,7 +376,6 @@ func Defaults() []FontInfo {
 				f.Close()
 			}
 		}
-		defaultFonts = append(defaultFonts, builtIn().Info)
 	})
 	return defaultFonts
 }
@@ -388,6 +389,15 @@ const FontBytes = 256 << 10
 // Set is the fonts for one piece of text: the ones asked for, opened at
 // once, and the defaults, each opened only when a character turns up that
 // no font before it has.
+// First is the set's first font, whose lines (ascent, x-height,
+// underline) text set in it keeps whatever font draws a character.
+func (s *Set) First() *Font {
+	if len(s.fonts) == 0 {
+		return nil
+	}
+	return s.fonts[0]
+}
+
 type Set struct {
 	fonts   []*Font
 	pending []FontInfo
