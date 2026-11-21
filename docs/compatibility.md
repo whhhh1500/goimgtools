@@ -69,4 +69,18 @@ The WebP encoders were written for this module. As there is no standard library 
 
 ## HEIC encoder
 
-HEIC is written by gen2brain/h265, an HEVC encoder in pure Go (module `goimgtools/heic`), and it is less efficient than x265: on six Kodak photographs (768×512), each encoded at qualities 30–90 and decoded with libde265, its files are 22% larger at equal SSIMULACRA2 than those of libheif 1.23.6 with x265 4.3 (pillow-heif 1.8.1, its default settings, 4:2:0), from 15% to 29% per image. Effort 9, which adds SAO, does not narrow it (22.5%). x265 is under the GPL, which this MIT-licensed module cannot include. Reading HEIC, such as phone photographs, does not depend on the encoder.
+HEIC is written by Kvazaar, the HEVC encoder of Tampere University (module `goimgtools/heic`), compiled to WebAssembly and translated to Go, with two options added to it (a QP 2 lower for Cb and Cr, and their distortion weighted more) and its variance adaptive quantization measured against one value for every picture. On the 24 Kodak photographs (768×512), each written at qualities 30–90 and read by libheif, against libheif 1.23.6 with x265 4.3 at its default settings (pillow-heif 1.8.1, x265's slow preset, 4:2:0), at equal SSIMULACRA2:
+
+| Effort | Size against x265 | A Kodak photograph on one core |
+|---|---|---|
+| 1 | +13.0% | 0.16s |
+| 2 | +10.8% | 0.22s |
+| 3 | +9.6% | 0.31s |
+| 4 | +6.8% | 0.43s |
+| 5 (default) | +5.3% (+2.1% to +10.5% per image) | 0.49s |
+| 6 | +1.2% (−2.4% to +4.5%) | 1.5s |
+| 7 | +0.7% | 2.4s |
+| 8 | +0.4% (−3.4% to +3.7%) | 3.5s |
+| 9 | −0.6% (on six of them) | 14s |
+
+x265 takes 0.36s for a Kodak photograph on one core and 3.2s for a 3840×2160 photograph, against about 7s at the default effort (2.3s with `Threads(8)`): Kvazaar runs as plain Go, without the SIMD of x265. gen2brain/h265, which wrote HEIC before, was 23% larger (14% to 29% per image) in 0.35s and 3.5s. x265 is under the GPL, which this MIT-licensed module cannot include. Lossless files (G, B and R, exact) are 0.4% larger than x265's at the default effort and 1.5% smaller at effort 7, and 9% larger than PNG. Reading HEIC, such as phone photographs, does not depend on the encoder.

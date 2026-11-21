@@ -1,7 +1,5 @@
 // Package heic teaches goimgtools the HEIC format (HEIF images coded with
-// HEVC, as phones take photographs): read and written by
-// github.com/gen2brain/h265, an HEVC codec in pure Go (no cgo, no
-// WebAssembly). Import it for its side effect:
+// HEVC, as phones take photographs). Import it for its side effect:
 //
 //	import _ "github.com/whhhh1500/goimgtools/heic"
 //
@@ -14,8 +12,28 @@
 // writes .heic files, as does ToFormat("heic", heic.Options{...}), with the
 // metadata goimgtools keeps. MaxFileSize works with its Quality.
 //
-// It is a module of its own: the codec is large, and HEVC is covered by
-// patents, whose licensing is the user's matter.
+// Files are read by github.com/gen2brain/h265, an HEVC decoder in pure Go
+// (no cgo, no WebAssembly), and written by Kvazaar, the HEVC encoder of
+// Tampere University, compiled to WebAssembly and translated to Go
+// (internal/kvazaar): plain Go too, which writes the same file on every
+// processor, with any Threads and memory limit. See Options for how its
+// files compare with x265's.
+//
+// An image of up to 4 megapixels (2 at 4:4:4) is coded as one picture, a
+// larger one as a grid of tiles of 1024 x 1024 (cut where the image ends),
+// as many at once as its Threads have room for under its memory limit, the
+// result the same however many. The image is kept one row of tiles at a
+// time (1.5 bytes a pixel, 3 at 4:4:4, and 1 more with transparency), and
+// each picture being coded takes about 1.3MB and 6.2 bytes a pixel more
+// (2MB and 16.6 at 4:4:4; the memory limit counts a little more). Each
+// 64 x 64 block's QP is moved by up to 13 by how much its samples vary
+// (Kvazaar's variance adaptive quantization, measured against one value
+// for every picture, so that a grid's tiles get the QPs the picture would).
+//
+// It is a module of its own: the codecs are large, and HEVC is covered by
+// patents, whose licensing is the user's matter. The licences of the code
+// it includes (Kvazaar's BSD licence among them) are in its licenses
+// directory.
 //
 // Unlike the formats of goimgtools, a HEIC is decoded whole: the pixels (4
 // bytes each, 8 for more than 8 bits) are counted in the memory limit. The
@@ -32,8 +50,6 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
-	"image"
-	"image/draw"
 	"io"
 
 	gheic "github.com/gen2brain/h265/heic"
@@ -49,24 +65,49 @@ var displayP3 []byte
 
 // Options are the settings of HEIC output, given to ToFormat("heic",
 // heic.Options{...}).
+//
+// Against libheif 1.23.6 with x265 4.3 at its defaults (pillow-heif 1.8.1,
+// x265's slow preset), on the 24 Kodak photographs each written at
+// qualities 30 to 90 and read by libheif, the files are larger at equal
+// SSIMULACRA2 by 5.3% at the default effort (from 2.1% to 10.5%), 1.2% at
+// effort 6, 0.7% at 7 and 0.4% at 8 (from 3.4% smaller to 3.7% larger), and
+// on six of them 0.6% smaller at effort 9; gen2brain/h265's encoder, which
+// wrote them before, 23% larger. On one core a photograph of 3840 x 2160
+// takes about 7s at the default effort (2.3s with Threads(8)), 20s at effort 6
+// (7.1s), where x265 takes 3.2s and gen2brain/h265 took 3.5s: Kvazaar runs
+// here as plain Go, without the SIMD of x265.
 type Options struct {
-	// Quality is 1 to 100; 0 means the default, 60.
+	// Quality is 1 to 100; 0 means the default, 60. The QP of a picture is
+	// 51 - Quality/2, moved for each 64 x 64 block by how much it varies (see
+	// the package doc); the files come out about the size and quality of
+	// libheif's at the same quality.
 	Quality int
 	// Effort trades time for size: 1 is the fastest, 9 gives the smallest
-	// files; 0 means the default, 5. From 6 the sample adaptive offset is
-	// fitted (about 2.2 times the time, 3.5% smaller).
+	// files; 0 means the default, 5. They are Kvazaar's presets: ultrafast
+	// at 1, superfast and fast (with rate-distortion optimized quantization)
+	// at 2 and 3, medium at 4 and 5, slower from 6; with more tried from 5
+	// (the colour's own prediction modes, sign hiding), from 7 split
+	// transforms, at 8 and 9 more prediction modes compared by their cost
+	// (at 9 all of them). See Options for how they compare; a Kodak
+	// photograph (768 x 512) takes 0.16s at effort 1, 0.49s at 5, 1.5s at 6,
+	// 3.5s at 8 and 14s at 9 on one core.
 	Effort int
-	// Lossless codes the samples without loss, in 4:4:4 (Quality is then
-	// not used): the colours come back within a level, the samples being
-	// YCbCr.
+	// Lossless codes the pixels without loss (Quality is then not used): G,
+	// B and R are coded 4:4:4 as they are, with the colour description that
+	// says so (as libheif reads it), and come back exactly. On the 24 Kodak
+	// photographs, 0.4% larger than x265's lossless files at the default
+	// effort and 1.5% smaller at effort 7; still 9% larger than the PNG
+	// files (and lossless WebP is far smaller). gen2brain/h265 stored the
+	// samples uncoded, 70% larger.
 	Lossless bool
-	// Chroma444 keeps all of the colour; by default it is kept at half
-	// the width and height (4:2:0).
+	// Chroma444 keeps all of the colour; by default it is kept at half the
+	// width and height (4:2:0). Such files are of HEVC's range extensions
+	// (the brand heix), which not every reader takes.
 	Chroma444 bool
 }
 
 // DefaultQuality is the quality of HEIC output when none is given.
-const DefaultQuality = gheic.DefaultQuality
+const DefaultQuality = 60
 
 func init() { goimgtools.RegisterFormat(Codec()) }
 
@@ -184,50 +225,4 @@ func decode(in goimgtools.Input, env *pipeline.Env) (pipeline.Source, error) {
 		meta.ICC = displayP3
 	}
 	return &source{Source: pipeline.FromImage(img, env), meta: meta, reserved: need}, nil
-}
-
-func encode(w io.Writer, src pipeline.Source, o goimgtools.EncodeOptions) error {
-	opts, _ := o.Options.(Options)
-	b := src.Bounds()
-	need := int64(b.Dx()) * int64(b.Dy()) * 4
-	env := pipeline.EnvOf(src)
-	if err := env.Budget.Reserve(need, "heic image"); err != nil {
-		return err
-	}
-	defer env.Budget.Release(need)
-	img := image.NewNRGBA(image.Rect(0, 0, b.Dx(), b.Dy()))
-	for {
-		s, err := src.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return err
-		}
-		r := s.Bounds()
-		draw.Draw(img, r.Sub(b.Min), s, r.Min, draw.Src)
-	}
-	q := o.Quality
-	if q == 0 {
-		q = opts.Quality
-	}
-	if q == 0 {
-		q = DefaultQuality
-	}
-	if q < 1 || q > 100 {
-		return errors.New("heic: quality must be 1 to 100")
-	}
-	effort := opts.Effort
-	if effort == 0 {
-		effort = 5
-	}
-	if effort < 1 || effort > 9 {
-		return errors.New("heic: effort must be 1 to 9")
-	}
-	chroma := gheic.Chroma420
-	if opts.Chroma444 || opts.Lossless {
-		chroma = gheic.Chroma444
-	}
-	return gheic.Encode(w, img, gheic.EncodeOptions{Quality: q, Lossless: opts.Lossless, Chroma: chroma, SAO: effort >= 6,
-		ICC: o.ICC, Exif: o.Exif, XMP: o.Xmp})
 }

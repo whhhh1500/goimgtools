@@ -1,0 +1,228 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index bb4d34a..227a628 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -362,13 +362,13 @@ else()
+   # it might be that the toolset is not properly set, so also use this
+   # in cases where we are not sure that it is not needed
+   if((NOT MSVC AND NOT LINUX AND NOT APPLE AND NOT ANDROID AND NOT EMSCRIPTEN AND NOT BSD) OR (CYGWIN OR MSYS OR MINGW))
+-    set(CMAKE_C_FLAGS "-Wa,-muse-unaligned-vector-move ${CMAKE_C_FLAGS}")
++    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
+   endif()
+ 
+   if(NOT ANDROID AND NOT EMSCRIPTEN)
+     set(THREADS_PREFER_PTHREAD_FLAG ON)
+-    find_package(Threads REQUIRED)
+-    target_link_libraries(kvazaar_objects PUBLIC Threads::Threads)
++    #find_package(Threads REQUIRED)
++    #target_link_libraries(kvazaar_objects PUBLIC Threads::Threads)
+   endif()
+ 
+   include(CheckLibraryExists)
+diff --git a/src/cfg.c b/src/cfg.c
+index 0a80e49..d57faf8 100644
+--- a/src/cfg.c
++++ b/src/cfg.c
+@@ -191,6 +191,8 @@ int kvz_config_init(kvz_config *cfg)
+   cfg->combine_intra_cus = 1;
+   cfg->force_inter = 0;
+   cfg->intra_chroma_search = 0;
++  cfg->chroma_qp_offset = 0;
++  cfg->chroma_rd_weight = 1.5;
+   cfg->fast_bipred = 1;
+ 
+   cfg->enable_logging_output = 1;
+@@ -1457,6 +1459,22 @@ int kvz_config_parse(kvz_config *cfg, const char *name, const char *value)
+   else if OPT("intra-chroma-search") {
+     cfg->intra_chroma_search = atobool(value);
+   }
++  else if OPT("chroma-qp-offset") {
++    int v = atoi(value);
++    if (v < -12 || v > 12) {
++      fprintf(stderr, "chroma-qp-offset must be -12 to 12\n");
++      return 0;
++    }
++    cfg->chroma_qp_offset = (int8_t)v;
++  }
++  else if OPT("chroma-rd-weight") {
++    double v = atof(value);
++    if (!(v > 0 && v <= 100)) {
++      fprintf(stderr, "chroma-rd-weight must be above 0, at most 100\n");
++      return 0;
++    }
++    cfg->chroma_rd_weight = v;
++  }
+   else if OPT("fast-bipred") {
+     cfg->fast_bipred = atobool(value);
+   }
+diff --git a/src/encoder.c b/src/encoder.c
+index d0c0039..8ef4ae6 100644
+--- a/src/encoder.c
++++ b/src/encoder.c
+@@ -156,6 +156,10 @@ encoder_control_t* kvz_encoder_control_init(const kvz_config *const cfg)
+ 
+   // Take a copy of the config.
+   memcpy(&encoder->cfg, cfg, sizeof(encoder->cfg));
++  {
++    extern double kvz_chroma_rd_weight;
++    kvz_chroma_rd_weight = cfg->chroma_rd_weight;
++  }
+ 
+   // Copy the ROI file path
+   if (cfg->roi.file_path) {
+diff --git a/src/encoder_state-bitstream.c b/src/encoder_state-bitstream.c
+index dafedc5..fb219cd 100644
+--- a/src/encoder_state-bitstream.c
++++ b/src/encoder_state-bitstream.c
+@@ -607,9 +607,8 @@ static void encoder_state_write_bitstream_pic_parameter_set(bitstream_t* stream,
+     WRITE_U(stream, 0, 1, "cu_qp_delta_enabled_flag");
+   }
+ 
+-  //TODO: add QP offsets
+-  WRITE_SE(stream, 0, "pps_cb_qp_offset");
+-  WRITE_SE(stream, 0, "pps_cr_qp_offset");
++  WRITE_SE(stream, encoder->cfg.chroma_qp_offset, "pps_cb_qp_offset");
++  WRITE_SE(stream, encoder->cfg.chroma_qp_offset, "pps_cr_qp_offset");
+   WRITE_U(stream, 0, 1, "pps_slice_chroma_qp_offsets_present_flag");
+   WRITE_U(stream, 0, 1, "weighted_pred_flag");
+   WRITE_U(stream, 0, 1, "weighted_bipred_idc");
+diff --git a/src/filter.c b/src/filter.c
+index daedbf7..01caafa 100644
+--- a/src/filter.c
++++ b/src/filter.c
+@@ -590,7 +590,7 @@ static FORCE_INLINE void filter_deblock_edge_chroma_csp(encoder_state_t * const
+     int8_t strength = 2;
+ 
+     const int32_t luma_qp  = get_qp_y_pred(state, x << shift_w, y << shift_h, dir);
+-    int32_t QP             = kvz_g_chroma_scale[csp == KVZ_CSP_420?0:1][luma_qp];
++    int32_t QP             = kvz_g_chroma_scale[csp == KVZ_CSP_420?0:1][CLIP(0, 57, luma_qp + encoder->cfg.chroma_qp_offset)];
+     int32_t bitdepth_scale = 1 << (encoder->bitdepth-8);
+     int32_t TC_index       = CLIP(0, 51+2, (int32_t)(QP + 2*(strength-1) + (tc_offset_div2 << 1)));
+     int32_t Tc             = kvz_g_tc_table_8x8[TC_index]*bitdepth_scale;
+diff --git a/src/kvazaar.h b/src/kvazaar.h
+index 36c28ab..fe591a7 100644
+--- a/src/kvazaar.h
++++ b/src/kvazaar.h
+@@ -496,6 +496,12 @@ typedef struct kvz_config
+ 
+   uint8_t intra_chroma_search;
+ 
++  /** \brief QP offset of Cb and Cr (pps_cb_qp_offset, pps_cr_qp_offset). */
++  int8_t chroma_qp_offset;
++
++  /** \brief Weight of chroma's distortion in rate-distortion costs (luma's is 0.8). */
++  double chroma_rd_weight;
++
+   uint8_t fast_bipred;
+ 
+   uint8_t enable_logging_output; //!< \brief May be used to disable the logging output to stderr. Default: on.
+diff --git a/src/rdo.c b/src/rdo.c
+index 4bfb678..4a49ad4 100644
+--- a/src/rdo.c
++++ b/src/rdo.c
+@@ -669,7 +669,7 @@ void kvz_rdoq(encoder_state_t * const state, coeff_t *coef, coeff_t *dest_coeff,
+   uint32_t log2_block_size   = kvz_g_convert_to_bit[ width ] + 2;
+   int32_t  scalinglist_type= (block_type == CU_INTRA ? 0 : 3) + (int8_t)("\0\3\1\2"[type]);
+ 
+-  int32_t qp_scaled = kvz_get_scaled_qp(type, state->qp, (encoder->bitdepth - 8) * 6, encoder->cfg.chroma_format == KVZ_CSP_420);
++  int32_t qp_scaled = kvz_get_scaled_qp(type, state->qp + (type ? encoder->cfg.chroma_qp_offset : 0), (encoder->bitdepth - 8) * 6, encoder->cfg.chroma_format == KVZ_CSP_420);
+   
+   int32_t q_bits = QUANT_SHIFT + qp_scaled/6 + transform_shift;
+ 
+diff --git a/src/search.c b/src/search.c
+index d0afd71..ca81581 100644
+--- a/src/search.c
++++ b/src/search.c
+@@ -52,6 +52,8 @@
+ #include "strategies/strategies-picture.h"
+ #include "strategies/strategies-quant.h"
+ 
++double kvz_chroma_rd_weight = 1.5;
++
+ 
+ #define IN_FRAME(x, y, width, height, block_width, block_height) \
+   ((x) >= 0 && (y) >= 0 \
+diff --git a/src/search.h b/src/search.h
+index e658f38..7272dc6 100644
+--- a/src/search.h
++++ b/src/search.h
+@@ -51,10 +51,9 @@
+ #ifndef KVZ_LUMA_MULT
+ # define KVZ_LUMA_MULT 0.8
+ #endif
+-// Modify weight of chroma SSD.
+-#ifndef KVZ_CHROMA_MULT
+-# define KVZ_CHROMA_MULT 1.5
+-#endif
++// Modify weight of chroma SSD: the encoder's chroma_rd_weight.
++extern double kvz_chroma_rd_weight;
++#define KVZ_CHROMA_MULT kvz_chroma_rd_weight
+ 
+  /**
+   *  \brief Data collected during search processes.
+diff --git a/src/strategies/avx2/quant-avx2.c b/src/strategies/avx2/quant-avx2.c
+index a4d94f6..43833fd 100644
+--- a/src/strategies/avx2/quant-avx2.c
++++ b/src/strategies/avx2/quant-avx2.c
+@@ -360,7 +360,7 @@ void kvz_quant_avx2(const encoder_state_t * const state, const coeff_t * __restr
+   const uint32_t log2_block_size = kvz_g_convert_to_bit[width] + 2;
+   const uint32_t * const  __restrict scan = kvz_g_sig_last_scan[scan_idx][log2_block_size - 1];
+ 
+-  int32_t qp_scaled = kvz_get_scaled_qp(type, state->qp, (encoder->bitdepth - 8) * 6, encoder->cfg.chroma_format == KVZ_CSP_420);
++  int32_t qp_scaled = kvz_get_scaled_qp(type, state->qp + (type ? encoder->cfg.chroma_qp_offset : 0), (encoder->bitdepth - 8) * 6, encoder->cfg.chroma_format == KVZ_CSP_420);
+   const uint32_t log2_tr_size = kvz_g_convert_to_bit[width] + 2;
+   const int32_t scalinglist_type = (block_type == CU_INTRA ? 0 : 3) + (int8_t)("\0\3\1\2"[type]);
+   const int32_t *quant_coeff = encoder->scaling_list.quant_coeff[log2_tr_size - 2][scalinglist_type][qp_scaled % 6];
+@@ -1225,7 +1225,7 @@ void kvz_dequant_avx2(const encoder_state_t * const state, coeff_t *q_coef, coef
+   int32_t n;
+   int32_t transform_shift = 15 - encoder->bitdepth - (kvz_g_convert_to_bit[ width ] + 2);
+ 
+-  int32_t qp_scaled = kvz_get_scaled_qp(type, state->qp, (encoder->bitdepth-8)*6, encoder->cfg.chroma_format == KVZ_CSP_420);
++  int32_t qp_scaled = kvz_get_scaled_qp(type, state->qp + (type ? encoder->cfg.chroma_qp_offset : 0), (encoder->bitdepth-8)*6, encoder->cfg.chroma_format == KVZ_CSP_420);
+ 
+   shift = 20 - QUANT_SHIFT - transform_shift;
+ 
+diff --git a/src/strategies/generic/quant-generic.c b/src/strategies/generic/quant-generic.c
+index cee01bd..e49c373 100644
+--- a/src/strategies/generic/quant-generic.c
++++ b/src/strategies/generic/quant-generic.c
+@@ -54,7 +54,7 @@ void kvz_quant_generic(const encoder_state_t * const state, const coeff_t *coef,
+   const uint32_t log2_block_size = kvz_g_convert_to_bit[width] + 2;
+   const uint32_t * const scan = kvz_g_sig_last_scan[scan_idx][log2_block_size - 1];
+ 
+-  int32_t qp_scaled = kvz_get_scaled_qp(type, state->qp, (encoder->bitdepth - 8) * 6, encoder->cfg.chroma_format == KVZ_CSP_420);
++  int32_t qp_scaled = kvz_get_scaled_qp(type, state->qp + (type ? encoder->cfg.chroma_qp_offset : 0), (encoder->bitdepth - 8) * 6, encoder->cfg.chroma_format == KVZ_CSP_420);
+   const uint32_t log2_tr_size = kvz_g_convert_to_bit[width] + 2;
+   const int32_t scalinglist_type = (block_type == CU_INTRA ? 0 : 3) + (int8_t)("\0\3\1\2"[type]);
+   const int32_t *quant_coeff = encoder->scaling_list.quant_coeff[log2_tr_size - 2][scalinglist_type][qp_scaled % 6];
+@@ -598,7 +598,7 @@ void kvz_dequant_generic(const encoder_state_t * const state, coeff_t *q_coef, c
+   int32_t n;
+   int32_t transform_shift = 15 - encoder->bitdepth - (kvz_g_convert_to_bit[ width ] + 2);
+ 
+-  int32_t qp_scaled = kvz_get_scaled_qp(type, state->qp, (encoder->bitdepth - 8) * 6, encoder->cfg.chroma_format == KVZ_CSP_420);
++  int32_t qp_scaled = kvz_get_scaled_qp(type, state->qp + (type ? encoder->cfg.chroma_qp_offset : 0), (encoder->bitdepth - 8) * 6, encoder->cfg.chroma_format == KVZ_CSP_420);
+ 
+   shift = 20 - QUANT_SHIFT - transform_shift;
+ 
+diff --git a/src/strategies/neon/quant-neon.c b/src/strategies/neon/quant-neon.c
+index 6cde22d..0e264f9 100644
+--- a/src/strategies/neon/quant-neon.c
++++ b/src/strategies/neon/quant-neon.c
+@@ -81,7 +81,7 @@ static void kvz_quant_neon(const encoder_state_t * const state, const coeff_t *c
+   const uint32_t log2_block_size = kvz_g_convert_to_bit[width] + 2;
+   const uint32_t * const scan = kvz_g_sig_last_scan[scan_idx][log2_block_size - 1];
+ 
+-  int32_t qp_scaled = kvz_get_scaled_qp(type, state->qp, (encoder->bitdepth - 8) * 6, encoder->cfg.chroma_format == KVZ_CSP_420);
++  int32_t qp_scaled = kvz_get_scaled_qp(type, state->qp + (type ? encoder->cfg.chroma_qp_offset : 0), (encoder->bitdepth - 8) * 6, encoder->cfg.chroma_format == KVZ_CSP_420);
+   const uint32_t log2_tr_size = kvz_g_convert_to_bit[width] + 2;
+   const int32_t scalinglist_type = (block_type == CU_INTRA ? 0 : 3) + (int8_t)("\0\3\1\2"[type]);
+   const int32_t *quant_coeff = encoder->scaling_list.quant_coeff[log2_tr_size - 2][scalinglist_type][qp_scaled % 6];
+@@ -257,7 +257,7 @@ static void kvz_dequant_neon(const encoder_state_t * const state, coeff_t *q_coe
+   const int32_t n_total = width * height;
+   int32_t transform_shift = 15 - encoder->bitdepth - (kvz_g_convert_to_bit[width] + 2);
+ 
+-  int32_t qp_scaled = kvz_get_scaled_qp(type, state->qp, (encoder->bitdepth - 8) * 6, encoder->cfg.chroma_format == KVZ_CSP_420);
++  int32_t qp_scaled = kvz_get_scaled_qp(type, state->qp + (type ? encoder->cfg.chroma_qp_offset : 0), (encoder->bitdepth - 8) * 6, encoder->cfg.chroma_format == KVZ_CSP_420);
+ 
+   shift = 20 - QUANT_SHIFT - transform_shift;
+ 

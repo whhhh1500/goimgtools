@@ -406,6 +406,27 @@ Gill. Released into the public domain. No Warranty, Use at your own risk."
 with the integer arithmetic of apngdis (by Max Stepin, the author of APNG;
 zlib licence), rewritten in Go; nothing of its files is included.
 
+## The HEIC module (`heic/`)
+
+The module `github.com/whhhh1500/goimgtools/heic` carries the notices of
+what it includes in its own `licenses/` directory, which goes with it:
+
+- **Kvazaar** (BSD 3-clause licence, copyright Tampere University,
+  ITU/ISO/IEC and the project's contributors; `LICENSE-KVAZAAR`): the HEVC
+  encoder, at commit c997f08 of github.com/ultravideo/kvazaar with the
+  changes of `internal/kvazaar/build/kvazaar.patch` (no threads, and an
+  option for a QP offset of Cb and Cr and one for the weight of their
+  distortion), compiled to WebAssembly by wasi-sdk with the entry points
+  of `internal/kvazaar/build/shim.c` and translated to Go by wasm2go
+  (github.com/ncruces/wasm2go): `internal/kvazaar/module.go` is that
+  translation, which `internal/kvazaar/build/build.sh` makes again. It
+  includes parts of the C library of wasi-sdk (wasi-libc, with musl and
+  cloudlibc; MIT and BSD 2-clause licences, `LICENSE-WASI-LIBC`).
+- **gen2brain/h265** (MIT licence, copyright roticv and Karpeles Lab Inc.;
+  `LICENSE-H265`): the module decodes HEIC with it (a dependency), and the
+  writing of the HEIF boxes in `container.go` is taken from its
+  `heic/encode.go` and `heic/gridenc.go`, changed.
+
 ## Acknowledgements (no code taken)
 
 - **gifsicle**: `internal/gifstream/optimize.go` and `localpal.go` try,

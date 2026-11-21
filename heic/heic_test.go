@@ -128,18 +128,16 @@ func TestMatch(t *testing.T) {
 	}
 }
 
-// TestEncode: written as HEIC and read back: Lossless within a level (the
-// samples are YCbCr, coded 4:4:4 without loss); with loss close, smaller
-// than PNG, smaller at a lower quality; the EXIF block kept with KeepExif;
-// MaxFileSize; .heic by the file name; transparency kept.
+// TestEncode: written as HEIC and read back: Lossless exactly (G, B and R
+// coded 4:4:4 without loss); with loss close, smaller than PNG, smaller at
+// a lower quality; the EXIF block kept with KeepExif; MaxFileSize; .heic by
+// the file name; transparency kept.
 func TestEncode(t *testing.T) {
 	photo := must(os.ReadFile("../tests/testdata/pillow/source.png"))
 	src := toPNG(t, goimgtools.FromBytes(photo))
 	got := toPNG(t, goimgtools.FromBytes(must(goimgtools.FromBytes(photo).ToFormat("heic", heic.Options{Lossless: true}).ToBytes())))
-	for i := range src.Pix {
-		if d := int(got.Pix[i]) - int(src.Pix[i]); d < -1 || d > 1 {
-			t.Fatalf("lossless: value %d is %d, was %d", i, got.Pix[i], src.Pix[i])
-		}
+	if !bytes.Equal(got.Pix, src.Pix) {
+		t.Error("lossless: the pixels changed")
 	}
 	var last int
 	for _, q := range []int{90, 60, 30} {
@@ -170,6 +168,68 @@ func TestEncode(t *testing.T) {
 	for _, o := range []heic.Options{{Quality: 101}, {Effort: 10}} {
 		if _, err := goimgtools.FromBytes(photo).ToFormat("heic", o).ToBytes(); err == nil {
 			t.Errorf("%+v accepted", o)
+		}
+	}
+	// Wider than a grid of 256 tiles: refused before anything is coded.
+	wide := goimgtools.FromImage(image.NewNRGBA(image.Rect(0, 0, 257*1024+1, 1)))
+	if _, err := wide.ToFormat("heic", nil).ToBytes(); err == nil {
+		t.Error("a grid of 257 tiles across accepted")
+	}
+}
+
+// TestEfforts: every effort writes a file close to the picture, and a higher
+// one is no larger than the lowest at the same quality.
+func TestEfforts(t *testing.T) {
+	photo := must(goimgtools.FromBytes(must(os.ReadFile("../tests/testdata/pillow/source.png"))).Resize(96, 0).PNG().ToBytes())
+	src := toPNG(t, goimgtools.FromBytes(photo))
+	var first int
+	for e := 1; e <= 9; e++ {
+		b := must(goimgtools.FromBytes(photo).ToFormat("heic", heic.Options{Effort: e}).ToBytes())
+		if p := psnr(toPNG(t, goimgtools.FromBytes(b)), src); p < 30 || (first > 0 && len(b) > first) {
+			t.Errorf("effort %d: %d bytes (effort 1: %d), PSNR %.1f", e, len(b), first, p)
+		}
+		if e == 1 {
+			first = len(b)
+		}
+	}
+}
+
+// TestLarge: an image of more than 4 megapixels is coded as a grid of
+// tiles: the same bytes with any number of threads, and under a memory
+// limit far below the image, which a picture coded whole would exceed; with
+// transparency, odd sizes, 4:4:4 and without loss.
+func TestLarge(t *testing.T) {
+	if testing.Short() {
+		t.Skip("short")
+	}
+	photo := must(os.ReadFile("../tests/testdata/pillow/source.png"))
+	big := must(goimgtools.FromBytes(photo).Resize(2601, 0).PNG().ToBytes())
+	src := toPNG(t, goimgtools.FromBytes(big))
+	var want []byte
+	for _, c := range []struct {
+		threads int
+		limit   int64
+	}{{1, 0}, {4, 0}, {3, 24 << 20}} {
+		b := must(goimgtools.FromBytes(big).Threads(c.threads).MemoryLimit(c.limit).ToFormat("heic", heic.Options{Effort: 1}).ToBytes())
+		if want == nil {
+			want = b
+			got := toPNG(t, goimgtools.FromBytes(b))
+			if src.Rect.Dx()*src.Rect.Dy() <= 4<<20 || got.Rect != src.Rect || psnr(got, src) < 35 {
+				t.Errorf("grid: %v from %v, PSNR %.1f", got.Rect, src.Rect, psnr(got, src))
+			}
+		} else if !bytes.Equal(b, want) {
+			t.Errorf("%d threads, limit %d: other bytes", c.threads, c.limit)
+		}
+	}
+	// Transparency, an odd size, without loss and at 4:4:4.
+	alpha := must(goimgtools.FromBytes(big).Resize(2599, 0).Rotate(0.5).PNG().ToBytes())
+	asrc := toPNG(t, goimgtools.FromBytes(alpha))
+	for _, o := range []heic.Options{{Effort: 1}, {Effort: 1, Lossless: true}, {Effort: 1, Chroma444: true}} {
+		b := must(goimgtools.FromBytes(alpha).Threads(4).ToFormat("heic", o).ToBytes())
+		got := toPNG(t, goimgtools.FromBytes(b))
+		p := psnr(got, asrc)
+		if got.Rect != asrc.Rect || p < 30 || (o.Lossless && !math.IsInf(p, 1)) {
+			t.Errorf("%+v: %v, PSNR %.1f", o, got.Rect, p)
 		}
 	}
 }

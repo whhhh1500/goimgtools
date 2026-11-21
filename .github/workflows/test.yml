@@ -134,7 +134,9 @@ jobs:
     # LoongArch) may round a*b+c once instead of twice, and the same image
     # would come out differently on them: no floating-point product may be
     # fused with an addition (an explicit conversion, float64(a*b) + c,
-    # rounds the product first). This lists any the compiler still fuses.
+    # rounds the product first). This lists any the compiler still fuses,
+    # in the library and in the HEIC module's encoder (Kvazaar translated
+    # from WebAssembly, whose translation converts every product).
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -145,7 +147,7 @@ jobs:
         run: |
           bad=0
           for arch in arm64 ppc64le s390x riscv64 loong64; do
-            out=$(GOARCH=$arch go build -a -gcflags=-S ./... 2>&1) || { echo "$out" | tail -20; exit 1; }
+            out=$(GOARCH=$arch go build -a -gcflags=-S ./... 2>&1 && cd heic && GOARCH=$arch go build -a -gcflags=-S ./internal/kvazaar 2>&1) || { echo "$out" | tail -20; exit 1; }
             found=$(echo "$out" | grep -E '\sFN?M(ADD|SUB)[SDF]?\s' | grep -oE 'goimgtools/[^ :]+\.go:[0-9]+' | sort -u)
             if [ -n "$found" ]; then
               echo "::error::$arch fuses a multiplication and an addition at:"
@@ -194,6 +196,9 @@ jobs:
       - run: |
           set -o pipefail
           GOARCH=${{ matrix.arch }} go test -exec ${{ matrix.qemu }} -timeout 120m -skip "${{ matrix.skip || '^$' }}" -v ./tests ./pipeline ./inspect ./internal/resize ./internal/ops | grep -E '^(--- (PASS|FAIL|SKIP)|FAIL|ok|panic)|^ +[^ ]+\.go:[0-9]+:'
+      # The HEIC encoder (Kvazaar translated to Go) gives the same stream.
+      - working-directory: heic
+        run: GOARCH=${{ matrix.arch }} go test -exec ${{ matrix.qemu }} -timeout 30m -v ./internal/kvazaar
 
   wasi:
     # WebAssembly, run by wasmtime: a 32-bit machine without threads.
