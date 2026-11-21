@@ -344,8 +344,8 @@ var ErrFileSize = errors.New("goimgtools: cannot reach the requested file size")
 // MaxFileSize makes the output at most n bytes by lowering the quality: the
 // highest quality that fits is used, never more than the one asked for with
 // JPEG or WebP (or their default). It applies to JPEG and lossy WebP
-// output (and near-lossless WebP, whose quality is how near), and to PNG
-// and GIF, whose quality is their number of colours: a
+// output (and near-lossless WebP, whose quality is how near, and TIFF with
+// TIFFJPEG), and to PNG and GIF, whose quality is their number of colours: a
 // PNG is first tried without loss, then with the most colours (at most
 // PNGOptions.Colors or GIFOptions.Colors when set) that fit, as Colors
 // reduces them. When even quality 1 (two colours) is too large the result

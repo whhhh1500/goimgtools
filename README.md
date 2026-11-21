@@ -105,7 +105,7 @@ Staged data is kept in memory up to 1/8 of the memory limit (8MB by default); be
 - A per-pixel adjustment of your own (beyond `Curves` and the other level operations) takes a few lines with `Pixels` (see the grayscale example in [Extending](docs/extending.md)), and a filter that needs neighbouring pixels can be a `Pipe` stage or a `Convolve` kernel.
 - GIF and BMP encoding is single-threaded (the strips of a compressed TIFF are compressed on the other cores); the optimal parse of lossless WebP (once the matches are found) and its second pass are sequential, so eight threads make it about twice as fast on screenshots and drawings, and 1.5 times on photographs.
 - JPEG trellis quantization estimates code lengths from the standard Huffman tables (mozjpeg first collects statistics for the whole image): this library processes strips as a stream and does not retain the coefficients of the whole image for this purpose.
-- `MaxFileSize` supports JPEG, lossy and near-lossless WebP, PNG and GIF (and registered formats that provide `Quality`), not lossless WebP, BMP, TIFF or animations.
+- `MaxFileSize` supports JPEG, lossy and near-lossless WebP, PNG, GIF and JPEG-compressed TIFF (and registered formats that provide `Quality`), not lossless WebP, BMP, other TIFF or animations.
 
 ## Versioning
 

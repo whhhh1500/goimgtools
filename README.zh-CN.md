@@ -105,7 +105,7 @@ goimgtools batch -resize 1920x1920 -no-enlarge -quality 80 -format jpeg in_dir o
 - 自定义的逐像素调整（`Curves` 等色阶操作之外）可用 `Pixels` 以数行代码实现（参见[扩展](docs/zh-CN/extending.md)中的灰度示例），依赖邻域像素的滤镜可实现为 `Pipe` 环节或 `Convolve` 卷积核。
 - GIF、BMP 编码为单线程（压缩 TIFF 的各条带交给其他核心压缩）；无损 WebP 的最优解析（找到匹配之后的部分）与第二遍为顺序过程，八线程时截图与图画约快一倍，照片快 1.5 倍。
 - JPEG 网格量化按标准霍夫曼表估算码长（mozjpeg 先统计全图再用优化后的表估算）：本库按条带流式处理，不为此保存整图系数。
-- `MaxFileSize` 支持 JPEG、有损与近无损 WebP、PNG 与 GIF（以及提供 `Quality` 的注册格式），不支持无损 WebP、BMP、TIFF 与动画。
+- `MaxFileSize` 支持 JPEG、有损与近无损 WebP、PNG、GIF 与 JPEG 压缩的 TIFF（以及提供 `Quality` 的注册格式），不支持无损 WebP、BMP、其他 TIFF 与动画。
 
 ## 版本
 
