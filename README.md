@@ -95,13 +95,14 @@ goimgtools batch -resize 1920x1920 -no-enlarge -quality 80 -format jpeg in_dir o
 | BMP | ✓ | ✓ | Rows read by file offset |
 | TIFF | ✓ | ✓ | Row-by-row streaming decompression; JPEG-compressed TIFFs (as libtiff, libvips and sharp write them) are read |
 | AVIF (module `goimgtools/avif`) | ✓ (the first image: transparency, EXIF, XMP, colour profile) | ✓ | Decoded whole by libavif (translated to Go) |
+| JPEG XL (module `goimgtools/jxl`) | ✓ (the first frame: transparency, 16 bits, EXIF, XMP, colour profile) | ✓ (cjxl's files) | Decoded whole by libjxl (translated to Go) |
 | HEIC (module `goimgtools/heic`) | ✓ (the primary image: grid, transparency, EXIF, XMP, colour profile) | ✓ (Kvazaar translated to Go; over 4 megapixels a grid of tiles) | Decoded by gen2brain/h265 (pure Go): without transparency (phone photographs) a row of tiles at a time, otherwise whole; written row by row into its pictures |
 
 Staged data is kept in memory up to 1/8 of the memory limit (8MB by default); beyond that it is written to temporary files, which are deleted after use.
 
 ## Limitations
 
-- AVIF and HEIC are read and written by separate modules, imported for their side effect: `github.com/whhhh1500/goimgtools/avif` (libavif with aom and dav1d, compiled to WebAssembly and translated to Go, no cgo) and `github.com/whhhh1500/goimgtools/heic` (read by gen2brain/h265, an HEVC decoder in pure Go; written by Kvazaar, the HEVC encoder, compiled to WebAssembly and translated to Go, no cgo). AVIF decodes an image whole; HEIC decodes a file without transparency (as phones write them) a row of tiles at a time, and other files whole.
+- AVIF, HEIC and JPEG XL are read and written by separate modules, imported for their side effect: `github.com/whhhh1500/goimgtools/avif` (libavif with aom and dav1d, compiled to WebAssembly and translated to Go, no cgo), `github.com/whhhh1500/goimgtools/jxl` (libjxl, the reference implementation, the same way) and `github.com/whhhh1500/goimgtools/heic` (read by gen2brain/h265, an HEVC decoder in pure Go; written by Kvazaar, the HEVC encoder, compiled to WebAssembly and translated to Go, no cgo). AVIF and JPEG XL decode an image whole; HEIC decodes a file without transparency (as phones write them) a row of tiles at a time, and other files whole.
 - Entropy decoding in JPEG is sequential (from `Threads(5)` the inverse DCT and the conversion of colour go to the other cores); with many threads it is the slowest stage of decoding a JPEG.
 - A per-pixel adjustment of your own (beyond `Curves` and the other level operations) takes a few lines with `Pixels` (see the grayscale example in [Extending](docs/extending.md)), and a filter that needs neighbouring pixels can be a `Pipe` stage or a `Convolve` kernel.
 - GIF and BMP encoding is single-threaded (the strips of a compressed TIFF are compressed on the other cores); the optimal parse of lossless WebP (once the matches are found) and its second pass are sequential, so eight threads make it about twice as fast on screenshots and drawings, and 1.5 times on photographs.

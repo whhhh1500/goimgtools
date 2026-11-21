@@ -451,6 +451,22 @@ for Open Media patent licence, `LICENSE-AOM`, `PATENTS-AOM`), dav1d 1.5.3
 and imir to an EXIF orientation as libavif's `avifexif.c` does (as
 gen2brain/avif, MIT licence, wrote it in Go).
 
+## The JPEG XL module (`jxl/`)
+
+The module `github.com/whhhh1500/goimgtools/jxl` carries the notices of
+what it includes in its own `licenses/` directory, which goes with it:
+libjxl 0.12.0 (BSD 3-clause and its patent grant, `LICENSE-LIBJXL`,
+`PATENTS-LIBJXL`), highway (dual Apache 2.0 and BSD 3-clause; under its BSD
+licence, `LICENSE-HIGHWAY`), brotli (MIT, `LICENSE-BROTLI`), skcms (BSD
+3-clause, `LICENSE-SKCMS`), the C library of wasi-sdk (`LICENSE-WASI-LIBC`)
+and its C++ library, libc++ (Apache 2.0 with LLVM exceptions,
+`LICENSE-LIBCXX`), compiled to WebAssembly with the entry points of
+`internal/libjxl/build/shim.c` and translated to Go by wasm2go:
+`internal/libjxl/module.go` is that translation, which
+`internal/libjxl/build/build.sh` makes again. Its test files were made by
+cjxl 0.12.0 from the library's own test images, and decoded by djxl 0.12.0
+for the comparison (`testdata/*.djxl.png`).
+
 ## Acknowledgements (no code taken)
 
 - **gifsicle**: `internal/gifstream/optimize.go` and `localpal.go` try,

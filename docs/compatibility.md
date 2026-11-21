@@ -91,3 +91,18 @@ x265 takes 0.36s for a Kodak photograph on one core and 3.2s for a 3840×2160 ph
 ## AVIF encoder
 
 AVIF is written by libavif 1.4.2 with aom 3.14.1 (module `goimgtools/avif`), the encoder of avifenc and of Pillow 13, compiled to WebAssembly and translated to Go. At the default effort (aom's speed 6, as theirs) its files are as small as Pillow's at equal SSIMULACRA2 (0.3% smaller on four Kodak photographs, each written at qualities 30–90 and decoded by Pillow); effort 7 (speed 4) is 4.8% smaller. It runs on one thread without SIMD: a Kodak photograph takes 1.1s at the default effort, where Pillow takes 0.08s (on its threads, with SIMD). Through gen2brain/avif, which ran libavif in a WebAssembly runtime, it took 2.4s, 0.8s of it to compile the codec when the program started, and 157MB at its peak (39MB now; 103MB for an image of 16×16, 10MB now).
+
+## JPEG XL
+
+JPEG XL is read and written by libjxl 0.12.0 (module `goimgtools/jxl`), the reference implementation, compiled to WebAssembly and translated to Go, without SIMD (as highway's scalar target). Checked against cjxl and djxl 0.12.0 (the official Windows build, with AVX2) on a Kodak photograph and on images with transparency, a profile, grey and an orientation:
+
+| | This module | cjxl / djxl 0.12.0 |
+|---|---|---|
+| Written at distance 1, effort 7 (the defaults) | 126,552 bytes, SSIMULACRA2 85.82 | 126,555 bytes, 85.82 |
+| Written without loss, effort 7 | 460,550 bytes | 460,552 bytes |
+| Decoded, without loss | the same pixels | |
+| Decoded, with loss | within a level (64 samples of 1.57 million differ) | |
+| Encoding, one core (default / effort 3 / lossless) | 1.3s / 57ms / 1.3s | 0.11s / 25ms / 0.47s |
+| Decoding, one core (with loss / without) | 51ms / 0.22s | 15ms / 0.10s (writing a PNG) |
+
+The differences of lossy decoding come from djxl's AVX2, whose fused multiplications and additions round a little differently; here every product is rounded, the same on every processor. A grey file decodes to RGB, a file whose codestream turns it (orientation 6) decodes upright with its EXIF orientation set to 1, and a lossless file keeps its own profile.
