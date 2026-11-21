@@ -84,3 +84,7 @@ HEIC is written by Kvazaar, the HEVC encoder of Tampere University (module `goim
 | 9 | −0.6% (on six of them) | 14s |
 
 x265 takes 0.36s for a Kodak photograph on one core and 3.2s for a 3840×2160 photograph, against about 7s at the default effort (2.3s with `Threads(8)`): Kvazaar runs as plain Go, without the SIMD of x265. gen2brain/h265, which wrote HEIC before, was 23% larger (14% to 29% per image) in 0.35s and 3.5s. x265 is under the GPL, which this MIT-licensed module cannot include. Lossless files (G, B and R, exact) are 0.4% larger than x265's at the default effort and 1.5% smaller at effort 7, and 9% larger than PNG. Reading HEIC, such as phone photographs, does not depend on the encoder.
+
+## AVIF encoder
+
+AVIF is written by libavif 1.4.2 with aom 3.14.1 (module `goimgtools/avif`, through gen2brain/avif), the encoder of avifenc and of Pillow 13. At the default effort (aom's speed 6, as theirs) its files are as small as Pillow's at equal SSIMULACRA2 (0.4% smaller on four Kodak photographs, each written at qualities 30–90 and decoded by Pillow); effort 7 (speed 4) is 5.1% smaller. It runs as WebAssembly on one thread without SIMD: a Kodak photograph takes about 1.5s at the default effort, and the first in a program about 0.8s more while the codec is compiled, where Pillow takes 0.08s (on its threads, with SIMD).

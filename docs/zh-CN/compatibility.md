@@ -84,3 +84,7 @@ HEIC 由坦佩雷大学的 HEVC 编码器 Kvazaar 写出（模块 `goimgtools/he
 | 9 | −0.6%（其中 6 张） | 14 秒 |
 
 x265 单核编一张 Kodak 照片 0.36 秒、一张 3840×2160 照片 3.2 秒，本库默认力度后者约 7 秒（`Threads(8)` 2.3 秒）：Kvazaar 在这里以纯 Go 运行，没有 x265 的 SIMD。原先写 HEIC 的 gen2brain/h265 大 23%（各图 14% 到 29%），耗时 0.35 秒与 3.5 秒。x265 是 GPL 许可，本 MIT 模块不能包含。无损文件（G、B、R，逐像素还原）在默认力度下比 x265 的大 0.4%，力度 7 小 1.5%，比 PNG 大 9%。读取 HEIC（如手机照片）与编码器无关。
+
+## AVIF 编码器
+
+AVIF 由 libavif 1.4.2 配 aom 3.14.1 写出（模块 `goimgtools/avif`，经 gen2brain/avif），与 avifenc、Pillow 13 用的编码器相同。默认力度（aom 速度 6，与它们相同）下文件与 Pillow 在同等 SSIMULACRA2 下一样小（4 张 Kodak 照片各以质量 30–90 写出、用 Pillow 解码，小 0.4%）；力度 7（速度 4）小 5.1%。它以 WebAssembly 单线程运行、没有 SIMD：一张 Kodak 照片默认力度约 1.5 秒，程序里第一次另加编译编码器的约 0.8 秒，Pillow 为 0.08 秒（多线程、有 SIMD）。
