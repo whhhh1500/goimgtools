@@ -34,6 +34,7 @@ err := goimgtools.Open("in.jpg").
 |---|---|
 | `Open(path)` / `FromBytes(b)` / `FromReader(r)` | A file, bytes in memory, a stream |
 | `Text(text, TextOptions{...})` | Renders text as an image, for use as a watermark or as output in its own right (see [Text](#text)) |
+| `Join(images, JoinOptions{Across, Gap, Background, Align})` | Lays images out in a grid, as sharp's `join` and ImageMagick's `montage`: `Across` to a row, cells as large as the largest image, `Gap` pixels apart, the room around smaller images in `Background` (transparent without one), each placed by `Align`. Each image is read through its own recipe a few rows at a time while its row of the grid is written |
 | `Blank(width, height, colour)` | An image of one colour (sharp's `create`, Pillow's `Image.new`): a canvas to `Composite` pictures and text onto; a translucent colour gives transparency. Its rows are made as they are read: no memory of its size |
 | `FromImage(img)` | An `image.Image` already in memory |
 | `FromSource(open)` | A caller-supplied pixel stream, such as a computed image or pixels read from another source (see [Extending](extending.md)) |

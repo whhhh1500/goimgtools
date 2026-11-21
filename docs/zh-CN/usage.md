@@ -34,6 +34,7 @@ err := goimgtools.Open("in.jpg").
 |---|---|
 | `Open(path)` / `FromBytes(b)` / `FromReader(r)` | 文件、内存数据、流 |
 | `Text(text, TextOptions{...})` | 将文字渲染为图像，可用作水印，也可单独输出（见[文字](#文字)） |
+| `Join(images, JoinOptions{Across, Gap, Background, Align})` | 把多张图排成网格，同 sharp 的 `join`、ImageMagick 的 `montage`：每行 `Across` 张，格子与最大的图一样大，间隔 `Gap` 像素，较小的图周围填 `Background`（不给则透明），按 `Align` 放置。每张图按其自身的处理链、在写到它那一行时按几行一次读取 |
 | `Blank(width, height, colour)` | 单一颜色的图像（sharp 的 `create`、Pillow 的 `Image.new`）：用 `Composite` 往上放图片和文字的画布；半透明颜色得到带透明的图。按行现生成，不占与尺寸成比例的内存 |
 | `FromImage(img)` | 内存中已有的 `image.Image` |
 | `FromSource(open)` | 调用方提供的像素流，如计算生成的图像、从其他来源读取的像素（见[扩展](extending.md)） |
