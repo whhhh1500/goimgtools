@@ -83,6 +83,7 @@ func seedFiles(tb testing.TB) [][]byte {
 		}
 		return p
 	}
+	out = append(out, []byte(`<svg width="9" height="7" viewBox="0 0 3 2"><g opacity=".5"><path d="M0 0L3 1q-1 1-2 1z" fill="red" stroke="blue"/></g></svg>`))
 	out = append(out, testutil.PSD(testutil.PSDFile{RLE: true, Mode: 3, Depth: 8, W: 9, H: 5, Channels: planes(4, 45), Layers: -1}),
 		testutil.PSD(testutil.PSDFile{PSB: true, Mode: 1, Depth: 16, W: 6, H: 3, Channels: planes(1, 36)}))
 	// An animated WebP (a lossless frame at an offset, then a lossy one

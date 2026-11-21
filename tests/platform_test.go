@@ -75,6 +75,7 @@ func TestSameOnEveryProcessor(t *testing.T) {
 		{"resize pillow translucent", clear.Clone().Resize(400, 50, ResizeOptions{Fit: FitFill, Kernel: KernelHamming, Method: MethodPillow}), "e37043c622b45c1a"},
 		{"resize libvips contain", clear.Clone().Resize(60, 60, ResizeOptions{Fit: FitContain, Kernel: KernelCubic,
 			Background: color.NRGBA{200, 10, 90, 99}, Method: MethodLibvips}), "9ff49d5906aebc1c"},
+		{"svg", FromBytes([]byte(platformSVG)).Resize(211, 0), "97652a7e74c99bc4"},
 	}
 	for _, c := range cases {
 		env := pipeline.NewEnv(0, t.TempDir())
@@ -195,3 +196,20 @@ func TestSameOnEveryProcessor(t *testing.T) {
 func animationBytes(t *testing.T) []byte {
 	return encodeAll(t, movingAnimation(120, 90, 5, true))
 }
+
+// platformSVG draws arcs, curves, turns, gradients, dashes, joins, a clip
+// and a mask: all of SVG's floating point.
+const platformSVG = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="157" height="113" viewBox="0 0 100 72">
+  <defs>
+    <radialGradient id="r" fx="0.3" fy="0.3" spreadMethod="reflect" r="0.4"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#a30" stop-opacity="0.8"/></radialGradient>
+    <linearGradient id="l" gradientTransform="rotate(33)"><stop offset="0.2" stop-color="teal"/><stop offset="0.9" stop-color="gold"/></linearGradient>
+    <clipPath id="k"><circle cx="70" cy="30" r="22"/></clipPath>
+    <mask id="m"><rect width="100" height="72" fill="#888"/></mask>
+  </defs>
+  <rect x="3.3" y="2.7" width="40" height="30" rx="5" fill="url(#r)" stroke="#036" stroke-width="1.5"/>
+  <g transform="rotate(17.5 70 30) skewX(7)" clip-path="url(#k)" opacity="0.8">
+    <path d="M50 10 c10-5 30 5 40 0 s0 30-10 40 a20 15 30 0 1-30-10z" fill="url(#l)" stroke="black" stroke-width="3"/>
+  </g>
+  <polyline points="5,60 20,40 35,62 50,41" fill="none" stroke="purple" stroke-width="4" stroke-dasharray="7 3" stroke-linecap="round" stroke-linejoin="round"/>
+  <ellipse cx="80" cy="60" rx="15" ry="8" fill="green" mask="url(#m)" transform="rotate(-21 80 60)"/>
+</svg>`

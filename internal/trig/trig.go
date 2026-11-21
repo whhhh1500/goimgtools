@@ -50,3 +50,136 @@ func cosPoly(x float64) float64 {
 
 // SinPi is sin(pi*k/n), n > 0: cos(pi*(n-2k)/(2n)).
 func SinPi(k, n int) float64 { return CosPi(n-2*k, 2*n) }
+
+// SinCos is sin and cos of x radians, |x| below a million, by Go's
+// octant reduction (Cody and Waite's, pi/4 in three parts) and the
+// polynomials above, every product rounded before it is added.
+func SinCos(x float64) (sin, cos float64) {
+	const (
+		pi4a = 7.85398125648498535156e-1
+		pi4b = 3.77489470793079817668e-8
+		pi4c = 2.69515142907905952645e-15
+	)
+	if math.IsNaN(x) || math.IsInf(x, 0) || math.Abs(x) > 1e6 {
+		return math.NaN(), math.NaN()
+	}
+	sinSign, cosSign := false, false
+	if x < 0 {
+		x, sinSign = -x, true
+	}
+	j := uint64(float64(x * (4 / math.Pi)))
+	y := float64(j)
+	if j&1 == 1 {
+		j++
+		y++
+	}
+	j &= 7
+	z := ((x - float64(y*pi4a)) - float64(y*pi4b)) - float64(y*pi4c)
+	if j > 3 {
+		j -= 4
+		sinSign, cosSign = !sinSign, !cosSign
+	}
+	if j > 1 {
+		cosSign = !cosSign
+	}
+	s, c := sinPoly(z), cosPoly(z)
+	if j == 1 || j == 2 {
+		s, c = c, s
+	}
+	if sinSign {
+		s = -s
+	}
+	if cosSign {
+		c = -c
+	}
+	return s, c
+}
+
+// SinCosDeg is sin and cos of d degrees, exact at the multiples of 90.
+func SinCosDeg(d float64) (sin, cos float64) {
+	d = math.Mod(d, 360)
+	if d < 0 {
+		d += 360
+	}
+	switch d {
+	case 0:
+		return 0, 1
+	case 90:
+		return 1, 0
+	case 180:
+		return 0, -1
+	case 270:
+		return -1, 0
+	}
+	return SinCos(float64(d * (math.Pi / 180)))
+}
+
+// Atan2 is the angle of (x, y), as math.Atan2, by Go's portable series
+// with every product rounded before it is added.
+func Atan2(y, x float64) float64 {
+	switch {
+	case math.IsNaN(x) || math.IsNaN(y):
+		return math.NaN()
+	case y == 0:
+		if x >= 0 && !math.Signbit(x) {
+			return math.Copysign(0, y)
+		}
+		return math.Copysign(math.Pi, y)
+	case x == 0:
+		return math.Copysign(math.Pi/2, y)
+	case math.IsInf(x, 0) || math.IsInf(y, 0):
+		return math.Atan2(y, x) // exact quarter values
+	}
+	q := atan(y / x)
+	if x < 0 {
+		if q <= 0 {
+			return q + math.Pi
+		}
+		return q - math.Pi
+	}
+	return q
+}
+
+func atan(x float64) float64 {
+	if x == 0 {
+		return x
+	}
+	if x > 0 {
+		return satan(x)
+	}
+	return -satan(-x)
+}
+
+func satan(x float64) float64 {
+	const (
+		morebits = 6.123233995736765886130e-17
+		tan3pio8 = 2.41421356237309504880
+	)
+	if x <= 0.66 {
+		return xatan(x)
+	}
+	if x > tan3pio8 {
+		return math.Pi/2 - xatan(1/x) + morebits
+	}
+	return math.Pi/4 + xatan((x-1)/(x+1)) + float64(0.5*morebits)
+}
+
+func xatan(x float64) float64 {
+	const (
+		p0 = -8.750608600031904122785e-01
+		p1 = -1.615753718733365076637e+01
+		p2 = -7.500855792314704667340e+01
+		p3 = -1.228866684490136173410e+02
+		p4 = -6.485021904942025371773e+01
+		q0 = +2.485846490142306297962e+01
+		q1 = +1.650270098316988542046e+02
+		q2 = +4.328810604912902668951e+02
+		q3 = +4.853903996359136964868e+02
+		q4 = +1.945506571482613964425e+02
+	)
+	z := float64(x * x)
+	num := float64(float64(float64(float64(float64(float64(float64(p0*z)+p1)*z)+p2)*z)+p3)*z) + p4
+	den := float64(float64(float64(float64(float64(float64(float64(float64(z+q0)*z)+q1)*z)+q2)*z)+q3)*z) + q4
+	z = float64(z*num) / den
+	return float64(x*z) + x
+}

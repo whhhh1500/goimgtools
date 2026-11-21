@@ -5,7 +5,9 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"image"
 	"image/color"
+	"image/draw"
 	"io"
 	"slices"
 	"strings"
@@ -22,6 +24,7 @@ import (
 	"github.com/whhhh1500/goimgtools/internal/qoistream"
 	"github.com/whhhh1500/goimgtools/internal/quant"
 	"github.com/whhhh1500/goimgtools/internal/resize"
+	"github.com/whhhh1500/goimgtools/internal/svg"
 	"github.com/whhhh1500/goimgtools/internal/tgastream"
 	"github.com/whhhh1500/goimgtools/internal/tiffstream"
 	"github.com/whhhh1500/goimgtools/internal/vp8enc"
@@ -35,7 +38,8 @@ type Format struct {
 	// Name is what the format is called everywhere: in Info.Format, in
 	// ToFormat, in error messages, on the command line. The formats of
 	// this package are "jpeg", "png", "webp", "gif", "bmp", "tiff",
-	// "ico", "psd" (read only), "qoi", "pnm" (Netpbm) and "tga".
+	// "ico", "psd" (read only), "qoi", "pnm" (Netpbm), "tga" and "svg" (read
+	// only).
 	Name string
 	// Extensions are the file extensions of the format, in lower case and
 	// with the dot. The first is the one to give a new file.
@@ -416,6 +420,28 @@ var builtin = []*formatDef{
 			return pnmstream.Encode(w, ops.Flatten(src, color.Black))
 		},
 		check: noOptions("pnm"),
+	}, {
+		// Drawn at its own size, or at the one the resize asks for.
+		Format: Format{"svg", []string{".svg"}},
+		magic:  svg.Match,
+		open: func(in *input, env *pipeline.Env) (pipeline.Source, error) {
+			ra, size, err := in.readerAt(env)
+			if err != nil {
+				return nil, err
+			}
+			if size > svg.MaxBytes {
+				return nil, errors.New("goimgtools: svg: the document is larger than 64MB")
+			}
+			data := make([]byte, size)
+			if _, err := ra.ReadAt(data, 0); err != nil && err != io.EOF {
+				return nil, err
+			}
+			s, err := svg.Open(data, env)
+			if err != nil {
+				return nil, err
+			}
+			return s, nil
+		},
 	}, {
 		// Last: a TGA file has no signature, only a header that makes sense.
 		Format:    Format{"tga", []string{".tga"}},
@@ -854,4 +880,24 @@ func encodeICO(w io.Writer, src pipeline.Source, sizes []int) error {
 		}
 	}
 	return icostream.Encode(w, imgs)
+}
+
+func init() {
+	// The pictures of SVG image elements, read as any input is (but SVG,
+	// against a document holding itself), within what the SVG has left.
+	svg.DecodeImage = func(data []byte, maxPixels int64) (*image.NRGBA, error) {
+		if svg.Match(data) || maxPixels < 1 {
+			return nil, errors.New("goimgtools: svg: an image element holds no picture this package draws")
+		}
+		m, err := FromBytes(data).LimitInputPixels(maxPixels).ToImage()
+		if err != nil {
+			return nil, err
+		}
+		if n, ok := m.(*image.NRGBA); ok {
+			return n, nil
+		}
+		n := image.NewNRGBA(m.Bounds())
+		draw.Draw(n, n.Rect, m, m.Bounds().Min, draw.Src)
+		return n, nil
+	}
 }

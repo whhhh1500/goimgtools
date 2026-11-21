@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/whhhh1500/goimgtools/internal/csscolor"
 	"github.com/whhhh1500/goimgtools/internal/ops"
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
@@ -250,9 +251,11 @@ func colorWord(c color.Color) string {
 }
 
 // ParseColor reads a colour as the command line and Do take it: white,
-// black, transparent (or none), #rgb, #rrggbb or #rrggbbaa.
+// black, transparent (or none), #rgb, #rrggbb or #rrggbbaa, and any other
+// colour CSS writes: the 148 names of CSS Color 4 (red, steelblue, ...),
+// #rgba, rgb() and rgba(), hsl() and hsla().
 func ParseColor(s string) (color.Color, error) {
-	switch strings.ToLower(s) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "white":
 		return color.White, nil
 	case "black":
@@ -260,18 +263,17 @@ func ParseColor(s string) (color.Color, error) {
 	case "transparent", "none":
 		return color.Transparent, nil
 	}
-	h := strings.TrimPrefix(s, "#")
-	if len(h) == 3 {
-		h = string([]byte{h[0], h[0], h[1], h[1], h[2], h[2]})
+	c, ok := csscolor.Parse(s)
+	if !ok && !strings.HasPrefix(strings.TrimSpace(s), "#") {
+		c, ok = csscolor.Parse("#" + strings.TrimSpace(s)) // the # may be left out
 	}
-	v, err := strconv.ParseUint(h, 16, 32)
-	switch {
-	case err != nil || (len(h) != 6 && len(h) != 8):
-		return nil, fmt.Errorf("goimgtools: want white, black, transparent, #rgb, #rrggbb or #rrggbbaa, got %q", s)
-	case len(h) == 8:
-		return color.NRGBA{uint8(v >> 24), uint8(v >> 16), uint8(v >> 8), uint8(v)}, nil
+	if !ok {
+		return nil, fmt.Errorf("goimgtools: want a colour such as white, red, #rgb, #rrggbb, #rrggbbaa or rgb(255, 0, 0), got %q", s)
 	}
-	return color.RGBA{uint8(v >> 16), uint8(v >> 8), uint8(v), 0xff}, nil
+	if c.A == 255 {
+		return color.RGBA{c.R, c.G, c.B, 255}, nil
+	}
+	return c, nil
 }
 
 // ---- applying the steps with hooks ----

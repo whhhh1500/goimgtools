@@ -797,7 +797,7 @@ func TestRegisterFormat(t *testing.T) {
 	if !ok || f.Name != "tpix" || len(f.Extensions) != 2 || f.Extensions[0] != ".tpix" || f.Extensions[1] != ".tpx" {
 		t.Fatalf("FormatByName: %+v, %v", f, ok)
 	}
-	if all := Formats(); len(all) != 12 || all[0].Name != "tpix" || all[1].Name != "jpeg" {
+	if all := Formats(); len(all) != 13 || all[0].Name != "tpix" || all[1].Name != "jpeg" {
 		t.Fatalf("Formats: %+v", all)
 	}
 
@@ -972,7 +972,7 @@ func TestWrapBuiltinFormat(t *testing.T) {
 	if o, ok := seen.Options.(JPEGOptions); !ok || !o.Progressive || seen.Quality != 70 {
 		t.Errorf("the wrapper saw %+v", seen)
 	}
-	if all := Formats(); len(all) != 11 || all[0].Name != "jpeg" {
+	if all := Formats(); len(all) != 12 || all[0].Name != "jpeg" {
 		t.Errorf("replacing a format changed the list: %+v", all)
 	}
 	// Taking the replacement back brings the package's own format back.
@@ -982,7 +982,7 @@ func TestWrapBuiltinFormat(t *testing.T) {
 	if again := run(); !bytes.Equal(again, before) || encodes.Load() != 1 {
 		t.Errorf("after UnregisterFormat the wrapper was still used (%d encodes)", encodes.Load())
 	}
-	if all := Formats(); len(all) != 11 || all[0].Name != "jpeg" {
+	if all := Formats(); len(all) != 12 || all[0].Name != "jpeg" {
 		t.Errorf("unregistering changed the list: %+v", all)
 	}
 
@@ -1260,7 +1260,7 @@ func TestRegisterWhileRunning(t *testing.T) {
 	}
 	close(stop)
 	wg.Wait()
-	if n := len(Formats()); n != 11+7 {
+	if n := len(Formats()); n != 12+7 {
 		t.Errorf("%d formats after registering seven names many times", n)
 	}
 }

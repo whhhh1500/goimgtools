@@ -230,6 +230,20 @@ func (m *Image) buildFrom(env *pipeline.Env, top bool, f *input, format string, 
 			}
 		}
 	}
+	if format == "svg" {
+		// A vector is drawn at the size the resize scales to, sharp at any
+		// size, rather than drawn at its own and resampled.
+		if z, turn, ok := firstResize(m.chain, r); ok && z.spec.o.Method == MethodDefault && !z.spec.o.LinearLight && (len(m.hooks) == 0 || turn == ops.Upright && len(m.chain) > 0 && isResize(m.chain[0])) {
+			if j, can := src.(interface{ ScaleOnLoad(w, h int) bool }); can {
+				b := src.Bounds()
+				dw, dh := z.spec.target(turn.Size(b.Dx(), b.Dy()))
+				iw, ih := turn.Size(dw, dh)
+				if r.fits(dw, dh) == nil && iw > 0 && ih > 0 && j.ScaleOnLoad(iw, ih) {
+					pre = preShrunk{orig: b.Size(), whole: true, exact: true}
+				}
+			}
+		}
+	}
 	// A CMYK image is turned into sRGB through its colour profile as soon
 	// as it is decoded, as sharp does; a file without one (or with one that
 	// cannot be read, or not a CMYK one) through libvips's CMYK profile, as

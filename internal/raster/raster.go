@@ -38,6 +38,9 @@ type Path struct {
 	// than by adding up the area each covers, which counts twice the part
 	// of a pixel two of them cover: for the overlapping pieces of a stroke.
 	Union bool
+	// EvenOdd, with Union, covers what an odd number of contours wind
+	// around, rather than what any number but none does.
+	EvenOdd bool
 }
 
 // Add adds a closed contour through the points (x, y pairs, in pixels).
@@ -279,7 +282,7 @@ func (p *Path) unionRow(cover, area []int64, x0, lo, hi, top, bot int64, c *Cell
 	if len(es) == 0 {
 		return 0
 	}
-	u := union{es: es, cover: cover, area: area, x0: x0, lo: lo, hi: hi, top: top, c: c, budget: maxBands}
+	u := union{es: es, cover: cover, area: area, x0: x0, lo: lo, hi: hi, top: top, c: c, budget: maxBands, evenOdd: p.EvenOdd}
 	if len(ev) <= maxCuts {
 		slices.Sort(ev)
 		ev = slices.Compact(ev)
@@ -305,6 +308,15 @@ type union struct {
 	c               *Cells
 	budget          int
 	left            int64
+	evenOdd         bool
+}
+
+// inside reports whether winding w is inside the path.
+func (u *union) inside(w int64) bool {
+	if u.evenOdd {
+		return w&1 != 0
+	}
+	return w != 0
 }
 
 // band adds the boundary of the union between ya and yb.
@@ -352,9 +364,9 @@ func (u *union) band(ya, yb int64) {
 				was := w
 				w += e.dir
 				switch {
-				case was == 0 && w != 0:
+				case !u.inside(was) && u.inside(w):
 					u.left += row(u.cover, u.area, u.x0, u.lo, u.hi, e.t, ya-u.top, e.b, yb-u.top)
-				case was != 0 && w == 0:
+				case u.inside(was) && !u.inside(w):
 					u.left += row(u.cover, u.area, u.x0, u.lo, u.hi, e.b, yb-u.top, e.t, ya-u.top)
 				}
 			}
@@ -387,9 +399,9 @@ func (u *union) band(ya, yb int64) {
 		was := w
 		w += e.dir
 		switch {
-		case was == 0 && w != 0:
+		case !u.inside(was) && u.inside(w):
 			u.left += row(u.cover, u.area, u.x0, u.lo, u.hi, e.t, ya-u.top, e.t, yb-u.top)
-		case was != 0 && w == 0:
+		case u.inside(was) && !u.inside(w):
 			u.left += row(u.cover, u.area, u.x0, u.lo, u.hi, e.t, yb-u.top, e.t, ya-u.top)
 		}
 	}

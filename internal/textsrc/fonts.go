@@ -62,6 +62,9 @@ func (f *Font) Close() {
 	}
 }
 
+// SFNT is the parsed font, for its outlines and metrics.
+func (f *Font) SFNT() *sfnt.Font { return f.f }
+
 // has reports whether the font has a glyph for r.
 func (f *Font) has(buf *sfnt.Buffer, r rune) bool {
 	i, err := f.f.GlyphIndex(buf, r)
@@ -439,6 +442,16 @@ func (s *Set) pick(r rune) (int, error) {
 			return i, nil
 		}
 	}
+}
+
+// Pick is the first font of the set that has r, default fonts opened as
+// needed; the first font when none has it.
+func (s *Set) Pick(r rune) (*Font, error) {
+	i, err := s.pick(r)
+	if err != nil || len(s.fonts) == 0 {
+		return nil, err
+	}
+	return s.fonts[i], nil
 }
 
 // Fonts lists the fonts opened so far.

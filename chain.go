@@ -61,6 +61,9 @@ type preShrunk struct {
 	// whole: the decoder has scaled the whole image to the size of the
 	// source instead (a WebP, as libwebp scales it), k being 0.
 	whole bool
+	// exact: and that size is the one the resize scales to (an SVG drawn
+	// at it), which leaves it nothing to scale.
+	exact bool
 	// planes: the strips are Gray (gray) or YCbCr of ratio, which the
 	// resize can scale plane by plane (resize.ScalePlanes).
 	planes bool
@@ -251,7 +254,9 @@ func (z resizeOp) resize(src pipeline.Source, turn ops.Orientation, pre preShrun
 		return nil, err
 	}
 	out := src
-	if iw != b.Dx() || ih != b.Dy() || pre.k > 1 || pre.whole {
+	if pre.exact && iw == b.Dx() && ih == b.Dy() {
+		// Drawn at the size wanted.
+	} else if iw != b.Dx() || ih != b.Dy() || pre.k > 1 || pre.whole {
 		var err error
 		switch {
 		case z.spec.o.LinearLight:

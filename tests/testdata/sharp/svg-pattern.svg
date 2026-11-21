@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="240" height="140">
+  <defs>
+    <pattern id="dots" x="0" y="0" width="20" height="20" patternUnits="userSpaceOnUse">
+      <rect width="20" height="20" fill="#eef"/><circle cx="10" cy="10" r="6" fill="#36c"/>
+    </pattern>
+    <pattern id="stripes" width="0.25" height="0.25" patternTransform="rotate(30)">
+      <rect width="8" height="4" fill="crimson"/>
+    </pattern>
+    <pattern id="vb" width="30" height="30" patternUnits="userSpaceOnUse" viewBox="0 0 10 10">
+      <path d="M0 0L10 10M10 0L0 10" stroke="green" stroke-width="1.5"/>
+    </pattern>
+  </defs>
+  <rect x="5" y="5" width="110" height="60" fill="url(#dots)" stroke="black"/>
+  <circle cx="180" cy="40" r="35" fill="url(#stripes)"/>
+  <rect x="5" y="75" width="230" height="60" fill="url(#vb)" fill-opacity="0.7"/>
+  <switch>
+    <foreignObject requiredExtensions="http://ns.adobe.com/AdobeIllustrator/10.0/" width="1" height="1"/>
+    <g><rect x="200" y="100" width="30" height="30" fill="orange"/></g>
+  </switch>
+</svg>

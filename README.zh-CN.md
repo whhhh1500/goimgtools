@@ -21,7 +21,7 @@ goimgtools 是纯 Go 实现的流式图像处理库与命令行工具。图像�
 - **内存有界**：默认上限 64MB，可通过 `MemoryLimit` 配置。依赖全图的步骤（旋转、减色、从流读取的渐进式 JPEG 等）在暂存数据超出配额时转存临时文件；所有随图像尺寸增长的缓冲均计入上限，超限时返回 `ErrMemoryLimit`。适用于内存受限的服务器、容器以及高并发图像服务。
 - **图像操作**：缩放（8 种插值核、5 种适配模式）、裁剪、任意角度旋转、仿射、透视与四边形变换、翻转、去边与扩边、铺底色、灰度化、色彩调整、反色、线性色阶、伽马、二值化、着色、明度拉伸、自动对比度、直方图均衡、色调分离、曝光反转、Pillow 的四种增强（色彩、对比度、亮度、锐度）与内置滤镜（浮雕、轮廓、找边、边缘增强等）、局部对比度增强（CLAHE）、高斯模糊与方框模糊、锐化（含反锐化掩模）、中值与排序滤波、膨胀与腐蚀、自定义卷积核、通道重组（recomb）、白色转透明（unflatten）、通道提取、智能裁剪（熵、注意力）；图片与文字水印（九宫格定位、按比例缩放、旋转、平铺、不透明度）；文字渲染（逐字字体回退、描边、阴影）；画图（圆角矩形、椭圆与圆、多边形、线，带抗锯齿的填充与描边，同 Pillow 的 ImageDraw 而边缘平滑）；空白画布；多图拼成网格（sharp 的 join）。
 - **隐形水印**：`InvisibleWatermark` 藏入至多 32 个字节（用户 ID、订单号等），用 `inspect.ReadWatermark` 与密钥读回，不需要原图：盲水印经得起重新保存、缩放、裁剪、旋转、调亮度与对比度、截图；防泄露水印还经得起对着屏幕拍照；强度与密度可调（见[隐形水印](docs/zh-CN/watermark.md)）。
-- **格式**：JPEG、PNG、WebP（有损、无损）、GIF、BMP、TIFF、ICO、QOI、TGA、Netpbm（PBM、PGM、PPM、PAM、PFM）的读写，Photoshop 的 PSD 与 PSB 的读取（合成图）；GIF、WebP 与 PNG 动画（APNG）可输出为 GIF、WebP 或 PNG 动画；默认保留 ICC 色彩配置（矩阵、查找表与灰度配置；CMYK 图像按其配置转换为 sRGB），可转换至 sRGB；保留或设置分辨率（DPI）；EXIF 与 XMP 可选保留。
+- **格式**：JPEG、PNG、WebP（有损、无损）、GIF、BMP、TIFF、ICO、QOI、TGA、Netpbm（PBM、PGM、PPM、PAM、PFM）的读写，SVG 的渲染，Photoshop 的 PSD 与 PSB 的读取（合成图）；GIF、WebP 与 PNG 动画（APNG）可输出为 GIF、WebP 或 PNG 动画；默认保留 ICC 色彩配置（矩阵、查找表与灰度配置；CMYK 图像按其配置转换为 sRGB），可转换至 sRGB；保留或设置分辨率（DPI）；EXIF 与 XMP 可选保留。
 - **压缩**：JPEG 霍夫曼表优化、按 mozjpeg 方法搜索扫描方案的渐进式编码、网格量化，以及 mozjpeg 或 jpegli 的量化表（用 jpegli 的表时，14 张图上同等 SSIMULACRA2 下比 mozjpeg 默认设置小 16%）、mozjpeg 的过冲去振铃（与 sharp 字节相同；截图 50 档相当于不开时的 75 档）；PNG 自适应调色板减色，以及无损 PNG 8–9 级：每行滤波逐一试过（oxipng 的 Brute），并用 libdeflate「接近最优解析」的移植压缩、像 zopfli 那样按代价分块（17 张图上比 oxipng `-o max` 小 0.9%，耗时不到其一半），和 10 级：每行用各滤波真实压缩后选取，再用 Zopfli 的移植多核压缩（同样 17 张图上比 ECT `-9` 小 0.23%）；有损 WebP 空间噪声整形、sharp YUV、网格量化、按测量选取环路滤波强度、色度误差扩散（14 张图上，同等 SSIMULACRA2 下比 libwebp 默认设置小 6.6%，比其最好设置小 1.3%），无损 WebP 按穿过像素的最便宜路径选匹配（17 张图上比 libwebp 最慢的设置小 5.1%，耗时约为其四分之一），以及同 libwebp 的近无损 WebP（照片比无损小 37%；23 张图上比 cwebp 的小 7.3%）；按目标文件大小或目标 SSIM（看起来不变的最小文件）自动选择质量；GIF 与 WebP 动画帧间差分存储、GIF 有损 LZW（照片类 GIF 动画转有损 WebP：同等 PSNR 下比 libwebp 动画编码器小 33%）。
 - **与 Pillow、sharp 相同的像素**：JPEG 解码结果与 libjpeg-turbo 相同，编码也与 libjpeg-turbo 相同（即 sharp 与 Pillow 写出的字节），许多操作与 Pillow 或 sharp 的结果逐字节一致：缩放（`MethodLibvips` 同 sharp，含解码时缩小的 JPEG 与 WebP；`MethodPillow` 同 Pillow，含 `thumbnail`）、Pillow 的 ImageOps、ImageEnhance 与 ImageFilter（含 `BoxBlur`）、模糊（两种算法）、瓦片金字塔（sharp 的 `tile`：Deep Zoom、Google 地图、IIIF、Zoomify）、任意角度旋转（同 sharp 或同 Pillow）、仿射变换（同 sharp，或 Pillow 的 `transform`，含透视）、去边、灰度化、二值化、反色、线性色阶、通道重组、白色转透明、中值与排序滤波、膨胀与腐蚀、卷积、CLAHE、加透明通道等（见[一致性与对比](docs/zh-CN/compatibility.md)）。
 - **并行**：`Threads(n)` 启用多核处理，输出与单线程逐字节一致。
@@ -98,6 +98,7 @@ goimgtools batch -resize 1920x1920 -no-enlarge -quality 80 -format jpeg in_dir o
 | PSD、PSB | ✓（合成图：各种颜色模式，1 到 32 位，带透明） | — | 逐条读取，每个通道从其存储位置读 |
 | QOI | ✓ | ✓（与 Pillow 逐字节相同，标为 sRGB） | 读写都流式 |
 | TGA | ✓（调色板、15 到 32 位真彩、灰度；压缩或不压缩；任意角起始；TGA 2.0 的 alpha 属性） | ✓（RLE 压缩，与 Pillow 逐字节相同） | 未压缩按文件偏移读行；压缩的流式读取（自下而上的经工作存储） |
+| SVG | ✓（渲染：形状、路径、变换、填充与描边（虚线、连接、端点）、渐变、不透明度、CSS、use 与 symbol、剪切路径、蒙版、图案、用已安装字体的文字、内嵌图片；按缩放要求的尺寸直接渲染） | — | 场景只构建一次，逐条带渲染 |
 | Netpbm（PBM、PGM、PPM、PAM、PFM） | ✓（文本或二进制，任意最大值，按 Pillow 的方式缩放；PAM 带透明） | ✓（PGM 或 PPM，与 Pillow 逐字节相同） | 按文件偏移读行 |
 
 暂存区数据不超过内存上限的 1/8（默认 8MB）时驻留内存，超出部分写入临时文件，用后删除。

@@ -61,7 +61,7 @@ Operations run in a fixed order: rotate → flip → trim → crop → resize �
 | `-fit` | `inside` (default), `cover`, `contain`, `outside`, `fill` |
 | `-linear-light` | Resize in linear light: fine light detail keeps its brightness when the image is reduced |
 | `-position` | The part `-fit cover` keeps and where `-fit contain` places the image: `center` (default), `northwest` … `southeast`; for `cover` also `entropy` (the most detail) or `attention` (what draws the eye) |
-| `-background color` | Colour of the padding for `-fit contain`, of the `-extend` borders, and of the corners after `-rotate` by an oblique angle: `white`, `black`, `transparent`, `#rrggbb`, `#rrggbbaa` |
+| `-background color` | Colour of the padding for `-fit contain`, of the `-extend` borders, and of the corners after `-rotate` by an oblique angle: any CSS colour (see below) |
 | `-kernel` | `nearest`, `linear`, `cubic` (default), `mitchell`, `lanczos2`, `lanczos3`, `mks2013`, `mks2021`, `box`, `hamming` |
 | `-reducing-gap` | With `-resize-method pillow`: Pillow's `reducing_gap` (2 with `-no-enlarge -fast-shrink` is Pillow's `thumbnail`) |
 | `-resize-method` | `draw` (default), `libvips` (sharp's resize, to the byte; sharp's default kernel is `lanczos3`) or `pillow` (Pillow's resize, to the byte) |
@@ -148,4 +148,4 @@ Measurements on 42 real photographs (250 million pixels in total, 20 cores), res
 | 8 | 0.87s | 32MB |
 | Unlimited (all 42 at once) | 0.83s | 46MB |
 
-Colours are specified as `white`, `black`, `#rrggbb` or `#rrggbbaa`.
+Colours are specified as CSS writes them: a name (`white`, `black`, `steelblue`, the 148 of CSS Color 4), `transparent`, `#rgb`, `#rrggbb`, `#rrggbbaa`, `rgb(255, 0, 0)`, `rgba(...)`, `hsl(...)`.

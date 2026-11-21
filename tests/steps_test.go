@@ -373,7 +373,7 @@ func TestDoBuiltIns(t *testing.T) {
 		}
 	}
 	for _, bad := range [][]string{{"resize", "40"}, {"resize", "a", "1"}, {"resize", "4", "4", "squash"}, {"crop", "1", "2"},
-		{"rotate"}, {"rotate", "x"}, {"rotate", "NaN"}, {"flip", "1"}, {"extend", "1", "2", "3", "4", "pink"}, {"blur"}, {"blur", "Inf"},
+		{"rotate"}, {"rotate", "x"}, {"rotate", "NaN"}, {"flip", "1"}, {"extend", "1", "2", "3", "4", "pinkish"}, {"blur"}, {"blur", "Inf"},
 		{"sharpen", "1", "1", "1.5"}, {"modulate", "1", "1"}, {"flatten"}, {"trim", "1", "2"}} {
 		if _, err := FromBytes(in).Do(bad[0], bad[1:]...).ToBytes(); err == nil {
 			t.Errorf("Do%v accepted", bad)
@@ -419,18 +419,22 @@ func TestDoWordsNeverPanic(t *testing.T) {
 	}
 }
 
-// TestParseColor reads every form and refuses the rest.
+// TestParseColor reads every form, CSS's colours among them, and refuses the
+// rest.
 func TestParseColor(t *testing.T) {
 	for s, want := range map[string]color.Color{
 		"white": color.White, "BLACK": color.Black, "none": color.Transparent, "#f00": color.RGBA{255, 0, 0, 255},
 		"#102030": color.RGBA{16, 32, 48, 255}, "10203080": color.NRGBA{16, 32, 48, 128},
+		"pink": color.RGBA{255, 192, 203, 255}, "SteelBlue": color.RGBA{70, 130, 180, 255}, "#0f08": color.NRGBA{0, 255, 0, 136},
+		"rgb(10, 20, 30)": color.RGBA{10, 20, 30, 255}, "rgba(255,0,0,0.5)": color.NRGBA{255, 0, 0, 128},
+		"rgb(100% 0% 50% / 25%)": color.NRGBA{255, 0, 128, 64}, "hsl(120, 100%, 25%)": color.RGBA{0, 128, 0, 255},
 	} {
 		got, err := ParseColor(s)
 		if err != nil || got != want {
 			t.Errorf("%q: %v, %v; want %v", s, got, err, want)
 		}
 	}
-	for _, s := range []string{"", "pink", "#12", "#12345", "#1234567", "#gggggg", "#123456789"} {
+	for _, s := range []string{"", "pinkish", "#12", "#12345", "#1234567", "#gggggg", "#123456789", "rgb(1,2)", "hsl(x, 1%, 1%)"} {
 		if _, err := ParseColor(s); err == nil {
 			t.Errorf("%q accepted", s)
 		}

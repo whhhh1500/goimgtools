@@ -61,7 +61,7 @@ goimgtools -op median:3 -op normalize -op "tint:#704214" scan.jpg out.jpg
 | `-fit` | `inside`（默认）、`cover`、`contain`、`outside`、`fill` |
 | `-linear-light` | 在线性光下缩放：缩小时细小的亮部细节保持亮度 |
 | `-position` | `-fit cover` 保留的部分与 `-fit contain` 放置图像的位置：`center`（默认）、`northwest` … `southeast`；`cover` 还可用 `entropy`（细节最多处）或 `attention`（最引人注意处） |
-| `-background 颜色` | `-fit contain` 的填充、`-extend` 的边框以及 `-rotate` 斜向旋转后四角的颜色：`white`、`black`、`transparent`、`#rrggbb`、`#rrggbbaa` |
+| `-background 颜色` | `-fit contain` 的填充、`-extend` 的边框以及 `-rotate` 斜向旋转后四角的颜色：任意 CSS 颜色（见下文） |
 | `-kernel` | `nearest`、`linear`、`cubic`（默认）、`mitchell`、`lanczos2`、`lanczos3`、`mks2013`、`mks2021`、`box`、`hamming` |
 | `-reducing-gap` | 配合 `-resize-method pillow`：Pillow 的 `reducing_gap`（2 并加 `-no-enlarge -fast-shrink` 即 Pillow 的 `thumbnail`） |
 | `-resize-method` | `draw`（默认）、`libvips`（与 sharp 的 resize 逐字节一致；sharp 默认核为 `lanczos3`）或 `pillow`（与 Pillow 的 resize 逐字节一致） |
@@ -148,4 +148,4 @@ goimgtools batch -resize 1920x1920 -no-enlarge -quality 80 -format jpeg 输入�
 | 8 | 0.87s | 32MB |
 | 不限（42 个同时） | 0.83s | 46MB |
 
-颜色可写作 `white`、`black`、`#rrggbb` 或 `#rrggbbaa`。
+颜色按 CSS 的写法：颜色名（`white`、`black`、`steelblue` 等 CSS Color 4 的 148 个）、`transparent`、`#rgb`、`#rrggbb`、`#rrggbbaa`、`rgb(255, 0, 0)`、`rgba(...)`、`hsl(...)`。
