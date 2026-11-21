@@ -50,6 +50,7 @@ import (
 	"io"
 	"runtime"
 	"sync/atomic"
+	"time"
 
 	"github.com/whhhh1500/goimgtools/internal/exifedit"
 	"github.com/whhhh1500/goimgtools/pipeline"
@@ -115,6 +116,9 @@ type Image struct {
 	autoOrient bool   // Rotate() was asked to follow the EXIF orientation
 	keepExif   bool
 	exifSet    []exifedit.Field // SetExif
+	loopSet    bool             // Loop
+	loop       int
+	delays     []time.Duration // FrameDelay
 	keepXmp    bool
 	stripICC   bool
 	density    float64 // to record in the output (0: none), when densitySet

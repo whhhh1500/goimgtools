@@ -80,6 +80,41 @@ import (
 // is processed (with FixedPalette, once that many have been).
 func (m *Image) Animated() *Image { m.animated = true; return m }
 
+// Loop sets how often an animation that Animated keeps plays: n times, or
+// for ever with 0 (sharp's loop). By default it plays as the input says.
+// A GIF stores how often it repeats after the first time, a WebP and an
+// APNG how often they play: n is the plays in every one.
+func (m *Image) Loop(n int) *Image {
+	if n < 0 || n > math.MaxUint16 {
+		return m.fail(errors.New("goimgtools: Loop must be 0 (for ever) to 65535"))
+	}
+	m.loopSet, m.loop = true, n
+	return m
+}
+
+// FrameDelay sets how long each frame of an animation that Animated keeps
+// shows (sharp's delay): one duration for every frame, or one for each,
+// the last for the frames beyond the list. By default each frame shows as
+// long as in the input. A GIF stores hundredths of a second (rounded); 10ms
+// or less is written as 100ms in a WebP, as browsers show such frames. A
+// frame that changes nothing still lengthens the one before by its delay.
+func (m *Image) FrameDelay(d ...time.Duration) *Image {
+	if len(d) == 0 {
+		return m.fail(errors.New("goimgtools: FrameDelay needs a duration"))
+	}
+	for _, v := range d {
+		if v < 0 || v > maxFrameDelay {
+			return m.fail(fmt.Errorf("goimgtools: a frame delay must be 0 to %v", maxFrameDelay))
+		}
+	}
+	m.delays = append([]time.Duration(nil), d...)
+	return m
+}
+
+// maxFrameDelay is the longest frame a WebP can hold (24 bits of
+// milliseconds; a GIF's is 655.35s).
+const maxFrameDelay = (1<<24 - 1) * time.Millisecond
+
 // Frames is what Image.Frames reports about an input that may be an
 // animation.
 type Frames struct {
@@ -683,6 +718,9 @@ func (m *Image) writeAnimated(w io.Writer, f *input, env *pipeline.Env, input, f
 		}
 	}
 	defer anim.Close()
+	if m.loopSet {
+		plays = m.loop
+	}
 	if cw <= 0 || ch <= 0 {
 		return fmt.Errorf("%w: the image has no pixels", ErrFormat)
 	}
@@ -865,7 +903,11 @@ func (s *frameSeq) next() (pipeline.Source, int, error) {
 		out.Close()
 		return nil, 0, fmt.Errorf("frame %d: %w", s.n, err)
 	}
-	return originAtZero{out}, info.ms, nil
+	ms := info.ms
+	if d := s.m.delays; len(d) > 0 {
+		ms = int(d[min(s.n-1, len(d)-1)].Milliseconds())
+	}
+	return originAtZero{out}, ms, nil
 }
 
 // writeFixedFrames writes every frame whole, reduced to the fixed palette.

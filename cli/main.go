@@ -33,6 +33,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/whhhh1500/goimgtools"
 )
@@ -110,7 +111,8 @@ type options struct {
 	tileSize, tileOverlap                          *int
 	tileLayout                                     *string
 	quality, pngLevel, pngColors, gifColors        *int
-	icoSizes                                       *string
+	icoSizes, frameDelay                           *string
+	loop                                           *int
 	gifFixed                                       *bool
 	gifLossy                                       *int
 	webpEffort                                     *int
@@ -221,6 +223,8 @@ func register(fs *flag.FlagSet) *options {
 		tiffComp:        fs.String("tiff-compression", "none", "TIFF compression: none, deflate, lzw or jpeg (lossy, -quality, default 80; no transparency)"),
 		tiffPredictor:   fs.Bool("tiff-predictor", false, "TIFF: store each sample as its difference from the pixel to its left (horizontal predictor): photographs compress much better with deflate or lzw"),
 		animated:        fs.Bool("animated", false, "process every frame of an animated GIF, WebP or PNG and write an animated GIF, WebP or PNG (APNG); only what changes is stored (GIF: one palette for all frames, -gif-colors, -no-dither); another output format is an error"),
+		loop:            fs.Int("loop", -1, "with -animated: how often the animation plays, 0 for ever (default: as the input)"),
+		frameDelay:      fs.String("frame-delay", "", "with -animated: how long each frame shows, in milliseconds: one value for every frame, or a list such as 100,50 (the last for the rest)"),
 		keepExif:        fs.Bool("keep-exif", false, "copy the EXIF block (camera, date, GPS) to the output"),
 		exifCopyright:   fs.String("exif-copyright", "", "write this 	ext as the EXIF copyright (into the kept block with -keep-exif, else a block of its own)"),
 		exifArtist:      fs.String("exif-artist", "", "write this 	ext as the EXIF artist (who made the image)"),
@@ -479,6 +483,20 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 	}
 	if *o.animated {
 		im.Animated()
+	}
+	if *o.loop >= 0 {
+		im.Loop(*o.loop)
+	}
+	if *o.frameDelay != "" {
+		var ds []time.Duration
+		for _, s := range strings.Split(*o.frameDelay, ",") {
+			n, err := strconv.Atoi(strings.TrimSpace(s))
+			if err != nil {
+				return nil, fmt.Errorf("-frame-delay: %q is not a number of milliseconds", s)
+			}
+			ds = append(ds, time.Duration(n)*time.Millisecond)
+		}
+		im.FrameDelay(ds...)
 	}
 	if *o.keepExif {
 		im.KeepExif()

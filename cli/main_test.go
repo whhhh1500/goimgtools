@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/whhhh1500/goimgtools"
 	"github.com/whhhh1500/goimgtools/internal/testutil"
@@ -649,5 +650,18 @@ func TestAnimatedColours(t *testing.T) {
 	}
 	if len(o.Image) != 4 || len(used) > 24 {
 		t.Errorf("%d frames, %d colours", len(o.Image), len(used))
+	}
+
+	// How often it plays and how long its frames show.
+	if _, _, err := cli("-animated", "-loop", "2", "-frame-delay", "40,90", in, out); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = os.ReadFile(out)
+	want, _ = goimgtools.FromBytes(buf.Bytes()).Animated().Loop(2).FrameDelay(40*time.Millisecond, 90*time.Millisecond).GIF().ToBytes()
+	if !bytes.Equal(got, want) {
+		t.Error("-loop, -frame-delay: not the library's file")
+	}
+	if _, _, err := cli("-animated", "-frame-delay", "x", in, out); err == nil {
+		t.Error("-frame-delay x: no error")
 	}
 }
