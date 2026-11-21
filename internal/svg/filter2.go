@@ -53,14 +53,14 @@ func (c *fctx) subregion(p *node, inputs []string) image.Rectangle {
 		v = strings.TrimSpace(v)
 		if c.primBox {
 			if strings.HasSuffix(v, "%") {
-				f, err := strconv.ParseFloat(strings.TrimSuffix(v, "%"), 64)
-				if err != nil {
+				f, ok := finiteNum(strings.TrimSuffix(v, "%"))
+				if !ok {
 					return def
 				}
 				return float64(f / 100 * of)
 			}
-			f, err := strconv.ParseFloat(v, 64)
-			if err != nil {
+			f, ok := finiteNum(v)
+			if !ok {
 				return def
 			}
 			return float64(f * of)
@@ -92,6 +92,16 @@ func (c *fctx) subregion(p *node, inputs []string) image.Rectangle {
 	lim := float64(1 << 24)
 	toInt := func(v float64) int { return int(math.Max(-lim, math.Min(lim, v))) }
 	return image.Rect(toInt(math.Floor(minX)), toInt(math.Floor(minY)), toInt(math.Ceil(maxX)), toInt(math.Ceil(maxY))).Intersect(whole)
+}
+
+// finiteNum reads a number, but NaN and the infinities: as integers they
+// come out differently on different processors.
+func finiteNum(s string) (float64, bool) {
+	v, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0, false
+	}
+	return v, true
 }
 
 // inputsOf names the inputs of a primitive.
@@ -204,14 +214,17 @@ func sCurve(t float64) float64 { return float64(float64(t*t) * (3 - float64(2*t)
 func lerpf(t, a, b float64) float64 { return a + float64(t*(b-a)) }
 
 func (t *turbulence) noise2(ch int, vx, vy float64, st *turbStitch) float64 {
+	// The lattice cells, compared with the stitching tile before they are
+	// taken modulo the lattice (the specification's code masks them first,
+	// and so never stitches; Chrome's Skia compares first, as here).
 	u := vx + turbPerlinN
-	bx0 := int(u) & turbBM
-	bx1 := (bx0 + 1) & turbBM
+	bx0 := int(u)
+	bx1 := bx0 + 1
 	rx0 := u - float64(int(u))
 	rx1 := rx0 - 1
 	u = vy + turbPerlinN
-	by0 := int(u) & turbBM
-	by1 := (by0 + 1) & turbBM
+	by0 := int(u)
+	by1 := by0 + 1
 	ry0 := u - float64(int(u))
 	ry1 := ry0 - 1
 	if st != nil {
@@ -283,15 +296,15 @@ func (c *fctx) turbulence(p *node, r image.Rectangle) (fbuf, error) {
 	if len(fr) > 1 {
 		fy = fr[1]
 	}
-	if fx < 0 || fy < 0 {
+	if !(fx >= 0 && fx < 1e6) || !(fy >= 0 && fy < 1e6) {
 		return out, nil // an error: transparent black
 	}
 	octaves := 1
-	if v, err := strconv.ParseFloat(strings.TrimSpace(p.attrs["numOctaves"]), 64); err == nil {
+	if v, ok := finiteNum(p.attrs["numOctaves"]); ok {
 		octaves = int(max(0, min(24, v))) // beyond this the octaves add nothing a pixel shows
 	}
 	seed := 0.0
-	if v, err := strconv.ParseFloat(strings.TrimSpace(p.attrs["seed"]), 64); err == nil {
+	if v, ok := finiteNum(p.attrs["seed"]); ok {
 		seed = math.Max(-1e9, math.Min(1e9, math.Trunc(v)))
 	}
 	fractal := strings.TrimSpace(p.attrs["type"]) == "fractalNoise"
@@ -443,17 +456,16 @@ func (c *fctx) convolve(p *node) (fbuf, error) {
 	pass := func() (fbuf, error) { copy(out, in); return out, nil }
 	order, _ := numbers(attrOr(p, "order", "3"))
 	ox, oy := 3, 3
-	if len(order) > 0 {
+	// Whole numbers, cut down to them (as librsvg).
+	if len(order) > 0 && order[0] >= 1 && order[0] <= 64 {
 		ox, oy = int(order[0]), int(order[0])
-		if order[0] != math.Trunc(order[0]) {
-			return pass()
-		}
+	} else if len(order) > 0 {
+		return pass()
 	}
-	if len(order) > 1 {
+	if len(order) > 1 && order[1] >= 1 && order[1] <= 64 {
 		oy = int(order[1])
-		if order[1] != math.Trunc(order[1]) {
-			return pass()
-		}
+	} else if len(order) > 1 {
+		return pass()
 	}
 	km, _ := numbers(p.attrs["kernelMatrix"])
 	if ox < 1 || oy < 1 || ox > 64 || oy > 64 || len(km) != ox*oy {
@@ -464,17 +476,16 @@ func (c *fctx) convolve(p *node) (fbuf, error) {
 		divisor += k
 	}
 	if v, ok := p.attrs["divisor"]; ok {
-		if d, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
-			if d == 0 {
-				return pass()
+		if d, ok := finiteNum(v); ok {
+			if d != 0 { // 0: the default, the kernel's sum
+				divisor = d
 			}
-			divisor = d
 		}
 	}
 	if divisor == 0 {
 		divisor = 1
 	}
-	bias, _ := strconv.ParseFloat(strings.TrimSpace(attrOr(p, "bias", "0")), 64)
+	bias, _ := finiteNum(attrOr(p, "bias", "0"))
 	tx, ty := ox/2, oy/2
 	if v, err := strconv.Atoi(strings.TrimSpace(attrOr(p, "targetX", "x"))); err == nil {
 		if v < 0 || v >= ox {
@@ -572,7 +583,7 @@ func (c *fctx) displacement(p *node) (fbuf, error) {
 		return nil, err
 	}
 	scale := 0.0
-	if v, err := strconv.ParseFloat(strings.TrimSpace(p.attrs["scale"]), 64); err == nil {
+	if v, ok := finiteNum(p.attrs["scale"]); ok {
 		scale = v
 	}
 	kx, ky := c.devScale()
@@ -664,6 +675,10 @@ func (c *fctx) lightingColor(p *node, st style) [3]float32 {
 	if _, ok := p.prop("lighting-color"); !ok {
 		col = [4]float32{1, 1, 1, 1}
 	}
+	if col[3] > 0 {
+		// The colour alone: its opacity plays no part (as librsvg).
+		return [3]float32{col[0] / col[3], col[1] / col[3], col[2] / col[3]}
+	}
 	return [3]float32{col[0], col[1], col[2]}
 }
 
@@ -679,8 +694,8 @@ type light struct {
 func (c *fctx) lightOf(p *node) (light, bool) {
 	for _, k := range p.children {
 		num := func(name string, def float64) float64 {
-			v, err := strconv.ParseFloat(strings.TrimSpace(k.attrs[name]), 64)
-			if err != nil {
+			v, ok := finiteNum(k.attrs[name])
+			if !ok {
 				return def
 			}
 			return v
@@ -709,7 +724,7 @@ func (c *fctx) lightOf(p *node) (light, bool) {
 		case "feSpotLight":
 			l := light{kind: 2, pos: point("x", "y", "z"), at: point("pointsAtX", "pointsAtY", "pointsAtZ"), exponent: num("specularExponent", 1)}
 			if v, ok := k.attrs["limitingConeAngle"]; ok {
-				if a, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
+				if a, ok := finiteNum(v); ok {
 					_, l.cosCone = trig.SinCosDeg(math.Abs(a))
 					l.hasCone = true
 				}
@@ -748,7 +763,7 @@ func (c *fctx) lighting(p *node, st style, specular bool) (fbuf, error) {
 		return out, nil // no light: transparent black
 	}
 	fnum := func(name string, def float64) float64 {
-		if v, err := strconv.ParseFloat(strings.TrimSpace(p.attrs[name]), 64); err == nil {
+		if v, ok := finiteNum(p.attrs[name]); ok {
 			return v
 		}
 		return def
@@ -757,11 +772,12 @@ func (c *fctx) lighting(p *node, st style, specular bool) (fbuf, error) {
 	kd := fnum("diffuseConstant", 1)
 	ks := fnum("specularConstant", 1)
 	exp := fnum("specularExponent", 1)
-	if specular && (exp < 1 || exp > 128) {
-		exp = 1
+	// A negative constant is not a value: the default stands (as librsvg).
+	if kd < 0 {
+		kd = 1
 	}
-	if kd < 0 || ks < 0 {
-		return out, nil
+	if ks < 0 {
+		ks = 1
 	}
 	col := c.lightingColor(p, st)
 	var s [3]float64 // the spot light's direction
@@ -769,6 +785,8 @@ func (c *fctx) lighting(p *node, st style, specular bool) (fbuf, error) {
 		s = norm3([3]float64{lt.at[0] - lt.pos[0], lt.at[1] - lt.pos[1], lt.at[2] - lt.pos[2]})
 	}
 	alpha := func(x, y int) float64 { return float64(in[4*(y*c.w+x)+3]) }
+	// The surface in the region's pixels: a region worked at a lower
+	// resolution has the slopes of the device (c.work).
 	for y := 0; y < c.h; y++ {
 		top, bot := max(0, y-1), min(c.h-1, y+1)
 		for x := 0; x < c.w; x++ {
@@ -786,7 +804,7 @@ func (c *fctx) lighting(p *node, st style, specular bool) (fbuf, error) {
 					sum += float64(w * (alpha(right, yy) - alpha(left, yy)))
 					wsum += w
 				}
-				nx = -float64(float64(ss*2/(wsum*float64(right-left))) * sum)
+				nx = -float64(float64(float64(ss*c.work[0])*2/(wsum*float64(right-left))) * sum)
 			}
 			if bot > top {
 				var sum, wsum float64
@@ -798,10 +816,10 @@ func (c *fctx) lighting(p *node, st style, specular bool) (fbuf, error) {
 					sum += float64(w * (alpha(xx, bot) - alpha(xx, top)))
 					wsum += w
 				}
-				ny = -float64(float64(ss*2/(wsum*float64(bot-top))) * sum)
+				ny = -float64(float64(float64(ss*c.work[1])*2/(wsum*float64(bot-top))) * sum)
 			}
 			n := norm3([3]float64{nx, ny, 1})
-			z := float64(ss * alpha(x, y))
+			z := float64(float64(ss*float64(c.work[0]+c.work[1])/2) * alpha(x, y))
 			var l [3]float64
 			lc := [3]float64{float64(col[0]), float64(col[1]), float64(col[2])}
 			switch lt.kind {

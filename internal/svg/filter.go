@@ -138,7 +138,7 @@ func (b *builder) filtered(n *node, f *node, m matrix, st style, vp viewport, ow
 	}
 	// The filter's primitives, on pictures of floats.
 	fc := &fctx{w: w, h: h, m: matrix{sx, 0, 0, sy, 0, 0}.mul(m), results: map[string]fbuf{}, reserve: b.reserve, release: b.release,
-		full: cm, region: [4]float64{rx, ry, rw, rh}, bbox: bx, primBox: primBox, fontSize: st.fontSize, vp: vp,
+		full: cm, region: [4]float64{rx, ry, rw, rh}, bbox: bx, primBox: primBox, fontSize: st.fontSize, vp: vp, work: [2]float64{sx, sy},
 		rects: map[string]image.Rectangle{}, lastRect: image.Rect(0, 0, w, h), images: map[*node]fbuf{}}
 	defer fc.end()
 	fc.linear = true
@@ -180,19 +180,31 @@ func (b *builder) filtered(n *node, f *node, m matrix, st style, vp viewport, ow
 			}
 			draw = func() { b.element(t, cm, inner, vp, nil) }
 		} else if strings.HasPrefix(href, "data:") {
-			x, y, iw, ih := rx, ry, rw, rh
-			if v, ok := parseLength(p.attrs["x"], st.fontSize, vp, axisX); ok && p.attrs["x"] != "" {
-				x = v
+			// The subregion in user space; of primitive units of the
+			// bounding box, fractions (or percentages) of it.
+			coord := func(name string, def float64, axis int, origin, size float64) float64 {
+				v := strings.TrimSpace(p.attrs[name])
+				if v == "" {
+					return def
+				}
+				if primBox {
+					pct := strings.HasSuffix(v, "%")
+					f, ok := finiteNum(strings.TrimSuffix(v, "%"))
+					if !ok {
+						return def
+					}
+					if pct {
+						f /= 100
+					}
+					return origin + float64(f*size)
+				}
+				if l, ok := parseLength(v, st.fontSize, vp, axis); ok {
+					return l
+				}
+				return def
 			}
-			if v, ok := parseLength(p.attrs["y"], st.fontSize, vp, axisY); ok && p.attrs["y"] != "" {
-				y = v
-			}
-			if v, ok := parseLength(p.attrs["width"], st.fontSize, vp, axisX); ok && p.attrs["width"] != "" {
-				iw = v
-			}
-			if v, ok := parseLength(p.attrs["height"], st.fontSize, vp, axisY); ok && p.attrs["height"] != "" {
-				ih = v
-			}
+			x, y := coord("x", rx, axisX, bx[0], bx[2]), coord("y", ry, axisY, bx[1], bx[3])
+			iw, ih := coord("width", rw, axisX, 0, bx[2]), coord("height", rh, axisY, 0, bx[3])
 			attrs := map[string]string{"x": strconv.FormatFloat(x, 'g', -1, 64), "y": strconv.FormatFloat(y, 'g', -1, 64),
 				"width": strconv.FormatFloat(iw, 'g', -1, 64), "height": strconv.FormatFloat(ih, 'g', -1, 64), "href": href}
 			if v, ok := p.attrs["preserveAspectRatio"]; ok {
@@ -315,6 +327,7 @@ type fctx struct {
 	primBox  bool
 	fontSize float64
 	vp       viewport
+	work     [2]float64                 // the region's pixels to the device's, across and down (1 at full resolution)
 	rects    map[string]image.Rectangle // the subregions of the results
 	lastRect image.Rectangle            // and of the last one
 	images   map[*node]fbuf             // the pictures of feImage
@@ -962,10 +975,6 @@ func (c *fctx) colorMatrix(p *node) (fbuf, error) {
 			mtx = [20]float64{1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0}
 		}
 	}
-	var mf [20]float32
-	for i, v := range mtx {
-		mf[i] = float32(v)
-	}
 	for i := 0; i < len(out); i += 4 {
 		a := in[i+3]
 		var u [4]float32
@@ -974,7 +983,11 @@ func (c *fctx) colorMatrix(p *node) (fbuf, error) {
 		}
 		var o [4]float32
 		for r := 0; r < 4; r++ {
-			o[r] = clampf(float32(mf[5*r]*u[0]) + float32(mf[5*r+1]*u[1]) + float32(mf[5*r+2]*u[2]) + float32(mf[5*r+3]*u[3]) + mf[5*r+4])
+			// Added up in float64: in float32 the luminance of a grey 0.5 is
+			// 0.49999997, and a table of discrete steps takes the step
+			// below (Figma's noise came out a quarter darker).
+			v := float64(mtx[5*r]*float64(u[0])) + float64(mtx[5*r+1]*float64(u[1])) + float64(mtx[5*r+2]*float64(u[2])) + float64(mtx[5*r+3]*float64(u[3])) + mtx[5*r+4]
+			o[r] = clampf(float32(v))
 		}
 		for q := 0; q < 3; q++ {
 			out[i+q] = float32(o[q] * o[3])
