@@ -24,19 +24,24 @@ type fbuf []float32
 // maxFilterPixels bounds a filter's region.
 const maxFilterPixels = 16 << 20
 
-// filterRef is the filter element an element refers to, or nil.
+// filterRef is the filter element an element refers to, or nil; or the
+// filter its list of CSS filter functions makes.
 func (b *builder) filterRef(n *node) *node {
+	return b.filterRefStyled(n, style{fontSize: 16}, viewport{})
+}
+
+func (b *builder) filterRefStyled(n *node, st style, vp viewport) *node {
 	v, ok := n.prop("filter")
 	if !ok {
 		return nil
 	}
 	v = strings.TrimSpace(v)
-	if !strings.HasPrefix(v, "url(") {
+	if v == "" || strings.EqualFold(v, "none") {
 		return nil
 	}
 	end := strings.IndexByte(v, ')')
-	if end < 0 {
-		return nil
+	if !strings.HasPrefix(v, "url(") || end < 0 || strings.TrimSpace(v[end+1:]) != "" {
+		return b.cssFilter(n, v, st, vp)
 	}
 	f := b.ids[strings.TrimPrefix(strings.Trim(strings.TrimSpace(v[4:end]), `"'`), "#")]
 	if f == nil || f.name != "filter" {
@@ -109,10 +114,8 @@ func (b *builder) unmeasured(n *node, depth int) bool {
 // filtered draws an element through its filter.
 func (b *builder) filtered(n *node, f *node, m matrix, st style, vp viewport, own, outer *clip) {
 	if b.filtering[f] {
-		return
+		return // within the element of one of its own feImages: a cycle
 	}
-	b.filtering[f] = true
-	defer delete(b.filtering, f)
 	bx, hasBox := b.bboxOf(n, vp, st)
 	bboxUnits := f.attrs["filterUnits"] != "userSpaceOnUse"
 	primBox := f.attrs["primitiveUnits"] == "objectBoundingBox"
@@ -143,7 +146,17 @@ func (b *builder) filtered(n *node, f *node, m matrix, st style, vp viewport, ow
 		return v
 	}
 	var rx, ry, rw, rh float64
-	if bboxUnits {
+	if mg, ok := f.attrs[cssMargin]; ok {
+		// Filter functions: the element's box and as far around it as they
+		// reach.
+		if !hasBox {
+			return
+		}
+		margin, _ := strconv.ParseFloat(mg, 64)
+		frac, _ := strconv.ParseFloat(f.attrs[cssFrac], 64)
+		mx, my := margin+float64(frac*bx[2]), margin+float64(frac*bx[3])
+		rx, ry, rw, rh = bx[0]-mx, bx[1]-my, bx[2]+float64(2*mx), bx[3]+float64(2*my)
+	} else if bboxUnits {
 		rx, ry = bx[0]+float64(frac("x", "-10%")*bx[2]), bx[1]+float64(frac("y", "-10%")*bx[3])
 		rw, rh = float64(frac("width", "120%")*bx[2]), float64(frac("height", "120%")*bx[3])
 	} else {
@@ -277,7 +290,13 @@ func (b *builder) filtered(n *node, f *node, m matrix, st style, vp viewport, ow
 			if t == nil {
 				continue
 			}
-			draw = func() { b.element(t, cm, inner, vp, nil) }
+			draw = func() {
+				// The filter is not drawn again within it (a nested use of
+				// the filter elsewhere is).
+				b.filtering[f] = true
+				defer delete(b.filtering, f)
+				b.element(t, cm, inner, vp, nil)
+			}
 		} else if strings.HasPrefix(href, "data:") {
 			// The subregion in user space; of primitive units of the
 			// bounding box, fractions (or percentages) of it.

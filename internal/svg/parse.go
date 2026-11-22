@@ -24,6 +24,8 @@ const (
 
 var errFormat = errors.New("goimgtools: svg: not a valid SVG document")
 
+const svgNS = "http://www.w3.org/2000/svg"
+
 // node is an element of the document.
 type node struct {
 	name     string // local name, svg namespace assumed
@@ -105,6 +107,7 @@ func parse(data []byte, reserve func(int64) error) (*node, error) {
 	var stack []*node
 	count := 0
 	foreign := 0 // foreignObject elements open: their HTML's text is kept
+	rootNS := ""
 	for {
 		tok, err := d.Token()
 		if err == io.EOF {
@@ -143,6 +146,14 @@ func parse(data []byte, reserve func(int64) error) (*node, error) {
 				}
 			}
 			n := &node{name: t.Name.Local, attrs: make(map[string]string, len(t.Attr))}
+			// An element of another namespace than SVG's (or the root's) is
+			// not one of SVG's, whatever its name: not drawn (but HTML in a
+			// foreignObject).
+			if sp := t.Name.Space; root == nil {
+				rootNS = sp
+			} else if foreign == 0 && sp != "" && sp != svgNS && sp != rootNS && strings.Contains(sp, ":") {
+				n.name = "\x00" + sp + " " + t.Name.Local
+			}
 			for _, a := range t.Attr {
 				k := a.Name.Local
 				switch sp := a.Name.Space; {

@@ -105,6 +105,9 @@ func FuzzOpen(f *testing.F) {
 	// HTML in a foreignObject: blocks, breaks, backgrounds, an SVG in it.
 	f.Add([]byte(`<svg width="40" height="30" style="text-align:center"><style>@import url(a);</style><style>span{background:#ff0}</style><foreignObject width="40" height="30"><div xmlns="http://www.w3.org/1999/xhtml" style="line-height:1.5;white-space:pre"><p>a<br/>b <strong>c</strong></p><h1>d</h1><svg width="9" height="50%" viewBox="0 0 2 1"><foreignObject width="5" height="5"><b>e</b></foreignObject></svg><script>x</script></div></foreignObject></svg>`))
 
+	// Filter functions of CSS, a url among them; media queries.
+	f.Add([]byte(`<svg width="20" height="20"><style>@media (prefers-color-scheme: light) and screen { rect { fill: red } }</style><filter id="a" filterUnits="userSpaceOnUse" x="2" width="9"><feFlood/></filter><rect width="9" height="9" filter="blur(1px) url(#a) drop-shadow(red 1 2 3) hue-rotate(.5turn) sepia(20%) opacity(2) contrast() url(#none)"/><g filter="url(#a)"><g filter="url(#a)"><circle r="5"/></g></g></svg>`))
+
 	f.Fuzz(func(t *testing.T, data []byte) {
 		env := pipeline.NewEnv(16<<20, "")
 		s, err := Open(data, env)

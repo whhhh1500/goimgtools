@@ -599,7 +599,72 @@ func TestForeignObject(t *testing.T) {
 	// A sheet's broken end does not spill into the next; @import ends at
 	// its semicolon.
 	sheets := `<style>@import url("x.css");'</style><style>#r { fill: green }</style><rect id="r" width="100" height="100" fill="red"/>`
+	// Media queries: those of a screen in the light scheme hold.
+	for _, c := range []struct {
+		query string
+		holds bool
+	}{
+		{"(prefers-color-scheme: light)", true}, {"(prefers-color-scheme: dark)", false}, {"screen", true},
+		{"print", false}, {"not print", true}, {"screen and (prefers-reduced-motion: reduce)", false},
+		{"print, (prefers-color-scheme: light)", true}, {"only screen and (color)", true},
+	} {
+		doc := `<style>rect { fill: red } @media ` + c.query + ` { rect { fill: green } }</style><rect width="100" height="100"/>`
+		if got := rgbaAt(render(t, doc), 50, 50) == [4]uint32{0, 128, 0, 255}; got != c.holds {
+			t.Errorf("@media %s: applied %v", c.query, got)
+		}
+	}
 	if got := rgbaAt(render(t, sheets), 50, 50); got != [4]uint32{0, 128, 0, 255} {
 		t.Errorf("a rule after @import in another sheet: %v", got)
+	}
+}
+
+// TestFilterFunctions: CSS's filter functions, as Chrome draws them: the
+// colour functions, drop-shadow (its third length the blur's standard
+// deviation), a list of them; values that are none (a percentage blur,
+// an angle without a unit, commas) leave the element as it is; a filter
+// used again within an element it is on.
+func TestFilterFunctions(t *testing.T) {
+	at := func(doc string, x, y int) [4]uint32 { return rgbaAt(render(t, doc), x, y) }
+	rect := `<rect x="10" y="10" width="40" height="40" fill="#ff0000" filter="`
+	near := func(got, want [4]uint32) bool {
+		for q := range got {
+			if d := int(got[q]) - int(want[q]); d < -2 || d > 2 {
+				return false
+			}
+		}
+		return true
+	}
+	for _, c := range []struct {
+		filter string
+		x, y   int
+		want   [4]uint32
+	}{
+		{"grayscale(1)", 30, 30, [4]uint32{54, 54, 54, 255}},
+		{"invert(100%)", 30, 30, [4]uint32{0, 255, 255, 255}},
+		{"opacity(0.5)", 30, 30, [4]uint32{128, 0, 0, 128}}, // premultiplied
+		{"brightness(0.5)", 30, 30, [4]uint32{128, 0, 0, 255}},
+		{"drop-shadow(20px 20px #0000ff)", 65, 65, [4]uint32{0, 0, 255, 255}},
+		{"drop-shadow(#0000ff 20 20)", 65, 65, [4]uint32{0, 0, 255, 255}},
+		{"grayscale(1) invert(1)", 30, 30, [4]uint32{201, 201, 201, 255}},
+		{"blur(50%)", 30, 30, [4]uint32{255, 0, 0, 255}},
+		{"hue-rotate(90)", 30, 30, [4]uint32{255, 0, 0, 255}},
+		{"drop-shadow(#0000ff, 20px, 20px)", 65, 65, [4]uint32{}},
+	} {
+		if got := at(rect+c.filter+`"/>`, c.x, c.y); !near(got, c.want) {
+			t.Errorf("%s: %v, want %v", c.filter, got, c.want)
+		}
+	}
+	nested := `<filter id="f"><feOffset dx="0"/></filter><g filter="url(#f)"><g filter="url(#f)"><rect width="100" height="100" fill="green"/></g></g>`
+	if got := at(nested, 50, 50); got != [4]uint32{0, 128, 0, 255} {
+		t.Errorf("a filter within an element it is on: %v", got)
+	}
+}
+
+// TestForeignNamespace: an element of another namespace than SVG's is not
+// drawn, whatever its name; one bound to SVG's by a prefix is.
+func TestForeignNamespace(t *testing.T) {
+	doc := `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><s:g xmlns="http://example.org/notsvg" xmlns:s="http://www.w3.org/2000/svg"><s:rect width="10" height="10" fill="green"/><rect width="10" height="10" fill="red"/></s:g></svg>`
+	if got := rgbaAt(renderDoc(t, []byte(doc)), 5, 5); got != [4]uint32{0, 128, 0, 255} {
+		t.Errorf("%v", got)
 	}
 }

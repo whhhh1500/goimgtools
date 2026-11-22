@@ -382,6 +382,56 @@ func isCSS(typ string) bool {
 	return t == "" || strings.EqualFold(t, "text/css")
 }
 
+// mediaMatches evaluates a media query list for a screen in the light
+// colour scheme, with no reduced motion: its media types, those features,
+// "not", "and" and commas; any other feature (sizes among them) does not
+// hold.
+func mediaMatches(q string) bool {
+	for _, one := range strings.Split(strings.ToLower(q), ",") {
+		words := strings.Fields(strings.NewReplacer("(", " ( ", ")", " ) ").Replace(one))
+		not := len(words) > 0 && words[0] == "not"
+		if not || len(words) > 0 && words[0] == "only" {
+			words = words[1:]
+		}
+		ok := true
+		for i := 0; i < len(words); i++ {
+			w := words[i]
+			switch {
+			case w == "and":
+			case w == "(":
+				// A feature: up to its parenthesis.
+				j := i + 1
+				for j < len(words) && words[j] != ")" {
+					j++
+				}
+				feat := strings.Join(words[i+1:min(j, len(words))], " ")
+				ok = ok && mediaFeature(feat)
+				i = j
+			default: // a media type
+				ok = ok && (w == "all" || w == "screen")
+			}
+		}
+		if ok != not {
+			return true
+		}
+	}
+	return false
+}
+
+func mediaFeature(f string) bool {
+	name, value, _ := strings.Cut(f, ":")
+	name, value = strings.TrimSpace(name), strings.TrimSpace(value)
+	switch name {
+	case "prefers-color-scheme":
+		return value == "light"
+	case "prefers-reduced-motion", "prefers-reduced-transparency", "prefers-contrast":
+		return value == "no-preference"
+	case "color":
+		return true
+	}
+	return false
+}
+
 // cssRule is a rule of a style sheet: its selectors and declarations.
 type cssRule struct {
 	sels  []selector
@@ -426,7 +476,13 @@ func parseRules(src string) []cssRule {
 		body := src[open+1 : end]
 		src = src[end+1:]
 		if strings.HasPrefix(head, "@") {
-			continue // media queries, font faces and the like are not used
+			// The rules of a media query that holds for a picture drawn as
+			// a browser shows it on a screen in its light scheme; other
+			// at-rules (font faces and the like) are not used.
+			if q, ok := strings.CutPrefix(head, "@media"); ok && mediaMatches(q) {
+				rules = append(rules, parseRules(body)...)
+			}
+			continue
 		}
 		var r cssRule
 		for _, part := range strings.Split(head, ",") {

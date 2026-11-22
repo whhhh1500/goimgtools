@@ -116,6 +116,7 @@ type builder struct {
 	marking     map[*node]bool  // and the markers
 	filtering   map[*node]bool  // and the filters
 	merged      map[*node]*node // filters with what they take by href
+	cssFilters  map[*node]*node // the filters of elements' lists of filter functions
 	clipping    map[*node]bool  // and the clip paths
 	release     func(int64)
 	reserve     func(int64) error
@@ -349,7 +350,7 @@ func (b *builder) element(n *node, m matrix, parent style, vp viewport, cl *clip
 	if ownClip == errClip {
 		return // a reference to a clip path that clips everything away
 	}
-	f := b.filterRef(n)
+	f := b.filterRefStyled(n, st, vp)
 	if mk := b.maskOf(n, m, vp, st); mk != nil {
 		if mk == errMask {
 			return
