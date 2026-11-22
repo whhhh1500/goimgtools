@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"image"
 	"net/url"
+	"slices"
 	"testing"
 
 	"github.com/whhhh1500/goimgtools/pipeline"
@@ -496,5 +497,38 @@ func TestPathAfterClose(t *testing.T) {
 <rect x="10" y="10" width="50" height="50" fill="red" filter="url(#b)"/>`
 	if img := render(t, doc); rgbaAt(img, 30, 30) != [4]uint32{0, 128, 0, 255} || rgbaAt(img, 70, 70)[3] != 0 {
 		t.Errorf("a filter by href: %v %v", rgbaAt(img, 30, 30), rgbaAt(img, 70, 70))
+	}
+}
+
+// TestFontWeights: the weights of a family tried for one asked for, in
+// the order CSS matches fonts (as Chrome picks Segoe UI Semibold for 600,
+// Light for 300, Bold for 650); bolder and lighter by the parent's.
+func TestFontWeights(t *testing.T) {
+	for _, c := range []struct {
+		w    int
+		head []int
+	}{
+		{400, []int{400, 500, 350, 300}},
+		{500, []int{500, 400, 350}},
+		{300, []int{300, 200, 100, 350, 400}},
+		{600, []int{600, 700, 800, 900, 500}},
+		{650, []int{700, 800, 900, 600}},
+		{900, []int{900, 800, 700}},
+	} {
+		if got := weightOrder(c.w); !slices.Equal(got[:len(c.head)], c.head) {
+			t.Errorf("weightOrder(%d) = %v, want %v first", c.w, got, c.head)
+		}
+	}
+	for _, c := range []struct {
+		v           string
+		parent, out int
+	}{
+		{"bold", 400, 700}, {"normal", 900, 400}, {"650", 400, 650}, {"1500", 400, 0},
+		{"bolder", 500, 700}, {"bolder", 300, 400}, {"bolder", 600, 900}, {"bolder", 900, 900},
+		{"lighter", 800, 700}, {"lighter", 600, 400}, {"lighter", 400, 100}, {"lighter", 50, 50},
+	} {
+		if got := weightValue(c.v, c.parent); got != c.out {
+			t.Errorf("weightValue(%q, %d) = %d, want %d", c.v, c.parent, got, c.out)
+		}
 	}
 }

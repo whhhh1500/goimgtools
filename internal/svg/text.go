@@ -92,8 +92,9 @@ func (b *builder) fonts(family, face string) *textsrc.Set {
 	var specs []string
 	try := func(f string) bool {
 		// The usual files of the fonts generic families stand for, without
-		// a look through all the system's fonts.
-		if paths, ok := knownFontFiles[f]; ok {
+		// a look through all the system's fonts: for their regular and bold
+		// weights (the others are looked for by name).
+		if paths, ok := knownFontFiles[f]; ok && (faceWeight(face) == 400 || faceWeight(face) == 700) {
 			for _, p := range paths[faceIndex(face)] {
 				if st, err := os.Stat(p); err == nil && !st.IsDir() {
 					specs = append(specs, p)
@@ -101,12 +102,31 @@ func (b *builder) fonts(family, face string) *textsrc.Set {
 				}
 			}
 		}
-		for _, name := range []string{f + face, f} {
-			if fo, err := textsrc.Open(name); err == nil {
-				fo.Close()
-				specs = append(specs, name)
-				return true
+		// The family's faces by the weights CSS tries for the one asked
+		// for, italic and then upright; else the family's regular face.
+		w, italic := parseFace(face)
+		for _, it := range []bool{italic, false}[:1+b2i(italic)] {
+			for _, cw := range weightOrder(w) {
+				for _, wn := range weightNames[cw] {
+					name := f
+					if wn != "" {
+						name += " " + wn
+					}
+					if it {
+						name += " Italic"
+					}
+					if fo, err := textsrc.Open(name); err == nil {
+						fo.Close()
+						specs = append(specs, name)
+						return true
+					}
+				}
 			}
+		}
+		if fo, err := textsrc.Open(f); err == nil {
+			fo.Close()
+			specs = append(specs, f)
+			return true
 		}
 		return false
 	}
@@ -286,15 +306,96 @@ var knownFontFiles = func() map[string][4][]string {
 // faceIndex is the place of a face among regular, bold, italic and bold
 // italic.
 func faceIndex(face string) int {
-	switch face {
-	case " Bold":
-		return 1
-	case " Italic":
-		return 2
-	case " Bold Italic":
-		return 3
+	w, italic := parseFace(face)
+	i := 0
+	if w >= 600 {
+		i = 1
 	}
-	return 0
+	if italic {
+		i += 2
+	}
+	return i
+}
+
+// faceOf is the face text asks for, by its weight (1 to 1000; 0 is 400)
+// and whether it is italic: "600" or "600 Italic".
+func faceOf(weight int, italic bool) string {
+	if weight <= 0 {
+		weight = 400
+	}
+	f := strconv.Itoa(weight)
+	if italic {
+		f += " Italic"
+	}
+	return f
+}
+
+func faceWeight(face string) int {
+	w, _ := parseFace(face)
+	return w
+}
+
+// parseFace reads a face of faceOf.
+func parseFace(face string) (weight int, italic bool) {
+	w, italic := strings.CutSuffix(face, " Italic")
+	weight, err := strconv.Atoi(w)
+	if err != nil || weight <= 0 {
+		weight = 400
+	}
+	return weight, italic
+}
+
+// The weights of the faces of families, by the names their fonts give
+// them.
+var (
+	weightLadder = []int{100, 200, 300, 350, 400, 500, 600, 700, 800, 900}
+	weightNames  = map[int][]string{
+		100: {"Thin", "Hairline"},
+		200: {"ExtraLight", "Extra Light", "UltraLight", "Ultra Light"},
+		300: {"Light"},
+		350: {"Semilight", "SemiLight", "Semi Light"},
+		400: {""},
+		500: {"Medium"},
+		600: {"Semibold", "SemiBold", "Semi Bold", "Demibold", "DemiBold", "Demi Bold"},
+		700: {"Bold"},
+		800: {"ExtraBold", "Extra Bold", "UltraBold", "Ultra Bold"},
+		900: {"Black", "Heavy"},
+	}
+)
+
+// weightOrder is the order the weights of a family are tried in for one
+// asked for, as CSS matches fonts: from 400 to 500, those from it up to
+// 500, then those below it, then those above 500; below 400, those down
+// from it, then those above; above 500, those up from it, then below.
+func weightOrder(w int) []int {
+	var out []int
+	up := func(from, to int) {
+		for _, l := range weightLadder {
+			if l >= from && l <= to {
+				out = append(out, l)
+			}
+		}
+	}
+	down := func(from, to int) {
+		for i := len(weightLadder) - 1; i >= 0; i-- {
+			if l := weightLadder[i]; l <= from && l >= to {
+				out = append(out, l)
+			}
+		}
+	}
+	switch {
+	case w >= 400 && w <= 500:
+		up(w, 500)
+		down(w-1, 0)
+		up(501, 1000)
+	case w < 400:
+		down(w, 0)
+		up(w+1, 1000)
+	default:
+		up(w, 1000)
+		down(w-1, 0)
+	}
+	return out
 }
 
 // spacing reads letter-spacing or word-spacing: normal is none.
@@ -429,13 +530,8 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 		// The inherited properties of text come with the style (from the
 		// element's ancestors too); these do not inherit.
 		family, anchor := kst.fontFamily, kst.anchor
-		face := ""
-		if kst.bold {
-			face += " Bold"
-		}
-		if kst.italic {
-			face += " Italic"
-		}
+		face := faceOf(kst.weight, kst.italic)
+
 		ctx.letter, ctx.word, ctx.baseline = kst.letterSp, kst.wordSp, kst.baseline
 		if v, ok := k.prop("alignment-baseline"); ok { // on text too, as Chrome (D3's charts put it there)
 			if bl, ok := baselineOf(v); ok {
@@ -1044,4 +1140,11 @@ func lengths(s string, st style, vp viewport, axis int) []float64 {
 		}
 	}
 	return out
+}
+
+func b2i(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }

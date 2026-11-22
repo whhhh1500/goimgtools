@@ -701,6 +701,7 @@ type style struct {
 	// letter-spacing, word-spacing and dominant-baseline.
 	fontFamily       string
 	bold, italic     bool
+	weight           int // font-weight, 1 to 1000; 0 is 400
 	anchor           int
 	letterSp, wordSp float64
 	baseline         int
@@ -850,9 +851,14 @@ func computeStyle(n *node, parent style, vp viewport) style {
 				s.italic = true
 				continue
 			case "bold", "bolder", "600", "700", "800", "900":
+				s.weight = weightValue(lf, parent.weight)
 				s.bold = true
 				continue
-			case "normal", "small-caps", "lighter", "100", "200", "300", "400", "500":
+			case "lighter", "100", "200", "300", "400", "500":
+				s.weight = weightValue(lf, parent.weight)
+				s.bold = false
+				continue
+			case "normal", "small-caps":
 				continue
 			}
 			size, _, _ := strings.Cut(f, "/")
@@ -910,11 +916,8 @@ func computeStyle(n *node, parent style, vp viewport) style {
 		s.fontFamily = v
 	}
 	if v, ok := get("font-weight"); ok {
-		switch strings.TrimSpace(v) {
-		case "bold", "bolder", "600", "700", "800", "900":
-			s.bold = true
-		case "normal", "lighter", "100", "200", "300", "400", "500":
-			s.bold = false
+		if w := weightValue(strings.ToLower(strings.TrimSpace(v)), parent.weight); w > 0 {
+			s.weight, s.bold = w, w >= 600
 		}
 	}
 	if v, ok := get("font-style"); ok {
@@ -1096,4 +1099,42 @@ func computeStyle(n *node, parent style, vp viewport) style {
 // splitList splits a list of numbers by commas and spaces.
 func splitList(s string) []string {
 	return strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' || r == '\r' })
+}
+
+// weightValue is a font-weight: a number from 1 to 1000 or a keyword,
+// bolder and lighter by the parent's weight as CSS has them; 0 for none.
+func weightValue(v string, parent int) int {
+	if parent <= 0 {
+		parent = 400
+	}
+	switch v {
+	case "normal":
+		return 400
+	case "bold":
+		return 700
+	case "bolder":
+		switch {
+		case parent < 350:
+			return 400
+		case parent < 550:
+			return 700
+		case parent < 900:
+			return 900
+		}
+		return parent
+	case "lighter":
+		switch {
+		case parent < 100:
+			return parent
+		case parent < 550:
+			return 100
+		case parent < 750:
+			return 400
+		}
+		return 700
+	}
+	if f, err := strconv.ParseFloat(v, 64); err == nil && f >= 1 && f <= 1000 {
+		return int(f)
+	}
+	return 0
 }
