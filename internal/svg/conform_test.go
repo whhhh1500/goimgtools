@@ -835,3 +835,24 @@ func TestTextSpans(t *testing.T) {
 		t.Errorf("text on the second subpath: ink from %d, want from 60", lo)
 	}
 }
+
+// TestRTLLines: a line of right-to-left text a tspan moves down by dy (as
+// d3 breaks lines) goes down whole, not its first letter alone.
+func TestRTLLines(t *testing.T) {
+	font := `font-family="'` + testFont + `'" font-size="16"`
+	img := render(t, `<text x="10" y="25" `+font+`><tspan>אבגד</tspan><tspan x="10" dy="40">הוזח</tspan></text>`)
+	span := func(y0, y1 int) int {
+		lo, hi := 100, -1
+		for y := y0; y < y1; y++ {
+			for x := 0; x < 100; x++ {
+				if rgbaAt(img, x, y)[3] > 0 {
+					lo, hi = min(lo, x), max(hi, x)
+				}
+			}
+		}
+		return hi - lo
+	}
+	if top, bottom := span(0, 35), span(45, 75); bottom < top/2 || top > bottom*2 {
+		t.Errorf("the lines' ink spans %d and %d pixels across", top, bottom)
+	}
+}

@@ -228,9 +228,16 @@ func rightToLeft(chars []tchar) []tchar {
 				if c.sh == nil { // shaped glyphs are mirrored by the shaping
 					c.r = mirrored[k]
 				}
+				// The chunk's place, and the shift its first character
+				// carries (a tspan's dy down to a next line), go to the
+				// character seen first: the whole chunk moves by them.
 				c.x, c.y = nil, nil
+				if k == 0 {
+					c.dx, c.dy = 0, 0
+				}
 				if i == 0 {
 					c.x, c.y = first.x, first.y
+					c.dx, c.dy = first.dx, first.dy
 				}
 				out[s+i] = c
 			}
