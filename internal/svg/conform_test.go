@@ -965,3 +965,35 @@ func TestChromeForms2(t *testing.T) {
 		t.Errorf("a mask of linearRGB: alpha %d, want about 55", a)
 	}
 }
+
+// TestVerticalText: a text of writing-mode tb runs down from y, its letters
+// on their side across x (the central baseline on it); a Chinese character
+// stands upright in the middle of the line, its top its top bearing below
+// the pen (the font's vertical metrics); text-orientation: upright stands
+// letters too; on a tspan writing-mode is not taken.
+func TestVerticalText(t *testing.T) {
+	font := `font-family="'../../tests/testdata/fonts/VertTest.ttf'" font-size="20"`
+	inked := func(img image.Image, x, y int) bool { return rgbaAt(img, x, y)[3] > 128 }
+	side := render(t, `<text x="50" y="10" writing-mode="tb" `+font+`>AA</text>`)
+	// A: 1 to 9 pixels down its advance of 10 (on its side), 0 to 14 across
+	// from 7.6 left of x (the middle of its ascent and descent on x).
+	if !inked(side, 48, 15) || !inked(side, 48, 25) || inked(side, 48, 30) || inked(side, 48, 5) || inked(side, 60, 15) {
+		t.Error("letters on their side down the line")
+	}
+	up := render(t, `<text x="50" y="10" writing-mode="tb" `+font+`>日</text>`)
+	// 日: 20 wide, its middle on x; its top 6 below the pen (its top
+	// bearing; the font's ascent would put it at 1.6), its bottom 24.
+	if !inked(up, 50, 20) || !inked(up, 43, 20) || inked(up, 41, 20) || inked(up, 50, 14) || !inked(up, 50, 17) || !inked(up, 50, 33) || inked(up, 50, 35) {
+		t.Error("an upright character in the middle of the line")
+	}
+	// text-orientation: upright stands a letter too: A, 10 wide, from 16 down
+	// to its baseline at 30 (its top bearing of 300 below the pen).
+	stand := render(t, `<text x="50" y="10" writing-mode="tb" style="text-orientation: upright" `+font+`>A</text>`)
+	if inked(stand, 48, 15) || !inked(stand, 50, 25) || inked(stand, 44, 25) || inked(stand, 50, 31) {
+		t.Error("text-orientation: upright")
+	}
+	span := render(t, `<text x="50" y="10" `+font+`><tspan writing-mode="tb">AA</tspan></text>`)
+	if inked(span, 48, 25) || !inked(span, 52, 5) {
+		t.Error("writing-mode on a tspan")
+	}
+}

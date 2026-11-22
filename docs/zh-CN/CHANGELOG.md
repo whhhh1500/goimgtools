@@ -6,6 +6,7 @@
 
 ### 新增
 
+- SVG 竖排文字：text 元素上的 `writing-mode` 为 `tb`、`tb-rl`、`vertical-rl`、`vertical-lr` 时（可继承，同 Chrome；写在 tspan 上不生效），从 `y` 向下排，`x` 处为其中线：多数文字的字母横躺；中日韩文字及其标点、全角字符与表情直立居中，按字体的竖排度量（`vhea` 与 `vmtx`，字形顶端在笔位下方 top bearing 处，同 HarfBuzz 为 Chrome 放置的位置；没有竖排度量的字体按字高与上升高度）前进与放置，括号与破折号横躺；`text-orientation` 为 `upright` 时全部直立，为 `sideways` 时全部横躺。`x`、`y`、`dx`、`dy`、`text-anchor`、`rotate`、装饰线与文字的包围盒都随这一行。路径上的文字仍为横排。
 - SVG 路径上的文字按 Chrome 的方式排：支持 SVG 2 中 `textPath` 的 `path` 属性（取解析到第一个错误之前的部分，优先于 `href`）；路径上字符的绝对 `x` 即沿路径的距离（text 上或 textPath 内 tspan 上的 `x` 会让文字沿路径移动，原先被忽略）；写在 textPath 自身上的 `x`、`y` 不是它的属性，不再采用（原先采用）。
 - SVG：CSS 的滤镜函数（`filter="blur(2px) drop-shadow(4px 5px 6px blue) grayscale(0.5)"`：blur、brightness、contrast、drop-shadow、grayscale、hue-rotate、invert、opacity、saturate、sepia，也可夹 url()），各按 Filter Effects 规范给出的等效原语依次计算，在 sRGB 中进行，区域为元素的包围盒（含描边）加上各函数所及的范围（url() 引用的滤镜裁到其自身区域），与 Chrome 相同：drop-shadow 的第三个长度即模糊的标准差，不带单位的长度按像素；Chrome 视为无效的写法（blur 用百分比、角度不带单位、参数间用逗号）则不加滤镜。resvg 的滤镜函数测试 44 个通过 36 个（原 15 个；其余只差在标签字体）。
 - SVG 样式表应用媒体查询成立的规则，条件按浅色方案、屏幕显示判断（`@media (prefers-color-scheme: light)`、`screen`、`not print`，支持 `and`、`not` 与逗号）；涉及尺寸或其他特性的查询视为不成立。原先所有 `@media` 中的规则都不用（深色方案的规则，例如为 GitHub 准备的图片所带的，仍然不用）。

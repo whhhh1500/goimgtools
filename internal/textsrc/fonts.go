@@ -69,6 +69,7 @@ type Font struct {
 	colourTried bool
 	// Whether it makes ligatures of Latin text by default.
 	liga, ligaTried bool
+	vm              vmetrics // its vertical metrics
 }
 
 // Close releases the font file.

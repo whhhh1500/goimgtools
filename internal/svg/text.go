@@ -76,6 +76,13 @@ const (
 	baseBottom
 )
 
+// The orientations of text-orientation.
+const (
+	orientMixed = iota
+	orientUpright
+	orientSideways
+)
+
 const (
 	anchorStart = iota
 	anchorMiddle
@@ -547,6 +554,13 @@ func (p *textPathInfo) at(s float64) (x, y, ux, uy float64, ok bool) {
 func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *clip) {
 	var chars []tchar
 	preserve := n.attrs["xml:space"] == "preserve" // the text's: its spaces at the end
+	// A vertical line (the text element's writing-mode, as Chrome) is laid
+	// out as a horizontal one, in a frame turned a quarter clockwise (its x
+	// the user space's y, its y the user space's x reversed): the glyphs of
+	// most scripts lie on their side, those set upright (Chinese, Japanese,
+	// Korean) are turned back and stand in the middle of the line. Not on a
+	// path.
+	vertical := st.vertical && !hasTextPath(n, 0)
 	var walk func(k *node, kst style, ctx textCtx)
 	walk = func(k *node, kst style, ctx textCtx) {
 		if v, ok := k.attrs["xml:space"]; ok {
@@ -615,6 +629,17 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 		rots, _ := numbers(k.attrs["rotate"])
 		if k.name == "textPath" {
 			xs, ys, dxs, dys, rots = nil, nil, nil, nil, nil // not attributes of a textPath (Chrome passes them over)
+		}
+		if vertical {
+			// Laid out across: along the line goes down, across it right.
+			neg := func(v []float64) []float64 {
+				out := make([]float64, len(v))
+				for i, f := range v {
+					out[i] = -f
+				}
+				return out
+			}
+			xs, ys, dxs, dys = ys, neg(xs), dys, neg(dxs)
 		}
 		first := len(chars)
 		kctx := ctx
@@ -708,6 +733,10 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 		// its pen, advance and frame.
 		gx, gy float64
 		extra  bool
+		// In a vertical line, a glyph that stands upright: its width
+		// across, and how far down from its pen its baseline is.
+		upright    bool
+		hadv, vorg float64
 	}
 	var out, extra []placed
 	var buf sfnt.Buffer
@@ -772,6 +801,7 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 		upem := fixed.Int26_6(sf.UnitsPerEm()) << 6
 		scale := c.st.fontSize / float64(sf.UnitsPerEm())
 		var gi sfnt.GlyphIndex
+		up := vertical && c.sh == nil && (c.st.orient == orientUpright || c.st.orient == orientMixed && upright(c.r))
 		if c.sh != nil {
 			if len(c.sh.glyphs) == 0 {
 				continue
@@ -782,7 +812,7 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 			if gi, err = sf.GlyphIndex(&buf, c.r); err != nil {
 				continue
 			}
-			if prevFont == f {
+			if prevFont == f && !up {
 				if k, err := sf.Kern(&buf, prev, gi, upem, font.HintingNone); err == nil {
 					penX += float64(float64(float64(k)/64) * scale)
 				}
@@ -804,7 +834,11 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 			if !(xh > 0) {
 				xh = float64(asc / 2)
 			}
-			switch c.tctx.baseline {
+			bl := c.tctx.baseline
+			if vertical && bl == baseAlphabetic {
+				bl = baseCentral // a vertical line's (as Chrome)
+			}
+			switch bl {
 			case baseMiddle:
 				p.base = float64(xh*u) / 2
 			case baseCentral:
@@ -850,6 +884,22 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 			adv = float64(float64(pen) * scale)
 		} else if a, err := sf.GlyphAdvance(&buf, gi, upem, font.HintingNone); err == nil {
 			adv = float64(float64(float64(a)/64) * scale)
+		}
+		if up {
+			// Upright: its advance down the line and its baseline as the
+			// font's vertical metrics give them (the top of its outline its
+			// top bearing down from the pen, as HarfBuzz places it for
+			// Chrome); a font without them, its height and ascent.
+			p.upright, p.hadv = true, adv
+			if va, tsb, ok := f.VerticalMetrics(gi); ok {
+				adv = float64(float64(va) * scale)
+				if bnd, _, err := sf.GlyphBounds(&buf, gi, upem, font.HintingNone); err == nil {
+					p.vorg = float64(float64(float64(tsb)-float64(float64(bnd.Min.Y)/64)) * scale)
+				}
+			} else if mt, err := sf.Metrics(&buf, upem, font.HintingNone); err == nil {
+				adv = float64(float64(float64(mt.Ascent+mt.Descent)/64) * scale)
+				p.vorg = float64(float64(float64(mt.Ascent)/64) * scale)
+			}
 		}
 		// Letter spacing parts no letters that join (as Chrome: nor what
 		// is drawn as nothing).
@@ -998,6 +1048,12 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 	// down.
 	type frame struct{ ox, oy, ux, uy, vx, vy float64 }
 	frames := make([]frame, len(out))
+	// The frames the glyphs are drawn in: those of the line but for upright
+	// glyphs in a vertical one.
+	gframes := frames
+	if vertical {
+		gframes = make([]frame, len(out))
+	}
 	drawn := make([]bool, len(out))
 	for i, p := range out {
 		shift := 0.0
@@ -1040,10 +1096,29 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 		} else {
 			frames[i] = frame{ox: p.x + shift, oy: p.y + down, ux: ux, uy: uy, vx: vx, vy: vy}
 		}
+		if vertical {
+			gframes[i] = frames[i]
+			if p.upright {
+				// Standing, turned back a quarter (by its rotation too), in
+				// the middle of the line across, its pen at its top.
+				s, c := 0.0, 1.0
+				if p.c.rotSet && p.c.rot != 0 {
+					s, c = trig.SinCosDeg(p.c.rot)
+				}
+				gframes[i] = frame{ox: p.x + shift + p.vorg, oy: p.y - p.c.tctx.shift + float64(p.hadv/2), ux: s, uy: -c, vx: c, vy: s}
+			}
+		}
 		drawn[i] = true
 	}
+	// user is a point of the frames in the text's user space.
+	user := func(x, y float64) [2]float64 {
+		if vertical {
+			return [2]float64{-y, x}
+		}
+		return [2]float64{x, y}
+	}
 	apply := func(fr frame, gx, gy float64) [2]float64 {
-		return [2]float64{fr.ox + float64(fr.ux*gx) + float64(fr.vx*gy), fr.oy + float64(fr.uy*gx) + float64(fr.vy*gy)}
+		return user(fr.ox+float64(fr.ux*gx)+float64(fr.vx*gy), fr.oy+float64(fr.uy*gx)+float64(fr.vy*gy))
 	}
 	if b.measureText != nil {
 		// Measured, not drawn: each character's cell, its advance across
@@ -1081,7 +1156,7 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 		}
 		flushBand := func(k key, bd *band) {
 			if bd.open {
-				quad(k.d, [4][2]float64{{bd.x0, bd.y}, {bd.x1, bd.y}, {bd.x1, bd.y + bd.thick}, {bd.x0, bd.y + bd.thick}})
+				quad(k.d, [4][2]float64{user(bd.x0, bd.y), user(bd.x1, bd.y), user(bd.x1, bd.y+bd.thick), user(bd.x0, bd.y+bd.thick)})
 				bd.open = false
 			}
 		}
@@ -1149,7 +1224,7 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 		sf := p.f.SFNT()
 		upem := fixed.Int26_6(sf.UnitsPerEm()) << 6
 		scale := p.c.st.fontSize / float64(sf.UnitsPerEm()) / 64
-		fr := frames[i]
+		fr := gframes[i]
 		pt := func(q fixed.Point26_6) [2]float64 {
 			return apply(fr, p.gx+float64(float64(q.X)*scale), p.gy+float64(float64(q.Y)*scale))
 		}
@@ -1197,6 +1272,9 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 			if ok {
 				flush()
 				fm := matrix{fr.ux, fr.uy, fr.vx, fr.vy, fr.ox, fr.oy}
+				if vertical {
+					fm = matrix{0, 1, -1, 0, 0, 0}.mul(fm) // the frame turned into the user space
+				}
 				b.glyphPicture(p.c.node, bm, m.mul(fm), p.gx, p.gy, p.c.st.fontSize, p.c.st, own, outer)
 				continue
 			}
@@ -1222,6 +1300,50 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 	}
 	flush()
 	decoLines(true)
+}
+
+// hasTextPath reports whether text holds a textPath.
+func hasTextPath(k *node, depth int) bool {
+	if depth > 64 {
+		return false
+	}
+	for _, c := range k.children {
+		if c.name == "textPath" || (c.name == "tspan" || c.name == "a") && hasTextPath(c, depth+1) {
+			return true
+		}
+	}
+	return false
+}
+
+// upright reports whether a character stands upright in a vertical line
+// (text-orientation: mixed): those Unicode's vertical orientation property
+// (UAX #50) gives U or Tu, Tr in the main: the scripts of China, Japan and
+// Korea, their symbols and punctuation, full width forms, emoji.
+func upright(r rune) bool {
+	switch r {
+	case 0x3008, 0x3009, 0x300A, 0x300B, 0x300C, 0x300D, 0x300E, 0x300F, 0x3010, 0x3011, 0x3014, 0x3015, 0x3016, 0x3017,
+		0x3018, 0x3019, 0x301A, 0x301B, 0x301C, 0x3030, 0x30A0, 0x30FC, 0xFF08, 0xFF09, 0xFF0D, 0xFF1A, 0xFF1B, 0xFF1C,
+		0xFF1D, 0xFF1E, 0xFF3B, 0xFF3D, 0xFF3F, 0xFF5B, 0xFF5C, 0xFF5D, 0xFF5E, 0xFF5F, 0xFF60, 0xFFE3:
+		// Brackets, dashes and the long vowel mark (Tr): their vertical
+		// forms are about the horizontal ones on their side.
+		return false
+	}
+	switch {
+	case r < 0x1100:
+		return r == 0xA7 || r == 0xA9 || r == 0xAE || r == 0xB1 || r == 0xBC || r == 0xBD || r == 0xBE || r == 0xD7 || r == 0xF7
+	case r <= 0x11FF, // Hangul Jamo
+		r >= 0x2E80 && r <= 0xA4CF,   // CJK radicals to Yi
+		r >= 0xA960 && r <= 0xA97F,   // Hangul Jamo extended A
+		r >= 0xAC00 && r <= 0xD7FF,   // Hangul syllables, Jamo extended B
+		r >= 0xE000 && r <= 0xFAFF,   // private use, CJK compatibility ideographs
+		r >= 0xFE10 && r <= 0xFE1F,   // vertical forms
+		r >= 0xFE30 && r <= 0xFE4F,   // CJK compatibility forms
+		r >= 0xFF00 && r <= 0xFFEF,   // half and full width forms
+		r >= 0x1F000 && r <= 0x1FAFF, // symbols and emoji
+		r >= 0x20000 && r <= 0x3FFFF: // CJK ideographs, extensions B on
+		return true
+	}
+	return false
 }
 
 // lengths reads a list of lengths.

@@ -790,6 +790,8 @@ type style struct {
 	letterSp, wordSp float64
 	baseline         int
 	rtl              bool // direction: rtl
+	vertical         bool // writing-mode: a vertical line (tb, tb-rl, vertical-rl, vertical-lr)
+	orient           int  // text-orientation in a vertical line: orientMixed, orientUpright, orientSideways
 	// CSS custom properties (--name), inherited; shared until an element
 	// declares its own.
 	vars map[string]string
@@ -1035,6 +1037,24 @@ func computeStyle(n *node, parent style, vp viewport) style {
 	if v, ok := get("dominant-baseline"); ok {
 		if bl, ok := baselineOf(v); ok {
 			s.baseline = bl
+		}
+	}
+	if v, ok := get("writing-mode"); ok {
+		switch strings.TrimSpace(v) {
+		case "tb", "tb-rl", "vertical-rl", "vertical-lr":
+			s.vertical = true
+		case "lr", "lr-tb", "rl", "rl-tb", "horizontal-tb":
+			s.vertical = false
+		}
+	}
+	if v, ok := get("text-orientation"); ok {
+		switch strings.TrimSpace(v) {
+		case "mixed":
+			s.orient = orientMixed
+		case "upright":
+			s.orient = orientUpright
+		case "sideways", "sideways-right":
+			s.orient = orientSideways
 		}
 	}
 	if v, ok := get("direction"); ok {
