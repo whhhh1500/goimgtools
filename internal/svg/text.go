@@ -28,6 +28,7 @@ type tchar struct {
 	face       string // "", " Bold", " Italic" or " Bold Italic"
 	x, y       *float64
 	dx, dy     float64
+	ly         float64 // where it is across the line: y and the dy before it, added up in the order of the text
 	dxSet      bool
 	dySet      bool
 	rot        float64 // rotate, degrees
@@ -713,6 +714,23 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 		return
 	}
 	b.shapeChars(chars)
+	// Each character's place across the line: y and dy added up in the
+	// order of the text (as SVG lays it out, and Chrome), before right-to-
+	// left runs are put in the order they are seen: a part of an Arabic
+	// word a tspan moves down keeps its letters.
+	ly := 0.0
+	for i := range chars {
+		c := &chars[i]
+		path := c.tctx.path
+		if path != nil && (i == 0 || chars[i-1].tctx.path != path) {
+			ly = 0
+		}
+		if c.y != nil && path == nil {
+			ly = *c.y
+		}
+		ly += c.dy
+		c.ly = ly
+	}
 	chars = rightToLeft(chars)
 	// Lay out: chunks start where a character is placed absolutely, and
 	// where a path starts.
@@ -769,22 +787,19 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 				chunk++
 			}
 			if newPath {
-				penX, penY = 0, 0
+				penX = 0
 			}
 			if c.x != nil {
 				// On a path, an absolute x is the distance along it (as
 				// SVG 2 lays text on paths out, and Chrome).
 				penX = *c.x
 			}
-			if c.y != nil && path == nil {
-				penY = *c.y
-			}
 			chunkStart = append(chunkStart, penX)
 			chunkPath = append(chunkPath, path)
 			prevFont = nil
 		}
 		penX += c.dx
-		penY += c.dy
+		penY = c.ly
 		if newChunk {
 			chunkFirst = append(chunkFirst, penX) // its first character's place, its dx in it
 		}

@@ -855,6 +855,23 @@ func TestRTLLines(t *testing.T) {
 	if top, bottom := span(0, 35), span(45, 75); bottom < top/2 || top > bottom*2 {
 		t.Errorf("the lines' ink spans %d and %d pixels across", top, bottom)
 	}
+	// dy on the second part of a right-to-left line moves that part (the
+	// left one, seen after the first), not the letters seen first.
+	img = render(t, `<text x="10" y="25" `+font+`><tspan>אב</tspan><tspan dy="40">גד</tspan></text>`)
+	middle := func(y0, y1 int) int {
+		lo, hi := 100, -1
+		for y := y0; y < y1; y++ {
+			for x := 0; x < 100; x++ {
+				if rgbaAt(img, x, y)[3] > 0 {
+					lo, hi = min(lo, x), max(hi, x)
+				}
+			}
+		}
+		return (lo + hi) / 2
+	}
+	if up, down := middle(0, 35), middle(45, 75); down >= up {
+		t.Errorf("the part moved down is at %d, the rest at %d", down, up)
+	}
 }
 
 // TestChromeForms: values as Chrome (and resvg) take them. flood-color and
