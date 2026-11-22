@@ -220,6 +220,13 @@ func (r *renderer) putDown(it *item, rows image.Rectangle, y0, n, depth int) {
 				l := (2125*uint32(p[0]) + 7154*uint32(p[1]) + 721*uint32(p[2]) + 5000) / 10000
 				if it.mask.alpha {
 					l = uint32(p[3])
+				} else if it.mask.linear && p[3] > 0 {
+					// Of the colours in linear light: unpremultiplied,
+					// each made linear, the luminance times the alpha.
+					a := uint32(p[3])
+					lin := func(v uint8) float32 { return toLinear[min(255, (uint32(v)*255+a/2)/a)] }
+					v := float32(0.2125*lin(p[0])) + float32(0.7154*lin(p[1])) + float32(0.0721*lin(p[2]))
+					l = uint32(float32(v*float32(a)) + 0.5)
 				}
 				j := (y-rows.Min.Y)*rw + i
 				mask[j] = uint8(mul255(min(255, l), uint32(mcov[j])))

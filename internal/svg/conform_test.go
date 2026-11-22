@@ -897,3 +897,71 @@ func TestChromeForms(t *testing.T) {
 		}
 	}
 }
+
+// TestChromeForms2: more as Chrome draws them. A filter on a rotated
+// element is worked in its own axes, its region a rotated square on the
+// device; a morphology radius of more than two numbers is none; lighting
+// constants below 0 are 0 and exponents are held to 1..128; a radial
+// gradient's focal point outside its circle makes a cone, not drawn outside
+// it; a mask of color-interpolation linearRGB takes the luminance in linear
+// light; a pattern's content inherits where the pattern is; the box of a
+// use includes its element's transform.
+func TestChromeForms2(t *testing.T) {
+	green := [4]uint32{0, 128, 0, 255}
+	none := [4]uint32{}
+	flood := `<filter id="f" x="0" y="0" width="1" height="1"><feFlood flood-color="green"/></filter>`
+	rotated := flood + `<rect x="-20" y="-20" width="40" height="40" transform="translate(50 50) rotate(45)" filter="url(#f)"/>`
+	light := func(attrs, src string) string {
+		return `<filter id="f" color-interpolation-filters="sRGB"><feSpecularLighting in="SourceAlpha" ` + attrs + `>` + src + `</feSpecularLighting></filter><circle cx="50" cy="50" r="40" filter="url(#f)"/>`
+	}
+	spot := `<feSpotLight x="50" y="80" z="30" pointsAtX="50" pointsAtY="50" pointsAtZ="0" specularExponent="%s"/>`
+	cases := []struct {
+		name, doc string
+		x, y      int
+		want      [4]uint32
+	}{
+		{"a rotated filter region, inside", rotated, 50, 50, green},
+		{"a rotated filter region, its box's corner", rotated, 25, 25, none},
+		{"a morphology radius of three numbers", `<filter id="f"><feMorphology radius="10 20 30"/></filter><rect x="20" y="20" width="60" height="60" fill="green" filter="url(#f)"/>`, 21, 50, green},
+		{"a negative diffuse constant", `<filter id="f"><feDiffuseLighting diffuseConstant="-1"><feDistantLight elevation="90"/></feDiffuseLighting></filter><rect width="100" height="100" filter="url(#f)"/>`, 50, 50, [4]uint32{0, 0, 0, 255}},
+		{"a focal point outside the circle", `<radialGradient id="g" gradientUnits="userSpaceOnUse" cx="50" cy="50" r="10" fx="90" fy="50"><stop stop-color="green"/><stop offset="1" stop-color="green"/></radialGradient><rect width="100" height="100" fill="url(#g)"/>`, 50, 5, none},
+		{"a focal point outside the circle, in the cone", `<radialGradient id="g" gradientUnits="userSpaceOnUse" cx="50" cy="50" r="10" fx="90" fy="50"><stop stop-color="green"/><stop offset="1" stop-color="green"/></radialGradient><rect width="100" height="100" fill="url(#g)"/>`, 50, 50, green},
+		{"a pattern's content inherits", `<g fill="green"><pattern id="p" patternUnits="userSpaceOnUse" width="100" height="100"><rect width="100" height="100"/></pattern></g><rect width="100" height="100" fill="url(#p)"/>`, 50, 50, green},
+		{"the box of a use of a moved group", `<defs><g id="g" transform="translate(50 50)"><rect width="10" height="10"/></g></defs>` + flood + `<use href="#g" filter="url(#f)"/>`, 55, 55, green},
+		{"the box of a use of a moved group, outside", `<defs><g id="g" transform="translate(50 50)"><rect width="10" height="10"/></g></defs>` + flood + `<use href="#g" filter="url(#f)"/>`, 5, 5, none},
+		{"a radius of 10 and 0, across", `<filter id="f"><feMorphology radius="10 0"/></filter><rect x="20" y="20" width="60" height="60" fill="green" filter="url(#f)"/>`, 25, 50, none},
+		{"a radius of 10 and 0, down", `<filter id="f"><feMorphology radius="10 0"/></filter><rect x="20" y="20" width="60" height="60" fill="green" filter="url(#f)"/>`, 50, 21, green},
+		{"a group's box round a turned circle", flood + `<g filter="url(#f)"><circle r="20" transform="translate(50 50) rotate(45)"/></g>`, 26, 50, green},
+		{"one circle for both, within", `<radialGradient id="g" fr="0.5"><stop stop-color="green"/><stop offset="1" stop-color="red"/></radialGradient><rect width="100" height="100" fill="url(#g)"/>`, 50, 50, green},
+		{"one circle for both, without", `<radialGradient id="g" fr="0.5"><stop stop-color="red"/><stop offset="1" stop-color="green"/></radialGradient><rect width="100" height="100" fill="url(#g)"/>`, 2, 2, green},
+		{"an invalid coordinate over one referred to", `<linearGradient id="a" x2="0" y2="1"><stop stop-color="green"/><stop offset="0.5" stop-color="green"/><stop offset="1" stop-color="red"/></linearGradient><linearGradient id="b" href="#a" x2="invalid" y2="invalid"/><rect width="100" height="100" fill="url(#b)"/>`, 10, 95, green},
+	}
+	for _, c := range cases {
+		if got := rgbaAt(render(t, c.doc), c.x, c.y); got != c.want {
+			t.Errorf("%s: %v, want %v", c.name, got, c.want)
+		}
+	}
+	// Exponents out of 1..128 are held there: as 1 and as 128.
+	same := func(name, a, b string) {
+		ia, ib := render(t, a), render(t, b)
+		for _, p := range [][2]int{{50, 50}, {50, 70}, {35, 60}} {
+			if ga, gb := rgbaAt(ia, p[0], p[1]), rgbaAt(ib, p[0], p[1]); ga != gb {
+				t.Errorf("%s at %v: %v, want %v", name, p, ga, gb)
+			}
+		}
+	}
+	same("a spot light's exponent of -10", light(``, fmt.Sprintf(spot, "-10")), light(``, fmt.Sprintf(spot, "1")))
+	same("a spot light's exponent of 500", light(``, fmt.Sprintf(spot, "500")), light(``, fmt.Sprintf(spot, "128")))
+	same("a specular exponent of 0", light(`specularExponent="0"`, fmt.Sprintf(spot, "1")), light(`specularExponent="1"`, fmt.Sprintf(spot, "1")))
+	// Elements in an entity of markup are put in where it is referred to.
+	ent := `<!DOCTYPE svg [<!ENTITY r "<rect width='100' height='100' fill='green'/>">]>
+<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><g>&r;</g></svg>`
+	if got := rgbaAt(renderDoc(t, []byte(ent)), 50, 50); got != green {
+		t.Errorf("elements of an entity: %v", got)
+	}
+	// linearRGB: a grey of half (sRGB 128) is about a fifth in linear light.
+	mask := `<mask id="m" color-interpolation="linearRGB"><rect width="100" height="100" fill="#808080"/></mask><rect width="100" height="100" fill="green" mask="url(#m)"/>`
+	if a := rgbaAt(render(t, mask), 50, 50)[3]; a < 50 || a > 60 {
+		t.Errorf("a mask of linearRGB: alpha %d, want about 55", a)
+	}
+}

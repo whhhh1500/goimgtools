@@ -88,6 +88,77 @@ func docEntities(d xml.Directive) map[string]string {
 	return out
 }
 
+// maxEntityGrowth bounds how much entities of markup may add to a
+// document.
+const maxEntityGrowth = 4 << 20
+
+// expandMarkup puts in the text of the entities of markup a doctype
+// declares, where the document refers to them (as libxml does for Chrome;
+// encoding/xml takes entities of text alone): those without references of
+// their own, as long as the document grows by no more than
+// maxEntityGrowth, reserved.
+func expandMarkup(data []byte, reserve func(int64) error) ([]byte, error) {
+	start := bytes.Index(data, []byte("<!DOCTYPE"))
+	if start < 0 {
+		return data, nil
+	}
+	open := bytes.IndexByte(data[start:], '[')
+	end := bytes.Index(data[start:], []byte("]>"))
+	if open < 0 || end < open || bytes.IndexByte(data[start:start+open], '>') >= 0 {
+		return data, nil
+	}
+	subset, body := data[start+open:start+end], data[start+end+2:]
+	ents := map[string][]byte{}
+	for _, m := range entityDecl.FindAllSubmatch(subset, 1000) {
+		v := m[3]
+		if len(v) == 0 {
+			v = m[4]
+		}
+		if bytes.IndexByte(v, '<') >= 0 && bytes.IndexByte(v, '&') < 0 {
+			ents[string(m[1])] = v
+		}
+	}
+	if len(ents) == 0 {
+		return data, nil
+	}
+	// The size it comes to, then the text.
+	grow := 0
+	each := func(f func(i, j int, v []byte)) {
+		for i := 0; i < len(body); {
+			k := bytes.IndexByte(body[i:], '&')
+			if k < 0 {
+				return
+			}
+			i += k
+			j := bytes.IndexByte(body[i:min(len(body), i+64)], ';')
+			if j < 0 {
+				i++
+				continue
+			}
+			if v, ok := ents[string(body[i+1:i+j])]; ok {
+				f(i, i+j+1, v)
+			}
+			i += j + 1
+		}
+	}
+	each(func(i, j int, v []byte) { grow += len(v) - (j - i) })
+	if grow <= 0 || grow > maxEntityGrowth {
+		return data, nil
+	}
+	if err := reserve(int64(len(data) + grow)); err != nil {
+		return nil, err
+	}
+	out := make([]byte, 0, len(data)+grow)
+	out = append(out, data[:start+end+2]...)
+	last := 0
+	each(func(i, j int, v []byte) {
+		out = append(out, body[last:i]...)
+		out = append(out, v...)
+		last = j
+	})
+	return append(out, body[last:]...), nil
+}
+
 // nodeBytes is about what an element of the tree takes.
 const nodeBytes = 320
 
@@ -99,6 +170,12 @@ func parse(data []byte, reserve func(int64) error) (*node, error) {
 			return nil, err
 		}
 		data = fromUTF16(data, o)
+	}
+	if bytes.Contains(data, []byte("<!ENTITY")) {
+		var err error
+		if data, err = expandMarkup(data, reserve); err != nil {
+			return nil, err
+		}
 	}
 	d := xml.NewDecoder(bytes.NewReader(data))
 	d.Strict = false

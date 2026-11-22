@@ -194,15 +194,39 @@ func (b *builder) filtered(n *node, f *node, m matrix, st style, vp viewport, ow
 	if !(rw > 0) || !(rh > 0) {
 		return
 	}
-	// The region on the device: the box round its corners, within the
-	// picture.
-	minX, minY, maxX, maxY := math.Inf(1), math.Inf(1), math.Inf(-1), math.Inf(-1)
-	for _, c := range [][2]float64{{rx, ry}, {rx + rw, ry}, {rx, ry + rh}, {rx + rw, ry + rh}} {
-		x, y := m.apply(c[0], c[1])
-		minX, maxX = math.Min(minX, x), math.Max(maxX, x)
-		minY, maxY = math.Min(minY, y), math.Max(maxY, y)
+	// Rotated or skewed, the primitives are worked in the element's own
+	// axes, at its scale along them, and the result is mapped onto the
+	// device (as Chrome): the region, a subregion, an offset, a tile and a
+	// light keep their shape in user space. From here m is the transform
+	// to the space they are worked in, dev the device's; back maps the one
+	// to the other.
+	dev, back, toDev := m, identity, identity
+	if kx, ky := hypot(m.a, m.b), hypot(m.c, m.d); kx > 0 && ky > 0 && (math.Abs(m.b) > 1e-9*kx || math.Abs(m.c) > 1e-9*ky) {
+		work := matrix{kx, 0, 0, ky, m.e, m.f}
+		if wi, ok := work.invert(); ok {
+			if bi, ok := m.mul(wi).invert(); ok {
+				m, toDev, back = work, m.mul(wi), bi
+			}
+		}
 	}
-	reg := image.Rect(int(math.Floor(minX)), int(math.Floor(minY)), int(math.Ceil(maxX)), int(math.Ceil(maxY))).Intersect(b.full)
+	// The region where it is worked: the box round its corners, within the
+	// picture.
+	box := func(t matrix, pts [][2]float64) image.Rectangle {
+		minX, minY, maxX, maxY := math.Inf(1), math.Inf(1), math.Inf(-1), math.Inf(-1)
+		for _, c := range pts {
+			x, y := t.apply(c[0], c[1])
+			minX, maxX = math.Min(minX, x), math.Max(maxX, x)
+			minY, maxY = math.Min(minY, y), math.Max(maxY, y)
+		}
+		return image.Rect(int(math.Floor(minX)), int(math.Floor(minY)), int(math.Ceil(maxX)), int(math.Ceil(maxY)))
+	}
+	picture := b.full
+	if m != dev {
+		fx, fy := float64(b.full.Min.X), float64(b.full.Min.Y)
+		gx, gy := float64(b.full.Max.X), float64(b.full.Max.Y)
+		picture = box(back, [][2]float64{{fx, fy}, {gx, fy}, {fx, gy}, {gx, gy}})
+	}
+	reg := box(m, [][2]float64{{rx, ry}, {rx + rw, ry}, {rx, ry + rh}, {rx + rw, ry + rh}}).Intersect(picture)
 	if reg.Empty() {
 		return
 	}
@@ -416,9 +440,10 @@ func (b *builder) filtered(n *node, f *node, m matrix, st style, vp viewport, ow
 		fc.end()
 	}
 	fcUnder := under
-	// The result, as a picture at the region's place.
-	area := fillPath(flatten(rectSegs(float64(reg.Min.X), float64(reg.Min.Y), float64(reg.Dx()), float64(reg.Dy()), 0, 0), identity), identity, false)
-	sh := &shader{tile: &tileSampler{tile: res, tw: w, th: h, inv: toRegion, clamp: true}}
+	// The result, as a picture at the region's place (on the device, a
+	// parallelogram when rotated or skewed).
+	area := fillPath(flatten(rectSegs(float64(reg.Min.X), float64(reg.Min.Y), float64(reg.Dx()), float64(reg.Dy()), 0, 0), toDev), toDev, false)
+	sh := &shader{tile: &tileSampler{tile: res, tw: w, th: h, inv: toRegion.mul(back), clamp: true}}
 	if fcUnder {
 		// The result, then the element over it within the region, as a
 		// group of the element's opacity and clip.
@@ -429,7 +454,7 @@ func (b *builder) filtered(n *node, f *node, m matrix, st style, vp viewport, ow
 			}
 			b.add(it)
 			regClip := &clip{paths: []*raster.Path{area}, bounds: pathBounds(area, b.full)}
-			b.draw(n, m, inner, vp, regClip, c)
+			b.draw(n, dev, inner, vp, regClip, c)
 		})
 		return
 	}

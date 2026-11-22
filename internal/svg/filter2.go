@@ -432,6 +432,9 @@ func (c *fctx) turbulence(p *node, r image.Rectangle) (fbuf, error) {
 // y) in device pixels.
 func (c *fctx) pair(p *node, name string, def float64) (float64, float64) {
 	v, _ := numbers(p.attrs[name])
+	if len(v) > 2 {
+		v = nil // more than two: not a value (as Chrome and resvg)
+	}
 	x, y := def, def
 	if len(v) > 0 {
 		x, y = v[0], v[0]
@@ -449,7 +452,14 @@ func (c *fctx) morphology(p *node) (fbuf, error) {
 		return nil, err
 	}
 	rxf, ryf := c.pair(p, "radius", 0)
-	if !(rxf > 0) || !(ryf > 0) {
+	// A radius below 0 is 0; one of 0 leaves that way as it is (as Chrome).
+	if !(rxf > 0) {
+		rxf = 0
+	}
+	if !(ryf > 0) {
+		ryf = 0
+	}
+	if rxf == 0 && ryf == 0 {
 		// A radius of nothing: the input as it is.
 		out, err := c.alloc()
 		if err == nil {
@@ -796,7 +806,7 @@ func (c *fctx) lightOf(p *node) (light, bool) {
 		case "fePointLight":
 			return light{kind: 1, pos: point("x", "y", "z")}, true
 		case "feSpotLight":
-			l := light{kind: 2, pos: point("x", "y", "z"), at: point("pointsAtX", "pointsAtY", "pointsAtZ"), exponent: num("specularExponent", 1)}
+			l := light{kind: 2, pos: point("x", "y", "z"), at: point("pointsAtX", "pointsAtY", "pointsAtZ"), exponent: min(max(num("specularExponent", 1), 1), 128)} // as Chrome
 			if v, ok := k.attrs["limitingConeAngle"]; ok {
 				if a, ok := finiteNum(v); ok {
 					_, l.cosCone = trig.SinCosDeg(math.Abs(a))
@@ -846,13 +856,10 @@ func (c *fctx) lighting(p *node, st style, specular bool) (fbuf, error) {
 	kd := fnum("diffuseConstant", 1)
 	ks := fnum("specularConstant", 1)
 	exp := fnum("specularExponent", 1)
-	// A negative constant is not a value: the default stands (as librsvg).
-	if kd < 0 {
-		kd = 1
-	}
-	if ks < 0 {
-		ks = 1
-	}
+	// The constants no less than 0, the exponent from 1 to 128 (as
+	// Chrome).
+	kd, ks = max(kd, 0), max(ks, 0)
+	exp = min(max(exp, 1), 128)
 	col := c.lightingColor(p, st)
 	var s [3]float64 // the spot light's direction
 	if lt.kind == 2 {

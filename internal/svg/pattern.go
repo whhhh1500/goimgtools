@@ -156,7 +156,9 @@ func (b *builder) pattern(p *node, opacity float64, st style, segs []seg, m matr
 	outer, full := b.sc, b.full
 	b.sc = &scene{w: pw, h: ph, points: outer.points, itemCount: outer.itemCount, charged: outer.charged, imageBytes: outer.imageBytes}
 	b.full = image.Rect(0, 0, pw, ph)
-	cst := computeStyle(content, initialStyle(), vp)
+	// Its properties inherited where it is in the document (as Chrome): a
+	// fill inherited that refers to the pattern again paints nothing.
+	cst := b.styleOf(content, vp)
 	b.children(content, cm, cst, viewport{tw, th}, nil)
 	inner := b.sc
 	b.sc, b.full = outer, full

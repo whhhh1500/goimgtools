@@ -41,6 +41,7 @@ type mask struct {
 	items  []item
 	region *clip
 	alpha  bool // mask-type: alpha, the alpha of the content (else its luminance)
+	linear bool // color-interpolation: linearRGB, the luminance of the colours in linear light
 }
 
 // clip is the coverage of a clip path: the union of its shapes.
@@ -1049,6 +1050,12 @@ func (b *builder) maskOf(n *node, m matrix, vp viewport, st style) *mask {
 	if v, ok := mn.prop("mask-type"); ok && strings.TrimSpace(v) == "alpha" {
 		mk.alpha = true
 	}
+	for p := mn; p != nil; p = p.parent {
+		if v, ok := p.prop("color-interpolation"); ok && strings.TrimSpace(v) != "inherit" {
+			mk.linear = strings.EqualFold(strings.TrimSpace(v), "linearRGB") // as Chrome
+			break
+		}
+	}
 	cm := m
 	if mn.attrs["maskContentUnits"] == "objectBoundingBox" {
 		if !hasBox || bx[2] <= 0 || bx[3] <= 0 {
@@ -1069,67 +1076,79 @@ func (b *builder) maskOf(n *node, m matrix, vp viewport, st style) *mask {
 // bboxOf is the bounding box of an element's geometry, its descendants'
 // for a container, in its user space: x, y, width, height.
 func (b *builder) bboxOf(n *node, vp viewport, st style) ([4]float64, bool) {
-	minX, minY, maxX, maxY := math.Inf(1), math.Inf(1), math.Inf(-1), math.Inf(-1)
-	var walk func(k *node, m matrix, kst style, depth int)
-	walk = func(k *node, m matrix, kst style, depth int) {
+	// As SVG 2 works it out (and Chrome): an element's box in its own
+	// space; a container's the box round its children's, each mapped by
+	// the child's transform as a rectangle (not the shapes turned).
+	var box func(k *node, kst style, depth int) ([4]float64, bool)
+	box = func(k *node, kst style, depth int) ([4]float64, bool) {
 		if depth > 32 || depth > 0 && !kst.display {
-			return // what is not drawn takes no room
+			return [4]float64{}, false // what is not drawn takes no room
+		}
+		minX, minY, maxX, maxY := math.Inf(1), math.Inf(1), math.Inf(-1), math.Inf(-1)
+		add := func(x, y float64) {
+			minX, maxX = math.Min(minX, x), math.Max(maxX, x)
+			minY, maxY = math.Min(minY, y), math.Max(maxY, y)
+		}
+		addBox := func(r [4]float64, m matrix) {
+			for _, c := range [][2]float64{{r[0], r[1]}, {r[0] + r[2], r[1]}, {r[0], r[1] + r[3]}, {r[0] + r[2], r[1] + r[3]}} {
+				add(m.apply(c[0], c[1]))
+			}
 		}
 		switch k.name {
 		case "path", "rect", "circle", "ellipse", "line", "polyline", "polygon":
-			for _, q := range flatten(shapeSegs(k, kst, vp), identity) {
-				for i := 0; i+1 < len(q.xy); i += 2 {
-					x, y := m.apply(q.xy[i], q.xy[i+1])
-					minX, maxX = math.Min(minX, x), math.Max(maxX, x)
-					minY, maxY = math.Min(minY, y), math.Max(maxY, y)
-				}
-			}
+			return segsBBox(shapeSegs(k, kst, vp))
 		case "image", "foreignObject": // a foreignObject's box is its x, y, width and height
 			x, _ := parseLength(k.attrs["x"], kst.fontSize, vp, axisX)
 			y, _ := parseLength(k.attrs["y"], kst.fontSize, vp, axisY)
 			w, okW := parseLength(k.attrs["width"], kst.fontSize, vp, axisX)
 			h, okH := parseLength(k.attrs["height"], kst.fontSize, vp, axisY)
 			if okW && okH && w > 0 && h > 0 {
-				for _, c := range [][2]float64{{x, y}, {x + w, y + h}, {x + w, y}, {x, y + h}} {
-					px, py := m.apply(c[0], c[1])
-					minX, maxX = math.Min(minX, px), math.Max(maxX, px)
-					minY, maxY = math.Min(minY, py), math.Max(maxY, py)
-				}
+				return [4]float64{x, y, w, h}, true
 			}
 		case "text":
 			// Its characters' cells, as laid out (and not drawn).
 			outer := b.measureText
 			b.measureText = func(_ *node, cell [4][2]float64) {
 				for _, c := range cell {
-					x, y := m.apply(c[0], c[1])
-					minX, maxX = math.Min(minX, x), math.Max(maxX, x)
-					minY, maxY = math.Min(minY, y), math.Max(maxY, y)
+					add(c[0], c[1])
 				}
 			}
 			b.text(k, identity, kst, vp, nil, nil)
 			b.measureText = outer
 		case "g", "a", "switch", "svg":
 			for _, c := range k.children {
-				cm := m
 				cst := computeStyle(c, kst, vp)
-				if tm, has := transformOf(c, cst.fontSize, vp); has {
-					cm = cm.mul(aboutOrigin(c, tm, vp.w, vp.h, cst.fontSize, vp, [2]float64{}))
+				if r, ok := box(c, cst, depth+1); ok {
+					cm := identity
+					if tm, has := transformOf(c, cst.fontSize, vp); has {
+						cm = aboutOrigin(c, tm, vp.w, vp.h, cst.fontSize, vp, [2]float64{})
+					}
+					addBox(r, cm)
 				}
-				walk(c, cm, cst, depth+1)
 			}
 		case "use":
 			if t := b.href(k); t != nil {
 				x, _ := parseLength(k.attrs["x"], kst.fontSize, vp, axisX)
 				y, _ := parseLength(k.attrs["y"], kst.fontSize, vp, axisY)
-				walk(t, m.mul(matrix{1, 0, 0, 1, x, y}), computeStyle(t, kst, vp), depth+1)
+				tst := computeStyle(t, kst, vp)
+				if r, ok := box(t, tst, depth+1); ok {
+					tm := matrix{1, 0, 0, 1, x, y}
+					if t.name != "symbol" && t.name != "svg" {
+						// The element it draws, with its own transform.
+						if ttm, has := transformOf(t, tst.fontSize, vp); has {
+							tm = tm.mul(aboutOrigin(t, ttm, vp.w, vp.h, tst.fontSize, vp, [2]float64{}))
+						}
+					}
+					addBox(r, tm)
+				}
 			}
 		}
+		if minX > maxX {
+			return [4]float64{}, false
+		}
+		return [4]float64{minX, minY, maxX - minX, maxY - minY}, true
 	}
-	walk(n, identity, st, 0)
-	if minX > maxX {
-		return [4]float64{}, false
-	}
-	return [4]float64{minX, minY, maxX - minX, maxY - minY}, true
+	return box(n, st, 0)
 }
 
 // overflowVisible reports whether what an element that makes a viewport (a

@@ -110,6 +110,14 @@ func (g *gradient) at(px, py float64) [4]uint8 {
 		a := float64(dx*dx) + float64(dy*dy) - float64(dr*dr)
 		b := float64(px*dx) + float64(py*dy) + float64(g.fr*dr)
 		c := float64(px*px) + float64(py*py) - float64(g.fr*g.fr)
+		if dx == 0 && dy == 0 && math.Abs(dr) <= float64(g.r/(1<<15)) {
+			// The two circles one: the first colour within, the last
+			// without (as Skia draws it for Chrome).
+			if c < 0 {
+				return g.lut[0]
+			}
+			return g.lut[lutSize-1]
+		}
 		if math.Abs(a) < 1e-12 {
 			if b == 0 {
 				return [4]uint8{}
@@ -281,8 +289,9 @@ func (b *builder) gradientHasStops(g *node) bool {
 
 // chainTransform is the first transform of the paint servers of a chain
 // (one and those it refers to) that is one: a value that does not parse is
-// passed over, as is one that flattens everything (as resvg, and as
-// Chrome draws it).
+// passed over, as is one that flattens everything (as resvg; Chrome draws
+// a gradient of such a transform as nothing, which resvg's suite leaves
+// undefined).
 func chainTransform(chain []*node, name string) (matrix, bool) {
 	for _, c := range chain {
 		if v, ok := c.attrs[name]; ok {
@@ -409,8 +418,8 @@ func (b *builder) gradient(g *node, opacity float64, st style, segs []seg, m mat
 	gr.inv = inv
 	coord := func(name, def string, axis int) float64 {
 		v, ok := attr(name)
-		if !ok {
-			v = def
+		if _, valid := parseLength(strings.TrimSuffix(strings.TrimSpace(v), "%"), 0, vp, axis); !ok || !valid {
+			v = def // not a length: the default, not the referenced one's (as Chrome)
 		}
 		if bboxUnits {
 			v = strings.TrimSpace(v)
@@ -455,12 +464,9 @@ func (b *builder) gradient(g *node, opacity float64, st style, segs []seg, m mat
 			c.A = 255
 			return solidShader(c, float64(s.a*opacity))
 		}
-		// A focal point outside the circle is brought just inside it (SVG 1.1).
-		if d := hypot(gr.fx-gr.cx, gr.fy-gr.cy); d > float64(gr.r*0.999) {
-			k := float64(gr.r*0.999) / d
-			gr.fx, gr.fy = gr.cx+float64((gr.fx-gr.cx)*k), gr.cy+float64((gr.fy-gr.cy)*k)
-		}
-		gr.fr = math.Min(gr.fr, float64(gr.r*0.999))
+		// A focal point outside the circle stays there, the gradient a cone
+		// from the focal circle to the end circle, not drawn outside it
+		// (SVG 2, as Chrome; SVG 1.1 brought the point inside).
 	}
 	// The colours along the gradient, interpolated between stops
 	// unpremultiplied (in linear light by color-interpolation, inherited
