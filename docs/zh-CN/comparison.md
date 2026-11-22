@@ -2,9 +2,9 @@
 
 # 与其他工具的对比
 
-本包的每一项能力，都与该项最强的工具对照：同一任务、同一输入，两边的数字都在同一台机器上实测。每一行的结论是**领先**、**持平**或**落后**；落后的项列在文末，写明正在怎么处理，或为什么不做。
+本包的每一项能力，都与该项最强的工具对照：同一任务、同一输入，两边的数字都在同一台机器上实测。每一行的结论是**领先**、**持平**或**落后**；落后的项列在文末，写明是怎样追平的，或为什么不做。
 
-测量于 2026 年 11 月 22 日：Windows 10，Intel Core i7-12700K，Go 1.27.1。对手：libvips 8.18.7（其 `vips` 与 `vipsthumbnail` 程序，带 mozjpeg、libpng、libwebp、cgif、librsvg），sharp 0.35.5（Node 24.14.1），Pillow 12.1.1（Python 3.14.3），libwebp 1.6.0（`cwebp`、`dwebp`），jpegli（提交 031a007），gifsicle 1.98，LittleCMS（经 Pillow 的 `ImageCms`），以及 libjxl 的 SSIMULACRA2 与 butteraugli。
+测量于 2026 年 11 月 22 日与 23 日：Windows 10，Intel Core i7-12700K，Go 1.27.1。对手：libvips 8.18.7（其 `vips` 与 `vipsthumbnail` 程序，带 mozjpeg、libpng、libwebp、cgif、librsvg），sharp 0.35.5（Node 24.14.1），Pillow 12.1.1（Python 3.14.3），libwebp 1.6.0（`cwebp`、`dwebp`），jpegli（提交 031a007），gifsicle 1.98，LittleCMS（经 Pillow 的 `ImageCms`），以及 libjxl 的 SSIMULACRA2 与 butteraugli。
 
 - **时间**是整个进程（启动、读取、处理、写出）三次运行中最短的一次；**内存**是操作系统记录的该进程的峰值工作集。只启动不干活时，本包占 7.3MB，`vips` 7.8MB，加载了 sharp 的 Node 56.6MB，加载了 Pillow 的 Python 18.2MB。
 - 内存排在时间之前：内存更低、时间相差不到一成的行算领先。

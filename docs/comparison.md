@@ -2,9 +2,9 @@ English | [中文](zh-CN/comparison.md)
 
 # Comparison with other tools
 
-Every capability of this package set against the strongest tool there is for it: the same task, the same input, both numbers measured on the same machine. A row is **ahead**, **level** or **behind**; what is behind is listed at the end, with what is being done about it or why it is left.
+Every capability of this package set against the strongest tool there is for it: the same task, the same input, both numbers measured on the same machine. A row is **ahead**, **level** or **behind**; what is behind is listed at the end, with how it was closed or why it is left.
 
-Measured on 22 November 2026: Windows 10, Intel Core i7-12700K, Go 1.27.1. The others: libvips 8.18.7 (its `vips` and `vipsthumbnail` programs, built with mozjpeg, libpng, libwebp, cgif and librsvg), sharp 0.35.5 on Node 24.14.1, Pillow 12.1.1 on Python 3.14.3, libwebp 1.6.0 (`cwebp`, `dwebp`), jpegli at commit 031a007, gifsicle 1.98, LittleCMS (through Pillow's `ImageCms`), and SSIMULACRA2 and butteraugli from libjxl.
+Measured on 22 and 23 November 2026: Windows 10, Intel Core i7-12700K, Go 1.27.1. The others: libvips 8.18.7 (its `vips` and `vipsthumbnail` programs, built with mozjpeg, libpng, libwebp, cgif and librsvg), sharp 0.35.5 on Node 24.14.1, Pillow 12.1.1 on Python 3.14.3, libwebp 1.6.0 (`cwebp`, `dwebp`), jpegli at commit 031a007, gifsicle 1.98, LittleCMS (through Pillow's `ImageCms`), and SSIMULACRA2 and butteraugli from libjxl.
 
 - **Time** is the best wall time of three runs of a whole process (start, read, work, write); **memory** is the peak working set of that process as the operating system records it. A process that only starts takes 7.3MB here, 7.8MB for `vips`, 56.6MB for Node with sharp loaded, 18.2MB for Python with Pillow loaded.
 - Memory is ranked before time: a row whose memory is lower and whose time is within a tenth is ahead.
