@@ -226,6 +226,9 @@ func (b *builder) shader(n *node, p paint, opacity float64, st style, segs []seg
 		if sh := b.pattern(t, opacity, st, segs, m, vp); sh != nil || b.err != nil {
 			return sh
 		}
+		if p.fallback != nil && b.boxless(t, "patternUnits", segs) {
+			return b.shader(n, *p.fallback, opacity, st, segs, m, vp)
+		}
 		return nil
 	}
 	if t == nil || t.name != "linearGradient" && t.name != "radialGradient" {
@@ -235,11 +238,29 @@ func (b *builder) shader(n *node, p paint, opacity float64, st style, segs []seg
 		return nil
 	}
 	sh := b.gradient(t, opacity, st, segs, m, vp)
-	if sh == nil && p.fallback != nil && !b.gradientHasStops(t) {
-		// A gradient without stops: the fallback, as Chrome paints it.
+	if sh == nil && p.fallback != nil && (!b.gradientHasStops(t) || b.boxless(t, "gradientUnits", segs)) {
+		// A gradient without stops, or of a bounding box's units on a
+		// shape whose box is flat (a straight line): the fallback, as
+		// Chrome paints it.
 		return b.shader(n, *p.fallback, opacity, st, segs, m, vp)
 	}
 	return sh
+}
+
+// boxless reports whether a paint server is in a bounding box's units (by
+// attr, of it or the servers it refers to) and the shape's box has no
+// width or no height.
+func (b *builder) boxless(t *node, attr string, segs []seg) bool {
+	for k, i := t, 0; k != nil && i < 8; k, i = b.href(k), i+1 {
+		if v, ok := k.attrs[attr]; ok {
+			if strings.TrimSpace(v) == "userSpaceOnUse" {
+				return false
+			}
+			break
+		}
+	}
+	bx, ok := segsBBox(segs)
+	return !ok || bx[2] <= 0 || bx[3] <= 0
 }
 
 // gradientHasStops reports whether a gradient, or one it refers to, has a

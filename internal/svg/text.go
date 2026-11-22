@@ -348,7 +348,7 @@ func (b *builder) pathFor(k *node, m matrix, st style, vp viewport) *textPathInf
 		return nil
 	}
 	tm := identity
-	if m, has, ok := transformOf(t, st.fontSize, vp); has && ok {
+	if m, has := transformOf(t, st.fontSize, vp); has {
 		tm = aboutOrigin(t, m, vp.w, vp.h, st.fontSize, vp, [2]float64{})
 	}
 	segs := shapeSegs(t, computeStyle(t, st, vp), vp)
@@ -578,6 +578,7 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 		thick   float64
 		over    float64
 		through float64
+		desc    float64 // the descent, down from the baseline (the bottom of its cell)
 		// A glyph of a shaped cluster: where it is drawn from the pen
 		// (y down); extra for those after the cluster's first, which share
 		// its pen, advance and frame.
@@ -688,6 +689,7 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 				p.base = -float64(desc * u)
 			}
 			p.over = -float64(asc * u)
+			p.desc = float64(desc * u)
 			// The line-through's middle a third of the ascent up (as Chrome).
 			p.through = -float64(asc*u) / 3
 		}
@@ -853,6 +855,17 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 	}
 	apply := func(fr frame, gx, gy float64) [2]float64 {
 		return [2]float64{fr.ox + float64(fr.ux*gx) + float64(fr.vx*gy), fr.oy + float64(fr.uy*gx) + float64(fr.vy*gy)}
+	}
+	if b.measureText != nil {
+		// Measured, not drawn: each character's cell, its advance across
+		// and its font's ascent to descent down (the box Chrome gives text).
+		for i, p := range out {
+			if drawn[i] && !p.extra {
+				fr := frames[i]
+				b.measureText([4][2]float64{apply(fr, 0, p.over), apply(fr, p.adv, p.over), apply(fr, 0, p.desc), apply(fr, p.adv, p.desc)})
+			}
+		}
+		return
 	}
 	// Decorations: a band along each glyph under one, those of a chunk
 	// along a straight line joined into one.

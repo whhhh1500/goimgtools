@@ -3,6 +3,7 @@ package svg
 import (
 	"image"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -41,7 +42,68 @@ func (b *builder) filterRef(n *node) *node {
 	if f == nil || f.name != "filter" {
 		return nil
 	}
-	return f
+	return b.mergedFilter(f)
+}
+
+// mergedFilter is a filter with what it takes from the filters it refers
+// to (by href): the attributes of its region and units it has not, and
+// the primitives of the first of them that has any when it has none. The
+// same node is given for a filter each time (it guards against cycles).
+func (b *builder) mergedFilter(f *node) *node {
+	if _, ok := f.attrs["href"]; !ok {
+		if _, ok := f.attrs["xlink:href"]; !ok {
+			return f
+		}
+	}
+	if m, ok := b.merged[f]; ok {
+		return m
+	}
+	m := &node{name: f.name, attrs: make(map[string]string, len(f.attrs)+6), parent: f.parent, sheet: f.sheet}
+	for k, v := range f.attrs {
+		m.attrs[k] = v
+	}
+	hasPrimitives := func(k *node) bool {
+		return slices.ContainsFunc(k.children, func(p *node) bool { return drawnPrimitive(p.name) })
+	}
+	seen := map[*node]bool{}
+	for k := f; k != nil && k.name == "filter" && !seen[k] && len(seen) < 8; k = b.href(k) {
+		seen[k] = true
+		for _, a := range []string{"x", "y", "width", "height", "filterUnits", "primitiveUnits"} {
+			if _, ok := m.attrs[a]; !ok {
+				if v, ok := k.attrs[a]; ok {
+					m.attrs[a] = v
+				}
+			}
+		}
+		if m.children == nil && hasPrimitives(k) {
+			m.children = k.children
+		}
+	}
+	if b.merged == nil {
+		b.merged = map[*node]*node{}
+	}
+	b.merged[f] = m
+	return m
+}
+
+// unmeasured reports whether an element holds what bboxOf does not measure
+// (text, a picture of its own size).
+func (b *builder) unmeasured(n *node, depth int) bool {
+	switch {
+	case n.name == "text" || n.name == "image":
+		return true
+	case depth > 32:
+		return false
+	case n.name == "use":
+		t := b.href(n)
+		return t != nil && t != n && b.unmeasured(t, depth+1)
+	}
+	for _, c := range n.children {
+		if b.unmeasured(c, depth+1) {
+			return true
+		}
+	}
+	return false
 }
 
 // filtered draws an element through its filter.
@@ -54,9 +116,10 @@ func (b *builder) filtered(n *node, f *node, m matrix, st style, vp viewport, ow
 	bx, hasBox := b.bboxOf(n, vp, st)
 	bboxUnits := f.attrs["filterUnits"] != "userSpaceOnUse"
 	primBox := f.attrs["primitiveUnits"] == "objectBoundingBox"
-	if !hasBox && (n.name == "text" || n.name == "image" || n.name == "g" || n.name == "use" || n.name == "svg" || n.name == "a") {
+	if !hasBox && b.unmeasured(n, 0) {
 		// A box not worked out here (that of text): the whole picture,
-		// in the element's user space.
+		// in the element's user space. (A group with nothing in it has
+		// none: its filter draws nothing, as in Chrome.)
 		if inv, ok := m.invert(); ok {
 			x0, y0 := inv.apply(0, 0)
 			x1, y1 := inv.apply(float64(b.full.Dx()), float64(b.full.Dy()))
@@ -66,6 +129,9 @@ func (b *builder) filtered(n *node, f *node, m matrix, st style, vp viewport, ow
 	}
 	if (bboxUnits || primBox) && (!hasBox || bx[2] <= 0 || bx[3] <= 0) {
 		return // a filter on nothing draws nothing
+	}
+	if !slices.ContainsFunc(f.children, func(p *node) bool { return drawnPrimitive(p.name) }) {
+		return // nor does a filter of no primitives, on anything (as Chrome)
 	}
 	frac := func(name, def string) float64 {
 		s := strings.TrimSpace(attrOr(f, name, def))
@@ -648,11 +714,15 @@ func (c *fctx) input(name string) (fbuf, error) {
 		}
 		return b, nil
 	}
+	switch strings.TrimSpace(name) {
+	case "BackgroundImage", "BackgroundAlpha", "FillPaint", "StrokePaint":
+		return c.alloc() // nothing
+	}
 	if r, ok := c.results[strings.TrimSpace(name)]; ok {
 		return r, nil
 	}
-	// BackgroundImage, FillPaint and the like: nothing.
-	return c.alloc()
+	// A result not made before it: as if none were named (as Chrome).
+	return c.last, nil
 }
 
 // num reads a number of a primitive, scaled by the primitive units.

@@ -110,12 +110,13 @@ var errTooMuch = errors.New(errTooLarge)
 // builder walks the document into a scene.
 type builder struct {
 	imagePixels int64
-	inputPixels int64          // of the files of the pictures, against maxInputPixels
-	masking     map[*node]bool // the masks being built, against cycles
-	patterning  map[*node]bool // and the patterns
-	marking     map[*node]bool // and the markers
-	filtering   map[*node]bool // and the filters
-	clipping    map[*node]bool // and the clip paths
+	inputPixels int64           // of the files of the pictures, against maxInputPixels
+	masking     map[*node]bool  // the masks being built, against cycles
+	patterning  map[*node]bool  // and the patterns
+	marking     map[*node]bool  // and the markers
+	filtering   map[*node]bool  // and the filters
+	merged      map[*node]*node // filters with what they take by href
+	clipping    map[*node]bool  // and the clip paths
 	release     func(int64)
 	reserve     func(int64) error
 	avail       func() int64 // memory the budget has left
@@ -128,6 +129,7 @@ type builder struct {
 	outlines    map[*node]*outline
 	clipText    func(segs []seg, m matrix) // set while the text of a clip path is laid out: takes its outlines
 	ctx         *paintContext              // what context-fill and context-stroke take, while a marker or use is drawn
+	measureText func(cell [4][2]float64)   // set while text is measured, not drawn: takes the corners of each character's cell
 	opts        buildOptions
 	depth       int
 	full        image.Rectangle
@@ -175,7 +177,7 @@ func size(root *node) (w, h float64, m matrix) {
 	}
 	// The root's transform (SVG 2) moves its box, the viewBox's mapping
 	// within it: about its centre by default, as Chrome does.
-	if tm, has, ok := transformOf(root, 16, viewport{w, h}); has && ok {
+	if tm, has := transformOf(root, 16, viewport{w, h}); has {
 		m = aboutOrigin(root, tm, w, h, 16, viewport{w, h}, [2]float64{0.5, 0.5}).mul(m)
 	}
 	return w, h, m
@@ -336,10 +338,7 @@ func (b *builder) element(n *node, m matrix, parent style, vp viewport, cl *clip
 	if !st.display {
 		return
 	}
-	if tm, has, ok := transformOf(n, st.fontSize, vp); has {
-		if !ok {
-			return
-		}
+	if tm, has := transformOf(n, st.fontSize, vp); has {
 		m = m.mul(aboutOrigin(n, tm, vp.w, vp.h, st.fontSize, vp, [2]float64{}))
 	}
 	if m.det() == 0 {
@@ -638,7 +637,7 @@ func (b *builder) clipOf(n *node, m matrix, vp viewport, st style, outer *clip) 
 		return nil // a reference to nothing: no clip
 	}
 	cm := m
-	if tm, has, ok := transformOf(cp, st.fontSize, vp); has && ok {
+	if tm, has := transformOf(cp, st.fontSize, vp); has {
 		cm = cm.mul(aboutOrigin(cp, tm, vp.w, vp.h, st.fontSize, vp, [2]float64{}))
 	}
 	if cp.attrs["clipPathUnits"] == "objectBoundingBox" {
@@ -680,10 +679,7 @@ func (b *builder) clipOf(n *node, m matrix, vp viewport, st style, outer *clip) 
 		if !s.display || !s.visible {
 			return
 		}
-		if tm, has, ok := transformOf(k, s.fontSize, vp); has {
-			if !ok {
-				return
-			}
+		if tm, has := transformOf(k, s.fontSize, vp); has {
 			km = km.mul(aboutOrigin(k, tm, vp.w, vp.h, s.fontSize, vp, [2]float64{}))
 		}
 		switch k.name {
@@ -1071,11 +1067,23 @@ func (b *builder) bboxOf(n *node, vp viewport, st style) ([4]float64, bool) {
 					minY, maxY = math.Min(minY, py), math.Max(maxY, py)
 				}
 			}
+		case "text":
+			// Its characters' cells, as laid out (and not drawn).
+			outer := b.measureText
+			b.measureText = func(cell [4][2]float64) {
+				for _, c := range cell {
+					x, y := m.apply(c[0], c[1])
+					minX, maxX = math.Min(minX, x), math.Max(maxX, x)
+					minY, maxY = math.Min(minY, y), math.Max(maxY, y)
+				}
+			}
+			b.text(k, identity, kst, vp, nil, nil)
+			b.measureText = outer
 		case "g", "a", "switch", "svg":
 			for _, c := range k.children {
 				cm := m
 				cst := computeStyle(c, kst, vp)
-				if tm, has, ok := transformOf(c, cst.fontSize, vp); has && ok {
+				if tm, has := transformOf(c, cst.fontSize, vp); has {
 					cm = cm.mul(aboutOrigin(c, tm, vp.w, vp.h, cst.fontSize, vp, [2]float64{}))
 				}
 				walk(c, cm, cst, depth+1)

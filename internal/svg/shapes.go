@@ -49,7 +49,9 @@ func shapeSegs(n *node, st style, vp viewport) []seg {
 	case "ellipse":
 		rx, okX := num("rx", axisX)
 		ry, okY := num("ry", axisY)
-		// An auto radius takes the other's value (SVG 2).
+		// An auto radius takes the other's value (SVG 2); so does a
+		// negative one, as Chrome takes it.
+		okX, okY = okX && rx >= 0, okY && ry >= 0
 		if !okX {
 			rx = ry
 		}

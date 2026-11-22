@@ -44,6 +44,9 @@
 
 ### 修复
 
+- 已安装字体按英文名识别。名字表中先列其他语言名字的字体，原先按那种语言命名：Windows 上 Segoe UI 与微软雅黑的粗体样式被读作 "Negreta"（加泰罗尼亚语的粗体），因此 `Text()` 与命令行找不到 "Segoe UI Bold"、"Microsoft YaHei Bold"，SVG 中 `font-weight: bold` 的微软雅黑文字画成了常规体。现在先取 Windows 美国英语的名字，其次取 Mac 的英语名字。
+- SVG 文字的包围盒与 Chrome 相同，为各字符的字框（横向为其前进宽度，纵向为字体的上伸到下伸）。原先文字没有包围盒：文字上的蒙版（其区域默认按包围盒单位）与包围盒单位的裁剪路径会让文字整个不显示，包围盒单位的滤镜则按整幅画面计算。
+- SVG（按 Chrome 的画法）：无法解析的 `transform` 属性（含 CSS 那样的单位）视为没有，元素照常绘制（原先不画）；椭圆负的 `rx` 或 `ry` 按 auto 取另一个半径；不以移动命令开头的路径数据什么都不画；包围盒单位的渐变或图案用于包围盒没有宽或高的图形（直线）时，用其后的备用颜色；包围盒单位的滤镜用于空的 g，以及没有任何原语的滤镜，什么都不画；原语的输入指向此前没有的结果时取上一个结果（原先是透明）；通过 `href` 引用另一个滤镜的滤镜，从它继承自己没有的区域、单位与原语（原先不继承）。
 - SVG 的 `text-decoration: line-through` 画在 Chrome 画的位置：线的中间在基线上方字体上升高度的三分之一处；原先在 x 高度的一半，40 像素时比 Chrome 低 4–5 像素（Arial、Segoe UI、Times New Roman、微软雅黑、Tahoma、Verdana、Georgia；现在相差不超过一个像素，Calibri 不超过三个，因 Chrome 用其 Windows 上升高度）。
 - SVG：字体族加载失败（打开字体时到达内存上限）时归还其字体已预留的内存；原先每个字体 256KB 一直占到文档关闭。
 - 文字（`Text()`、水印、SVG）遇到所用字体都没有的字符（如符号 ✨、★、箭头，或字体不含的文字）时，从系统里的符号与其他文字的字体取（Windows 的 Segoe UI Symbol 与 Emoji、Nirmala UI 等；macOS 的 Apple Symbols；Linux 的 Noto Symbols、DejaVu Sans），只在遇到这样的字符时才打开；原来画成缺字的空框。

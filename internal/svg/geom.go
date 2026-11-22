@@ -174,23 +174,28 @@ func originPart(s string, size float64, lo, hi string, fontSize float64, vp view
 
 // transformOf is an element's transform: the CSS transform property (from
 // its style attribute or the style sheets; "none" is none), or else its
-// transform attribute. has is false for none; ok false for an attribute
-// that does not parse (a CSS value that does not is passed over).
-func transformOf(n *node, fontSize float64, vp viewport) (m matrix, has, ok bool) {
+// transform attribute. has is false for none (a value of either that does
+// not parse is passed over).
+func transformOf(n *node, fontSize float64, vp viewport) (matrix, bool) {
 	if v, ok := n.cssProp("transform"); ok {
 		if strings.EqualFold(strings.TrimSpace(v), "none") {
-			return identity, false, true
+			return identity, false
 		}
 		if m, ok := parseCSSTransform(v, fontSize, vp); ok {
-			return m, true, true
+			return m, true
 		}
 	}
 	v, has := n.attrs["transform"]
 	if !has {
-		return identity, false, true
+		return identity, false
 	}
-	m, ok = parseTransform(v)
-	return m, true, ok
+	m, ok := parseTransform(v)
+	if !ok {
+		// One that does not parse (units, as CSS has them, among its
+		// numbers) is none: the element is drawn as it is, as in Chrome.
+		return identity, false
+	}
+	return m, true
 }
 
 // parseCSSTransform reads a transform of CSS: functions apart by spaces,
@@ -503,6 +508,9 @@ func parsePath(d string) []seg {
 		}
 		c := p.s[p.i]
 		if c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' {
+			if len(out) == 0 && cmd == 0 && c != 'M' && c != 'm' {
+				break // path data starts with a move, or is none
+			}
 			cmd = c
 			p.i++
 		} else if cmd == 0 {

@@ -411,3 +411,90 @@ func TestUseForms(t *testing.T) {
 		t.Error("x and y of an svg element a use draws")
 	}
 }
+
+// TestFilterForms: as Chrome draws them, a filter on an empty group draws
+// nothing (in a bounding box's units); an input naming no result is the
+// last one; a filter without primitives draws nothing.
+func TestFilterForms(t *testing.T) {
+	if got := rgbaAt(render(t, `<filter id="f"><feFlood flood-color="red"/></filter><g filter="url(#f)"/>`), 50, 50); got[3] != 0 {
+		t.Errorf("a filter on an empty group: %v", got)
+	}
+	if got := rgbaAt(render(t, `<filter id="f" filterUnits="userSpaceOnUse" x="0" y="0" width="100" height="100"><feFlood flood-color="green"/></filter><g filter="url(#f)"/>`), 50, 50); got != [4]uint32{0, 128, 0, 255} {
+		t.Errorf("a filter of the user space on an empty group: %v", got)
+	}
+	if got := rgbaAt(render(t, `<filter id="f"><feOffset dx="0" in="nothing"/></filter><rect width="100" height="100" fill="green" filter="url(#f)"/>`), 50, 50); got != [4]uint32{0, 128, 0, 255} {
+		t.Errorf("an input naming no result: %v", got)
+	}
+	if got := rgbaAt(render(t, `<filter id="f"/><rect width="100" height="100" fill="green" filter="url(#f)"/>`), 50, 50); got[3] != 0 {
+		t.Errorf("a filter without primitives: %v", got)
+	}
+	if got := rgbaAt(render(t, `<rect width="100" height="100" fill="green" filter="url(#missing)"/>`), 50, 50); got != [4]uint32{0, 128, 0, 255} {
+		t.Errorf("a filter that is not there: %v", got)
+	}
+}
+
+// TestShapeForms: as Chrome draws them, a transform attribute that does
+// not parse (units in it) is none; a negative radius of an ellipse is
+// auto; path data that does not start with a move is none; a gradient of
+// a bounding box's units on a straight line takes the fallback.
+func TestShapeForms(t *testing.T) {
+	green := [4]uint32{0, 128, 0, 255}
+	if got := rgbaAt(render(t, `<rect width="20" height="20" fill="green" transform="translate(50px, 50px)"/>`), 10, 10); got != green {
+		t.Errorf("a transform with units: %v", got)
+	}
+	if got := rgbaAt(render(t, `<ellipse cx="50" cy="50" rx="-40" ry="40" fill="green"/>`), 50, 50); got != green {
+		t.Errorf("a negative rx: %v", got)
+	}
+	if got := rgbaAt(render(t, `<path d="L 0 0 L 100 0 L 100 100 L 0 100 z" fill="green"/>`), 50, 50); got[3] != 0 {
+		t.Errorf("path data without a move: %v", got)
+	}
+	line := `<linearGradient id="g"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="red"/></linearGradient>
+<line x1="0" y1="50" x2="100" y2="50" stroke="url(#g) green" stroke-width="10"/>`
+	if got := rgbaAt(render(t, line), 50, 50); got != green {
+		t.Errorf("a gradient on a straight line: %v", got)
+	}
+}
+
+// TestTextBox: the bounding box of text is its characters' cells (a
+// filter's region in its units covers them, not the picture).
+func TestTextBox(t *testing.T) {
+	doc := `<filter id="f" x="0" y="0" width="1" height="1"><feFlood flood-color="green"/></filter>
+<text x="10" y="50" font-size="20" font-family="'` + testFont + `'" filter="url(#f)">नमस्ते</text>`
+	img := render(t, doc)
+	if got := rgbaAt(img, 15, 45); got != [4]uint32{0, 128, 0, 255} {
+		t.Errorf("in the text's box: %v", got)
+	}
+	if got := rgbaAt(img, 90, 90); got[3] != 0 {
+		t.Errorf("outside the text's box: %v", got)
+	}
+	// A mask on text, its region in the text's box (as by default): the
+	// text is drawn.
+	masked := render(t, `<mask id="m"><rect width="100" height="100" fill="white"/></mask>
+<text x="10" y="50" font-size="20" font-family="'`+testFont+`'" mask="url(#m)">नमस्ते</text>`)
+	inked := false
+	for y := 30; y < 60 && !inked; y++ {
+		for x := 10; x < 90; x++ {
+			if rgbaAt(masked, x, y)[3] > 0 {
+				inked = true
+				break
+			}
+		}
+	}
+	if !inked {
+		t.Error("a mask on text hid it")
+	}
+}
+
+// TestPathAfterClose: a command after a close (Z) goes on from the start
+// of the path closed; a filter takes its primitives and region from the
+// filter it refers to.
+func TestPathAfterClose(t *testing.T) {
+	if got := rgbaAt(render(t, `<path d="M 0 0 L 50 0 L 50 50 Z L 0 100 L 50 100 Z" fill="green"/>`), 10, 80); got != [4]uint32{0, 128, 0, 255} {
+		t.Errorf("a line after a close: %v", got)
+	}
+	doc := `<filter id="a" x="0" y="0" width="1" height="1"><feFlood flood-color="green"/></filter><filter id="b" href="#a"/>
+<rect x="10" y="10" width="50" height="50" fill="red" filter="url(#b)"/>`
+	if img := render(t, doc); rgbaAt(img, 30, 30) != [4]uint32{0, 128, 0, 255} || rgbaAt(img, 70, 70)[3] != 0 {
+		t.Errorf("a filter by href: %v %v", rgbaAt(img, 30, 30), rgbaAt(img, 70, 70))
+	}
+}

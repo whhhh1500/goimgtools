@@ -4,8 +4,10 @@
 package textsrc
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -92,7 +94,9 @@ func (f *Font) has(buf *sfnt.Buffer, r rune) bool {
 	return err == nil && i != 0
 }
 
-func describe(f *sfnt.Font, path string, index int) FontInfo {
+// describe names a font: in English, from its name table read through r
+// (when it is there), else as sfnt has them.
+func describe(f *sfnt.Font, r io.ReaderAt, path string, index int) FontInfo {
 	var buf sfnt.Buffer
 	name := func(id sfnt.NameID) string {
 		s, err := f.Name(&buf, id)
@@ -101,7 +105,15 @@ func describe(f *sfnt.Font, path string, index int) FontInfo {
 		}
 		return strings.TrimSpace(s)
 	}
-	info := FontInfo{Path: path, Index: index, Family: name(sfnt.NameIDFamily), Style: name(sfnt.NameIDSubfamily), Full: name(sfnt.NameIDFull)}
+	info := FontInfo{Path: path, Index: index}
+	if r != nil {
+		if fam, sub, full, ok := englishNames(r, index); ok {
+			info.Family, info.Style, info.Full = fam, sub, full
+		}
+	}
+	if info.Family == "" && info.Full == "" {
+		info.Family, info.Style, info.Full = name(sfnt.NameIDFamily), name(sfnt.NameIDSubfamily), name(sfnt.NameIDFull)
+	}
 	if info.Family == "" {
 		info.Family = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	}
@@ -139,7 +151,7 @@ func openFile(path string, index int) (*Font, error) {
 		file.Close()
 		return nil, fmt.Errorf("goimgtools: %s holds %d fonts, there is no #%d", path, len(fonts), index)
 	}
-	return &Font{Info: describe(fonts[index], path, index), f: fonts[index], file: file}, nil
+	return &Font{Info: describe(fonts[index], file, path, index), f: fonts[index], file: file}, nil
 }
 
 // parseFile returns the fonts of a font or collection file.
@@ -184,7 +196,7 @@ func OpenData(data []byte) (*Font, error) {
 	if err != nil {
 		return nil, fmt.Errorf("goimgtools: not a font: %w", err)
 	}
-	return &Font{Info: describe(f, "", 0), f: f, data: data}, nil
+	return &Font{Info: describe(f, bytes.NewReader(data), "", 0), f: f, data: data}, nil
 }
 
 // Open loads the font spec names: the built-in font, a font file
@@ -274,7 +286,7 @@ func System() []FontInfo {
 					return nil // not a font this library reads
 				}
 				for i, f := range fonts {
-					systemFonts = append(systemFonts, describe(f, path, i))
+					systemFonts = append(systemFonts, describe(f, file, path, i))
 				}
 				return nil
 			})
