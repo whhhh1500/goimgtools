@@ -1,6 +1,7 @@
 package textsrc
 
 import (
+	"bytes"
 	"image"
 	"image/draw"
 	"unicode"
@@ -10,6 +11,7 @@ import (
 	"golang.org/x/image/vector"
 
 	"github.com/whhhh1500/goimgtools/internal/bidi"
+	"github.com/whhhh1500/goimgtools/internal/colorfont"
 	"github.com/whhhh1500/goimgtools/internal/shape"
 )
 
@@ -66,6 +68,48 @@ func isMark(r rune) bool {
 	return r >= 0x0300 && unicode.In(r, unicode.Mn, unicode.Me, unicode.Mc)
 }
 
+// colourFont is the colour layers of font i, read (and counted in the
+// budget) the first time; nil for a font without them.
+func (s *Set) colourFont(i int) (*colorfont.Font, error) {
+	f := s.fonts[i]
+	if f.colourTried {
+		return f.colour, nil
+	}
+	f.colourTried = true
+	var c *colorfont.Font
+	var err error
+	switch {
+	case f.file != nil:
+		c, err = colorfont.Open(f.file, f.Info.Index)
+	case f.data != nil:
+		c, err = colorfont.Open(bytes.NewReader(f.data), 0)
+	}
+	if err != nil || c == nil {
+		return nil, nil // drawn in one colour
+	}
+	if err := s.reserve(c.Bytes); err != nil {
+		return nil, err
+	}
+	s.held += c.Bytes
+	f.colour = c
+	return c, nil
+}
+
+// ColourLayers appends the colour layers of glyph id of f, a font of the
+// set, to buf: none for a glyph drawn in one colour.
+func (s *Set) ColourLayers(f *Font, id sfnt.GlyphIndex, buf []colorfont.Layer) ([]colorfont.Layer, error) {
+	for i, g := range s.fonts {
+		if g == f {
+			c, err := s.colourFont(i)
+			if err != nil {
+				return buf, err
+			}
+			return c.Layers(uint16(id), buf), nil
+		}
+	}
+	return buf, nil
+}
+
 // ShapingFace is the shaping tables of f, a font of the set, read (and
 // counted in the budget) the first time; nil when it has none that can be
 // read.
@@ -102,6 +146,22 @@ func NeedsShaping(rs []rune) []bool {
 					need[j] = true
 				}
 			}
+		}
+	}
+	// An emoji with what joins or modifies it (a zero width joiner, a
+	// variation selector, a skin tone, a keycap, tags), and the two
+	// regional indicators of a flag, are shaped together: the font's tables
+	// make one glyph of the sequence.
+	for i := 1; i < n; i++ {
+		r := rs[i]
+		switch {
+		case (r == 0x200D || r == 0xFE0F || r == 0x20E3 || r >= 0x1F3FB && r <= 0x1F3FF || r >= 0xE0020 && r <= 0xE007F) && EmojiBase(rs[i-1]):
+			need[i-1], need[i], any = true, true, true
+			if r == 0x200D && i+1 < n {
+				need[i+1] = true
+			}
+		case r >= 0x1F1E6 && r <= 0x1F1FF && rs[i-1] >= 0x1F1E6 && rs[i-1] <= 0x1F1FF:
+			need[i-1], need[i], any = true, true, true
 		}
 	}
 	if !any {
@@ -152,7 +212,7 @@ func (s *source) shapeParagraph(rs []rune, levels []int8, size float64) ([]*shap
 			fonts[i] = fonts[i-1]
 			continue
 		}
-		fi, err := s.set.pick(r)
+		fi, err := s.set.pickFor(rs, i)
 		if err != nil {
 			return nil, err
 		}
@@ -253,6 +313,58 @@ func arabicForms(rs []rune, from, to int) {
 		forms[k] = out[j]
 	}
 	copy(rs[from:to], forms[from:to])
+}
+
+// hasColour reports whether a line has a colour glyph.
+func (s *source) hasColour(l line) bool {
+	for _, g := range l.glyphs {
+		c := s.set.fonts[g.font].colour
+		if c == nil {
+			continue
+		}
+		if g.sh != nil {
+			for _, sg := range g.sh.glyphs {
+				if s.layers = c.Layers(uint16(sg.id), s.layers[:0]); len(s.layers) > 0 {
+					return true
+				}
+			}
+			continue
+		}
+		if id, err := s.set.fonts[g.font].f.GlyphIndex(&s.set.buf, g.r); err == nil {
+			if s.layers = c.Layers(uint16(id), s.layers[:0]); len(s.layers) > 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// drawColour draws glyph id of font fi at dot as its colour layers, if it
+// has them (false if not): each layer in its colour, its alpha times that
+// of the text's colour, or in the text's colour for a layer of it; when
+// src is not the text's colour (the shape of the text, for its outline
+// and shadow), every layer in src.
+func (s *source) drawColour(dst draw.Image, src image.Image, fi int, id sfnt.GlyphIndex, dot fixed.Point26_6) bool {
+	c := s.set.fonts[fi].colour // read at layout
+	if c == nil {
+		return false
+	}
+	s.layers = c.Layers(uint16(id), s.layers[:0])
+	if len(s.layers) == 0 {
+		return false
+	}
+	text := src == image.Image(s.fg)
+	_, _, _, fa := s.fg.C.RGBA()
+	for _, l := range s.layers {
+		lsrc := src
+		if text && !l.Foreground {
+			col := l.Color
+			col.A = uint8((uint32(col.A)*fa + 0x7fff) / 0xffff)
+			lsrc = image.NewUniform(col)
+		}
+		s.drawGlyph(dst, lsrc, fi, sfnt.GlyphIndex(l.Glyph), dot, s.size)
+	}
+	return true
 }
 
 // drawGlyph draws glyph id of font fi with its origin at dot, as the

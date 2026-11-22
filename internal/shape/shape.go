@@ -22,6 +22,8 @@ import (
 	ot "github.com/go-text/typesetting/font/opentype"
 	"github.com/go-text/typesetting/harfbuzz"
 	"github.com/go-text/typesetting/language"
+
+	"github.com/whhhh1500/goimgtools/internal/otdir"
 )
 
 // tables are those read for shaping: the character map, the advances and
@@ -104,14 +106,6 @@ func (v *view) Seek(off int64, whence int) (int64, error) {
 	return v.pos, nil
 }
 
-func read(r io.ReaderAt, off int64, n int) ([]byte, error) {
-	b := make([]byte, n)
-	if _, err := r.ReadAt(b, off); err != nil {
-		return nil, err
-	}
-	return b, nil
-}
-
 // Open reads the shaping tables of font number index of a font or
 // collection file. err is set for a font that cannot be shaped with.
 func Open(r io.ReaderAt, index int) (f *Face, err error) {
@@ -120,60 +114,33 @@ func Open(r io.ReaderAt, index int) (f *Face, err error) {
 			f, err = nil, errors.New("shape: the font's tables cannot be read")
 		}
 	}()
-	hdr, err := read(r, 0, 12)
+	dir, err := otdir.Read(r, index)
 	if err != nil {
 		return nil, err
 	}
-	base := int64(0)
-	if string(hdr[:4]) == "ttcf" {
-		n := int(binary.BigEndian.Uint32(hdr[8:]))
-		if index < 0 || index >= n {
-			return nil, errors.New("shape: no such font in the collection")
-		}
-		o, err := read(r, 12+4*int64(index), 4)
-		if err != nil {
-			return nil, err
-		}
-		base = int64(binary.BigEndian.Uint32(o))
-		if hdr, err = read(r, base, 12); err != nil {
-			return nil, err
-		}
-	}
-	n := int(binary.BigEndian.Uint16(hdr[4:]))
-	recs, err := read(r, base+12, 16*n)
-	if err != nil {
-		return nil, err
-	}
-	type table struct {
-		rec       []byte
-		off, size int64
-	}
-	var keep []table
+	var keep []otdir.Table
 	var total int64
-	for i := 0; i < n; i++ {
-		rec := recs[16*i : 16*i+16]
-		if !tables[string(rec[:4])] {
-			continue
+	for tag, t := range dir.Tables {
+		if tables[tag] {
+			keep = append(keep, t)
+			total += t.Length
 		}
-		t := table{rec: rec, off: int64(binary.BigEndian.Uint32(rec[8:])), size: int64(binary.BigEndian.Uint32(rec[12:]))}
-		keep = append(keep, t)
-		total += t.size
 	}
 	if total > MaxBytes {
 		return nil, errors.New("shape: the font's tables are too large")
 	}
-	sort.Slice(keep, func(i, j int) bool { return string(keep[i].rec[:4]) < string(keep[j].rec[:4]) })
+	sort.Slice(keep, func(i, j int) bool { return string(keep[i].Record[:4]) < string(keep[j].Record[:4]) })
 	v := &view{r: r, head: make([]byte, 12+16*len(keep))}
-	copy(v.head, hdr[:4]) // the font's kind (TrueType or CFF outlines)
+	copy(v.head, dir.Version[:])
 	binary.BigEndian.PutUint16(v.head[4:], uint16(len(keep)))
 	at := (int64(len(v.head)) + 3) &^ 3
 	for i, t := range keep {
 		rec := v.head[12+16*i:]
-		copy(rec, t.rec[:8]) // tag and checksum
+		copy(rec, t.Record[:8]) // tag and checksum
 		binary.BigEndian.PutUint32(rec[8:], uint32(at))
-		binary.BigEndian.PutUint32(rec[12:], uint32(t.size))
-		v.segs = append(v.segs, segment{at: at, n: t.size, from: t.off})
-		at += (t.size + 3) &^ 3
+		binary.BigEndian.PutUint32(rec[12:], uint32(t.Length))
+		v.segs = append(v.segs, segment{at: at, n: t.Length, from: t.Offset})
+		at += (t.Length + 3) &^ 3
 	}
 	v.size = at
 	ld, err := ot.NewLoader(v)

@@ -79,6 +79,9 @@ func TestSameOnEveryProcessor(t *testing.T) {
 		// Text shaped by its font's tables: Devanagari's conjuncts and marks.
 		{"shaped text", Text("नमस्ते क्षत्रिय हिन्दी", TextOptions{Fonts: []string{shapedFont}, Size: 37.3}), "b7b51b60806667d3"},
 		{"shaped svg", FromBytes([]byte(shapedSVG)), "bec51a52c180107c"},
+		// Colour glyphs, layer by layer, half transparent; an emoji sequence.
+		{"colour text", Text("A ✨ 👨‍👩", TextOptions{Fonts: []string{colourFont}, Size: 33.7, Color: color.NRGBA{40, 90, 160, 200}, StrokeWidth: 1.5}), "95d3e9dfd6b8defe"},
+		{"colour svg", FromBytes([]byte(`<svg xmlns="http://www.w3.org/2000/svg" width="140" height="50"><text x="4" y="38" font-size="31.3" rotate="7" font-family="'` + colourFont + `'" fill="#357">A✨👨&#x200D;👩</text></svg>`)), "538b140dd65ea03d"},
 	}
 	for _, c := range cases {
 		env := pipeline.NewEnv(0, t.TempDir())
@@ -199,6 +202,9 @@ func TestSameOnEveryProcessor(t *testing.T) {
 func animationBytes(t *testing.T) []byte {
 	return encodeAll(t, movingAnimation(120, 90, 5, true))
 }
+
+// colourFont is a font of colour glyphs made for the tests.
+const colourFont = "testdata/fonts/ColourTest.ttf"
 
 // shapedFont is Noto Sans Devanagari cut down to a few words.
 const shapedFont = "testdata/fonts/NotoSansDevanagari-subset.ttf"

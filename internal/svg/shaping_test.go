@@ -89,6 +89,46 @@ func TestShapedBudget(t *testing.T) {
 	}
 }
 
+// TestColourGlyph: a colour glyph (as a colour emoji) is filled layer by
+// layer in its colours, a layer of the text's colour in the text's fill;
+// emoji joined by a zero width joiner are the one glyph the font makes.
+func TestColourGlyph(t *testing.T) {
+	doc := func(text string) string {
+		return `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="80"><text x="10" y="60" font-size="50" fill="#0a141e" font-family="'../../tests/testdata/fonts/ColourTest.ttf'">` + text + `</text></svg>`
+	}
+	env := pipeline.NewEnv(0, "")
+	s, err := Open([]byte(doc("✨")), env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err := pipeline.Collect(s)
+	s.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := map[[3]uint32]int{}
+	b := img.Bounds()
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			r, g, bl, a := img.At(x, y).RGBA()
+			if a == 0xffff {
+				count[[3]uint32{r >> 8, g >> 8, bl >> 8}]++
+			}
+		}
+	}
+	for _, c := range [][3]uint32{{255, 0, 0}, {0, 0, 255}, {10, 20, 30}} {
+		if count[c] < 20 {
+			t.Errorf("✨: %d pixels of %v", count[c], c)
+		}
+	}
+	one, _, _ := inkWidth(t, doc("👨"), 0)
+	joined, _, _ := inkWidth(t, doc("👨‍👩"), 0)
+	two, _, _ := inkWidth(t, doc("👨👩"), 0)
+	if joined >= two || joined < one {
+		t.Errorf("widths: one %d, joined %d, two %d", one, joined, two)
+	}
+}
+
 // TestLetterSpacingJoined: letter spacing does not part Arabic letters
 // (as Chrome): Arabic with it is as wide as without.
 func TestLetterSpacingJoined(t *testing.T) {

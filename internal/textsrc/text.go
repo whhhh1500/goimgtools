@@ -16,6 +16,7 @@ import (
 	"golang.org/x/image/vector"
 
 	"github.com/whhhh1500/goimgtools/internal/bidi"
+	"github.com/whhhh1500/goimgtools/internal/colorfont"
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
@@ -98,6 +99,7 @@ type source struct {
 	maskB     *image.Alpha // its outline or its shadow
 	size      float64
 	gmask     image.Alpha // a glyph of shaped text, drawn
+	layers    []colorfont.Layer
 	grast     *vector.Rasterizer
 	tmp       []uint8
 	reserved  int64
@@ -330,7 +332,7 @@ func (s *source) layout(text string, o Options) error {
 			var fi int
 			if sh != nil {
 				fi = sh.font
-			} else if fi, err = s.set.pick(r); err != nil {
+			} else if fi, err = s.set.pickFor(runes, i); err != nil {
 				return err
 			}
 			face, err := s.face(fi, o.Size)
@@ -341,6 +343,10 @@ func (s *source) layout(text string, o Options) error {
 				used[fi] = true
 				m := face.Metrics()
 				ascent, descent = max(ascent, m.Ascent), max(descent, m.Descent)
+				// Its colour glyphs, if it has them, read now: drawing cannot fail.
+				if _, err := s.set.colourFont(fi); err != nil {
+					return err
+				}
 			}
 			x := pen
 			var adv fixed.Int26_6
@@ -566,7 +572,9 @@ func (s *source) drawLine(i int) {
 			if g.sh != nil {
 				for _, sg := range g.sh.glyphs {
 					dot := fixed.Point26_6{X: start + g.x + sg.dx, Y: fixed.I(top+s.ascent) + sg.dy}
-					s.drawGlyph(dst, src, g.font, sg.id, dot, s.size)
+					if !s.drawColour(dst, src, g.font, sg.id, dot) {
+						s.drawGlyph(dst, src, g.font, sg.id, dot, s.size)
+					}
 				}
 				continue
 			}
@@ -575,6 +583,9 @@ func (s *source) drawLine(i int) {
 			}
 			d.Face = s.faces[g.font]
 			d.Dot = fixed.Point26_6{X: start + g.x, Y: fixed.I(top + s.ascent)}
+			if id, err := s.set.fonts[g.font].f.GlyphIndex(&s.set.buf, g.r); err == nil && s.drawColour(dst, src, g.font, id, d.Dot) {
+				continue
+			}
 			d.DrawString(string(g.r))
 		}
 	}
@@ -619,5 +630,9 @@ func (s *source) drawLine(i int) {
 	if s.strokeC != nil {
 		paint(s.strokeC, &other, image.Point{})
 	}
-	paint(s.fg, &shape, image.Point{})
+	if s.hasColour(l) {
+		glyphs(&win, s.fg) // its colour glyphs in their colours
+	} else {
+		paint(s.fg, &shape, image.Point{})
+	}
 }

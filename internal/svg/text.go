@@ -12,6 +12,7 @@ import (
 	"golang.org/x/image/math/fixed"
 
 	"github.com/whhhh1500/goimgtools/internal/bidi"
+	"github.com/whhhh1500/goimgtools/internal/colorfont"
 	"github.com/whhhh1500/goimgtools/internal/textsrc"
 	"github.com/whhhh1500/goimgtools/internal/trig"
 )
@@ -592,6 +593,12 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 	var chunkPath []*textPathInfo
 	var prev sfnt.GlyphIndex
 	var prevFont *textsrc.Font
+	// The characters as laid out, for the variation selectors that ask for
+	// an emoji in colour or as text.
+	visual := make([]rune, len(chars))
+	for i, c := range chars {
+		visual[i] = c.r
+	}
 	for i := range chars {
 		c := &chars[i]
 		path := c.tctx.path
@@ -628,7 +635,7 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 		var f *textsrc.Font
 		if c.sh != nil {
 			f = c.sh.font
-		} else if f, _ = set.Pick(c.r); f == nil {
+		} else if f, _ = set.PickFor(visual, i); f == nil {
 			continue
 		}
 		sf := f.SFNT()
@@ -922,6 +929,7 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 	// Outlines, a run of characters of the same element at a time.
 	var runSegs []seg
 	var runNode *node
+	var layers []colorfont.Layer
 	var runStyle style
 	flush := func() {
 		if len(runSegs) > 0 && runNode != nil {
@@ -939,33 +947,60 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 		}
 		sf := p.f.SFNT()
 		upem := fixed.Int26_6(sf.UnitsPerEm()) << 6
-		gsegs, err := sf.LoadGlyph(&buf, p.gi, upem, nil)
-		if err != nil {
-			continue
-		}
 		scale := p.c.st.fontSize / float64(sf.UnitsPerEm()) / 64
 		fr := frames[i]
 		pt := func(q fixed.Point26_6) [2]float64 {
 			return apply(fr, p.gx+float64(float64(q.X)*scale), p.gy+float64(float64(q.Y)*scale))
 		}
-		for _, g := range gsegs {
-			switch g.Op {
-			case sfnt.SegmentOpMoveTo:
-				if len(runSegs) > 0 && runSegs[len(runSegs)-1].cmd != cmdClose {
-					runSegs = append(runSegs, seg{cmd: cmdClose})
+		// outline appends the outline of glyph gi to segs.
+		outline := func(segs []seg, gi sfnt.GlyphIndex) []seg {
+			gsegs, err := sf.LoadGlyph(&buf, gi, upem, nil)
+			if err != nil {
+				return segs
+			}
+			for _, g := range gsegs {
+				switch g.Op {
+				case sfnt.SegmentOpMoveTo:
+					if len(segs) > 0 && segs[len(segs)-1].cmd != cmdClose {
+						segs = append(segs, seg{cmd: cmdClose})
+					}
+					segs = append(segs, seg{cmd: cmdMove, pts: [3][2]float64{pt(g.Args[0])}})
+				case sfnt.SegmentOpLineTo:
+					segs = append(segs, seg{cmd: cmdLine, pts: [3][2]float64{pt(g.Args[0])}})
+				case sfnt.SegmentOpQuadTo:
+					segs = append(segs, seg{cmd: cmdQuad, pts: [3][2]float64{pt(g.Args[0]), pt(g.Args[1])}})
+				case sfnt.SegmentOpCubeTo:
+					segs = append(segs, seg{cmd: cmdCubic, pts: [3][2]float64{pt(g.Args[0]), pt(g.Args[1]), pt(g.Args[2])}})
 				}
-				runSegs = append(runSegs, seg{cmd: cmdMove, pts: [3][2]float64{pt(g.Args[0])}})
-			case sfnt.SegmentOpLineTo:
-				runSegs = append(runSegs, seg{cmd: cmdLine, pts: [3][2]float64{pt(g.Args[0])}})
-			case sfnt.SegmentOpQuadTo:
-				runSegs = append(runSegs, seg{cmd: cmdQuad, pts: [3][2]float64{pt(g.Args[0]), pt(g.Args[1])}})
-			case sfnt.SegmentOpCubeTo:
-				runSegs = append(runSegs, seg{cmd: cmdCubic, pts: [3][2]float64{pt(g.Args[0]), pt(g.Args[1]), pt(g.Args[2])}})
+			}
+			if len(segs) > 0 && segs[len(segs)-1].cmd != cmdClose {
+				segs = append(segs, seg{cmd: cmdClose})
+			}
+			return segs
+		}
+		// A colour glyph (as a colour emoji): its layers, each filled in its
+		// colour (a layer of the text's colour as the text is), unstroked.
+		if set := b.fonts(p.c.family, p.c.face); set != nil {
+			var err error
+			if layers, err = set.ColourLayers(p.f, p.gi, layers[:0]); err != nil {
+				b.err = err
 			}
 		}
-		if len(runSegs) > 0 && runSegs[len(runSegs)-1].cmd != cmdClose {
-			runSegs = append(runSegs, seg{cmd: cmdClose})
+		if len(layers) > 0 {
+			flush()
+			for _, l := range layers {
+				lst := p.c.st
+				if !l.Foreground {
+					lst.fill = paint{kind: paintColor, c: l.Color}
+				}
+				lst.stroke = paint{kind: paintNone}
+				if segs := outline(nil, sfnt.GlyphIndex(l.Glyph)); len(segs) > 0 {
+					b.shape(p.c.node, segs, m, lst, vp, own, outer)
+				}
+			}
+			continue
 		}
+		runSegs = outline(runSegs, p.gi)
 		if len(runSegs) > maxSegs {
 			flush()
 		}

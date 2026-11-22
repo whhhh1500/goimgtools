@@ -18,6 +18,7 @@ import (
 	"golang.org/x/image/font/gofont/goregular"
 	"golang.org/x/image/font/sfnt"
 
+	"github.com/whhhh1500/goimgtools/internal/colorfont"
 	"github.com/whhhh1500/goimgtools/internal/shape"
 )
 
@@ -59,6 +60,10 @@ type Font struct {
 	// them is laid out in the font.
 	shaping    *shape.Face
 	shapeTried bool
+	// Its colour glyphs (as colour emoji), read the first time a glyph of
+	// it is drawn.
+	colour      *colorfont.Font
+	colourTried bool
 }
 
 // Close releases the font file.
@@ -501,6 +506,79 @@ func (s *Set) pick(r rune) (int, error) {
 			return i, nil
 		}
 	}
+}
+
+// wantsColour reports whether character i of rs is shown as a colour emoji:
+// one of the emoji that are by default (Unicode's Emoji_Presentation) or one asked
+// to be by the variation selector that follows it, not one asked to be
+// text.
+func wantsColour(rs []rune, i int) bool {
+	if !EmojiBase(rs[i]) {
+		return false
+	}
+	next := rune(0)
+	if i+1 < len(rs) {
+		next = rs[i+1]
+	}
+	switch next {
+	case 0xFE0F:
+		return true
+	case 0xFE0E:
+		return false
+	}
+	r := rs[i]
+	k := sort.Search(len(emojiPresentationTable), func(k int) bool { return emojiPresentationTable[k][1] >= r })
+	return k < len(emojiPresentationTable) && emojiPresentationTable[k][0] <= r
+}
+
+// EmojiBase reports whether r can be shown as an emoji: a keycap's digit,
+// # or *, © and ®, or a symbol from U+2000 on (letters cannot).
+func EmojiBase(r rune) bool {
+	return r >= 0x2000 || r >= '0' && r <= '9' || r == '#' || r == '*' || r == 0xA9 || r == 0xAE
+}
+
+// pickFor is the font for character i of rs: for a colour emoji, the first
+// font with a colour glyph for it, if one has; else the first with a
+// glyph.
+func (s *Set) pickFor(rs []rune, i int) (int, error) {
+	if !wantsColour(rs, i) {
+		return s.pick(rs[i])
+	}
+	for k := 0; ; k++ {
+		if k == len(s.fonts) {
+			if len(s.pending) == 0 {
+				break
+			}
+			if err := s.more(); err != nil {
+				return 0, err
+			}
+			if k == len(s.fonts) {
+				break
+			}
+		}
+		id, err := s.fonts[k].f.GlyphIndex(&s.buf, rs[i])
+		if err != nil || id == 0 {
+			continue
+		}
+		c, err := s.colourFont(k)
+		if err != nil {
+			return 0, err
+		}
+		if len(c.Layers(uint16(id), nil)) > 0 {
+			return k, nil
+		}
+	}
+	return s.pick(rs[i])
+}
+
+// PickFor is the font of the set for character i of rs, as Pick, but for a
+// colour emoji the first font with a colour glyph for it, if one has.
+func (s *Set) PickFor(rs []rune, i int) (*Font, error) {
+	k, err := s.pickFor(rs, i)
+	if err != nil || len(s.fonts) == 0 {
+		return nil, err
+	}
+	return s.fonts[k], nil
 }
 
 // Pick is the first font of the set that has r, default fonts opened as

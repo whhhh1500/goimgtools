@@ -408,6 +408,18 @@ Gill. Released into the public domain. No Warranty, Use at your own risk."
 with the integer arithmetic of apngdis (by Max Stepin, the author of APNG;
 zlib licence), rewritten in Go; nothing of its files is included.
 
+## Unicode Character Database
+
+Unicode License v3, copyright Unicode, Inc. The full text is in `LICENSE-UNICODE`, next to
+this file. Tables generated from its data files of Unicode 17.0.0:
+
+| Here | From |
+|---|---|
+| `internal/bidi/tables.go` (`mirrorTable`) | `BidiMirroring.txt` |
+| `internal/textsrc/emoji_table.go` | `emoji/emoji-data.txt` (Emoji_Presentation) |
+
+The bracket pairs of `internal/bidi/tables.go` are those of `BidiBrackets.txt` as
+`golang.org/x/text` holds them.
 ## Noto Sans Devanagari (a font for the tests)
 
 SIL Open Font License 1.1, copyright Google Inc. The full text is in

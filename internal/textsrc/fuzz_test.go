@@ -6,19 +6,19 @@ import (
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
-// FuzzLayout: any text, in the shaping test font and the built-in one, at
+// FuzzLayout: any text, in the shaping test font, the colour one and the built-in one, at
 // any width, lays out without a panic; every line's glyphs go left to
 // right and the line is as wide as where its last one ends.
 func FuzzLayout(f *testing.F) {
 	for _, s := range []string{
 		"नमस्ते दुनिया", "क्षत्रिय हिन्दी", "◌ि ◌ा 1ा", "कि​र्क­प्र",
 		"abc אבג (def) 123", "⁧abc⁩ ‮तेन‬", "á̂b‍‌",
-		"مرحبا لا إله", "لَا", string(rune(0xFEFF)) + "‏⁦", "ภาษาไทย", "",
+		"مرحبا لا إله", "لَا", string(rune(0xFEFF)) + "‏⁦", "ภาษาไทย", "", "A ✨" + string(rune(0xFE0F)) + " 👨" + string(rune(0x200D)) + "👩 👨" + string(rune(0xFE0E)) + " 1" + string(rune(0x20E3)),
 	} {
 		f.Add(s, uint16(0))
 		f.Add(s, uint16(60))
 	}
-	font := []string{"../../tests/testdata/fonts/NotoSansDevanagari-subset.ttf", BuiltIn}
+	font := []string{"../../tests/testdata/fonts/NotoSansDevanagari-subset.ttf", "../../tests/testdata/fonts/ColourTest.ttf", BuiltIn}
 	f.Fuzz(func(t *testing.T, text string, width uint16) {
 		if len(text) > 400 {
 			return

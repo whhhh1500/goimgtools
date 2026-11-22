@@ -75,7 +75,7 @@ func (b *builder) shapeChars(chars []tchar) {
 			fonts[i] = fonts[i-1]
 			continue
 		}
-		f, err := sets[i].Pick(c.r)
+		f, err := sets[i].PickFor(rs, i)
 		if err != nil || f == nil {
 			need[i] = false
 			continue
