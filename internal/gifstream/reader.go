@@ -23,7 +23,6 @@ package gifstream
 
 import (
 	"bufio"
-	"compress/lzw"
 	"errors"
 	"fmt"
 	"image"
@@ -96,7 +95,7 @@ type decoder struct {
 	// the strip of the frame before, once it is closed, and the LZW
 	// reader.
 	spare []uint8
-	lzw   *lzw.Reader
+	lzw   *lzwReader
 
 	// From header.
 	vers            string
@@ -501,10 +500,9 @@ func (d *decoder) openImage(env *pipeline.Env) (pipeline.Source, error) {
 	// A wonderfully Go-like piece of magic.
 	s.br = &blockReader{d: d}
 	if d.lzw == nil {
-		d.lzw = lzw.NewReader(s.br, lzw.LSB, int(litWidth)).(*lzw.Reader)
-	} else {
-		d.lzw.Reset(s.br, lzw.LSB, int(litWidth))
+		d.lzw = new(lzwReader)
 	}
+	d.lzw.reset(s.br, uint(litWidth))
 	s.lzwr = d.lzw
 	return s, nil
 }
