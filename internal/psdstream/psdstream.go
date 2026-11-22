@@ -46,6 +46,7 @@ const (
 	compRLE       = 1
 	maxAlphaIDs   = 56
 	resResolution = 1005
+	resIptc       = 1028
 	resICC        = 1039
 	resTransIndex = 1047
 	resAlphaIDs   = 1053
@@ -202,7 +203,7 @@ func parse(r io.ReaderAt, size int64) (*file, error) {
 			break
 		}
 		switch id {
-		case resICC, resExif, resXmp:
+		case resICC, resExif, resXmp, resIptc:
 			if sz <= pipeline.MaxMetaBytes {
 				b := p.read(sz)
 				switch id {
@@ -210,6 +211,10 @@ func parse(r io.ReaderAt, size int64) (*file, error) {
 					f.meta.ICC = b
 				case resExif:
 					f.meta.Exif = b
+				case resIptc:
+					if len(b) > 0 && b[0] == 0x1c {
+						f.meta.Iptc = b
+					}
 				default:
 					f.meta.Xmp = b
 				}

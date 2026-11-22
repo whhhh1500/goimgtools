@@ -128,7 +128,7 @@ type options struct {
 	jpegChroma                                     *string
 	animated, keepExif, stripICC, toSRGB           *bool
 	exifCopyright, exifArtist, exifDescription     *string
-	trimLineArt, keepXmp, tiffPredictor            *bool
+	trimLineArt, keepXmp, keepIptc, tiffPredictor  *bool
 	trimBackground                                 *string
 	trimMargin                                     *int
 	density                                        *float64
@@ -237,6 +237,7 @@ func register(fs *flag.FlagSet) *options {
 		exifArtist:      fs.String("exif-artist", "", "write this 	ext as the EXIF artist (who made the image)"),
 		exifDescription: fs.String("exif-description", "", "write this 	ext as the EXIF image description (a title or caption)"),
 		keepXmp:         fs.Bool("keep-xmp", false, "copy the XMP packet (keywords, rating, rights) to the output (JPEG, PNG, WebP, TIFF)"),
+		keepIptc:        fs.Bool("keep-iptc", false, "copy the IPTC record (caption, keywords, byline, copyright) to the output (JPEG, TIFF)"),
 		stripICC:        fs.Bool("strip-icc", false, "drop the ICC colour profile instead of copying it"),
 		density:         fs.Float64("density", 0, "record a resolution of `DPI` pixels per inch in the output (JPEG, PNG, TIFF, BMP); by default the input's is kept"),
 		toSRGB:          fs.Bool("srgb", false, "convert the colours to sRGB from the image's ICC profile (Display P3, Adobe RGB...) and leave the profile out; GIF and BMP output always are"),
@@ -514,6 +515,9 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 	}
 	if *o.exifCopyright != "" || *o.exifArtist != "" || *o.exifDescription != "" {
 		im.SetExif(goimgtools.ExifFields{Copyright: *o.exifCopyright, Artist: *o.exifArtist, ImageDescription: *o.exifDescription})
+	}
+	if *o.keepIptc {
+		im.KeepIptc()
 	}
 	if *o.keepXmp {
 		im.KeepXmp()

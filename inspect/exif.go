@@ -471,3 +471,22 @@ func ReadXmp(img *goimgtools.Image) ([]byte, bool, error) {
 	src.Close()
 	return data, len(data) > 0, nil
 }
+
+// ReadIptc returns the IPTC record of the image's file (JPEG, TIFF or
+// Photoshop), as sharp's metadata().iptc, and whether it has one: the
+// datasets of the Information Interchange Model one after the other, each
+// 0x1C, its record and dataset numbers, a length of two bytes and the
+// value (2:120 the caption, 2:25 a keyword, 2:80 the byline, 2:116 the
+// copyright notice). It reads the file's header, not the pixels.
+func ReadIptc(img *goimgtools.Image) ([]byte, bool, error) {
+	if img == nil {
+		return nil, false, errors.New("goimgtools/inspect: ReadIptc needs an image")
+	}
+	src, err := img.Clone().KeepIptc().Stream(nil)
+	if err != nil {
+		return nil, false, err
+	}
+	data := pipeline.MetaOf(src).Iptc
+	src.Close()
+	return data, len(data) > 0, nil
+}

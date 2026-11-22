@@ -153,6 +153,7 @@ err := goimgtools.Open("in.jpg").
 | `KeepExif()` | 将输入的 EXIF（相机、时间、GPS）保留至输出。默认丢弃 |
 | `SetExif(ExifFields{...})` | 往输出的 EXIF 块写入文字字段（`Copyright` 版权、`Artist` 作者、`ImageDescription` 描述、`Software` 软件、`DateTime` 修改时间），同 sharp 的 `withExif` / `withExifMerge`：配合 `KeepExif()` 时写进输入的 EXIF 块，其余内容原位不动，否则单独成块。适用于 JPEG、PNG、WebP、TIFF |
 | `KeepXmp()` | 将输入的 XMP 数据包（Adobe 的元数据：关键词、评级、版权、编辑历史）保留至 JPEG、PNG、WebP、TIFF 输出，即 sharp 的 `keepXmp`。默认丢弃 |
+| `KeepIptc()` | 将输入的 IPTC 记录（新闻图片的元数据：说明、关键词、作者、版权声明）保留至 JPEG、TIFF 输出；可从 JPEG、TIFF、Photoshop 文件读取。默认丢弃 |
 | `StripICC()` | 丢弃 ICC 色彩配置。默认保留，否则广色域照片会出现偏色 |
 | `Density(dpi)` | 在输出中记录每英寸 `dpi` 个像素的分辨率（1–65535）：JPEG 的 JFIF 段、PNG 的 pHYs 块、TIFF 的分辨率标签、BMP 的文件头，以及保留的 EXIF 块中的分辨率字段（WebP 与 GIF 没有专门的位置）。默认保留输入的分辨率，缩放后也保留，与 libvips 和 sharp 相同；`Density(0)` 表示不记录 |
 | `ToSRGB()` | 依据输入的色彩配置（原色与色调曲线，或查找表）将颜色转换至 sRGB，输出不再附带配置：在忽略色彩配置的程序中颜色同样正确，文件也略小。转换为 GIF、BMP（无法附带配置）时自动执行。CMYK 图像（JPEG、TIFF）解码时总会经其色彩配置转为 sRGB，与 sharp 相同；不带配置的按 libvips 的 CMYK 配置转换，同 sharp |

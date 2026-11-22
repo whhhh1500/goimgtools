@@ -1244,6 +1244,9 @@ type Options struct {
 	Exif []byte
 	ICC  []byte
 	Xmp  []byte
+	// Iptc is an IPTC record, written as Photoshop's image resource
+	// 0x0404 in APP13 segments.
+	Iptc []byte
 	// Optimize computes Huffman tables for this image instead of using the
 	// standard ones. The pixels a decoder gets are the same; the file is
 	// smaller. The entropy-coded data is staged (see writer_opt.go).
@@ -1395,7 +1398,7 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 			d := uint16(max(1, min(math.Round(o.Density), 65535)))
 			e.write([]byte{0xff, 0xe0, 0, 16, 'J', 'F', 'I', 'F', 0, 1, 1, 1, byte(d >> 8), byte(d), byte(d >> 8), byte(d), 0, 0})
 		}
-		e.writeMeta(o.Exif, o.ICC, o.Xmp)
+		e.writeMeta(o.Exif, o.ICC, o.Xmp, o.Iptc)
 	}
 	// Write the quantization tables.
 	e.writeDQT(nComponent)
@@ -1428,9 +1431,11 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 }
 
 // writeMeta writes an APP1 segment with the EXIF block, APP2 segments with
-// the ICC profile and an APP1 segment with the XMP packet. A block too
-// large for its segments is left out.
-func (e *encoder) writeMeta(exif, icc, xmp []byte) {
+// the ICC profile, an APP1 segment with the XMP packet and APP13 segments
+// with the IPTC record (as Photoshop's image resource 0x0404, split over
+// segments as Photoshop splits its resources). A block too large for its
+// segments is left out.
+func (e *encoder) writeMeta(exif, icc, xmp, iptc []byte) {
 	seg := func(marker byte, head string, extra, data []byte) {
 		n := 2 + len(head) + len(extra) + len(data)
 		e.write([]byte{0xff, marker, byte(n >> 8), byte(n)})
@@ -1451,5 +1456,19 @@ func (e *encoder) writeMeta(exif, icc, xmp []byte) {
 	const xmpHead = "http://ns.adobe.com/xap/1.0/\x00"
 	if len(xmp) > 0 && len(xmp) <= 0xffff-2-len(xmpHead) {
 		seg(0xe1, xmpHead, nil, xmp)
+	}
+	const irbHead = "Photoshop 3.0\x00"
+	if n := len(iptc); n > 0 && n <= pipeline.MaxMetaBytes {
+		// "8BIM", the number, no name, the length, the record, to an even
+		// length.
+		res := append([]byte("8BIM\x04\x04\x00\x00"), byte(n>>24), byte(n>>16), byte(n>>8), byte(n))
+		res = append(res, iptc...)
+		if n&1 == 1 {
+			res = append(res, 0)
+		}
+		const part = 0xffff - 2 - len(irbHead)
+		for ; len(res) > 0; res = res[min(part, len(res)):] {
+			seg(0xed, irbHead, nil, res[:min(part, len(res))])
+		}
 	}
 }

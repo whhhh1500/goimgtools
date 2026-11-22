@@ -15,6 +15,10 @@ type Meta struct {
 	// Xmp is the XMP packet (Adobe's metadata, in XML): keywords, rating,
 	// rights, the history of edits.
 	Xmp []byte
+	// Iptc is the IPTC record (the datasets of the Information Interchange
+	// Model, each starting 0x1C: caption, keywords, byline, copyright),
+	// without what a container wraps it in.
+	Iptc []byte
 	// Density is the resolution the file records, in pixels per inch
 	// (dots per inch), horizontally; 0 when it records none.
 	Density float64

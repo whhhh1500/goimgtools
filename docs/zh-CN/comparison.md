@@ -89,7 +89,7 @@
 |---|---|---|---|
 | 操作 | sharp 的全部操作（各种核与适配方式的缩放、裁取、加边、去边、各种混合模式的叠加、旋转、仿射、翻转、锐化、中值、模糊、膨胀、腐蚀、铺底、去底、gamma、反相、归一化、CLAHE、卷积、阈值、布尔、线性、通道重组、调色、着色、灰度、通道），带 `…Libvips` 选项时像素与它相同；Pillow 的 `ImageOps`、`ImageEnhance`、`ImageFilter` 的核与 `transform`，像素与它相同 | 自己的 | 自己的 |
 | 缺少的操作 | 颜色查找立方（`Color3DLUT`）、逐像素表达式（`ImageMath`）、填充（flood fill）、弧与扇形、噪声图；CMYK 或 Lab 输出；全流程保持 16 位（只有默认缩放保持） | | |
-| 元数据 | EXIF 读取并解析、保留、或写入文字字段；XMP 读取与保留；ICC 保留、移除、转换到 sRGB 或某个 RGB 配置；分辨率。没有 IPTC | EXIF、XMP、ICC、IPTC 保留；EXIF 字段、XMP、ICC 可设置 | EXIF 逐标签读写，XMP 读取，IPTC 读取，ICC |
+| 元数据 | EXIF 读取并解析、保留、或写入文字字段；XMP 读取与保留；IPTC 读取与保留（JPEG、TIFF）；ICC 保留、移除、转换到 sRGB 或某个 RGB 配置；分辨率 | EXIF、XMP、ICC、IPTC 保留；EXIF 字段、XMP、ICC 可设置 | EXIF 逐标签读写，XMP 读取，IPTC 读取，ICC |
 | 文字 | 字体按顺序回退，按字体的表格整形（HarfBuzz 的移植），从右向左，换行，对齐，描边，阴影，彩色表情（COLR 第 0 版、位图）。没有竖排，不能选字体特性，没有标记语言 | Pango：字体回退、整形、从右向左、换行、对齐、两端对齐、标记语言；没有描边与阴影 | FreeType 与 Raqm：一次一个字体，整形、字体特性、竖排、可变字体、描边；换行由调用方自己做 |
 | 水印 | 图片与文字，平铺、旋转、不透明度与混合；能扛住重新压缩的隐形水印，凭密钥读回 | 叠加 | 粘贴 |
 | SVG | resvg 的 1,801 个测试通过 1,327 个（不含文字的 1,414 个通过 1,303 个） | librsvg：1,099（1,073） | — |
@@ -110,7 +110,7 @@
 | TIFF 的各种变体 | 不写瓦片与金字塔。BigTIFF、CMYK、Lab、浮点、2 位与 4 位、灰度带透明、zstd 与 WebP 压缩现在都能读 | 待处理（读取已补齐） |
 | DDS、PCX、SGI、XBM、DIB、XPM、FITS | 不读 | 待处理 |
 | JPEG 2000 | 不读 | 待处理 |
-| IPTC | 不读也不保留 | 待处理 |
+| IPTC | 原先不读也不保留 | 已补齐：可从 JPEG、TIFF、PSD 读取，可保留到 JPEG 与 TIFF（`KeepIptc`） |
 | 文字：竖排、字体特性、可变字体、`Text()` 里的 COLR 第 1 版 | 没有（SVG 文字有竖排、可变字体与 COLR 第 1 版） | 待处理 |
 | `Color3DLUT`、`ImageMath`、填充、弧、噪声；CMYK 与 Lab 输出；全流程 16 位 | 没有 | 待处理 |
 | AVIF、HEIC、JPEG XL | 不读不写 | 有意不做：它们的编解码器转成 Go 之后，编译和运行占用的内存远超本包给自己定的限度；已于 2026 年 11 月 21 日移除 |

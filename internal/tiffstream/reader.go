@@ -24,6 +24,7 @@ import (
 
 	"golang.org/x/image/ccitt"
 
+	"github.com/whhhh1500/goimgtools/internal/jpegstream"
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
@@ -108,6 +109,7 @@ type decoder struct {
 	icc     []byte  // the colour profile, if the file has one
 	xres    float64 // the resolution across, in resUnit
 	xmp     []byte  // the XMP packet, if the file has one
+	iptc    []byte  // the IPTC record, if the file has one
 	exif    []byte  // the EXIF block made of the first directory (exif.go)
 	// jpegTables are the tables JPEG-compressed blocks share.
 	jpegTables []byte
@@ -339,6 +341,36 @@ func (d *decoder) parseIFD(p []byte) (int, error) {
 		// goimgtools addition: the XMP packet.
 		if d.xmp == nil {
 			d.xmp = d.bytesOf(p, pipeline.MaxMetaBytes)
+		}
+	case tIPTC:
+		// goimgtools addition: the IPTC record, of bytes or (as Photoshop
+		// has it) of LONGs, which are the same bytes in words; put in
+		// order when a writer swapped the words' bytes; taken out of
+		// Photoshop's resources when it is wrapped in them as a JPEG's is
+		// (libvips writes a JPEG's so).
+		if dt, n, val := d.field(p); d.iptc == nil && (dt == dtUndefined || dt == dtByte || dt == dtLong) {
+			if dt == dtLong {
+				n *= 4
+			}
+			var b []byte
+			switch {
+			case n == 0 || n > pipeline.MaxMetaBytes:
+			case n <= uint64(len(val)):
+				b = append([]byte(nil), val[:n]...)
+			default:
+				b, _ = safeReadAt(d.r, n, d.pointer(val))
+			}
+			if len(b) >= 4 && b[0] != 0x1c && b[3] == 0x1c {
+				for i := 0; i+4 <= len(b); i += 4 {
+					b[i], b[i+1], b[i+2], b[i+3] = b[i+3], b[i+2], b[i+1], b[i]
+				}
+			}
+			if head := "Photoshop 3.0\x00"; len(b) > len(head) && string(b[:len(head)]) == head {
+				b = jpegstream.PhotoshopIptc(b[len(head):])
+			}
+			if len(b) > 0 && b[0] == 0x1c {
+				d.iptc = b
+			}
 		}
 	case tJPEGTables:
 		// goimgtools addition: the tables of JPEG compression.

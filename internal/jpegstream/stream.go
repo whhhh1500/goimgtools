@@ -499,6 +499,8 @@ func (d *decoder) nextSegment() (sos, eoi bool, err error) {
 			err = d.processApp1(n)
 		case app2Marker:
 			err = d.processApp2(n)
+		case app13Marker:
+			err = d.processApp13(n)
 		case app14Marker:
 			err = d.processApp14Marker(n)
 		default:

@@ -39,6 +39,7 @@ type fileInfo struct {
 	ICC         bool    `json:"icc"`
 	Exif        bool    `json:"exif"`
 	Xmp         bool    `json:"xmp"`
+	Iptc        bool    `json:"iptc"`
 	Density     float64 `json:"density,omitempty"` // pixels per inch
 	Frames      int     `json:"frames,omitempty"`
 	DurationMS  int64   `json:"duration_ms,omitempty"`
@@ -59,7 +60,7 @@ func describe(file string) fileInfo {
 	out.Megapixels = float64(m.Width) * float64(m.Height) / 1e6
 	out.Color, out.Bits, out.Alpha = m.Color, m.Bits, m.HasAlpha
 	out.Orientation, out.ICC, out.Exif, out.Density = m.Orientation, m.HasICC, m.HasExif, m.Density
-	out.Xmp = m.HasXmp
+	out.Xmp, out.Iptc = m.HasXmp, m.HasIptc
 	out.Frames = 1
 	if st, err := os.Stat(file); err == nil {
 		out.Bytes = st.Size()
@@ -121,6 +122,9 @@ func (f fileInfo) line() string {
 	}
 	if f.Xmp {
 		b.WriteString(", XMP")
+	}
+	if f.Iptc {
+		b.WriteString(", IPTC")
 	}
 	if f.Error != "" {
 		b.WriteString("; " + f.Error)

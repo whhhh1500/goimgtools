@@ -321,7 +321,7 @@ func (s *stream) Env() *pipeline.Env { return s.env }
 // Meta is the colour profile, the XMP packet and the EXIF block of the file
 // (made of its first directory, exif.go), and its resolution.
 func (s *stream) Meta() pipeline.Meta {
-	m := pipeline.Meta{ICC: s.d.icc, Xmp: s.d.xmp, Exif: s.d.exif}
+	m := pipeline.Meta{ICC: s.d.icc, Xmp: s.d.xmp, Iptc: s.d.iptc, Exif: s.d.exif}
 	switch s.d.resUnit {
 	case 0, resPerInch: // inches when the unit is not given
 		m.Density = density.FromPerInch(s.d.xres)

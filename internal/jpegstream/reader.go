@@ -66,6 +66,7 @@ const (
 	app0Marker  = 0xe0
 	app1Marker  = 0xe1 // EXIF
 	app2Marker  = 0xe2 // ICC profile
+	app13Marker = 0xed // Photoshop's image resources
 	app14Marker = 0xee
 	app15Marker = 0xef
 )
@@ -171,9 +172,13 @@ type decoder struct {
 	iccParts map[int][]byte
 	iccTotal int
 	metaDone bool
-	touched  [maxComponents]bool // components that appeared in a scan
-	bandMy   int                 // first MCU row of the current band
-	scale    uint                // the image is shrunk by 1<<scale (ShrinkOnLoad)
+	// irb: Photoshop's image resources, gathered from the APP13 segments
+	// for the IPTC record among them; irbFull when they were too many.
+	irb     []byte
+	irbFull bool
+	touched [maxComponents]bool // components that appeared in a scan
+	bandMy  int                 // first MCU row of the current band
+	scale   uint                // the image is shrunk by 1<<scale (ShrinkOnLoad)
 	// rowCoef holds the coefficients of one MCU row, by component, when
 	// the scans of a multi-scan image are decoded in step (multiscan.go).
 	rowCoef [maxComponents][]block
@@ -555,6 +560,56 @@ func (d *decoder) processApp1(n int) error {
 	return nil
 }
 
+// processApp13 collects Photoshop's image resources (goimgtools addition),
+// which hold the IPTC record and may be split over APP13 segments; more of
+// them than a block of metadata may be are not kept.
+func (d *decoder) processApp13(n int) error {
+	const prefix = "Photoshop 3.0\x00"
+	if d.metaDone || d.irbFull || n <= len(prefix) {
+		return d.ignore(n)
+	}
+	if len(d.irb)+n-len(prefix) > pipeline.MaxMetaBytes {
+		d.irbFull = true // too much: none of it is kept
+		return d.ignore(n)
+	}
+	buf := make([]byte, n)
+	if err := d.readFull(buf); err != nil {
+		return err
+	}
+	if string(buf[:len(prefix)]) == prefix {
+		d.irb = append(d.irb, buf[len(prefix):]...)
+	}
+	return nil
+}
+
+// PhotoshopIptc is the IPTC record among Photoshop's image resources irb
+// (each "8BIM", a number, a name, a length and that many bytes, name and
+// bytes padded to an even length): resource 0x0404. Nil when there is
+// none.
+func PhotoshopIptc(irb []byte) []byte {
+	for len(irb) >= 12 && string(irb[:4]) == "8BIM" {
+		id := int(irb[4])<<8 | int(irb[5])
+		name := 1 + int(irb[6])
+		name += name & 1
+		if len(irb) < 6+name+4 {
+			return nil
+		}
+		irb = irb[6+name:]
+		size := int(irb[0])<<24 | int(irb[1])<<16 | int(irb[2])<<8 | int(irb[3])
+		if size < 0 || size > len(irb)-4 {
+			return nil
+		}
+		if id == 0x0404 {
+			if size == 0 {
+				return nil
+			}
+			return append([]byte(nil), irb[4:4+size]...)
+		}
+		irb = irb[min(4+size+size&1, len(irb)):]
+	}
+	return nil
+}
+
 // processApp2 collects the pieces of an ICC profile, which is split over
 // APP2 segments numbered from 1.
 func (d *decoder) processApp2(n int) error {
@@ -598,4 +653,8 @@ func (d *decoder) finishMeta() {
 		}
 	}
 	d.iccParts = nil
+	if !d.irbFull {
+		d.meta.Iptc = PhotoshopIptc(d.irb)
+	}
+	d.irb = nil
 }

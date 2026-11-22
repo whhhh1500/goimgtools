@@ -76,6 +76,9 @@ type EncodeOptions struct {
 	// Xmp is the XMP packet to put into the file (KeepXmp); nil for none.
 	// An encoder whose format cannot hold it leaves it out.
 	Xmp []byte
+	// Iptc is the IPTC record to put into the file (KeepIptc); nil for
+	// none. JPEG and TIFF hold one.
+	Iptc []byte
 	// Density is the resolution to record, in pixels per inch; 0 for none
 	// (an encoder whose format needs one writes its usual default). An
 	// encoder whose format cannot hold it leaves it out.
@@ -198,7 +201,7 @@ var builtin = []*formatDef{
 			}
 			// Transparency over black, as libvips (sharp) flattens it.
 			src = ops.Flatten(src, color.Black)
-			return jpegstream.Encode(w, src, &jpegstream.Options{Quality: q, Exif: o.Exif, ICC: o.ICC, Xmp: o.Xmp, Density: o.Density,
+			return jpegstream.Encode(w, src, &jpegstream.Options{Quality: q, Exif: o.Exif, ICC: o.ICC, Xmp: o.Xmp, Iptc: o.Iptc, Density: o.Density,
 				Optimize: jo.Optimize, Progressive: jo.Progressive, Trellis: jo.Trellis, QuantTable: int(jo.QuantTable),
 				Subsampling: int(jo.ChromaSubsampling), OvershootDeringing: jo.OvershootDeringing})
 		},
@@ -350,7 +353,7 @@ var builtin = []*formatDef{
 			if err != nil {
 				return err
 			}
-			out := &tiffstream.Options{ICC: o.ICC, Xmp: o.Xmp, Exif: o.Exif, Density: o.Density, Predictor: to.Predictor}
+			out := &tiffstream.Options{ICC: o.ICC, Xmp: o.Xmp, Iptc: o.Iptc, Exif: o.Exif, Density: o.Density, Predictor: to.Predictor}
 			switch to.Compression {
 			case TIFFNone:
 			case TIFFDeflate:

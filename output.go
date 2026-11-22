@@ -79,6 +79,13 @@ func (m *Image) SetExif(f ExifFields) *Image {
 // and TIFF, as sharp's keepXmp. By default it is dropped.
 func (m *Image) KeepXmp() *Image { m.keepXmp = true; return m }
 
+// KeepIptc copies the IPTC record of the input (the press's metadata:
+// caption, keywords, byline, copyright notice) to the output, in JPEG (a
+// Photoshop resource in an APP13 segment) and TIFF (tag 33723), as sharp's
+// keepMetadata keeps it. By default it is dropped. It is read from JPEG,
+// TIFF and Photoshop files.
+func (m *Image) KeepIptc() *Image { m.keepIptc = true; return m }
+
 // StripICC drops the ICC colour profile of the input. By default it is
 // copied to the output, because the pixel values only mean the right
 // colours together with it. Without it the values are taken for sRGB, as
@@ -904,6 +911,9 @@ func (m *Image) outputMeta(meta pipeline.Meta) (out pipeline.Meta) {
 	if m.keepXmp {
 		out.Xmp = meta.Xmp
 	}
+	if m.keepIptc {
+		out.Iptc = meta.Iptc
+	}
 	return out
 }
 
@@ -924,7 +934,7 @@ func (m *Image) encodeWith(w io.Writer, src pipeline.Source, format string, opti
 	if def == nil || def.encode == nil {
 		return fmt.Errorf("goimgtools: cannot write %s (%s)", format, formatList())
 	}
-	o := EncodeOptions{Exif: meta.Exif, ICC: meta.ICC, Xmp: meta.Xmp, Density: meta.Density, Options: options}
+	o := EncodeOptions{Exif: meta.Exif, ICC: meta.ICC, Xmp: meta.Xmp, Iptc: meta.Iptc, Density: meta.Density, Options: options}
 	if def.quality != nil {
 		if q, ok := def.quality(o.Options); ok {
 			o.Quality = q

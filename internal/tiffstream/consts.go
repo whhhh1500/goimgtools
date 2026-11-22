@@ -83,6 +83,9 @@ const (
 	tICCProfile = 34675
 	// tXMP holds the XMP packet (XMLPacket).
 	tXMP = 700
+	// tIPTC holds the IPTC record (IPTC-NAA, libtiff's RICHTIFFIPTC): of
+	// bytes, or said to be of LONGs by writers that follow Photoshop.
+	tIPTC = 33723
 	// tJPEGTables holds the tables the JPEG-compressed blocks share.
 	tJPEGTables = 347
 	// tYCbCrSubSampling and tReferenceBlackWhite describe YCbCr samples.

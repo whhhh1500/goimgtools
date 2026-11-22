@@ -112,7 +112,7 @@ func encodeJPEG(w io.Writer, src pipeline.Source, o *Options) error {
 		if _, err := sp.Write(scan); err != nil {
 			return err
 		}
-		if sp.Size() > math.MaxUint32-maxIFD-int64(len(tables)+len(o.ICC)+len(o.Xmp))-8*int64(len(offsets)) {
+		if sp.Size() > math.MaxUint32-maxIFD-int64(len(tables)+len(o.ICC)+len(o.Xmp)+len(o.Iptc))-8*int64(len(offsets)) {
 			return errTooLarge
 		}
 	}
@@ -194,6 +194,9 @@ func encodeJPEG(w io.Writer, src pipeline.Source, o *Options) error {
 	}
 	if len(o.Xmp) > 0 && len(o.Xmp) <= pipeline.MaxMetaBytes {
 		ifd = append(ifd, ifdEnt{tag: tXMP, datatype: dtByte, raw: o.Xmp})
+	}
+	if len(o.Iptc) > 0 && len(o.Iptc) <= pipeline.MaxMetaBytes {
+		ifd = append(ifd, ifdEnt{tag: tIPTC, datatype: dtUndefined, raw: o.Iptc})
 	}
 	ifd = append(ifd, exifEntries(o.Exif)...)
 	return writeIFD(w, imageLen+8, ifd)

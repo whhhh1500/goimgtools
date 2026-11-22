@@ -143,6 +143,9 @@ type Options struct {
 	// Xmp is an XMP packet to embed (tag 700), at most
 	// pipeline.MaxMetaBytes.
 	Xmp []byte
+	// Iptc is an IPTC record to embed (tag 33723, as bytes), at most
+	// pipeline.MaxMetaBytes.
+	Iptc []byte
 	// Exif is an EXIF block (in TIFF form) whose first directory's tags
 	// that describe the picture go into the file's (exif.go), with the
 	// directories they point to.
@@ -322,7 +325,7 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 		return errZeroSize
 	}
 	compression := uint32(cNone)
-	var icc, xmp []byte
+	var icc, xmp, iptc []byte
 	var exif []ifdEnt
 	res := []uint32{72, 1}
 	if o != nil && o.Density > 0 {
@@ -336,6 +339,9 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 		}
 		if len(o.Xmp) <= pipeline.MaxMetaBytes {
 			xmp = o.Xmp
+		}
+		if len(o.Iptc) <= pipeline.MaxMetaBytes {
+			iptc = o.Iptc
 		}
 		exif = exifEntries(o.Exif)
 	}
@@ -359,7 +365,7 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 	// imageLen is the length of the pixel data in bytes.
 	// The offset of the IFD is imageLen + 8 header bytes.
 	imageLen := rowLen * int64(dy)
-	if rowLen > math.MaxInt32 || (compression == cNone && imageLen+8+maxIFD+int64(len(icc)+len(xmp)) > math.MaxUint32) {
+	if rowLen > math.MaxInt32 || (compression == cNone && imageLen+8+maxIFD+int64(len(icc)+len(xmp)+len(iptc)) > math.MaxUint32) {
 		return errTooLarge
 	}
 
@@ -516,7 +522,7 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 			return err
 		}
 		imageLen = sp.Size()
-		if imageLen+8+maxIFD+8*int64(len(strips.offsets))+int64(len(icc)+len(xmp)) > math.MaxUint32 {
+		if imageLen+8+maxIFD+8*int64(len(strips.offsets))+int64(len(icc)+len(xmp)+len(iptc)) > math.MaxUint32 {
 			return errTooLarge
 		}
 		var hdr [8]byte
@@ -631,6 +637,9 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 	}
 	if len(xmp) > 0 {
 		ifd = append(ifd, ifdEnt{tag: tXMP, datatype: dtByte, raw: xmp})
+	}
+	if len(iptc) > 0 {
+		ifd = append(ifd, ifdEnt{tag: tIPTC, datatype: dtUndefined, raw: iptc})
 	}
 	ifd = append(ifd, exif...)
 

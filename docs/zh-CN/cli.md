@@ -113,7 +113,7 @@ goimgtools -op median:3 -op normalize -op "tint:#704214" scan.jpg out.jpg
 | `-animated` | 处理 GIF、WebP 或 PNG 动画（APNG）的每一帧，按输出格式写为 GIF、WebP 或 PNG 动画（APNG，无损）；`-gif-colors`、`-no-dither` 适用于 GIF，WebP 的选项适用于 WebP，`-png-level` 适用于 PNG。输出为其他格式时报错 |
 | `-loop N`、`-frame-delay 毫秒[,毫秒...]` | 配合 `-animated`：播放次数（0 为无限）与每帧显示的毫秒数（一个值用于全部帧，或逐帧列出，最后一个用于其余帧） |
 | `-op NAME[:ARG,ARG...]` | 按名称执行操作（`goimgtools ops` 列出全部操作，包括内置操作与程序注册的操作）；可多次指定，按指定顺序在锐化之后执行 |
-| `-keep-exif`、`-keep-xmp`、`-strip-icc` | 元数据 |
+| `-keep-exif`、`-keep-xmp`、`-keep-iptc`、`-strip-icc` | 元数据 |
 | `-exif-copyright 文字`、`-exif-artist 文字`、`-exif-description 文字` | 写入这些 EXIF 字段（配合 `-keep-exif` 写进保留的块，否则单独成块） |
 | `-density DPI` | 在输出中记录每英寸 DPI 个像素的分辨率（JPEG、PNG、TIFF、BMP）；默认保留输入的分辨率 |
 | `-srgb` | 依据色彩配置将颜色转换至 sRGB，输出不含配置（转为 GIF、BMP 时自动执行） |

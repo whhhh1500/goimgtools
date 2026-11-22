@@ -113,7 +113,7 @@ Operations run in a fixed order: rotate → flip → trim → crop → resize �
 | `-animated` | Process every frame of an animated GIF, WebP or PNG (APNG) and write an animated GIF, WebP or PNG (APNG, without loss) by the output; `-gif-colors` and `-no-dither` also apply to GIF, the WebP options to WebP, `-png-level` to PNG. Another output format is an error |
 | `-loop N`, `-frame-delay MS[,MS...]` | With `-animated`: how often the animation plays (0 for ever) and how long its frames show, in milliseconds (one value for all, or a list, the last for the rest) |
 | `-op NAME[:ARG,ARG...]` | Run an operation by name (`goimgtools ops` lists all of them, both built-in and registered by the program); may be specified more than once, and the operations run after sharpening in the order specified |
-| `-keep-exif`, `-keep-xmp`, `-strip-icc` | Metadata |
+| `-keep-exif`, `-keep-xmp`, `-keep-iptc`, `-strip-icc` | Metadata |
 | `-exif-copyright TEXT`, `-exif-artist TEXT`, `-exif-description TEXT` | Write these EXIF fields (into the kept block with `-keep-exif`, else a block of their own) |
 | `-density DPI` | Record a resolution of DPI pixels per inch in the output (JPEG, PNG, TIFF, BMP); by default the input's is kept |
 | `-srgb` | Convert colours to sRGB using the colour profile; the output contains no profile (applied automatically when converting to GIF or BMP) |

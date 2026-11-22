@@ -122,6 +122,7 @@ type Image struct {
 	loop       int
 	delays     []time.Duration // FrameDelay
 	keepXmp    bool
+	keepIptc   bool
 	stripICC   bool
 	toProfile  []byte   // see ToProfile
 	pages      []*Image // see Pages
