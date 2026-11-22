@@ -997,3 +997,46 @@ func TestVerticalText(t *testing.T) {
 		t.Error("writing-mode on a tspan")
 	}
 }
+
+// TestVariableFonts: a font with variations is drawn at the instance of
+// the style, as Chrome sets it: font-weight on wght (its outlines and
+// advances), font-variation-settings over it.
+func TestVariableFonts(t *testing.T) {
+	font := `font-family="'../../tests/testdata/fonts/VarTest.ttf'" font-size="20"`
+	inked := func(img image.Image, x, y int) bool { return rgbaAt(img, x, y)[3] > 128 }
+	// A: ink 1 to 9 of an advance of 10 at wght 400, 1 to 13 of 14 at 900.
+	for _, c := range []struct {
+		name, attrs string
+		heavy       bool
+	}{
+		{"default", ``, false},
+		{"font-weight", `font-weight="900"`, true},
+		{"font-variation-settings", `style="font-variation-settings: 'wght' 900"`, true},
+		{"settings over the weight", `font-weight="900" style="font-variation-settings: 'wght' 400"`, false},
+		{"settings that do not parse", `font-weight="900" style="font-variation-settings: wght 400"`, true},
+	} {
+		img := render(t, `<text x="10" y="50" `+font+` `+c.attrs+`>AA</text>`)
+		if got := inked(img, 20, 45) && inked(img, 36, 45); got != c.heavy {
+			t.Errorf("%s: drawn heavy %v", c.name, got)
+		}
+		if !inked(img, 15, 45) || inked(img, 15, 30) {
+			t.Errorf("%s: the first letter", c.name)
+		}
+	}
+	// font-stretch on wdth: ultra-condensed (50%) narrows A to ink 1 to 5 of
+	// an advance of 6; the second starts at 16.
+	for _, c := range []struct {
+		name, attrs string
+		narrow      bool
+	}{
+		{"normal", ``, false},
+		{"ultra-condensed", `font-stretch="ultra-condensed"`, true},
+		{"50%", `style="font-stretch: 50%"`, true},
+		{"settings", `style="font-variation-settings: 'wdth' 50"`, true},
+	} {
+		img := render(t, `<text x="10" y="50" `+font+` `+c.attrs+`>AA</text>`)
+		if got := !inked(img, 16, 45) && inked(img, 19, 45) && !inked(img, 22, 45); got != c.narrow {
+			t.Errorf("%s: drawn narrow %v", c.name, got)
+		}
+	}
+}

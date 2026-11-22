@@ -783,9 +783,12 @@ type style struct {
 	// letter-spacing, word-spacing and dominant-baseline.
 	fontFamily       string
 	bold, italic     bool
-	weight           int  // font-weight, 1 to 1000; 0 is 400
-	whitePre         bool // white-space keeps spaces and line feeds (of HTML in a foreignObject)
-	noWrap           bool // and does not wrap lines to fit (nowrap, pre)
+	weight           int     // font-weight, 1 to 1000; 0 is 400
+	stretch          float64 // font-stretch, a percentage; 0 is 100
+	oblique          float64 // font-style: oblique, its angle; 0 for none
+	fontVar          string  // font-variation-settings, as written; "" for normal
+	whitePre         bool    // white-space keeps spaces and line feeds (of HTML in a foreignObject)
+	noWrap           bool    // and does not wrap lines to fit (nowrap, pre)
 	anchor           int
 	letterSp, wordSp float64
 	baseline         int
@@ -1007,11 +1010,31 @@ func computeStyle(n *node, parent style, vp viewport) style {
 		}
 	}
 	if v, ok := get("font-style"); ok {
-		switch strings.TrimSpace(v) {
-		case "italic", "oblique":
-			s.italic = true
-		case "normal":
-			s.italic = false
+		switch f := strings.Fields(v); {
+		case len(f) == 1 && f[0] == "italic":
+			s.italic, s.oblique = true, 0
+		case len(f) > 0 && f[0] == "oblique":
+			// Its angle, 14 degrees unless given (CSS Fonts 4).
+			s.italic, s.oblique = true, 14
+			if len(f) == 2 {
+				if a, ok := cssAngle(f[1]); ok {
+					s.oblique = a
+				}
+			}
+		case len(f) == 1 && f[0] == "normal":
+			s.italic, s.oblique = false, 0
+		}
+	}
+	if v, ok := get("font-stretch"); ok {
+		if p, ok := stretchValue(v); ok {
+			s.stretch = p
+		}
+	}
+	if v, ok := get("font-variation-settings"); ok {
+		if v = strings.TrimSpace(v); v == "normal" {
+			s.fontVar = ""
+		} else {
+			s.fontVar = v
 		}
 	}
 	if v, ok := get("text-anchor"); ok {
@@ -1203,6 +1226,37 @@ func computeStyle(n *node, parent style, vp viewport) style {
 // splitList splits a list of numbers by commas and spaces.
 func splitList(s string) []string {
 	return strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' || r == '\r' })
+}
+
+// stretchValue reads font-stretch: a keyword or a percentage.
+func stretchValue(v string) (float64, bool) {
+	v = strings.ToLower(strings.TrimSpace(v))
+	switch v {
+	case "ultra-condensed":
+		return 50, true
+	case "extra-condensed":
+		return 62.5, true
+	case "condensed":
+		return 75, true
+	case "semi-condensed":
+		return 87.5, true
+	case "normal":
+		return 100, true
+	case "semi-expanded":
+		return 112.5, true
+	case "expanded":
+		return 125, true
+	case "extra-expanded":
+		return 150, true
+	case "ultra-expanded":
+		return 200, true
+	}
+	if p, ok := strings.CutSuffix(v, "%"); ok {
+		if f, err := strconv.ParseFloat(p, 64); err == nil && f >= 0 && !math.IsInf(f, 0) {
+			return f, true
+		}
+	}
+	return 0, false
 }
 
 // weightValue is a font-weight: a number from 1 to 1000 or a keyword,

@@ -70,6 +70,8 @@ type Font struct {
 	// Whether it makes ligatures of Latin text by default.
 	liga, ligaTried bool
 	vm              vmetrics // its vertical metrics
+	// Whether it has variations (fvar), read the first time it is asked.
+	variable, varTried bool
 }
 
 // Close releases the font file.

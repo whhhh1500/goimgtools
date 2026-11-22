@@ -14,6 +14,7 @@ import (
 
 	"github.com/whhhh1500/goimgtools/internal/bidi"
 	"github.com/whhhh1500/goimgtools/internal/colorfont"
+	"github.com/whhhh1500/goimgtools/internal/shape"
 	"github.com/whhhh1500/goimgtools/internal/textsrc"
 	"github.com/whhhh1500/goimgtools/internal/trig"
 )
@@ -737,6 +738,10 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 		// across, and how far down from its pen its baseline is.
 		upright    bool
 		hadv, vorg float64
+		// Of a font with variations: the face it is drawn from, at the
+		// instance of its style.
+		vface *shape.Face
+		vars  []shape.Variation
 	}
 	var out, extra []placed
 	var buf sfnt.Buffer
@@ -819,6 +824,14 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 			}
 		}
 		p := placed{c: c, f: f, gi: gi, x: penX, y: penY, chunk: chunk, sx: 1}
+		if f.Variable() {
+			// Drawn at the instance of its style (its outlines and
+			// advances); a face that cannot be read, at its default.
+			if vf, err := set.ShapingFace(f); err == nil && vf != nil && vf.Variable() {
+				p.vface, p.vars = vf, instance(c.st)
+				vf.SetVariations(p.vars)
+			}
+		}
 		// The lines of the set's first font, in its units of 1/64, whatever
 		// font draws the character (as Chrome: a line of mixed scripts keeps
 		// one baseline and one underline).
@@ -882,6 +895,8 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 				pen += g.XAdvance
 			}
 			adv = float64(float64(pen) * scale)
+		} else if p.vface != nil {
+			adv = float64(float64(p.vface.Advance(uint16(gi))) * scale)
 		} else if a, err := sf.GlyphAdvance(&buf, gi, upem, font.HintingNone); err == nil {
 			adv = float64(float64(float64(a)/64) * scale)
 		}
@@ -1203,6 +1218,7 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 	}
 	decoLines(false)
 	// Outlines, a run of characters of the same element at a time.
+	var vsegs []shape.Segment // an outline of a font with variations
 	var runSegs []seg
 	var runNode *node
 	var layers []colorfont.Layer
@@ -1230,6 +1246,37 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 		}
 		// outline appends the outline of glyph gi to segs.
 		outline := func(segs []seg, gi sfnt.GlyphIndex) []seg {
+			if p.vface != nil {
+				// At the instance (set again for each: drawing a run may
+				// draw a pattern of text of its face): in font units, y up.
+				p.vface.SetVariations(p.vars)
+				var ok bool
+				if vsegs, ok = p.vface.Outline(uint16(gi), vsegs[:0]); ok {
+					k := p.c.st.fontSize / float64(sf.UnitsPerEm())
+					at := func(a [2]float32) [2]float64 {
+						return apply(fr, p.gx+float64(float64(a[0])*k), p.gy-float64(float64(a[1])*k))
+					}
+					for _, g := range vsegs {
+						switch g.Op {
+						case shape.MoveTo:
+							if len(segs) > 0 && segs[len(segs)-1].cmd != cmdClose {
+								segs = append(segs, seg{cmd: cmdClose})
+							}
+							segs = append(segs, seg{cmd: cmdMove, pts: [3][2]float64{at(g.Args[0])}})
+						case shape.LineTo:
+							segs = append(segs, seg{cmd: cmdLine, pts: [3][2]float64{at(g.Args[0])}})
+						case shape.QuadTo:
+							segs = append(segs, seg{cmd: cmdQuad, pts: [3][2]float64{at(g.Args[0]), at(g.Args[1])}})
+						default:
+							segs = append(segs, seg{cmd: cmdCubic, pts: [3][2]float64{at(g.Args[0]), at(g.Args[1]), at(g.Args[2])}})
+						}
+					}
+					if len(segs) > 0 && segs[len(segs)-1].cmd != cmdClose {
+						segs = append(segs, seg{cmd: cmdClose})
+					}
+					return segs
+				}
+			}
 			gsegs, err := sf.LoadGlyph(&buf, gi, upem, nil)
 			if err != nil {
 				return segs

@@ -83,3 +83,17 @@ func (f *Font) reader() io.ReaderAt {
 	}
 	return nil
 }
+
+// Variable reports whether the font has variations (an fvar table), from
+// its table directory, read the first time it is asked.
+func (f *Font) Variable() bool {
+	if !f.varTried {
+		f.varTried = true
+		if r := f.reader(); r != nil {
+			if dir, err := otdir.Read(r, f.Info.Index); err == nil {
+				_, f.variable = dir.Tables["fvar"]
+			}
+		}
+	}
+	return f.variable
+}

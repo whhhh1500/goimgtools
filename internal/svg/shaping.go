@@ -174,6 +174,10 @@ func (b *builder) shapeChars(chars []tchar) {
 			if c.tctx.path != first.tctx.path || c.x != nil || c.y != nil {
 				break
 			}
+			// A font with variations, at another instance: a run of its own.
+			if fonts[i].Variable() && instanceOf(c.st) != instanceOf(first.st) {
+				break
+			}
 			j++
 		}
 		face, err := sets[i].ShapingFace(fonts[i])
@@ -181,6 +185,7 @@ func (b *builder) shapeChars(chars []tchar) {
 			i = j
 			continue
 		}
+		face.SetVariations(instance(first.st)) // a font with variations, at the run's instance
 		gs, ok := sh.Shape(face, rs, i, j, levels[i]%2 == 1)
 		if !ok {
 			i = j

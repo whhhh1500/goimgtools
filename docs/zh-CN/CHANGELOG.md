@@ -6,6 +6,7 @@
 
 ### 新增
 
+- 可变字体（含 `fvar` 表：带 `gvar` 的 TrueType 轮廓或 CFF2）中的 SVG 文字按样式对应的实例绘制，与 Chrome 的设定一致：`font-weight` 对应 `wght` 轴，`font-stretch`（关键字与百分比，现已读取）对应 `wdth`，`font-style: oblique`（及其角度）对应 `slnt`，`italic` 对应 `ital`，字号对应 `opsz`（光学尺寸，CSS 的默认行为），`font-variation-settings` 优先于以上各项；轮廓、前进宽度与整形都随之变化（原先按字体的默认实例绘制，只有一个可变字体文件的字族，粗体也画成常规）。只有这类字体才读取轮廓及其变化数据，并计入内存上限。
 - SVG 竖排文字：text 元素上的 `writing-mode` 为 `tb`、`tb-rl`、`vertical-rl`、`vertical-lr` 时（可继承，同 Chrome；写在 tspan 上不生效），从 `y` 向下排，`x` 处为其中线：多数文字的字母横躺；中日韩文字及其标点、全角字符与表情直立居中，按字体的竖排度量（`vhea` 与 `vmtx`，字形顶端在笔位下方 top bearing 处，同 HarfBuzz 为 Chrome 放置的位置；没有竖排度量的字体按字高与上升高度）前进与放置，括号与破折号横躺；`text-orientation` 为 `upright` 时全部直立，为 `sideways` 时全部横躺。`x`、`y`、`dx`、`dy`、`text-anchor`、`rotate`、装饰线与文字的包围盒都随这一行。路径上的文字仍为横排。
 - SVG 路径上的文字按 Chrome 的方式排：支持 SVG 2 中 `textPath` 的 `path` 属性（取解析到第一个错误之前的部分，优先于 `href`）；路径上字符的绝对 `x` 即沿路径的距离（text 上或 textPath 内 tspan 上的 `x` 会让文字沿路径移动，原先被忽略）；写在 textPath 自身上的 `x`、`y` 不是它的属性，不再采用（原先采用）。
 - SVG：CSS 的滤镜函数（`filter="blur(2px) drop-shadow(4px 5px 6px blue) grayscale(0.5)"`：blur、brightness、contrast、drop-shadow、grayscale、hue-rotate、invert、opacity、saturate、sepia，也可夹 url()），各按 Filter Effects 规范给出的等效原语依次计算，在 sRGB 中进行，区域为元素的包围盒（含描边）加上各函数所及的范围（url() 引用的滤镜裁到其自身区域），与 Chrome 相同：drop-shadow 的第三个长度即模糊的标准差，不带单位的长度按像素；Chrome 视为无效的写法（blur 用百分比、角度不带单位、参数间用逗号）则不加滤镜。resvg 的滤镜函数测试 44 个通过 36 个（原 15 个；其余只差在标签字体）。

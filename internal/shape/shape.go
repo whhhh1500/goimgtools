@@ -7,7 +7,8 @@
 // A font is read for it through a table directory of its own that lists
 // only the tables shaping needs, so its outlines, pictures and other
 // tables are never read: a collection of Chinese fonts that would take
-// 40MB to parse whole takes under 1MB.
+// 40MB to parse whole takes under 1MB. A font with variations has its
+// outlines and their variations read too, to be drawn at an instance.
 package shape
 
 import (
@@ -38,9 +39,17 @@ var tables = map[string]bool{
 // is not shaped (no font of the systems this was tried on comes near).
 const MaxBytes = 16 << 20
 
+// variationTables are read as well for a font with variations (fvar): its
+// outlines, their variations and those of its advances, so that it can be
+// drawn at another instance than its default.
+var variationTables = map[string]bool{
+	"fvar": true, "avar": true, "gvar": true, "glyf": true, "loca": true, "HVAR": true, "MVAR": true, "CFF2": true,
+}
+
 // Face is the shaping tables of a font.
 type Face struct {
-	font *harfbuzz.Font
+	font     *harfbuzz.Font
+	variable bool // with variations, and their outlines
 	// Bytes is the memory it is counted as: three times its tables, as
 	// measured (a parsed table takes up to 2.5 times its bytes).
 	Bytes int64
@@ -118,13 +127,21 @@ func Open(r io.ReaderAt, index int) (f *Face, err error) {
 	if err != nil {
 		return nil, err
 	}
-	var keep []otdir.Table
-	var total int64
-	for tag, t := range dir.Tables {
-		if tables[tag] {
-			keep = append(keep, t)
-			total += t.Length
+	pick := func(variable bool) (keep []otdir.Table, total int64) {
+		for tag, t := range dir.Tables {
+			if tables[tag] || variable && variationTables[tag] {
+				keep = append(keep, t)
+				total += t.Length
+			}
 		}
+		return keep, total
+	}
+	_, variable := dir.Tables["fvar"]
+	keep, total := pick(variable)
+	if variable && total > MaxBytes {
+		// Its outlines too large: shaped at its default instance.
+		variable = false
+		keep, total = pick(false)
 	}
 	if total > MaxBytes {
 		return nil, errors.New("shape: the font's tables are too large")
@@ -151,7 +168,10 @@ func Open(r io.ReaderAt, index int) (f *Face, err error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Face{font: harfbuzz.NewFont(font.NewFace(ft)), Bytes: 3 * total}, nil
+	_, glyf := dir.Tables["glyf"]
+	_, gvar := dir.Tables["gvar"]
+	_, cff2 := dir.Tables["CFF2"]
+	return &Face{font: harfbuzz.NewFont(font.NewFace(ft)), variable: variable && (glyf && gvar || cff2), Bytes: 3 * total}, nil
 }
 
 // Ligatures reports whether font number index of a font or collection file
@@ -228,6 +248,93 @@ func Ligatures(r io.ReaderAt, index int) bool {
 		}
 	}
 	return false
+}
+
+// Variable reports whether the face has variations (an fvar table) and the
+// outlines to draw them (TrueType's with gvar, or CFF2).
+func (f *Face) Variable() bool { return f.variable }
+
+// Variation is the value of an axis of a font with variations, by its tag
+// (four letters), in its design units.
+type Variation struct {
+	Tag   string
+	Value float32
+}
+
+// SetVariations puts the face at an instance of its font: the axes named at
+// their values (held within their ranges), the others at their defaults;
+// tags the font has no axis of are passed over. Shaping, Outline and
+// Advance then take it.
+func (f *Face) SetVariations(vs []Variation) {
+	if !f.variable {
+		return
+	}
+	defer func() { recover() }() // tables that cannot be read: the instance stays
+	var list []font.Variation
+	for _, v := range vs {
+		if len(v.Tag) == 4 {
+			list = append(list, font.Variation{Tag: ot.MustNewTag(v.Tag), Value: v.Value})
+		}
+	}
+	f.font.Face().SetVariations(list)
+}
+
+// Segment operations of an outline.
+const (
+	MoveTo = iota
+	LineTo
+	QuadTo
+	CubeTo
+)
+
+// Segment is a piece of an outline: a move, a line or a quadratic or cubic
+// curve to its last point, in font units, y up.
+type Segment struct {
+	Op   int
+	Args [3][2]float32
+}
+
+// Outline appends the outline of glyph gid at the face's instance to segs;
+// ok is false when it cannot be read.
+func (f *Face) Outline(gid uint16, segs []Segment) (_ []Segment, ok bool) {
+	defer func() {
+		if recover() != nil {
+			ok = false
+		}
+	}()
+	o, ok := f.font.Face().GlyphDataOutline(font.GID(gid))
+	if !ok {
+		return segs, false
+	}
+	for _, s := range o.Segments {
+		var g Segment
+		switch s.Op {
+		case ot.SegmentOpMoveTo:
+			g.Op = MoveTo
+		case ot.SegmentOpLineTo:
+			g.Op = LineTo
+		case ot.SegmentOpQuadTo:
+			g.Op = QuadTo
+		default:
+			g.Op = CubeTo
+		}
+		for i, a := range s.Args {
+			g.Args[i] = [2]float32{a.X, a.Y}
+		}
+		segs = append(segs, g)
+	}
+	return segs, true
+}
+
+// Advance is how far glyph gid moves the pen at the face's instance, in
+// font units.
+func (f *Face) Advance(gid uint16) (adv float32) {
+	defer func() {
+		if recover() != nil {
+			adv = 0
+		}
+	}()
+	return f.font.Face().HorizontalAdvance(font.GID(gid))
 }
 
 // OpenData is Open for a font held in memory.
