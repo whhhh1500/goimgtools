@@ -526,7 +526,7 @@ func (b *builder) viewportInto(n *node, m matrix, st style, x, y, w, h float64, 
 	}
 	// overflow is hidden unless it says otherwise.
 	rect := own
-	if ov, _ := n.prop("overflow"); ov != "visible" && ov != "auto" {
+	if !overflowVisible(n) {
 		segs := rectSegs(x, y, w, h, 0, 0)
 		p := fillPath(flatten(segs, m), m, false)
 		rect = chainClip(&clip{paths: []*raster.Path{p}, bounds: pathBounds(p, b.full)}, own)
@@ -597,8 +597,9 @@ func (b *builder) useContent(n, t *node, m matrix, st style, vp viewport, x, y f
 		if !ts.display {
 			return
 		}
-		if t.name == "svg" {
-			// An svg element keeps its place, moved by the use's.
+		{
+			// An svg element keeps its place, moved by the use's; so does a
+			// symbol (SVG 2, as Chrome and resvg).
 			tx, _ := parseLength(t.attrs["x"], ts.fontSize, vp, axisX)
 			ty, _ := parseLength(t.attrs["y"], ts.fontSize, vp, axisY)
 			x, y = x+tx, y+ty
@@ -754,6 +755,30 @@ func segsBBox(segs []seg) ([4]float64, bool) {
 	}
 	if minX > maxX {
 		return [4]float64{}, false
+	}
+	// Within the points that make the curves, which hold them: the points
+	// of a flattened curve may stray by a rounding, so a curve along a
+	// straight line would keep a box of some width (Chrome's has none).
+	hx0, hy0, hx1, hy1 := math.Inf(1), math.Inf(1), math.Inf(-1), math.Inf(-1)
+	for _, s := range segs {
+		n := 0
+		switch s.cmd {
+		case cmdMove, cmdLine:
+			n = 1
+		case cmdQuad:
+			n = 2
+		case cmdCubic:
+			n = 3
+		}
+		for _, p := range s.pts[:n] {
+			hx0, hx1 = math.Min(hx0, p[0]), math.Max(hx1, p[0])
+			hy0, hy1 = math.Min(hy0, p[1]), math.Max(hy1, p[1])
+		}
+	}
+	if hx0 <= hx1 {
+		minX, maxX = math.Max(minX, hx0), math.Min(maxX, hx1)
+		minY, maxY = math.Max(minY, hy0), math.Min(maxY, hy1)
+		maxX, maxY = math.Max(maxX, minX), math.Max(maxY, minY)
 	}
 	return [4]float64{minX, minY, maxX - minX, maxY - minY}, true
 }
@@ -1105,6 +1130,35 @@ func (b *builder) bboxOf(n *node, vp viewport, st style) ([4]float64, bool) {
 		return [4]float64{}, false
 	}
 	return [4]float64{minX, minY, maxX - minX, maxY - minY}, true
+}
+
+// overflowVisible reports whether what an element that makes a viewport (a
+// nested svg, a symbol, a marker, a foreignObject) draws shows outside it:
+// its overflow visible or auto. Unset, it is hidden (the user agent's style
+// sheet); inherit takes the parent's, which unset is hidden on those
+// elements (but the root svg) and visible on others.
+func overflowVisible(n *node) bool {
+	for k := n; k != nil; k = k.parent {
+		v, ok := k.prop("overflow")
+		v = strings.TrimSpace(v)
+		if ok && v == "inherit" {
+			continue
+		}
+		if !ok {
+			if k == n {
+				return false
+			}
+			switch k.name {
+			case "svg":
+				return k.parent == nil
+			case "symbol", "marker", "pattern", "image", "foreignObject":
+				return false
+			}
+			return true
+		}
+		return v == "visible" || v == "auto"
+	}
+	return true // above the root: the initial value, visible
 }
 
 // conditionsMet evaluates an element's conditional attributes: it asks for

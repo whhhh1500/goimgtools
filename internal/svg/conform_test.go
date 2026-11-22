@@ -856,3 +856,44 @@ func TestRTLLines(t *testing.T) {
 		t.Errorf("the lines' ink spans %d and %d pixels across", top, bottom)
 	}
 }
+
+// TestChromeForms: values as Chrome (and resvg) take them. flood-color and
+// lighting-color currentColor and inherit resolve where the primitive is
+// (lighting-color white unset); stdDeviation of more than two numbers is no
+// blur; a convolution kernel that does not fit its order is transparent;
+// BackgroundImage and FillPaint are as if no input were named; rgb() with
+// commas takes numbers or percentages, not both; a paint's fallback that is
+// not a colour makes it invalid; a symbol's x and y move it; overflow
+// inherit on a marker takes its parent's; a curve on a straight line has no
+// width; an feImage of an element draws it at its subregion's corner.
+func TestChromeForms(t *testing.T) {
+	green := [4]uint32{0, 128, 0, 255}
+	black := [4]uint32{0, 0, 0, 255}
+	cases := []struct {
+		name, doc string
+		x, y      int
+		want      [4]uint32
+	}{
+		{"flood-color currentColor", `<filter id="f" color="green"><feFlood flood-color="currentColor"/></filter><rect width="100" height="100" color="red" filter="url(#f)"/>`, 50, 50, green},
+		{"flood-color inherit", `<filter id="f" flood-color="green"><feFlood flood-color="inherit"/></filter><rect width="100" height="100" filter="url(#f)"/>`, 50, 50, green},
+		{"lighting-color inherit, unset", `<filter id="f"><feDiffuseLighting lighting-color="inherit"><feDistantLight elevation="90"/></feDiffuseLighting></filter><rect width="100" height="100" filter="url(#f)"/>`, 50, 50, [4]uint32{255, 255, 255, 255}},
+		{"stdDeviation of four numbers", `<filter id="f"><feGaussianBlur stdDeviation="5 10 15 20"/></filter><rect x="20" y="20" width="60" height="60" fill="green" filter="url(#f)"/>`, 21, 50, green},
+		{"a kernel short of its order", `<filter id="f"><feConvolveMatrix order="3" kernelMatrix="1 1 1"/></filter><rect width="100" height="100" fill="green" filter="url(#f)"/>`, 50, 50, [4]uint32{}},
+		{"FillPaint", `<filter id="f"><feOffset in="FillPaint"/></filter><rect width="100" height="100" fill="green" filter="url(#f)"/>`, 50, 50, green},
+		{"BackgroundImage", `<filter id="f"><feOffset in="BackgroundImage"/></filter><rect width="100" height="100" fill="green" filter="url(#f)"/>`, 50, 50, green},
+		{"rgba of numbers and percentages", `<rect width="100" height="100" fill="rgba(0, 50%, 0, 0.5)"/>`, 50, 50, black},
+		{"rgb of percentages", `<rect width="100" height="100" fill="rgb(0%, 50.2%, 0%)"/>`, 50, 50, green},
+		{"a fallback with icc-color", `<linearGradient id="g"><stop stop-color="red"/></linearGradient><rect width="100" height="100" fill="url(#g) green icc-color(p, 0.1, 0.2, 0.3)"/>`, 50, 50, black},
+		{"a symbol's x and y", `<symbol id="s" x="50" y="50"><rect width="50" height="50" fill="green"/></symbol><use href="#s"/>`, 25, 25, [4]uint32{}},
+		{"a symbol's x and y, inside", `<symbol id="s" x="50" y="50"><rect width="50" height="50" fill="green"/></symbol><use href="#s"/>`, 75, 75, green},
+		{"overflow inherit on a marker", `<marker id="m" overflow="inherit" markerWidth="1" markerHeight="1"><rect x="-20" y="-20" width="40" height="40" fill="green"/></marker><path d="M50 50 h1" marker-start="url(#m)"/>`, 40, 40, green},
+		{"a curve on a straight line", `<linearGradient id="g"><stop stop-color="red"/><stop offset="1" stop-color="red"/></linearGradient><line x1="50" y1="0" x2="50" y2="100" stroke="green" stroke-width="6"/><path d="M50 0 C50 20 50 80 50 100" stroke="url(#g)" stroke-width="6"/>`, 50, 50, green},
+		{"feImage of an element", `<defs><rect id="r" width="30" height="30" fill="green"/></defs><filter id="f" filterUnits="userSpaceOnUse" x="40" y="40" width="60" height="60"><feImage href="#r"/></filter><rect width="100" height="100" filter="url(#f)"/>`, 55, 55, green},
+		{"feImage of an element, before its corner", `<defs><rect id="r" width="30" height="30" fill="green"/></defs><filter id="f" filterUnits="userSpaceOnUse" x="40" y="40" width="60" height="60"><feImage href="#r"/></filter><rect width="100" height="100" filter="url(#f)"/>`, 75, 75, [4]uint32{}},
+	}
+	for _, c := range cases {
+		if got := rgbaAt(render(t, c.doc), c.x, c.y); got != c.want {
+			t.Errorf("%s: %v, want %v", c.name, got, c.want)
+		}
+	}
+}

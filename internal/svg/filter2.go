@@ -524,23 +524,25 @@ func (c *fctx) convolve(p *node) (fbuf, error) {
 	if err != nil {
 		return nil, err
 	}
-	pass := func() (fbuf, error) { copy(out, in); return out, nil }
+	// Attributes that make no kernel: transparent black (as Chrome and
+	// resvg).
+	invalid := func() (fbuf, error) { return out, nil }
 	order, _ := numbers(attrOr(p, "order", "3"))
 	ox, oy := 3, 3
 	// Whole numbers, cut down to them (as librsvg).
 	if len(order) > 0 && order[0] >= 1 && order[0] <= 64 {
 		ox, oy = int(order[0]), int(order[0])
 	} else if len(order) > 0 {
-		return pass()
+		return invalid()
 	}
 	if len(order) > 1 && order[1] >= 1 && order[1] <= 64 {
 		oy = int(order[1])
 	} else if len(order) > 1 {
-		return pass()
+		return invalid()
 	}
 	km, _ := numbers(p.attrs["kernelMatrix"])
 	if ox < 1 || oy < 1 || ox > 64 || oy > 64 || len(km) != ox*oy {
-		return pass() // not a kernel: the input passes on
+		return invalid() // not a kernel
 	}
 	divisor := 0.0
 	for _, k := range km {
@@ -560,13 +562,13 @@ func (c *fctx) convolve(p *node) (fbuf, error) {
 	tx, ty := ox/2, oy/2
 	if v, err := strconv.Atoi(strings.TrimSpace(attrOr(p, "targetX", "x"))); err == nil {
 		if v < 0 || v >= ox {
-			return pass()
+			return invalid()
 		}
 		tx = v
 	}
 	if v, err := strconv.Atoi(strings.TrimSpace(attrOr(p, "targetY", "x"))); err == nil {
 		if v < 0 || v >= oy {
-			return pass()
+			return invalid()
 		}
 		ty = v
 	}
@@ -747,9 +749,6 @@ func (c *fctx) image(p *node) (fbuf, error) {
 // colour space.
 func (c *fctx) lightingColor(p *node, st style) [3]float32 {
 	col := c.floodColor(p, "lighting-color", "", st)
-	if _, ok := p.prop("lighting-color"); !ok {
-		col = [4]float32{1, 1, 1, 1}
-	}
 	if col[3] > 0 {
 		// The colour alone: its opacity plays no part (as librsvg).
 		return [3]float32{col[0] / col[3], col[1] / col[3], col[2] / col[3]}

@@ -734,9 +734,14 @@ func parsePaint(s string) (paint, bool) {
 		id := strings.Trim(strings.TrimSpace(s[4:end]), `"'`)
 		p := paint{kind: paintURL, url: strings.TrimPrefix(id, "#")}
 		if rest := strings.TrimSpace(s[end+1:]); rest != "" {
-			if f, ok := parsePaint(rest); ok {
-				p.fallback = &f
+			f, ok := parsePaint(rest)
+			if !ok || f.kind != paintNone && f.kind != paintColor && f.kind != paintCurrent {
+				// A fallback that is not a colour or none (a colour with an
+				// icc-color): the whole value is invalid (as Chrome and
+				// resvg).
+				return paint{}, false
 			}
+			p.fallback = &f
 		}
 		return p, true
 	}

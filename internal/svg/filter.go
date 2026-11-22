@@ -2,6 +2,7 @@ package svg
 
 import (
 	"image"
+	"image/color"
 	"math"
 	"slices"
 	"strconv"
@@ -310,6 +311,30 @@ func (b *builder) filtered(n *node, f *node, m matrix, st style, vp viewport, ow
 		}
 		href = strings.TrimSpace(href)
 		var draw func()
+		// The subregion in user space; of primitive units of the
+		// bounding box, fractions (or percentages) of it.
+		coord := func(name string, def float64, axis int, origin, size float64) float64 {
+			v := strings.TrimSpace(p.attrs[name])
+			if v == "" {
+				return def
+			}
+			if primBox {
+				pct := strings.HasSuffix(v, "%")
+				f, ok := finiteNum(strings.TrimSuffix(v, "%"))
+				if !ok {
+					return def
+				}
+				if pct {
+					f /= 100
+				}
+				return origin + float64(f*size)
+			}
+			if l, ok := parseLength(v, st.fontSize, vp, axis); ok {
+				return l
+			}
+			return def
+		}
+		x, y := coord("x", rx, axisX, bx[0], bx[2]), coord("y", ry, axisY, bx[1], bx[3])
 		if strings.HasPrefix(href, "#") {
 			t := b.ids[href[1:]]
 			if t == nil {
@@ -331,33 +356,10 @@ func (b *builder) filtered(n *node, f *node, m matrix, st style, vp viewport, ow
 						delete(b.filtering, a)
 					}
 				}()
-				b.element(t, cm, inner, vp, nil)
+				// At the subregion's corner (as Chrome and resvg).
+				b.element(t, cm.mul(matrix{1, 0, 0, 1, x, y}), inner, vp, nil)
 			}
 		} else if strings.HasPrefix(href, "data:") {
-			// The subregion in user space; of primitive units of the
-			// bounding box, fractions (or percentages) of it.
-			coord := func(name string, def float64, axis int, origin, size float64) float64 {
-				v := strings.TrimSpace(p.attrs[name])
-				if v == "" {
-					return def
-				}
-				if primBox {
-					pct := strings.HasSuffix(v, "%")
-					f, ok := finiteNum(strings.TrimSuffix(v, "%"))
-					if !ok {
-						return def
-					}
-					if pct {
-						f /= 100
-					}
-					return origin + float64(f*size)
-				}
-				if l, ok := parseLength(v, st.fontSize, vp, axis); ok {
-					return l
-				}
-				return def
-			}
-			x, y := coord("x", rx, axisX, bx[0], bx[2]), coord("y", ry, axisY, bx[1], bx[3])
 			iw, ih := coord("width", rw, axisX, 0, bx[2]), coord("height", rh, axisY, 0, bx[3])
 			attrs := map[string]string{"x": strconv.FormatFloat(x, 'g', -1, 64), "y": strconv.FormatFloat(y, 'g', -1, 64),
 				"width": strconv.FormatFloat(iw, 'g', -1, 64), "height": strconv.FormatFloat(ih, 'g', -1, 64), "href": href}
@@ -769,14 +771,12 @@ func (c *fctx) input(name string) (fbuf, error) {
 		}
 		return b, nil
 	}
-	switch strings.TrimSpace(name) {
-	case "BackgroundImage", "BackgroundAlpha", "FillPaint", "StrokePaint":
-		return c.alloc() // nothing
-	}
 	if r, ok := c.results[strings.TrimSpace(name)]; ok {
 		return r, nil
 	}
-	// A result not made before it: as if none were named (as Chrome).
+	// A result not made before it, and the inputs Filter Effects 1 dropped
+	// (BackgroundImage, BackgroundAlpha, FillPaint, StrokePaint): as if none
+	// were named (as Chrome and resvg).
 	return c.last, nil
 }
 
@@ -969,6 +969,9 @@ func (c *fctx) blur(p *node) (fbuf, error) {
 	}
 	sd, _ := numbers(p.attrs["stdDeviation"])
 	sx, sy := 0.0, 0.0
+	if len(sd) > 2 {
+		sd = nil // more than two: not a value, no blur (as Chrome and resvg)
+	}
 	if len(sd) > 0 {
 		sx, sy = sd[0], sd[0]
 	}
@@ -1122,15 +1125,41 @@ func (c *fctx) shift(in fbuf, dx, dy float64) (fbuf, error) {
 // in the filter's colour space.
 func (c *fctx) floodColor(p *node, prop, opProp string, st style) [4]float32 {
 	col := [4]float32{0, 0, 0, 1}
-	if v, ok := p.prop(prop); ok {
+	if prop == "lighting-color" {
+		col = [4]float32{1, 1, 1, 1} // its initial value: white
+	}
+	// inherit takes the parent's (the filter element's); currentColor the
+	// color where the primitive is (as Chrome), not the filtered element's.
+	q := p
+	v, ok := q.prop(prop)
+	for ok && strings.TrimSpace(v) == "inherit" && q.parent != nil {
+		q = q.parent
+		v, ok = q.prop(prop)
+	}
+	if ok {
 		if strings.EqualFold(strings.TrimSpace(v), "currentcolor") {
-			col = [4]float32{float32(st.color.R) / 255, float32(st.color.G) / 255, float32(st.color.B) / 255, float32(st.color.A) / 255}
+			cc := color.NRGBA{0, 0, 0, 255} // the initial color
+			for k := q; k != nil; k = k.parent {
+				if cv, ok := k.prop("color"); ok {
+					if parsed, ok := csscolor.Parse(cv); ok {
+						cc = parsed
+						break
+					}
+				}
+			}
+			col = [4]float32{float32(cc.R) / 255, float32(cc.G) / 255, float32(cc.B) / 255, float32(cc.A) / 255}
 		} else if cc, ok := csscolor.Parse(v); ok {
 			col = [4]float32{float32(cc.R) / 255, float32(cc.G) / 255, float32(cc.B) / 255, float32(cc.A) / 255}
 		}
 	}
-	if v, ok := p.prop(opProp); ok {
-		col[3] = float32(float64(col[3]) * opacityValue(v, 1))
+	qo := p
+	ov, ok := qo.prop(opProp)
+	for ok && strings.TrimSpace(ov) == "inherit" && qo.parent != nil {
+		qo = qo.parent
+		ov, ok = qo.prop(opProp)
+	}
+	if ok {
+		col[3] = float32(float64(col[3]) * opacityValue(ov, 1))
 	}
 	for k := 0; k < 3; k++ {
 		if c.linear {

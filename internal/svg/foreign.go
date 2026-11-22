@@ -101,7 +101,7 @@ func (b *builder) foreignObject(n *node, m matrix, st style, vp viewport, own, o
 	tst.baseline = baseAlphabetic // SVG's dominant-baseline is not HTML's
 	// What overflows the box is clipped (unless overflow says otherwise).
 	rect := own
-	if ov, _ := n.prop("overflow"); ov != "visible" && ov != "auto" {
+	if !overflowVisible(n) {
 		p := fillPath(flatten(rectSegs(x, y, w, h, 0, 0), m), m, false)
 		rect = chainClip(&clip{paths: []*raster.Path{p}, bounds: pathBounds(p, b.full)}, own)
 	}

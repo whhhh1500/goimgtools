@@ -49,6 +49,7 @@
 
 ### 修复
 
+- SVG 按 Chrome 与 resvg 的画法（每条都与两者对照过）：`feImage` 引用元素时画在其子区域的左上角（原先画在元素本身的位置，差一个区域偏移）；输入 `BackgroundImage`、`BackgroundAlpha`、`FillPaint`、`StrokePaint` 当作没写输入（原先是透明）；`flood-color`、`lighting-color` 为 `currentColor` 或 `inherit` 时在原语所在处取值，`lighting-color` 未设时为白色；`stdDeviation` 多于两个数时不模糊；`feConvolveMatrix` 的核与阶数不符（或目标点在核外）时结果透明（原先原样传出输入）；`symbol` 上的 `x`、`y` 生效；标记或视口上的 `overflow="inherit"` 取父元素的值；沿直线的曲线包围盒宽度为零（按包围盒单位的渐变不画）；备用值不是颜色或 `none` 的绘制值（`url(#g) green icc-color(…)`）整体无效；带逗号的 `rgb()`、`rgba()` 不能数字与百分比混用。
 - SVG 中从右向左书写的文字：tspan 用 `dx` 或 `dy` 移动的一行（d3 用 `x` 加 `dy` 分行就是这样）整行移动；原先只有阅读顺序上的第一个字母（最右边那个）移动，其余仍留在上一行。
 - SVG 文字：tspan 上的 `textLength`（及 `lengthAdjust`）让其字符恰好排满该长度，行内其后的文字随之移动（原先只认 text 元素上的）；tspan 上的 `xml:space="preserve"` 保留其空格（原先只读 text 元素上的）；路径上的文字可延续到路径后面的子路径，`startOffset` 的百分比按全部子路径的总长计算（原先只沿第一个子路径）。均与 Chrome 用同一字体对照。
 - SVG 的 `text-anchor` 按块内字形的实际范围对齐，与 SVG 2 及 Chrome 相同：`dx` 让某个字形退到第一个字形之前时，`start` 让最左的字形从 `x` 开始，`middle`、`end` 按全部字形的范围居中或右对齐（原先按第一个笔位到最后一个笔位的距离）。

@@ -227,7 +227,7 @@ func (b *builder) marker(mk *node, v vertex, m matrix, st style, vp viewport, cl
 	}
 	mst := computeStyle(mk, initialStyle(), vp)
 	var cut *clip
-	if ov, _ := mk.prop("overflow"); ov != "visible" && ov != "auto" {
+	if !overflowVisible(mk) {
 		p := fillPath(flatten(rectSegs(0, 0, mw, mh, 0, 0), mm), mm, false)
 		cut = chainClip(&clip{paths: nil, bounds: pathBounds(p, b.full)}, nil)
 		cut.paths = append(cut.paths, p)

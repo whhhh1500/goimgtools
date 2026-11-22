@@ -33,7 +33,8 @@ func Parse(s string) (c color.NRGBA, ok bool) {
 	fn, args := strings.TrimSpace(s[:open]), s[open+1:len(s)-1]
 	var parts []string
 	var alpha string
-	if strings.Contains(args, ",") {
+	comma := strings.Contains(args, ",")
+	if comma {
 		parts = strings.Split(args, ",")
 		if len(parts) == 4 {
 			alpha, parts = parts[3], parts[:3]
@@ -59,12 +60,22 @@ func Parse(s string) (c color.NRGBA, ok bool) {
 	switch fn {
 	case "rgb", "rgba":
 		var v [3]float64
+		pcts := 0
 		for i, p := range parts {
-			x, ok := number(strings.TrimSpace(p), 255)
+			p = strings.TrimSpace(p)
+			if strings.HasSuffix(p, "%") {
+				pcts++
+			}
+			x, ok := number(p, 255)
 			if !ok {
 				return c, false
 			}
 			v[i] = x
+		}
+		if comma && pcts != 0 && pcts != 3 {
+			// The comma form takes numbers or percentages, not both (CSS
+			// Color 4, as Chrome).
+			return c, false
 		}
 		return color.NRGBA{byteOf(v[0]), byteOf(v[1]), byteOf(v[2]), byteOf(a * 255)}, true
 	case "hsl", "hsla":
