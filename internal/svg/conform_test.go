@@ -532,3 +532,74 @@ func TestFontWeights(t *testing.T) {
 		}
 	}
 }
+
+// TestForeignObject: the HTML of a foreignObject (as mermaid writes its
+// labels) is drawn as text: centred by text-align, lines broken by br and
+// blocks, the backgrounds of inline elements under their text, an SVG
+// document in it drawn as SVG; what browsers do not show (style elements)
+// is not drawn.
+func TestForeignObject(t *testing.T) {
+	font := `font-family="'` + testFont + `'"`
+	ink := func(img image.Image, x0, y0, x1, y1 int) (n int, minX, maxX int) {
+		minX, maxX = 1<<30, -1
+		for y := y0; y < y1; y++ {
+			for x := x0; x < x1; x++ {
+				if c := rgbaAt(img, x, y); c[3] > 0 && c[1] < 100 {
+					n++
+					minX, maxX = min(minX, x), max(maxX, x)
+				}
+			}
+		}
+		return n, minX, maxX
+	}
+	label := `<g ` + font + ` font-size="16" style="text-align:center"><foreignObject width="100" height="60"><div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap;"><span>नमस्ते<br/>नमस्ते</span></div></foreignObject></g>`
+	img := render(t, label)
+	top, l1, r1 := ink(img, 0, 0, 100, 22)
+	bottom, _, _ := ink(img, 0, 22, 100, 50)
+	if top == 0 || bottom == 0 {
+		t.Fatalf("two lines: %d and %d pixels of ink", top, bottom)
+	}
+	if mid := (l1 + r1) / 2; mid < 45 || mid > 55 {
+		t.Errorf("a line centred: its ink from %d to %d", l1, r1)
+	}
+	if n, _, _ := ink(render(t, `<foreignObject width="100" height="100"><div xmlns="http://www.w3.org/1999/xhtml"><style>p { color: red }</style></div></foreignObject>`), 0, 0, 100, 100); n != 0 {
+		t.Errorf("a style element drawn: %d pixels", n)
+	}
+	bg := `<foreignObject width="100" height="40" ` + font + `><div xmlns="http://www.w3.org/1999/xhtml"><span style="background-color: #0000ff">नमस्ते</span></div></foreignObject>`
+	blue := 0
+	bimg := render(t, bg)
+	for y := 0; y < 40; y++ {
+		for x := 0; x < 100; x++ {
+			if c := rgbaAt(bimg, x, y); c[2] > 200 && c[0] < 50 {
+				blue++
+			}
+		}
+	}
+	if blue < 50 {
+		t.Errorf("the background of a span: %d pixels", blue)
+	}
+	// Words that do not fit the box's width wrap (white-space lets them);
+	// with nowrap they stay on one line.
+	words := func(ws string) image.Image {
+		return render(t, `<foreignObject width="60" height="80" `+font+` font-size="16"><div xmlns="http://www.w3.org/1999/xhtml" style="white-space: `+ws+`">नमस्ते नमस्ते नमस्ते</div></foreignObject>`)
+	}
+	if n, _, _ := ink(words("normal"), 0, 22, 60, 60); n == 0 {
+		t.Error("words not wrapped to the box")
+	}
+	if n, _, _ := ink(words("nowrap"), 0, 22, 60, 60); n != 0 {
+		t.Errorf("words wrapped with nowrap: %d pixels below the first line", n)
+	}
+	if got := splitWords("a b-c  d 1-2"); !slices.Equal(got, []string{"a ", "b-", "c  ", "d ", "1-2"}) {
+		t.Errorf("break opportunities: %q", got)
+	}
+	nested := `<foreignObject width="100" height="100"><div xmlns="http://www.w3.org/1999/xhtml"><svg xmlns="http://www.w3.org/2000/svg" width="50" height="50"><rect width="50" height="50" fill="green"/></svg></div></foreignObject>`
+	if got := rgbaAt(render(t, nested), 25, 25); got != [4]uint32{0, 128, 0, 255} {
+		t.Errorf("an SVG document in the HTML: %v", got)
+	}
+	// A sheet's broken end does not spill into the next; @import ends at
+	// its semicolon.
+	sheets := `<style>@import url("x.css");'</style><style>#r { fill: green }</style><rect id="r" width="100" height="100" fill="red"/>`
+	if got := rgbaAt(render(t, sheets), 50, 50); got != [4]uint32{0, 128, 0, 255} {
+		t.Errorf("a rule after @import in another sheet: %v", got)
+	}
+}

@@ -958,7 +958,7 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 		for i, p := range out {
 			if drawn[i] && !p.extra {
 				fr := frames[i]
-				b.measureText([4][2]float64{apply(fr, 0, p.over), apply(fr, p.adv, p.over), apply(fr, 0, p.desc), apply(fr, p.adv, p.desc)})
+				b.measureText(p.c.node, [4][2]float64{apply(fr, 0, p.over), apply(fr, p.adv, p.over), apply(fr, 0, p.desc), apply(fr, p.adv, p.desc)})
 			}
 		}
 		return

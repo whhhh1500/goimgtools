@@ -323,64 +323,25 @@ func declarations(src string) [][3]string {
 // applySheets matches the rules of every style element of the document to
 // its elements.
 func applySheets(root *node) {
-	var css strings.Builder
+	// Each style element is a sheet of its own (what is broken in one does
+	// not spill into the next), their rules in the document's order.
+	var sheets []string
 	var walk func(n *node)
 	walk = func(n *node) {
-		if n.name == "style" && isCSS(n.attrs["type"]) {
-			css.WriteString(n.text)
-			css.WriteByte('\n')
+		if n.name == "style" && isCSS(n.attrs["type"]) && n.text != "" {
+			sheets = append(sheets, n.text)
 		}
 		for _, c := range n.children {
 			walk(c)
 		}
 	}
 	walk(root)
-	if css.Len() == 0 {
+	if len(sheets) == 0 {
 		return
 	}
-	src := stripComments(css.String())
-	type rule struct {
-		sels  []selector
-		decls [][3]string
-	}
-	var rules []rule
-	for len(src) > 0 {
-		open := strings.IndexByte(src, '{')
-		if open < 0 {
-			break
-		}
-		head := strings.TrimSpace(src[:open])
-		// The block, with any nested one (an at-rule's).
-		depth, end := 0, -1
-		for i := open; i < len(src); i++ {
-			if src[i] == '{' {
-				depth++
-			} else if src[i] == '}' {
-				depth--
-				if depth == 0 {
-					end = i
-					break
-				}
-			}
-		}
-		if end < 0 {
-			break
-		}
-		body := src[open+1 : end]
-		src = src[end+1:]
-		if strings.HasPrefix(head, "@") {
-			continue // media queries, font faces and the like are not used
-		}
-		var r rule
-		for _, part := range strings.Split(head, ",") {
-			if s, ok := parseSelector(part); ok {
-				r.sels = append(r.sels, s)
-			}
-		}
-		r.decls = declarations(body)
-		if len(r.sels) > 0 && len(r.decls) > 0 {
-			rules = append(rules, r)
-		}
+	var rules []cssRule
+	for _, sheet := range sheets {
+		rules = append(rules, parseRules(stripComments(sheet))...)
 	}
 	order := 0
 	var apply func(n *node)
@@ -419,6 +380,66 @@ func isCSS(typ string) bool {
 	t, _, _ := strings.Cut(typ, ";")
 	t = strings.TrimSpace(t)
 	return t == "" || strings.EqualFold(t, "text/css")
+}
+
+// cssRule is a rule of a style sheet: its selectors and declarations.
+type cssRule struct {
+	sels  []selector
+	decls [][3]string
+}
+
+// parseRules reads the rules of a style sheet (its comments gone); at-rules
+// are passed over.
+func parseRules(src string) []cssRule {
+	var rules []cssRule
+	for len(src) > 0 {
+		// At-rules without a block (@import, @charset, @namespace) end at
+		// their semicolon.
+		if t := strings.TrimLeft(src, " \t\r\n"); strings.HasPrefix(t, "@") {
+			semi, brace := strings.IndexByte(t, ';'), strings.IndexByte(t, '{')
+			if semi >= 0 && (brace < 0 || semi < brace) {
+				src = t[semi+1:]
+				continue
+			}
+		}
+		open := strings.IndexByte(src, '{')
+		if open < 0 {
+			break
+		}
+		head := strings.TrimSpace(src[:open])
+		// The block, with any nested one (an at-rule's).
+		depth, end := 0, -1
+		for i := open; i < len(src); i++ {
+			if src[i] == '{' {
+				depth++
+			} else if src[i] == '}' {
+				depth--
+				if depth == 0 {
+					end = i
+					break
+				}
+			}
+		}
+		if end < 0 {
+			break
+		}
+		body := src[open+1 : end]
+		src = src[end+1:]
+		if strings.HasPrefix(head, "@") {
+			continue // media queries, font faces and the like are not used
+		}
+		var r cssRule
+		for _, part := range strings.Split(head, ",") {
+			if s, ok := parseSelector(part); ok {
+				r.sels = append(r.sels, s)
+			}
+		}
+		r.decls = declarations(body)
+		if len(r.sels) > 0 && len(r.decls) > 0 {
+			rules = append(rules, r)
+		}
+	}
+	return rules
 }
 
 func stripComments(s string) string {
@@ -701,7 +722,9 @@ type style struct {
 	// letter-spacing, word-spacing and dominant-baseline.
 	fontFamily       string
 	bold, italic     bool
-	weight           int // font-weight, 1 to 1000; 0 is 400
+	weight           int  // font-weight, 1 to 1000; 0 is 400
+	whitePre         bool // white-space keeps spaces and line feeds (of HTML in a foreignObject)
+	noWrap           bool // and does not wrap lines to fit (nowrap, pre)
 	anchor           int
 	letterSp, wordSp float64
 	baseline         int

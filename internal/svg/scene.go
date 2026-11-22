@@ -127,9 +127,9 @@ type builder struct {
 	err         error
 	useing      map[*node]bool // the use elements being expanded, against cycles
 	outlines    map[*node]*outline
-	clipText    func(segs []seg, m matrix) // set while the text of a clip path is laid out: takes its outlines
-	ctx         *paintContext              // what context-fill and context-stroke take, while a marker or use is drawn
-	measureText func(cell [4][2]float64)   // set while text is measured, not drawn: takes the corners of each character's cell
+	clipText    func(segs []seg, m matrix)        // set while the text of a clip path is laid out: takes its outlines
+	ctx         *paintContext                     // what context-fill and context-stroke take, while a marker or use is drawn
+	measureText func(k *node, cell [4][2]float64) // set while text is measured, not drawn: takes the corners of each character's cell, and its element
 	opts        buildOptions
 	depth       int
 	full        image.Rectangle
@@ -449,6 +449,8 @@ func (b *builder) draw(n *node, m matrix, st style, vp viewport, ownClip, cl *cl
 		b.group(n, st, ownClip, cl, func(c *clip) { b.text(n, m, st, vp, nil, c) })
 	case "image":
 		b.image(n, m, st, vp, ownClip, cl)
+	case "foreignObject":
+		b.foreignObject(n, m, st, vp, ownClip, cl)
 	}
 }
 
@@ -1070,7 +1072,7 @@ func (b *builder) bboxOf(n *node, vp viewport, st style) ([4]float64, bool) {
 		case "text":
 			// Its characters' cells, as laid out (and not drawn).
 			outer := b.measureText
-			b.measureText = func(cell [4][2]float64) {
+			b.measureText = func(_ *node, cell [4][2]float64) {
 				for _, c := range cell {
 					x, y := m.apply(c[0], c[1])
 					minX, maxX = math.Min(minX, x), math.Max(maxX, x)

@@ -104,6 +104,7 @@ func parse(data []byte, reserve func(int64) error) (*node, error) {
 	var root *node
 	var stack []*node
 	count := 0
+	foreign := 0 // foreignObject elements open: their HTML's text is kept
 	for {
 		tok, err := d.Token()
 		if err == io.EOF {
@@ -169,8 +170,14 @@ func parse(data []byte, reserve func(int64) error) (*node, error) {
 				root = n
 			}
 			stack = append(stack, n)
+			if n.name == "foreignObject" {
+				foreign++
+			}
 		case xml.EndElement:
 			if len(stack) > 0 {
+				if stack[len(stack)-1].name == "foreignObject" {
+					foreign--
+				}
 				stack = stack[:len(stack)-1]
 			}
 		case xml.CharData:
@@ -183,7 +190,7 @@ func parse(data []byte, reserve func(int64) error) (*node, error) {
 					top.text += string(t)
 				}
 				// In text, character data keeps its place among the tspans.
-				if top.name == "text" || top.name == "tspan" || top.name == "a" || top.name == "textPath" {
+				if top.name == "text" || top.name == "tspan" || top.name == "a" || top.name == "textPath" || foreign > 0 {
 					count++
 					top.children = append(top.children, &node{name: "#text", text: string(t), parent: top, attrs: map[string]string{}})
 				}

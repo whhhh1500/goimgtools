@@ -102,6 +102,9 @@ func FuzzOpen(f *testing.F) {
 	f.Add(append([]byte(`<?xml version="1.0" encoding="windows-1251"?><!DOCTYPE svg [<!ENTITY c "green">]><svg width="9" height="9" style="background: #ffd; transform: rotate(5deg)"><rect width="9" height="9" fill="&c;" transform-origin="center" transform="scale(.5)"/><text>`), 0xCF, 0xF0, '<', '/', 't', 'e', 'x', 't', '>', '<', '/', 's', 'v', 'g', '>'))
 	f.Add([]byte{0xFF, 0xFE, '<', 0, 's', 0, 'v', 0, 'g', 0, ' ', 0, 'w', 0, 'i', 0, 'd', 0, 't', 0, 'h', 0, '=', 0, '"', 0, '4', 0, '"', 0, '/', 0, '>', 0})
 	f.Add([]byte(`<svg width="20" height="20"><style>[x] { transform: translate(1px, 10%) } rect[fill$="n"] { paint-order: markers stroke }</style><marker id="m" orient="0.1turn"><path d="M0 0h3v3z" fill="context-stroke"/></marker><defs><path id="p" d="M1 1h9v9" fill="context-fill"/></defs><use href="#p" fill="url(#g) red" stroke="blue" marker-mid="url(#m)"/><path d="M2 2h9v9" stroke="red" marker-mid="url(#m)" paint-order="markers"/><image width="9" height="9" href="data:image/svg+xml;utf8,%3Csvg width='4' height='4'%3E%3Cimage width='2' height='2' href='data:image/svg+xml;utf8,%3Csvg/%3E'/%3E%3C/svg%3E"/></svg>`))
+	// HTML in a foreignObject: blocks, breaks, backgrounds, an SVG in it.
+	f.Add([]byte(`<svg width="40" height="30" style="text-align:center"><style>@import url(a);</style><style>span{background:#ff0}</style><foreignObject width="40" height="30"><div xmlns="http://www.w3.org/1999/xhtml" style="line-height:1.5;white-space:pre"><p>a<br/>b <strong>c</strong></p><h1>d</h1><svg width="9" height="50%" viewBox="0 0 2 1"><foreignObject width="5" height="5"><b>e</b></foreignObject></svg><script>x</script></div></foreignObject></svg>`))
+
 	f.Fuzz(func(t *testing.T, data []byte) {
 		env := pipeline.NewEnv(16<<20, "")
 		s, err := Open(data, env)
