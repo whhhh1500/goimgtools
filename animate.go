@@ -664,6 +664,9 @@ func (m *Image) writeAnimated(w io.Writer, f *input, env *pipeline.Env, input, f
 		if g.Colors < 0 || g.Colors > 256 {
 			return errors.New("goimgtools: GIF colours must be 1 to 256")
 		}
+		if g.Effort < 0 || g.Effort > 9 {
+			return errors.New("goimgtools: GIF effort must be 1 to 9")
+		}
 		// One colour is no choice to make; the fixed palette handles it.
 		fixed = g.FixedPalette || g.Colors == 1
 	}
@@ -781,7 +784,7 @@ func (m *Image) writeAnimated(w io.Writer, f *input, env *pipeline.Env, input, f
 		return m.writeFixedFrames(w, centi, &seq.n, loop, g)
 	}
 	return gifstream.EncodeAnimation(w, env, gifstream.AnimOptions{
-		Frames: frames, LoopCount: loop, Colors: g.Colors, NoDither: g.NoDither, Lossy: g.Lossy,
+		Frames: frames, LoopCount: loop, Colors: g.Colors, NoDither: g.NoDither, Lossy: g.Lossy, Effort: g.Effort,
 	}, centi)
 }
 

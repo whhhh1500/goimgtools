@@ -27,6 +27,23 @@ type AnimOptions struct {
 	NoDither bool
 	// Lossy is as in Options.
 	Lossy int
+	// Effort is as in AnimConfig; it also sets how the palette is chosen
+	// (PolishFor).
+	Effort int
+}
+
+// PolishFor is how often the colours of a palette chosen with the given
+// effort (1 to 9; 0 the most) are moved toward the pixels, as
+// quant.Options.Polish takes it: not at all up to 3, once up to 6, three
+// times from there.
+func PolishFor(effort int) int {
+	switch {
+	case effort >= 1 && effort <= 3:
+		return -1
+	case effort >= 4 && effort <= 6:
+		return 1
+	}
+	return 0
 }
 
 // GIF disposal methods.
@@ -103,7 +120,7 @@ func EncodeAnimation(w io.Writer, env *pipeline.Env, o AnimOptions, next func() 
 		tee = newFrameTee(t, fh, o.Frames)
 		src = tee
 	}
-	q, err := quant.Quantize(src, &quant.Options{Colors: o.Colors, NoDither: o.NoDither, FrameRows: fh})
+	q, err := quant.Quantize(src, &quant.Options{Colors: o.Colors, NoDither: o.NoDither, FrameRows: fh, Polish: PolishFor(o.Effort)})
 	if err != nil {
 		src.Close()
 		return err
@@ -161,7 +178,7 @@ func EncodeAnimation(w io.Writer, env *pipeline.Env, o AnimOptions, next func() 
 			ti = i
 		}
 	}
-	aw, err := NewAnimWriter(w, AnimConfig{Width: fw, Height: fh, LoopCount: o.LoopCount, BackgroundIndex: byte(max(ti, 0)), GlobalPalette: pal, Lossy: o.Lossy})
+	aw, err := NewAnimWriter(w, AnimConfig{Width: fw, Height: fh, LoopCount: o.LoopCount, BackgroundIndex: byte(max(ti, 0)), GlobalPalette: pal, Lossy: o.Lossy, Effort: o.Effort})
 	if err != nil {
 		return err
 	}
@@ -291,8 +308,12 @@ var clearPolicies = [...]uint32{0, 0, 128, 192, 224}
 func (aw *AnimWriter) smallest(pal color.Palette, local bool, r image.Rectangle, ti int, ways [][]byte) ([]byte, int, error) {
 	var best []byte
 	bestPolicy, bestSize := 0, -1
+	policies := len(clearPolicies)
+	if aw.effort >= 1 && aw.effort <= 8 {
+		policies = 1 // compress/lzw's alone
+	}
 	for _, way := range ways {
-		for policy := range clearPolicies {
+		for policy := 0; policy < policies; policy++ {
 			if policy > 0 && aw.e.lossy > 0 {
 				break
 			}

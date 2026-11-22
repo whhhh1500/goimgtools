@@ -25,6 +25,11 @@ type AnimConfig struct {
 	GlobalPalette color.Palette
 	// Lossy is as in Options.
 	Lossy int
+	// Effort, 1 to 9 (0: the most, 9), trades time for size: below 9 a
+	// frame is coded with compress/lzw's way of clearing the code table
+	// alone, where 9 also tries four ways of putting the clearing off and
+	// keeps the smallest (see smallest).
+	Effort int
 }
 
 // FrameInfo is what goes with one frame of an animation besides its pixels.
@@ -285,6 +290,7 @@ type AnimWriter struct {
 	// every trial, its LZW tables used again.
 	probe   *encoder
 	counted byteCounter
+	effort  int
 }
 
 // NewAnimWriter checks cfg and writes the header, the logical screen
@@ -310,13 +316,16 @@ func NewAnimWriter(w io.Writer, cfg AnimConfig) (*AnimWriter, error) {
 	if cfg.Lossy < 0 || cfg.Lossy > 255 {
 		return nil, fmt.Errorf("goimgtools: gif: lossy must be 0 to 255, got %d", cfg.Lossy)
 	}
+	if cfg.Effort < 0 || cfg.Effort > 9 {
+		return nil, fmt.Errorf("goimgtools: gif: effort must be 1 to 9, got %d", cfg.Effort)
+	}
 	e := newEncoder(w, cfg.Width, cfg.Height, cfg.GlobalPalette)
 	e.lossy = cfg.Lossy
 	e.writeHeader(cfg.BackgroundIndex, cfg.LoopCount)
 	if e.err != nil {
 		return nil, e.err
 	}
-	return &AnimWriter{e: e}, nil
+	return &AnimWriter{e: e, effort: cfg.Effort}, nil
 }
 
 // WriteFrame appends one frame. src yields *image.Paletted strips, all

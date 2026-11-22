@@ -56,6 +56,10 @@ type Options struct {
 	// one palette): dithering starts afresh at the top of each, so that no
 	// frame's pixels depend on another's.
 	FrameRows int
+	// Polish is how many times the colours chosen are moved toward the
+	// pixels themselves (see polish): 0 is the default, 3; below 0 none,
+	// which is faster and a little less exact.
+	Polish int
 }
 
 // Quantize returns src as *image.Paletted strips over a palette of at most
@@ -74,12 +78,15 @@ type Options struct {
 // Nothing is read until the first Next, which reads all of src. Closing the
 // result closes src.
 func Quantize(src pipeline.Source, o *Options) (pipeline.Source, error) {
-	colors, dither, frame := 256, true, 0
+	colors, dither, frame, passes := 256, true, 0, polishPasses
 	if o != nil {
 		if o.Colors != 0 {
 			colors = o.Colors
 		}
 		dither, frame = !o.NoDither, o.FrameRows
+		if o.Polish != 0 {
+			passes = max(0, min(o.Polish, polishPasses))
+		}
 	}
 	if frame < 0 {
 		return nil, fmt.Errorf("goimgtools: FrameRows must not be negative, not %d", frame)
@@ -97,7 +104,7 @@ func Quantize(src pipeline.Source, o *Options) (pipeline.Source, error) {
 	if frame == 0 {
 		frame = b.Dy()
 	}
-	return &quantized{src: src, env: pipeline.EnvOf(src), bounds: b, colors: colors, dither: dither, frame: frame}, nil
+	return &quantized{src: src, env: pipeline.EnvOf(src), bounds: b, colors: colors, dither: dither, frame: frame, passes: passes}, nil
 }
 
 const (
@@ -117,6 +124,7 @@ type quantized struct {
 	colors int
 	dither bool
 	frame  int // rows per frame
+	passes int // of polish
 
 	state  int
 	err    error
@@ -430,7 +438,7 @@ const (
 // the nearest whoever finds it, and the sums, of integers, are exact in any
 // order, so the centres are the same however many there are.
 func (q *quantized) polish(cent [][4]float64, solid int) error {
-	if len(cent) == 0 {
+	if len(cent) == 0 || q.passes == 0 {
 		return nil
 	}
 	w, h := q.bounds.Dx(), q.bounds.Dy()
@@ -461,7 +469,7 @@ func (q *quantized) polish(cent [][4]float64, solid int) error {
 	}
 	rest := make([]*searcher, workers)
 	first := make([]*searcher, workers)
-	for pass := 0; pass < polishPasses; pass++ {
+	for pass := 0; pass < q.passes; pass++ {
 		for i := range cent {
 			for c := 0; c < 4; c++ {
 				ic[i][c] = int32(cent[i][c] + 0.5)

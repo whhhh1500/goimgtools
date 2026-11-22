@@ -112,7 +112,7 @@ func (t *frameTee) local(infos []frameInfo) bool {
 // they were are what the picture shows. plan says how each frame is
 // written, as EncodeAnimation decides it.
 func (t *frameTee) writeLocal(w io.Writer, env *pipeline.Env, stored *pipeline.Spill, o AnimOptions, fw int, infos []frameInfo, plan func(k int) (image.Rectangle, byte, int)) error {
-	aw, err := NewAnimWriter(w, AnimConfig{Width: fw, Height: t.fh, LoopCount: o.LoopCount, Lossy: o.Lossy})
+	aw, err := NewAnimWriter(w, AnimConfig{Width: fw, Height: t.fh, LoopCount: o.LoopCount, Lossy: o.Lossy, Effort: o.Effort})
 	if err != nil {
 		return err
 	}
@@ -167,7 +167,7 @@ func (t *frameTee) writeLocal(w io.Writer, env *pipeline.Env, stored *pipeline.S
 			}
 			bufs[i] = pix
 			for policy := range clearPolicies {
-				if policy > 0 && o.Lossy > 0 {
+				if policy > 0 && (o.Lossy > 0 || aw.effort >= 1 && aw.effort <= 8) {
 					break
 				}
 				size, err := aw.codedSize(pal, true, rect, ti, pix, policy)

@@ -62,6 +62,22 @@ func TestLutAndIptcFlags(t *testing.T) {
 		t.Error("tiles and a pyramid changed nothing")
 	}
 
+	// -gif-effort is GIFOptions' Effort.
+	gifOut := filepath.Join(dir, "out.gif")
+	if _, _, err := cli("-gif-effort", "1", in, gifOut); err != nil {
+		t.Fatal(err)
+	}
+	wantGIF, err := goimgtools.Open(in).GIF(goimgtools.GIFOptions{Effort: 1}).ToBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(gifOut); !bytes.Equal(got, wantGIF) {
+		t.Error("-gif-effort 1: the file differs from GIFOptions{Effort: 1}'s")
+	}
+	if _, _, err := cli("-gif-effort", "12", in, gifOut); err == nil {
+		t.Error("-gif-effort 12: written")
+	}
+
 	// A JPEG with an IPTC record in an APP13 segment.
 	rec := []byte("\x1c\x02\x78\x00\x09A caption")
 	res := append([]byte("Photoshop 3.0\x008BIM\x04\x04\x00\x00\x00\x00\x00"), byte(len(rec)))

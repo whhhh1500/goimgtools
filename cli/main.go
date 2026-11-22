@@ -118,7 +118,7 @@ type options struct {
 	icoSizes, icnsSizes, frameDelay, profile, lut  *string
 	loop                                           *int
 	gifFixed                                       *bool
-	gifLossy                                       *int
+	gifLossy, gifEffort                            *int
 	webpEffort                                     *int
 	webpNear, webpExact                            *bool
 	webpAlphaQ                                     *int
@@ -229,6 +229,7 @@ func register(fs *flag.FlagSet) *options {
 		webpEffort:      fs.Int("webp-effort", 0, "WebP: effort 1 (fastest) to 9 (smallest file); default 5 (for lossy, all there is but for transparency)"),
 		gifColors:       fs.Int("gif-colors", 0, "largest number of colours in a GIF, 1-256 (default 256)"),
 		gifFixed:        fs.Bool("gif-fixed-palette", false, "GIF: use the standard fixed palette instead of colours chosen for the image (faster, a much worse picture)"),
+		gifEffort:       fs.Int("gif-effort", 0, "GIF: 1 (fastest) to 9 (smallest, the default): how often the palette is refined and how many ways each frame of an animation is coded"),
 		gifLossy:        fs.Int("gif-lossy", 0, "GIF: lossy compression, the colour difference 1-255 it may accept (16-32 for photographic animations: 24-48% smaller; 8-16 for dithered stills); 0 keeps every pixel"),
 		tiffComp:        fs.String("tiff-compression", "none", "TIFF compression: none, deflate, lzw or jpeg (lossy, -quality, default 80; no transparency)"),
 		tiffPredictor:   fs.Bool("tiff-predictor", false, "TIFF: store each sample as its difference from the pixel to its left (horizontal predictor): photographs compress much better with deflate or lzw"),
@@ -856,7 +857,7 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 	case "webp":
 		im.WebP(goimgtools.WebPOptions{Quality: *o.quality, Lossless: *o.lossless, Effort: *o.webpEffort, NearLossless: *o.webpNear, Exact: *o.webpExact, AlphaQuality: *o.webpAlphaQ})
 	case "gif":
-		im.GIF(goimgtools.GIFOptions{Colors: *o.gifColors, NoDither: *o.noDither, FixedPalette: *o.gifFixed, Lossy: *o.gifLossy})
+		im.GIF(goimgtools.GIFOptions{Colors: *o.gifColors, NoDither: *o.noDither, FixedPalette: *o.gifFixed, Lossy: *o.gifLossy, Effort: *o.gifEffort})
 	case "bmp":
 		im.BMP()
 	case "tiff":

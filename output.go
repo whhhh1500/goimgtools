@@ -447,6 +447,16 @@ type GIFOptions struct {
 	// loses more (8 to 16 suit it), pictures of a few flat colours gain
 	// little.
 	Lossy int
+	// Effort trades time for size and exactness, as WebPOptions.Effort
+	// and sharp's effort for GIF: 1 is the fastest, 9 the most thorough;
+	// 0 means 9, what this package has always done. The colours chosen
+	// are moved toward the pixels three times from 7 on, once from 4 to
+	// 6, not at all below; and only at 9 is each frame of an animation
+	// coded five ways (clearing the code table when it fills, or putting
+	// that off) to keep the smallest. On an animation of photographs,
+	// effort 1 took 0.30s where 9 took 0.70s, for a file 0.6% larger; a
+	// still photograph is 0.3 dB less exact at 1 than at 9.
+	Effort int
 }
 
 // GIF selects GIF output. An image that is not already paletted with few

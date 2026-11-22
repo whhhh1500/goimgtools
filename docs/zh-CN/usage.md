@@ -122,7 +122,7 @@ err := goimgtools.Open("in.jpg").
 | `JPEG(JPEGOptions{Quality, Optimize, Progressive, Trellis, QuantTable, ChromaSubsampling})` | 质量 `Quality` 为 1–100，0 表示 80。`Optimize`、`Progressive` 在像素不变的前提下减小文件；`Trellis`、`QuantTable`（0–8，编号同 mozjpeg 的 `-quant-table`；或 `QuantTableJpegli`）会改变像素（见[压缩](compression.md)）。`ChromaSubsampling`：`Chroma420`（默认：色度为宽高各一半，同标准库与 libjpeg）、`Chroma422`（宽度一半）或 `Chroma444`（保留全部色度：彩色文字与边缘清晰，文件约大 30%），即 sharp 的 `chromaSubsampling` |
 | `PNG(PNGOptions{CompressionLevel, Colors, NoDither})` | 压缩级别 1（最快）至 10（最小；8、9 级搜索最小文件，单核耗时分别为 7 级的 5–20 倍和 18–65 倍；10 级用 Zopfli 压缩，8 线程时耗时约为 9 级的 14 倍）；`Colors` 将颜色减至最多 256 色（见[压缩](compression.md)） |
 | `WebP(WebPOptions{Quality, Lossless, Effort})` | 有损（质量 1–100，默认 75）或无损；`Effort` 1 最快至 9 最小，默认 5（有损时 5 已用上除透明通道外的全部手段，2 耗时约减半，1 约为三分之一） |
-| `GIF(GIFOptions{Colors, NoDither, FixedPalette})` | 最多 256 色，按图像内容选取；`FixedPalette` 改用标准库的固定调色板 |
+| `GIF(GIFOptions{Colors, NoDither, FixedPalette, Lossy, Effort})` | 最多 256 色，按图像内容选取；`FixedPalette` 改用标准库的固定调色板；`Effort` 1（最快）到 9（默认：调色板细化三遍，动图每帧试五种编码）在时间与大小之间取舍 |
 | `BMP()` | |
 | `QOI()` | QOI（"Quite OK Image"）：无损、8 位、RGB 或 RGBA，读写速度接近直接复制像素；文件与参考编码器相同（与 Pillow 相同，只是颜色空间标为 sRGB） |
 | `TGA()` | Truevision TGA（Targa），游戏贴图常用：RLE 压缩、自上而下；灰度、调色板（至多 256 色）或真彩（不透明 24 位，带透明 32 位）；与 Pillow 以 compression `"tga_rle"`、orientation 1 写出的文件逐字节相同 |

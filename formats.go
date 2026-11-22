@@ -314,10 +314,13 @@ var builtin = []*formatDef{
 			if g.Colors < 0 || g.Colors > 256 {
 				return errors.New("goimgtools: GIF colours must be 1 to 256")
 			}
+			if g.Effort < 0 || g.Effort > 9 {
+				return errors.New("goimgtools: GIF effort must be 1 to 9")
+			}
 			// One colour is no choice to make; the fixed palette handles it.
 			if !g.FixedPalette && g.Colors != 1 {
 				// The source stays the caller's to close.
-				q, err := quant.Quantize(ops.BinaryAlpha(keepOpen{src}), &quant.Options{Colors: g.Colors, NoDither: g.NoDither})
+				q, err := quant.Quantize(ops.BinaryAlpha(keepOpen{src}), &quant.Options{Colors: g.Colors, NoDither: g.NoDither, Polish: gifstream.PolishFor(g.Effort)})
 				if err != nil {
 					return err
 				}
