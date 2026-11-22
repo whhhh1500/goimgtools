@@ -441,7 +441,15 @@ type Set struct {
 	reserve func(n int64) error
 	held    int64
 	buf     sfnt.Buffer
+	// Its user draws the paint graphs of COLR version 1: a font with one
+	// for an emoji is a colour font for it.
+	paints bool
 }
+
+// DrawsPaints says the set's user draws the colour glyphs of COLR version 1
+// (their paint graphs): PickFor takes a font with one for an emoji as a
+// colour font.
+func (s *Set) DrawsPaints() { s.paints = true }
 
 // Load opens the fonts named by specs and data, in that order. reserve is
 // called with FontBytes for every font opened, now or later; release, at
@@ -583,7 +591,7 @@ func (s *Set) pickFor(rs []rune, i int) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		if len(c.Layers(uint16(id), nil)) > 0 {
+		if len(c.Layers(uint16(id), nil)) > 0 || s.paints && c.HasPaint(uint16(id)) {
 			return k, nil
 		}
 		if s.fonts[k].bitmaps.Has(uint16(id)) {

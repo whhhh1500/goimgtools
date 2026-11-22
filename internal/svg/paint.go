@@ -5,6 +5,8 @@ import (
 	"math"
 	"strconv"
 	"strings"
+
+	"github.com/whhhh1500/goimgtools/internal/trig"
 )
 
 // shader gives the colour of a paint at a pixel, premultiplied.
@@ -25,8 +27,12 @@ type gradient struct {
 	x1, y1, dx, dy, len2 float64
 	// Radial: the focal circle to the end circle.
 	cx, cy, r, fx, fy, fr float64
-	spread                int
-	lut                   [lutSize][4]uint8
+	// Sweep (of a colour glyph): about (cx, cy) from the angle start to
+	// end, in degrees counter-clockwise (in gradient space, y up).
+	sweep      bool
+	start, end float64
+	spread     int
+	lut        [lutSize][4]uint8
 }
 
 const (
@@ -102,7 +108,16 @@ func (s *shader) at(x, y int) [4]uint8 {
 func (g *gradient) at(px, py float64) [4]uint8 {
 	x, y := g.inv.apply(px, py)
 	var t float64
-	if !g.radial {
+	if g.sweep {
+		a := float64(trig.Atan2(y-g.cy, x-g.cx) * (180 / math.Pi))
+		if a < 0 {
+			a += 360
+		}
+		if g.end == g.start {
+			return [4]uint8{}
+		}
+		t = (a - g.start) / (g.end - g.start)
+	} else if !g.radial {
 		t = (float64((x-g.x1)*g.dx) + float64((y-g.y1)*g.dy)) / g.len2
 	} else {
 		dx, dy, dr := g.cx-g.fx, g.cy-g.fy, g.r-g.fr

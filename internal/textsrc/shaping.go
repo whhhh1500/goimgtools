@@ -136,6 +136,17 @@ func (s *Set) ColourLayers(f *Font, id sfnt.GlyphIndex, buf []colorfont.Layer) (
 	return buf, nil
 }
 
+// ColourFont is the colour glyphs (COLR) of f, a font of the set: nil for a
+// font without them.
+func (s *Set) ColourFont(f *Font) (*colorfont.Font, error) {
+	for i, g := range s.fonts {
+		if g == f {
+			return s.colourFont(i)
+		}
+	}
+	return nil, nil
+}
+
 // Picture is the colour picture of glyph id of f, a font of the set (a PNG
 // of a bitmap colour font), for text of ppem pixels; ok is false for a
 // glyph without one.

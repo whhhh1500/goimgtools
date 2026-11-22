@@ -6,6 +6,7 @@
 
 ### 新增
 
+- SVG 文字绘制 COLR 第 1 版的彩色字形（Noto Color Emoji 即此格式，与 Chrome 一致）：按其绘制图——裁剪用的字形轮廓、纯色、线性 / 径向 / 扫描渐变（颜色按预乘插值；色标可超出 0 到 1，延伸方式 pad、repeat、reflect）、变换（平移、缩放、旋转、斜切，可绕中心）、裁剪框与合成（各混合模式；Porter-Duff 模式中 clear、源、目标照做，其余按源覆盖），前景色为文字的填充色。含此类字形的字体会被选作表情的彩色字体。此类字体的可变数据不应用。`Text()` 绘制的文字仍以单色绘制它们。
 - 可变字体（含 `fvar` 表：带 `gvar` 的 TrueType 轮廓或 CFF2）中的 SVG 文字按样式对应的实例绘制，与 Chrome 的设定一致：`font-weight` 对应 `wght` 轴，`font-stretch`（关键字与百分比，现已读取）对应 `wdth`，`font-style: oblique`（及其角度）对应 `slnt`，`italic` 对应 `ital`，字号对应 `opsz`（光学尺寸，CSS 的默认行为），`font-variation-settings` 优先于以上各项；轮廓、前进宽度与整形都随之变化（原先按字体的默认实例绘制，只有一个可变字体文件的字族，粗体也画成常规）。只有这类字体才读取轮廓及其变化数据，并计入内存上限。
 - SVG 竖排文字：text 元素上的 `writing-mode` 为 `tb`、`tb-rl`、`vertical-rl`、`vertical-lr` 时（可继承，同 Chrome；写在 tspan 上不生效），从 `y` 向下排，`x` 处为其中线：多数文字的字母横躺；中日韩文字及其标点、全角字符与表情直立居中，按字体的竖排度量（`vhea` 与 `vmtx`，字形顶端在笔位下方 top bearing 处，同 HarfBuzz 为 Chrome 放置的位置；没有竖排度量的字体按字高与上升高度）前进与放置，括号与破折号横躺；`text-orientation` 为 `upright` 时全部直立，为 `sideways` 时全部横躺。`x`、`y`、`dx`、`dy`、`text-anchor`、`rotate`、装饰线与文字的包围盒都随这一行。路径上的文字仍为横排。
 - SVG 路径上的文字按 Chrome 的方式排：支持 SVG 2 中 `textPath` 的 `path` 属性（取解析到第一个错误之前的部分，优先于 `href`）；路径上字符的绝对 `x` 即沿路径的距离（text 上或 textPath 内 tspan 上的 `x` 会让文字沿路径移动，原先被忽略）；写在 textPath 自身上的 `x`、`y` 不是它的属性，不再采用（原先采用）。

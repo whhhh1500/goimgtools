@@ -184,6 +184,8 @@ func (b *builder) fonts(family, face string) *textsrc.Set {
 	if err != nil {
 		b.release(got)
 		s = nil
+	} else {
+		s.DrawsPaints() // the colour glyphs of COLR version 1 are drawn here
 	}
 	b.fontSets[key] = s
 	return s
@@ -1300,6 +1302,21 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 				segs = append(segs, seg{cmd: cmdClose})
 			}
 			return segs
+		}
+		// A colour glyph of COLR version 1: its paint graph.
+		if set := b.fonts(p.c.family, p.c.face); set != nil {
+			if cf, err := set.ColourFont(p.f); err != nil {
+				b.err = err
+			} else if cf.HasPaint(uint16(p.gi)) {
+				flush()
+				k := p.c.st.fontSize / float64(sf.UnitsPerEm())
+				fm := matrix{fr.ux, fr.uy, fr.vx, fr.vy, fr.ox, fr.oy}
+				if vertical {
+					fm = matrix{0, 1, -1, 0, 0, 0}.mul(fm)
+				}
+				b.colrGlyph(p.c.node, cf, p.f, p.gi, m.mul(fm).mul(matrix{k, 0, 0, -k, p.gx, p.gy}), p.c.st, own, outer)
+				continue
+			}
 		}
 		// A colour glyph (as a colour emoji): its layers, each filled in its
 		// colour (a layer of the text's colour as the text is), unstroked.

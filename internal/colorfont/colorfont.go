@@ -23,7 +23,11 @@ type Font struct {
 	baseOff, layerOff  int
 	numBase, numLayers int
 	palette            []color.NRGBA
-	Bytes              int64 // the memory it holds
+	// Version 1: the paint records of its base glyphs, its list of layers
+	// and of clip boxes, where they are in colr (0 for none).
+	baseList, numPaints int
+	layerList, clipList int
+	Bytes               int64 // the memory it holds
 }
 
 // Layer is a layer of a colour glyph: a glyph, drawn in a colour of the
@@ -63,8 +67,11 @@ func Open(r io.ReaderAt, index int) (*Font, error) {
 		layerOff:  int(be.Uint32(colr[8:])),
 		numLayers: int(be.Uint16(colr[12:])),
 	}
-	if f.numBase == 0 {
-		return nil, nil // colour glyphs of version 1 only
+	if be.Uint16(colr) >= 1 && len(colr) >= 34 {
+		f.v1(colr)
+	}
+	if f.numBase == 0 && f.numPaints == 0 {
+		return nil, nil // no colour glyphs
 	}
 	if f.baseOff+6*f.numBase > len(colr) || f.layerOff+4*f.numLayers > len(colr) {
 		return nil, errors.New("colorfont: COLR records beyond the table")

@@ -1040,3 +1040,36 @@ func TestVariableFonts(t *testing.T) {
 		}
 	}
 }
+
+// TestColrV1: a colour glyph of COLR version 1 is drawn by its paint graph:
+// a gradient within a glyph's outline, a transform about a point, a sweep.
+func TestColrV1(t *testing.T) {
+	font := `font-family="'../../tests/testdata/fonts/ColrV1Test.ttf'" font-size="100"`
+	near := func(got [4]uint32, want [4]uint32) bool {
+		for i := range got {
+			if d := int(got[i]) - int(want[i]); d < -12 || d > 12 {
+				return false
+			}
+		}
+		return true
+	}
+	// A: the box (0 to 100 across, 10 to 90 down), red at its left to blue
+	// at its right.
+	img := render(t, `<text x="0" y="90" `+font+`>A</text>`)
+	if l, r := rgbaAt(img, 1, 50), rgbaAt(img, 98, 50); !near(l, [4]uint32{253, 0, 2, 255}) || !near(r, [4]uint32{2, 0, 253, 255}) {
+		t.Errorf("a linear gradient: %v at the left, %v at the right", l, r)
+	}
+	// B: the box in green scaled by half about its middle: 25 to 75 across,
+	// 30 to 70 down.
+	img = render(t, `<text x="0" y="90" `+font+`>B</text>`)
+	if got := rgbaAt(img, 50, 50); got != [4]uint32{0, 128, 0, 255} || rgbaAt(img, 10, 50)[3] != 0 || rgbaAt(img, 50, 20)[3] != 0 {
+		t.Errorf("a scale about a point: %v in the middle", got)
+	}
+	// C: a sweep about (50, 50), red at 0 degrees (right of the middle) to
+	// blue at 360: purple at 180 (left), three quarters red at 90 (above).
+	img = render(t, `<text x="0" y="90" `+font+`>C</text>`)
+	right, left, up := rgbaAt(img, 95, 48), rgbaAt(img, 5, 50), rgbaAt(img, 50, 15)
+	if !near(right, [4]uint32{250, 0, 5, 255}) || !near(left, [4]uint32{128, 0, 127, 255}) || !near(up, [4]uint32{191, 0, 64, 255}) {
+		t.Errorf("a sweep: %v right, %v left, %v above", right, left, up)
+	}
+}
