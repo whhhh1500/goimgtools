@@ -197,7 +197,7 @@ func (v variant) build() ([]byte, image.Image) {
 	if v.rowBytes == 0 && v.stored == 0 {
 		binary.LittleEndian.PutUint16(head[66:], uint16(stored))
 	}
-	colours := 1 << (v.bits * v.planes)
+	colours := 1 << min(v.bits*v.planes, 8) // 256 and more are the same here; an int of 32 bits has no 1<<32
 	want := image.NewNRGBA(image.Rect(0, 0, v.w, v.h))
 	if v.bits < 8 && !v.noPalette {
 		for i := 0; i < 16; i++ {
