@@ -15,8 +15,10 @@ import (
 // colour table), as GIF makers that choose a palette for every frame write
 // them, instead of with one palette chosen for all the frames, which would
 // change pixels and, the colours being fewer than the frames need, make
-// the file larger too. frameTee stages the frames as the quantizer reads
-// them, so that this can be decided once they are all read.
+// the file larger too. frameTee counts the colours of the frames as the
+// quantizer reads them, so that this can be decided once they are all
+// read; the frames are then written from the rows the quantizer stored
+// (quant's Stored), not from a copy of them.
 
 // noColour is the key of a transparent pixel.
 const noColour = 0
@@ -31,11 +33,10 @@ func colourKey(r, g, b, a uint8) uint32 {
 
 // frameTee passes the frames (one under the other, as animFrames hands them
 // out, with what stays as it was made transparent) on to the quantizer,
-// keeps a copy of them in a spill, and counts the colours written of each.
+// and counts the colours written of each.
 type frameTee struct {
-	src   pipeline.Source
-	spill *pipeline.Spill
-	fh    int
+	src pipeline.Source
+	fh  int
 	// For each frame: the colours of its changed pixels (up to 257), and
 	// whether it has transparent pixels.
 	written []int16
@@ -46,10 +47,8 @@ type frameTee struct {
 }
 
 func newFrameTee(src pipeline.Source, fh, frames int) *frameTee {
-	t := &frameTee{src: src, spill: pipeline.NewSpill(src.Env()), fh: fh, all: map[uint32]struct{}{},
+	return &frameTee{src: src, fh: fh, all: map[uint32]struct{}{},
 		written: make([]int16, frames), transp: make([]bool, frames), set: map[uint32]struct{}{}, setK: -1}
-	t.spill.Expect(int64(src.Bounds().Dx()) * int64(src.Bounds().Dy()) * 4)
-	return t
 }
 
 func (t *frameTee) Env() *pipeline.Env      { return t.src.Env() }
@@ -66,9 +65,6 @@ func (t *frameTee) Next() (image.Image, error) {
 	b := p.Rect
 	for y := b.Min.Y; y < b.Max.Y; y++ {
 		row := p.Pix[p.PixOffset(b.Min.X, y):][:4*b.Dx()]
-		if _, err := t.spill.Write(row); err != nil {
-			return nil, err
-		}
 		if k := y / t.fh; k != t.setK {
 			clear(t.set)
 			t.setK = k
@@ -108,21 +104,14 @@ func (t *frameTee) local(infos []frameInfo) bool {
 	return true
 }
 
-// release gives back the copy.
-func (t *frameTee) release() {
-	if t.spill != nil {
-		t.spill.Close()
-		t.spill = nil
-	}
-}
-
-// writeLocal writes the animation from the copy, each frame with a palette
-// of its own: every pixel as it is. A frame written as what changed is
+// writeLocal writes the animation from the frames as stored (their rows of
+// RGBA, one frame under the other), each frame with a palette of its own:
+// every pixel as it is. A frame written as what changed is
 // written whichever way of the three bestFrame tries codes smallest, of
 // those whose colours fit in a palette; the colours of the pixels left as
 // they were are what the picture shows. plan says how each frame is
 // written, as EncodeAnimation decides it.
-func (t *frameTee) writeLocal(w io.Writer, env *pipeline.Env, o AnimOptions, fw int, infos []frameInfo, plan func(k int) (image.Rectangle, byte, int)) error {
+func (t *frameTee) writeLocal(w io.Writer, env *pipeline.Env, stored *pipeline.Spill, o AnimOptions, fw int, infos []frameInfo, plan func(k int) (image.Rectangle, byte, int)) error {
 	aw, err := NewAnimWriter(w, AnimConfig{Width: fw, Height: t.fh, LoopCount: o.LoopCount, Lossy: o.Lossy})
 	if err != nil {
 		return err
@@ -137,7 +126,7 @@ func (t *frameTee) writeLocal(w io.Writer, env *pipeline.Env, o AnimOptions, fw 
 	keys := make([]uint32, 0, px)
 	row := make([]byte, 4*fw)
 	var bufs [3][]byte
-	rd := pipeline.NewSeqReader(t.spill, 0, t.spill.Size(), 64<<10)
+	rd := pipeline.NewSeqReader(stored, 0, stored.Size(), 64<<10)
 	prevDisposal := byte(disposalBackground)
 	for k := range infos {
 		rect, disposal, delay := plan(k)

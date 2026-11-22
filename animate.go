@@ -361,6 +361,10 @@ type canvas struct {
 	row      []uint8
 	reserved int64
 	nrgba    bool
+	// band is the strip the canvas is handed out in, kept from frame to
+	// frame; lent while a source has it.
+	band *image.RGBA
+	lent bool
 }
 
 func newCanvas(env *pipeline.Env, w, h int) (*canvas, error) {
@@ -565,6 +569,7 @@ func (c *canvas) dispose(r image.Rectangle, disposal byte, saved *pipeline.Spill
 type canvasSource struct {
 	c        *canvas
 	band     *image.RGBA
+	shared   bool // band is the canvas's, to give back
 	n, y     int
 	reserved int64
 }
@@ -575,7 +580,17 @@ func (c *canvas) source() (*canvasSource, error) {
 	if err := c.env.Budget.Reserve(need, "animation strip"); err != nil {
 		return nil, err
 	}
-	return &canvasSource{c: c, band: image.NewRGBA(image.Rect(0, 0, c.w, n)), n: n, reserved: need}, nil
+	s := &canvasSource{c: c, n: n, reserved: need}
+	switch {
+	case c.band == nil:
+		c.band = image.NewRGBA(image.Rect(0, 0, c.w, n))
+		fallthrough
+	case !c.lent:
+		s.band, s.shared, c.lent = c.band, true, true
+	default: // a source of the frame before is still open
+		s.band = image.NewRGBA(image.Rect(0, 0, c.w, n))
+	}
+	return s, nil
 }
 
 func (s *canvasSource) Env() *pipeline.Env      { return s.c.env }
@@ -590,6 +605,9 @@ func (s *canvasSource) ColorModel() color.Model {
 func (s *canvasSource) Close() error {
 	s.c.env.Budget.Release(s.reserved)
 	s.reserved = 0
+	if s.shared {
+		s.shared, s.c.lent = false, false
+	}
 	return nil
 }
 

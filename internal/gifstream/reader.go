@@ -92,6 +92,12 @@ func readByte(r io.ByteReader) (byte, error) {
 type decoder struct {
 	r reader
 
+	// Of an animation, from frame to frame (goimgtools): the pixels of
+	// the strip of the frame before, once it is closed, and the LZW
+	// reader.
+	spare []uint8
+	lzw   *lzw.Reader
+
 	// From header.
 	vers            string
 	width           int
@@ -482,11 +488,24 @@ func (d *decoder) openImage(env *pipeline.Env) (pipeline.Source, error) {
 		return nil, err
 	}
 	s.reserved = need
-	s.band = image.NewPaletted(image.Rect(rect.Min.X, rect.Min.Y, rect.Max.X, rect.Min.Y+s.n), palette)
+	if n := dx * s.n; n > 0 && cap(d.spare) >= n {
+		// The strip of the frame before, cleared as a new one is.
+		pix := d.spare[:n]
+		d.spare = nil
+		clear(pix)
+		s.band = &image.Paletted{Pix: pix, Stride: dx, Rect: image.Rect(rect.Min.X, rect.Min.Y, rect.Max.X, rect.Min.Y+s.n), Palette: palette}
+	} else {
+		s.band = image.NewPaletted(image.Rect(rect.Min.X, rect.Min.Y, rect.Max.X, rect.Min.Y+s.n), palette)
+	}
 
 	// A wonderfully Go-like piece of magic.
 	s.br = &blockReader{d: d}
-	s.lzwr = lzw.NewReader(s.br, lzw.LSB, int(litWidth))
+	if d.lzw == nil {
+		d.lzw = lzw.NewReader(s.br, lzw.LSB, int(litWidth)).(*lzw.Reader)
+	} else {
+		d.lzw.Reset(s.br, lzw.LSB, int(litWidth))
+	}
+	s.lzwr = d.lzw
 	return s, nil
 }
 
@@ -511,6 +530,9 @@ func (s *stream) Close() error {
 	if s.reserved != 0 {
 		s.env.Budget.Release(s.reserved)
 		s.reserved = 0
+	}
+	if s.band != nil {
+		s.d.spare = s.band.Pix
 	}
 	s.band = nil
 	if s.err == nil {

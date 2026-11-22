@@ -94,15 +94,14 @@ func EncodeAnimation(w io.Writer, env *pipeline.Env, o AnimOptions, next func() 
 	defer env.Budget.Release(need)
 	t := &animFrames{env: env, w: fw, h: fh, n: o.Frames, next: next, first: first, firstDelay: delay, k: -1,
 		infos: make([]frameInfo, 0, o.Frames)}
-	// Without a palette size asked for, the frames are also staged: if
-	// each has few enough colours, they are written with palettes of their
-	// own (see frameTee).
+	// Without a palette size asked for, the colours of each frame are
+	// counted: if each has few enough, they are written with palettes of
+	// their own (see frameTee), from the rows the quantizer stored.
 	var src pipeline.Source = t
 	var tee *frameTee
 	if o.Colors == 0 {
 		tee = newFrameTee(t, fh, o.Frames)
 		src = tee
-		defer tee.release()
 	}
 	q, err := quant.Quantize(src, &quant.Options{Colors: o.Colors, NoDither: o.NoDither, FrameRows: fh})
 	if err != nil {
@@ -144,11 +143,12 @@ func EncodeAnimation(w io.Writer, env *pipeline.Env, o AnimOptions, next func() 
 			cur.merged = true
 		}
 	}
-	if tee != nil {
-		if tee.local(t.infos) {
-			return tee.writeLocal(w, env, o, fw, t.infos, plan)
+	if tee != nil && tee.local(t.infos) {
+		st, _ := q.(interface{ Stored() *pipeline.Spill })
+		if st == nil || st.Stored() == nil {
+			return errors.New("goimgtools: gif: the frames are not stored")
 		}
-		tee.release()
+		return tee.writeLocal(w, env, st.Stored(), o, fw, t.infos, plan)
 	}
 	p0, ok := s.(*image.Paletted)
 	if !ok {
@@ -311,23 +311,33 @@ func (aw *AnimWriter) smallest(pal color.Palette, local bool, r image.Rectangle,
 // codedSize is how many bytes the pixels of a frame take, coded as
 // AnimWriter codes them.
 func (aw *AnimWriter) codedSize(pal color.Palette, local bool, r image.Rectangle, ti int, pix []byte, policy int) (int, error) {
-	var c byteCounter
 	global := pal
 	if local {
 		global = nil
 	}
-	e := newEncoder(&c, aw.e.width, aw.e.height, global)
-	e.lossy, e.clearPolicy = aw.e.lossy, policy
+	// A new encoder for each trial took a table of 64KB each time (some
+	// fifteen a frame); this one keeps its tables.
+	e := aw.probe
+	if e == nil {
+		e = newEncoder(&aw.counted, aw.e.width, aw.e.height, nil)
+		aw.probe = e
+	}
+	aw.counted.n = 0
+	e.err, e.globalPalette, e.lossy, e.clearPolicy = nil, global, aw.e.lossy, policy
 	e.beginImage(pal, r, 0, 0, ti)
 	e.writePixels(pix)
 	e.endImage()
 	e.flush()
-	return c.n, e.err
+	return aw.counted.n, e.err
 }
 
+// byteCounter counts what is written to it; it is a writer as the encoder
+// takes one, with nothing to flush.
 type byteCounter struct{ n int }
 
 func (c *byteCounter) Write(p []byte) (int, error) { c.n += len(p); return len(p), nil }
+func (c *byteCounter) WriteByte(byte) error        { c.n++; return nil }
+func (c *byteCounter) Flush() error                { return nil }
 
 // pixelsSource is a frame held whole, as one strip.
 type pixelsSource struct {

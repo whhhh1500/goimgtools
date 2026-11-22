@@ -281,6 +281,10 @@ type AnimWriter struct {
 	frames int
 	closed bool
 	err    error
+	// probe codes a frame to count its bytes (codedSize): one encoder for
+	// every trial, its LZW tables used again.
+	probe   *encoder
+	counted byteCounter
 }
 
 // NewAnimWriter checks cfg and writes the header, the logical screen

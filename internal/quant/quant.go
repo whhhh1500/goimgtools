@@ -153,6 +153,14 @@ func (q *quantized) ColorModel() color.Model {
 	return color.NRGBAModel
 }
 
+// Stored is the image as the first pass stored it: its rows of 8-bit
+// non-premultiplied RGBA, one after the other (an *image.NRGBA strip's as
+// they came). It is there from the first Next until the last strip has been
+// handed out or the source is closed, and nil for a source handed on
+// untouched: for a caller that may want the pixels themselves instead of
+// the palette's, without keeping a copy of its own.
+func (q *quantized) Stored() *pipeline.Spill { return q.spill }
+
 func (q *quantized) reserve(n int64, what string) error {
 	if err := q.env.Budget.Reserve(n, what); err != nil {
 		return err

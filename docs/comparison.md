@@ -34,7 +34,7 @@ Measured on 22 November 2026: Windows 10, Intel Core i7-12700K, Go 1.27.1. The o
 | Greyscale | 0.21s, 8.7MB | 0.18s (0.22s of CPU), 30.1MB | 0.28s, 220MB | 0.27s, 135MB | | memory ahead, CPU time level |
 | Brightness, saturation and hue | 0.46s, 9.4MB | | 1.14s, 230MB | | | ahead |
 | A logo laid on | 0.18s, 9.7MB | | 0.30s, 217MB | 0.27s, 204MB | | ahead |
-| Animated GIF (18 frames, 768×512) to 384 wide | 0.73s, 23.8MB, 942KB | | 2.03s, 75.1MB, 1405KB | | gifsicle 0.31s, 18.2MB, 1416KB (its default sampling); 0.46s, 21.1MB, 1428KB (`--resize-method lanczos3 -O3`) | file ahead (a third smaller); time and memory **behind** gifsicle |
+| Animated GIF (18 frames, 768×512) to 384 wide | 0.71s, 23.0MB, 942KB | | 2.03s, 75.1MB, 1405KB | | gifsicle 0.31s, 17.9MB, 1416KB (its default sampling); 0.46s, 21.1MB, 1428KB (`--resize-method lanczos3 -O3`) | file ahead (a third smaller); time and memory **behind** gifsicle |
 | Animated GIF to animated WebP | 0.51s, 26.7MB, 854KB (effort 1); 1.28s, 25.8MB, 940KB (the default) | 0.54s, 29.9MB, 946KB | 0.60s, 78.0MB, 946KB | 0.45s, 35.2MB, 1339KB | | ahead at effort 1 |
 
 With four threads (`-threads 4`, `VIPS_CONCURRENCY=4`, `sharp.concurrency(4)`):
@@ -105,7 +105,7 @@ What each reads (R) and writes (W). libvips is the build above (its other loader
 | Rotation by 90° | 0.31s against 0.17s (0.68s before the rows of a round were written as one block) | Open: libvips holds the image in memory (97MB); here it is turned through a store that may be a file |
 | Rotation by other angles | 0.64s against 0.42s | Open |
 | GIF decoding | 0.24s against 0.19s for a 24 megapixel GIF | Open |
-| Animated GIF resized | gifsicle is twice as fast and takes 5MB less; its file is half as large again | Open |
+| Animated GIF resized | gifsicle is twice as fast (0.31s against 0.71s; 0.46s with its Lanczos method and `-O3`) and takes 5MB less (17.9MB against 23.0MB); its file is half as large again. Of the time here, a third chooses and refines one palette for all frames and maps the pixels to it with dithering, and a quarter codes each frame fifteen ways to keep the smallest: what makes the file a third smaller. Of the memory, 7MB is the program itself and 6MB what is in use (the picture so far, the colour counts, a frame in work); the rest is what Go's collector lets the heap grow by before it collects. Collecting sooner (GOGC=25) brings this task to 18.6MB but costs the tasks that stream 1 to 2MB each (measured), so it is not set; gifsicle keeps frames as 8-bit indexes and does no true-colour work | Open: a faster setting for GIF output (fewer trials, less refining) is not there; the allocations were cut from 48MB to 18MB in all, which did not move the peak |
 | JPEG against jpegli by butteraugli | 3.2 points more file at equal butteraugli (4.0 points less at equal SSIMULACRA2) | Open |
 | TIFF variants | Tiles and pyramids are not written. BigTIFF, CMYK, Lab, floats, 2 and 4 bits, grey with alpha, zstd and WebP compression are read now | Open (reading closed) |
 | DDS, PCX, SGI, XBM, DIB, XPM, FITS | Not read | Open |
