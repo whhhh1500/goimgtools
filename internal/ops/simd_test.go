@@ -42,10 +42,18 @@ func TestBoxSIMD(t *testing.T) {
 			useSIMD = false
 			h.pass(want, src)
 			useSIMD = true
-			h.pass(got, src)
-			for k := range want {
-				if got[k] != want[k] {
-					t.Fatalf("case %d: w %d, r %v, %d channels: byte %d is %d, want %d", i, w, r, nc, k, got[k], want[k])
+			// The pass by the sums of the row where there is one, and the
+			// pass by a sum that slides.
+			for _, prefix := range []bool{usePrefix, false} {
+				was := usePrefix
+				usePrefix = prefix
+				out := append([]uint8(nil), got...)
+				h.pass(out, src)
+				usePrefix = was
+				for k := range want {
+					if out[k] != want[k] {
+						t.Fatalf("case %d: w %d, r %v, %d channels, by sums %v: byte %d is %d, want %d", i, w, r, nc, prefix, k, out[k], want[k])
+					}
 				}
 			}
 		}

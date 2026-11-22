@@ -3,6 +3,7 @@ package tiffstream
 import (
 	"encoding/binary"
 	"io"
+	"math"
 	"sort"
 
 	"github.com/whhhh1500/goimgtools/pipeline"
@@ -50,24 +51,46 @@ type byteOrder interface {
 type exifBuilder struct {
 	r    io.ReaderAt
 	bo   byteOrder
+	big  bool // the file is a BigTIFF: entries of 20 bytes, offsets of 8
 	out  []byte
 	dirs int // directories written, against loops
 }
 
-// readExif returns the EXIF block of a TIFF whose first directory's
-// entries are entries; nil when it has none of the tags but the
-// resolution, or when they cannot be read.
-func readExif(r io.ReaderAt, order binary.ByteOrder, entries []byte) []byte {
+// exifEnt is an entry of a directory of the file: its tag, type and count,
+// and the bytes (4, or 8 in a BigTIFF) that hold its value or where it is.
+type exifEnt struct {
+	tag, typ uint16
+	count    uint64
+	val      []byte
+}
+
+// ent reads the entry e of the file.
+func (b *exifBuilder) ent(e []byte) exifEnt {
+	if b.big {
+		return exifEnt{b.bo.Uint16(e), b.bo.Uint16(e[2:]), b.bo.Uint64(e[4:]), e[12:20]}
+	}
+	return exifEnt{b.bo.Uint16(e), b.bo.Uint16(e[2:]), uint64(b.bo.Uint32(e[4:])), e[8:12]}
+}
+
+// readExif returns the EXIF block of a TIFF (a BigTIFF when big) whose
+// first directory's entries are entries; nil when it has none of the tags
+// but the resolution, or when they cannot be read.
+func readExif(r io.ReaderAt, order binary.ByteOrder, entries []byte, big bool) []byte {
 	bo, ok := order.(byteOrder)
 	if !ok {
 		return nil
 	}
-	var keep [][]byte
+	b := &exifBuilder{r: r, bo: bo, big: big}
+	n := ifdLen
+	if big {
+		n = bigIFDLen
+	}
+	var keep []exifEnt
 	described := false // a tag besides the resolution, which every TIFF has
-	for i := 0; i+ifdLen <= len(entries); i += ifdLen {
-		if e := entries[i : i+ifdLen]; exifTags[bo.Uint16(e)] {
+	for i := 0; i+n <= len(entries); i += n {
+		if e := b.ent(entries[i : i+n]); exifTags[e.tag] {
 			keep = append(keep, e)
-			if t := bo.Uint16(e); t != 282 && t != 283 && t != 296 {
+			if e.tag != 282 && e.tag != 283 && e.tag != 296 {
 				described = true
 			}
 		}
@@ -75,7 +98,6 @@ func readExif(r io.ReaderAt, order binary.ByteOrder, entries []byte) []byte {
 	if !described {
 		return nil
 	}
-	b := &exifBuilder{r: r, bo: bo}
 	if order == binary.ByteOrder(binary.LittleEndian) {
 		b.out = append(b.out, leHeader...)
 	} else {
@@ -88,31 +110,44 @@ func readExif(r io.ReaderAt, order binary.ByteOrder, entries []byte) []byte {
 	return b.out
 }
 
-// dir writes a directory of the entries (12 bytes each, as in the file)
-// at the end of the block, with what they point to after it; depth counts
-// the directories it is in.
-func (b *exifBuilder) dir(entries [][]byte, depth int) bool {
+// dir writes a directory of the entries (12 bytes each, whatever the file
+// has) at the end of the block, with what they point to after it; depth
+// counts the directories it is in.
+func (b *exifBuilder) dir(entries []exifEnt, depth int) bool {
 	if b.dirs++; b.dirs > 8 || depth > 2 || len(entries) > 1000 {
 		return false
 	}
-	sort.SliceStable(entries, func(i, j int) bool { return b.bo.Uint16(entries[i]) < b.bo.Uint16(entries[j]) })
+	sort.SliceStable(entries, func(i, j int) bool { return entries[i].tag < entries[j].tag })
 	start := len(b.out)
 	b.out = b.bo.AppendUint16(b.out, uint16(len(entries)))
 	for _, e := range entries {
-		b.out = append(b.out, e...)
+		b.out = b.bo.AppendUint16(b.out, e.tag)
+		b.out = b.bo.AppendUint16(b.out, e.typ)
+		b.out = b.bo.AppendUint32(b.out, uint32(e.count))
+		b.out = append(b.out, e.val[:4]...)
 	}
 	b.out = b.bo.AppendUint32(b.out, 0) // no next directory
 	for i, e := range entries {
 		at := start + 2 + ifdLen*i
-		tag, typ, count := b.bo.Uint16(e), int(b.bo.Uint16(e[2:])), uint64(b.bo.Uint32(e[4:]))
-		if typ <= 0 || typ >= len(typeSizes) || typeSizes[typ] == 0 {
-			return false
-		}
-		if exifPointers[tag] {
-			if count != 1 || (typ != 4 && typ != 13) {
+		if exifPointers[e.tag] {
+			// An offset of 4 bytes, or in a BigTIFF one of 8, which the
+			// block holds as one of 4.
+			off := int64(b.bo.Uint32(e.val))
+			switch {
+			case e.count != 1:
+				return false
+			case e.typ == 4 || e.typ == 13:
+			case b.big && (e.typ == 16 || e.typ == 18):
+				v := b.bo.Uint64(e.val)
+				if v > math.MaxInt64 {
+					return false
+				}
+				off = int64(v)
+				b.bo.PutUint16(b.out[at+2:], 4)
+			default:
 				return false
 			}
-			sub, ok := b.readDir(int64(b.bo.Uint32(e[8:])))
+			sub, ok := b.readDir(off)
 			if !ok {
 				return false
 			}
@@ -122,16 +157,31 @@ func (b *exifBuilder) dir(entries [][]byte, depth int) bool {
 			}
 			continue
 		}
-		n := count * uint64(typeSizes[typ])
+		typ := int(e.typ)
+		if typ <= 0 || typ >= len(typeSizes) || typeSizes[typ] == 0 || e.count > math.MaxUint32 {
+			return false
+		}
+		n := e.count * uint64(typeSizes[typ])
 		if n <= 4 {
 			continue // the value is in the entry
 		}
 		if n > pipeline.MaxMetaBytes || uint64(len(b.out))+n > pipeline.MaxMetaBytes {
 			return false
 		}
-		data, err := safeReadAt(b.r, n, int64(b.bo.Uint32(e[8:])))
-		if err != nil {
-			return false
+		data := e.val[:min(n, uint64(len(e.val)))] // in the entry, in a BigTIFF
+		if n > uint64(len(e.val)) {
+			off := int64(b.bo.Uint32(e.val))
+			if b.big {
+				v := b.bo.Uint64(e.val)
+				if v > math.MaxInt64 {
+					return false
+				}
+				off = int64(v)
+			}
+			var err error
+			if data, err = safeReadAt(b.r, n, off); err != nil {
+				return false
+			}
 		}
 		if len(b.out)%2 == 1 {
 			b.out = append(b.out, 0) // values start on a word boundary
@@ -143,22 +193,29 @@ func (b *exifBuilder) dir(entries [][]byte, depth int) bool {
 }
 
 // readDir reads the entries of the directory at off.
-func (b *exifBuilder) readDir(off int64) ([][]byte, bool) {
-	var n [2]byte
-	if _, err := b.r.ReadAt(n[:], off); err != nil {
+func (b *exifBuilder) readDir(off int64) ([]exifEnt, bool) {
+	var n [8]byte
+	head, size := 2, ifdLen
+	if b.big {
+		head, size = 8, bigIFDLen
+	}
+	if _, err := b.r.ReadAt(n[:head], off); err != nil {
 		return nil, false
 	}
-	count := int(b.bo.Uint16(n[:]))
+	count := uint64(b.bo.Uint16(n[:]))
+	if b.big {
+		count = b.bo.Uint64(n[:])
+	}
 	if count > 1000 {
 		return nil, false
 	}
-	p, err := safeReadAt(b.r, uint64(count*ifdLen), off+2)
+	p, err := safeReadAt(b.r, count*uint64(size), off+int64(head))
 	if err != nil {
 		return nil, false
 	}
-	entries := make([][]byte, count)
+	entries := make([]exifEnt, count)
 	for i := range entries {
-		entries[i] = p[i*ifdLen : (i+1)*ifdLen]
+		entries[i] = b.ent(p[i*size : (i+1)*size])
 	}
 	return entries, true
 }

@@ -20,6 +20,12 @@ const (
 	beHeader = "MM\x00\x2A" // Header for big-endian files.
 
 	ifdLen = 12 // Length of an IFD entry in bytes.
+
+	// BigTIFF (goimgtools addition): offsets and counts of 8 bytes, IFD
+	// entries of 20.
+	bigLEHeader = "II\x2B\x00"
+	bigBEHeader = "MM\x00\x2B"
+	bigIFDLen   = 20
 )
 
 // Data types (p. 14-16 of the spec).
@@ -31,10 +37,15 @@ const (
 	dtRational = 5
 	// dtUndefined is bytes of any meaning (the colour profile).
 	dtUndefined = 7
+	// Of BigTIFF: unsigned integers and offsets of 8 bytes.
+	dtLong8 = 16
+	dtIFD8  = 18
 )
 
-// The length of one instance of each data type in bytes.
-var lengths = [...]uint32{0, 1, 1, 2, 4, 8}
+// The length of one instance of each data type in bytes: those of the
+// specification, and BigTIFF's; the types past dtRational are only told
+// apart from types that are not there.
+var lengths = [...]uint32{0, 1, 1, 2, 4, 8, 1, 1, 2, 4, 8, 4, 8, 4, 1, 1, 8, 8, 8}
 
 // Tags (see p. 28-41 of the spec).
 const (
@@ -65,6 +76,7 @@ const (
 
 	tPredictor    = 317
 	tColorMap     = 320
+	tInkSet       = 332 // goimgtools addition: of a CMYK image
 	tExtraSamples = 338
 	// tICCProfile holds an ICC colour profile (InterColorProfile, from the
 	// TIFF/EP and the ICC specifications).

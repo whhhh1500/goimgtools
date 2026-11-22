@@ -86,6 +86,125 @@ hstore:
 	JLT hloop
 	RET
 
+// func hboxPrefixSIMD(pre *uint32, pad *byte, n int)
+TEXT ·hboxPrefixSIMD(SB), NOSPLIT, $0-24
+	MOVQ pre+0(FP), DI
+	MOVQ pad+8(FP), SI
+	MOVQ n+16(FP), CX
+	VPXOR X0, X0, X0
+	VMOVDQU X0, (DI)
+ploop:
+	VPMOVZXBD (SI), X1
+	VPADDD X1, X0, X0
+	VMOVDQU X0, 16(DI)
+	ADDQ $4, SI
+	ADDQ $16, DI
+	DECQ CX
+	JNZ ploop
+	RET
+
+// The body of the window of pixel x of the row is the pixels x+1 to
+// x+2ri+1 of pad, its sum pre[x+2ri+2] - pre[x+1]; the pixels beyond it
+// are pad[x] and pad[x+2ri+2].
+//
+// func hboxSumSIMD(dst, pad *byte, pre *uint32, w, ri int, ww, fw uint32, keepAlpha bool)
+TEXT ·hboxSumSIMD(SB), NOSPLIT, $0-49
+	MOVQ dst+0(FP), DI
+	MOVQ pad+8(FP), SI       // left
+	MOVQ pre+16(FP), R8
+	MOVQ w+24(FP), CX
+	MOVQ ri+32(FP), DX
+	MOVL ww+40(FP), AX
+	VMOVD AX, X13
+	VPBROADCASTD X13, Y13
+	MOVL fw+44(FP), AX
+	VMOVD AX, X14
+	VPBROADCASTD X14, Y14
+	VPBROADCASTD boxHalf<>(SB), Y15
+	VMOVDQU boxPack<>(SB), Y12
+	MOVBQZX keepAlpha+48(FP), BX
+	LEAQ 2(DX)(DX*1), DX     // 2ri+2
+	LEAQ (SI)(DX*4), R9      // right
+	SHLQ $4, DX
+	LEAQ (R8)(DX*1), R10     // the sums past the window
+	ADDQ $16, R8             // the sums before it
+	MOVQ CX, R11
+	SHRQ $1, R11             // pairs of pixels
+	JZ sone
+	TESTQ BX, BX
+	JNZ skeep
+spair:
+	VMOVDQU (R10), Y0
+	VPSUBD (R8), Y0, Y0
+	VPMOVZXBD (SI), Y1
+	VPMOVZXBD (R9), Y2
+	VPADDD Y2, Y1, Y1
+	VPMULLD Y13, Y0, Y0
+	VPMULLD Y14, Y1, Y1
+	VPADDD Y1, Y0, Y0
+	VPADDD Y15, Y0, Y0
+	VPSRLD $24, Y0, Y0
+	VPSHUFB Y12, Y0, Y0
+	VMOVD X0, (DI)
+	VEXTRACTI128 $1, Y0, X1
+	VMOVD X1, 4(DI)
+	ADDQ $32, R10
+	ADDQ $32, R8
+	ADDQ $8, SI
+	ADDQ $8, R9
+	ADDQ $8, DI
+	DECQ R11
+	JNZ spair
+	JMP sone
+skeep:
+	// The same, the alpha of dst put back in its lanes.
+	VMOVDQU (R10), Y0
+	VPSUBD (R8), Y0, Y0
+	VPMOVZXBD (SI), Y1
+	VPMOVZXBD (R9), Y2
+	VPADDD Y2, Y1, Y1
+	VPMULLD Y13, Y0, Y0
+	VPMULLD Y14, Y1, Y1
+	VPADDD Y1, Y0, Y0
+	VPADDD Y15, Y0, Y0
+	VPSRLD $24, Y0, Y0
+	VPMOVZXBD (DI), Y3
+	VPBLENDD $0x88, Y3, Y0, Y0
+	VPSHUFB Y12, Y0, Y0
+	VMOVD X0, (DI)
+	VEXTRACTI128 $1, Y0, X1
+	VMOVD X1, 4(DI)
+	ADDQ $32, R10
+	ADDQ $32, R8
+	ADDQ $8, SI
+	ADDQ $8, R9
+	ADDQ $8, DI
+	DECQ R11
+	JNZ skeep
+sone:
+	// The last pixel of a row of an odd number.
+	TESTQ $1, CX
+	JZ sdone
+	VMOVDQU (R10), X0
+	VPSUBD (R8), X0, X0
+	VPMOVZXBD (SI), X1
+	VPMOVZXBD (R9), X2
+	VPADDD X2, X1, X1
+	VPMULLD X13, X0, X0
+	VPMULLD X14, X1, X1
+	VPADDD X1, X0, X0
+	VPADDD X15, X0, X0
+	VPSRLD $24, X0, X0
+	VPSHUFB X12, X0, X0
+	TESTQ BX, BX
+	JZ sstore
+	MOVBLZX 3(DI), AX
+	VPINSRB $3, AX, X0, X0
+sstore:
+	VMOVD X0, (DI)
+sdone:
+	VZEROUPPER
+	RET
 // func vboxRowSIMD(out, a, b, c *byte, sum *uint32, n int, ww, fw uint32)
 TEXT ·vboxRowSIMD(SB), NOSPLIT, $0-56
 	MOVQ out+0(FP), DI

@@ -12,6 +12,15 @@ var useSIMD = true
 //go:noescape
 func hboxRowSIMD(dst, src *byte, w, ri int, ww, fw uint32, keepAlpha bool)
 
+// usePrefix: the pass by the sums of the row is amd64's.
+var usePrefix = false
+
+func hboxPrefixSIMD(pre *uint32, pad *byte, n int) { panic("unreachable") }
+
+func hboxSumSIMD(dst, pad *byte, pre *uint32, w, ri int, ww, fw uint32, keepAlpha bool) {
+	panic("unreachable")
+}
+
 // vboxRowSIMD is the inner loop of vbox.nextRow for n bytes, n a multiple
 // of 8.
 //

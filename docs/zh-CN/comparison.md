@@ -27,8 +27,8 @@
 | GIF 缩到 1536 宽的 JPEG | 0.24s、9.9MB | 0.19s、154MB | 0.25s、197MB | 0.20s、45MB | | 内存领先，时间**落后**四分之一（GIF 解码） |
 | TIFF 缩到 1536 宽的 JPEG | 0.14s、11.6MB | 0.30s、80.6MB | 0.36s、133MB | 0.37s、236MB | | 领先 |
 | JPEG 缩到 1536 宽的 GIF | 0.49s、15.9MB、442KB | | 1.99s、127MB、500KB | 0.58s、142MB、409KB | | 领先 |
-| 模糊，sigma 2（JPEG 进出） | 0.31s、12.1MB | 0.15s（CPU 0.19s）、31.8MB | 0.27s、268MB | 0.59s、295MB | | 内存领先，时间**落后** libvips（它快一倍；它的核在峰值的五分之一处截断） |
-| 锐化，sigma 2 | 0.38s、12.3MB | 0.97s、34.9MB | 1.07s、219MB | 0.72s、295MB | | 领先 |
+| 模糊，sigma 2（JPEG 进出） | 0.27s、12.1MB | 0.15s（CPU 0.22s）、31.8MB | 0.27s、268MB | 0.59s、295MB | | 内存领先，时间**落后** libvips（CPU 时间 0.28s 对它的 0.22s，它分摊在不止一个核上；它的核在峰值的五分之一处截断），与 sharp 持平 |
+| 锐化，sigma 2 | 0.35s、12.5MB | 0.98s、34.9MB | 1.07s、219MB | 0.72s、295MB | | 领先 |
 | 旋转 90° | 0.31s、14.2MB | 0.17s、97.1MB | 0.33s、267MB | 0.28s、204MB | | 内存领先（七分之一），时间**落后** libvips（它把整张图放在内存里） |
 | 旋转 30° | 0.64s、14.1MB | 0.42s（CPU 0.53s）、98.5MB | 0.54s、398MB | 1.42s、376MB | | 内存领先，时间**落后** libvips |
 | 灰度 | 0.21s、8.7MB | 0.18s（CPU 0.22s）、30.1MB | 0.28s、220MB | 0.27s、135MB | | 内存领先，CPU 时间持平 |
@@ -47,8 +47,8 @@
 | PNG 转 PNG，同尺寸 | 0.87s、18.1MB、42.2MB | 1.11s、34.3MB、66.2MB | 1.19s、82.2MB、66.2MB |
 | JPEG 转有损 WebP | 2.08s、20.8MB；0.83s、20.0MB（力度 1） | 1.83s、198MB | 1.89s、246MB |
 | PNG 转无损 WebP | 3.94s、33.0MB | 8.11s、752MB | 8.58s、800MB |
-| 模糊，sigma 2 | 0.14s、19.4MB | 0.12s、35.1MB | 0.28s、270MB |
-| 锐化，sigma 2 | 0.18s、21.1MB | 0.32s、45.3MB | 0.43s、231MB |
+| 模糊，sigma 2 | 0.12s、20.1MB | 0.13s、35.3MB | 0.28s、270MB |
+| 锐化，sigma 2 | 0.15s、21.3MB | 0.31s、45.4MB | 0.43s、231MB |
 | 旋转 90° | 0.22s、18.0MB | 0.17s、99.5MB | 0.33s、267MB |
 | 旋转 30° | 0.41s、19.9MB | 0.21s、104MB | 0.38s、399MB |
 
@@ -80,7 +80,7 @@
 | AVIF、HEIC | — | R W | AVIF R W |
 | JPEG XL | — | —（可选） | — |
 | JPEG 2000 | — | —（可选） | R W |
-| TIFF：BigTIFF、CMYK、Lab、浮点、2 位与 4 位、灰度带透明、zstd 与 WebP 压缩，写瓦片与金字塔 | —（能读：条带与瓦片、金字塔的第一层，1、8、16 位，LZW、Deflate、PackBits、CCITT、JPEG） | R W | R W（大部分） |
+| TIFF：Lab、浮点、zstd 与 WebP 压缩，写瓦片与金字塔 | —（能读：普通 TIFF 与 BigTIFF，条带与瓦片、金字塔的第一层；1、2、4、8、16 位的灰度与调色板，灰度带透明，带或不带透明的 RGB，CMYK；LZW、Deflate、PackBits、CCITT、JPEG） | R W | R W（大部分） |
 | DDS、PCX、SGI、XBM、DIB | — | — | R W |
 | XPM、FITS、FLI、IM、MSP、SPIDER、BLP、DCX、FTEX、GBR、IMT、MCIDAS、PCD、PIXAR、SUN、WMF、EPS | — | — | R（部分 W） |
 | UltraHDR（带增益图的 JPEG） | R（只读图像本身） | R W | R（只读图像本身） |
@@ -101,13 +101,13 @@
 | 哪一项 | 实测的差距 | 状态 |
 |---|---|---|
 | PNG 编码时间 | 文件小 0.8% 的情况下，比 libpng（libvips，`filter=all`）多用三分之一的时间：1.86s 对 1.38s | 待处理 |
-| 模糊 | 0.31s，libvips 0.15s（它的高斯核在峰值五分之一处截断；本包的 `BlurLibvips` 逐字节用同一个核，要 0.70s） | 待处理 |
+| 模糊 | 单线程 0.27s，libvips 0.15s（CPU 时间 0.28s 对 0.22s：libvips 即使设为一个线程，解码和编码也在别的核上进行）；四线程持平（0.12s 对 0.13s）。它的高斯核在峰值五分之一处截断；本包的 `BlurLibvips` 逐字节用同一个核，要 0.73s。横向方框遍改为从整行的累加和取每个窗口的和之前是 0.31s | 待处理 |
 | 旋转 90° | 0.31s 对 0.17s（把每一轮的行写成一整块之前是 0.68s） | 待处理：libvips 把整张图放在内存里（97MB）；本包经一个可能落到文件上的暂存区来转 |
 | 其他角度的旋转 | 0.64s 对 0.42s | 待处理 |
 | GIF 解码 | 2400 万像素的 GIF：0.24s 对 0.19s | 待处理 |
 | 动图 GIF 缩放 | gifsicle 快一倍、少用 5MB 内存；它的文件大一半 | 待处理 |
 | JPEG 按 butteraugli 对 jpegli | 同等 butteraugli 下文件大 3.2 个点（同等 SSIMULACRA2 下小 4.0 个点） | 待处理 |
-| TIFF 的各种变体 | 不读 BigTIFF、CMYK、Lab、浮点、2 位与 4 位、灰度带透明、zstd 与 WebP 压缩；不写瓦片与金字塔 | 待处理 |
+| TIFF 的各种变体 | 不读 Lab、浮点、zstd 与 WebP 压缩；不写瓦片与金字塔。BigTIFF、CMYK、2 位与 4 位、灰度带透明现在都能读 | 待处理 |
 | DDS、PCX、SGI、XBM、DIB、XPM、FITS | 不读 | 待处理 |
 | JPEG 2000 | 不读 | 待处理 |
 | IPTC | 不读也不保留 | 待处理 |

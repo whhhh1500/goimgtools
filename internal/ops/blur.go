@@ -203,6 +203,10 @@ type hbox struct {
 	nc     int // channels blurred: 3 when there is no transparency, the alpha staying 255
 	passes int
 	t      [2][]uint8
+	// For the pass by sums (usePrefix): the row with its ends repeated
+	// ri+1 pixels beyond them, and its sums from its start.
+	pad []uint8
+	pre []uint32
 }
 
 // apply puts the blurred row into dst (whose alpha stays as it is when
@@ -221,6 +225,23 @@ func (h *hbox) apply(dst, row []uint8) {
 // repeated beyond them.
 func (h *hbox) pass(dst, src []uint8) {
 	w, ri := h.w, h.b.ri
+	if useSIMD && usePrefix && w > 0 {
+		// The row with its ends repeated, its sums, then each pixel from
+		// two of the sums: the same arithmetic, so the same bytes.
+		n := w + 2*ri + 2
+		if h.pad == nil {
+			h.pad, h.pre = make([]uint8, 4*n), make([]uint32, 4*(n+1))
+		}
+		_ = dst[4*w-1]
+		for i := 0; i <= ri; i++ {
+			copy(h.pad[4*i:], src[:4])
+			copy(h.pad[4*(ri+1+w+i):], src[4*(w-1):4*w])
+		}
+		copy(h.pad[4*(ri+1):], src[:4*w])
+		hboxPrefixSIMD(&h.pre[0], &h.pad[0], n)
+		hboxSumSIMD(&dst[0], &h.pad[0], &h.pre[0], w, ri, h.b.ww, h.b.fw, h.nc == 3)
+		return
+	}
 	if useSIMD && w > 0 {
 		_, _ = dst[4*w-1], src[4*w-1]
 		hboxRowSIMD(&dst[0], &src[0], w, ri, h.b.ww, h.b.fw, h.nc == 3)
@@ -639,8 +660,10 @@ func (f *filterStage) boxPasses(b box, passes int) (rowSource, error) {
 	w := f.in.w
 	w4 := 4 * w
 	rows, ways := f.work.rows, f.work.ways
-	// The blurred rows of a batch, and two rows for each part of the work.
-	if err := f.reserve(int64(w4)*int64(rows+2*ways), "blur rows"); err != nil {
+	// The blurred rows of a batch, and for each part of the work two rows
+	// and, for the pass by sums, the row with its ends repeated and its
+	// sums (20 bytes a pixel).
+	if err := f.reserve(int64(w4)*int64(rows+2*ways)+int64(ways)*20*int64(w+2*b.ri+3), "blur rows"); err != nil {
 		return nil, err
 	}
 	nc := 4

@@ -185,14 +185,14 @@ func open(r io.ReaderAt, env *pipeline.Env) (_ *stream, err error) {
 	case cNone, 0, cG3, cG4, cLZW, cDeflate, cDeflateOld, cPackBits:
 	case cJPEG:
 		// 8-bit grey or colour only.
-		if d.bpp != 8 || (d.mode != mRGB && d.mode != mGray && d.mode != mGrayInvert) {
+		if d.bpp != 8 || d.grayAlpha || (d.mode != mRGB && d.mode != mGray && d.mode != mGrayInvert) {
 			return nil, UnsupportedError("JPEG compression of this kind of image")
 		}
 	default:
 		return nil, UnsupportedError(fmt.Sprintf("compression value %d", d.firstVal(tCompression)))
 	}
-	if d.firstVal(tPredictor) == prHorizontal && d.bpp == 1 {
-		return nil, UnsupportedError("horizontal predictor with 1 BitsPerSample")
+	if d.firstVal(tPredictor) == prHorizontal && d.bpp < 8 {
+		return nil, UnsupportedError(fmt.Sprintf("horizontal predictor with %d BitsPerSample", d.bpp))
 	}
 
 	s := &stream{
@@ -214,8 +214,11 @@ func open(r io.ReaderAt, env *pipeline.Env) (_ *stream, err error) {
 	switch d.mode {
 	case mRGB:
 		numSamples = 3
-	case mNRGBA, mRGBA:
+	case mNRGBA, mRGBA, mCMYK:
 		numSamples = 4
+	}
+	if d.grayAlpha {
+		numSamples = 2
 	}
 	s.rowBytes = int((int64(blockWidth)*int64(numSamples)*int64(d.bpp) + 7) / 8)
 
@@ -253,10 +256,21 @@ func open(r io.ReaderAt, env *pipeline.Env) (_ *stream, err error) {
 func (s *stream) newImage(imgRect image.Rectangle) (img image.Image) {
 	d := s.d
 	switch d.mode {
+	case mCMYK:
+		img = image.NewCMYK(imgRect)
 	case mGray, mGrayInvert:
-		if d.bpp == 16 {
+		switch {
+		case d.grayAlpha && d.bpp == 16 && d.premult:
+			img = image.NewRGBA64(imgRect)
+		case d.grayAlpha && d.bpp == 16:
+			img = image.NewNRGBA64(imgRect)
+		case d.grayAlpha && d.premult:
+			img = image.NewRGBA(imgRect)
+		case d.grayAlpha:
+			img = image.NewNRGBA(imgRect)
+		case d.bpp == 16:
 			img = image.NewGray16(imgRect)
-		} else {
+		default:
 			img = image.NewGray(imgRect)
 		}
 	case mPaletted:
@@ -305,7 +319,7 @@ func (s *stream) Opaque() bool {
 	case mNRGBA, mRGBA:
 		return false
 	}
-	return true
+	return !s.d.grayAlpha
 }
 
 func (s *stream) Close() error {

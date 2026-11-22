@@ -339,7 +339,8 @@ var builtin = []*formatDef{
 	{
 		Format: Format{"tiff", []string{".tif", ".tiff"}},
 		magic: func(h []byte) bool {
-			return bytes.HasPrefix(h, []byte("II*\x00")) || bytes.HasPrefix(h, []byte("MM\x00*"))
+			return bytes.HasPrefix(h, []byte("II*\x00")) || bytes.HasPrefix(h, []byte("MM\x00*")) ||
+				bytes.HasPrefix(h, []byte("II+\x00\x08\x00\x00\x00")) || bytes.HasPrefix(h, []byte("MM\x00+\x00\x08\x00\x00")) // BigTIFF
 		},
 		open: func(in *input, env *pipeline.Env) (pipeline.Source, error) {
 			return in.openAt(env, tiffstream.Open)

@@ -14,6 +14,25 @@ var useSIMD = cpu.X86.HasAVX2
 //go:noescape
 func hboxRowSIMD(dst, src *byte, w, ri int, ww, fw uint32, keepAlpha bool)
 
+// usePrefix selects the horizontal pass by the sums of the row from its
+// start (hbox.prefixPass): two pixels at a time, none waiting for the one
+// before it as with a sum that slides.
+var usePrefix = cpu.X86.HasAVX2
+
+// hboxPrefixSIMD writes the sums of the n pixels of pad from its start,
+// channel by channel: pre[4(i+1)+c] = pre[4i+c] + pad[4i+c], from zero.
+//
+//go:noescape
+func hboxPrefixSIMD(pre *uint32, pad *byte, n int)
+
+// hboxSumSIMD is hbox.pass of a row of w pixels from pad, the row with
+// ri+1 pixels repeated before and after it, and pre, its sums: for all
+// four channels, or the colours only (the alpha of dst left as it is)
+// when keepAlpha.
+//
+//go:noescape
+func hboxSumSIMD(dst, pad *byte, pre *uint32, w, ri int, ww, fw uint32, keepAlpha bool)
+
 // vboxRowSIMD is the inner loop of vbox.nextRow for n bytes, n a multiple
 // of 8.
 //

@@ -27,8 +27,8 @@ Measured on 22 November 2026: Windows 10, Intel Core i7-12700K, Go 1.27.1. The o
 | GIF to a JPEG 1536 wide | 0.24s, 9.9MB | 0.19s, 154MB | 0.25s, 197MB | 0.20s, 45MB | | memory ahead, time **behind** by a quarter (GIF decoding) |
 | TIFF to a JPEG 1536 wide | 0.14s, 11.6MB | 0.30s, 80.6MB | 0.36s, 133MB | 0.37s, 236MB | | ahead |
 | JPEG to a GIF 1536 wide | 0.49s, 15.9MB, 442KB | | 1.99s, 127MB, 500KB | 0.58s, 142MB, 409KB | | ahead |
-| Blur, sigma 2 (JPEG in and out) | 0.31s, 12.1MB | 0.15s (0.19s of CPU), 31.8MB | 0.27s, 268MB | 0.59s, 295MB | | memory ahead, time **behind** libvips (twice; its kernel is cut off at a fifth of its peak) |
-| Sharpen, sigma 2 | 0.38s, 12.3MB | 0.97s, 34.9MB | 1.07s, 219MB | 0.72s, 295MB | | ahead |
+| Blur, sigma 2 (JPEG in and out) | 0.27s, 12.1MB | 0.15s (0.22s of CPU), 31.8MB | 0.27s, 268MB | 0.59s, 295MB | | memory ahead, time **behind** libvips (0.28s of CPU against its 0.22s, which it spreads over more than one core; its kernel is cut off at a fifth of its peak), level with sharp |
+| Sharpen, sigma 2 | 0.35s, 12.5MB | 0.98s, 34.9MB | 1.07s, 219MB | 0.72s, 295MB | | ahead |
 | Rotate 90° | 0.31s, 14.2MB | 0.17s, 97.1MB | 0.33s, 267MB | 0.28s, 204MB | | memory ahead (a seventh), time **behind** libvips (it holds the whole image) |
 | Rotate 30° | 0.64s, 14.1MB | 0.42s (0.53s of CPU), 98.5MB | 0.54s, 398MB | 1.42s, 376MB | | memory ahead, time **behind** libvips |
 | Greyscale | 0.21s, 8.7MB | 0.18s (0.22s of CPU), 30.1MB | 0.28s, 220MB | 0.27s, 135MB | | memory ahead, CPU time level |
@@ -47,8 +47,8 @@ With four threads (`-threads 4`, `VIPS_CONCURRENCY=4`, `sharp.concurrency(4)`):
 | PNG to PNG, same size | 0.87s, 18.1MB, 42.2MB | 1.11s, 34.3MB, 66.2MB | 1.19s, 82.2MB, 66.2MB |
 | JPEG to lossy WebP | 2.08s, 20.8MB; 0.83s, 20.0MB (effort 1) | 1.83s, 198MB | 1.89s, 246MB |
 | PNG to lossless WebP | 3.94s, 33.0MB | 8.11s, 752MB | 8.58s, 800MB |
-| Blur, sigma 2 | 0.14s, 19.4MB | 0.12s, 35.1MB | 0.28s, 270MB |
-| Sharpen, sigma 2 | 0.18s, 21.1MB | 0.32s, 45.3MB | 0.43s, 231MB |
+| Blur, sigma 2 | 0.12s, 20.1MB | 0.13s, 35.3MB | 0.28s, 270MB |
+| Sharpen, sigma 2 | 0.15s, 21.3MB | 0.31s, 45.4MB | 0.43s, 231MB |
 | Rotate 90° | 0.22s, 18.0MB | 0.17s, 99.5MB | 0.33s, 267MB |
 | Rotate 30° | 0.41s, 19.9MB | 0.21s, 104MB | 0.38s, 399MB |
 
@@ -80,7 +80,7 @@ What each reads (R) and writes (W). libvips is the build above (its other loader
 | AVIF, HEIC | — | R W | AVIF R W |
 | JPEG XL | — | — (optional) | — |
 | JPEG 2000 | — | — (optional) | R W |
-| TIFF: BigTIFF, CMYK, Lab, floats, 2 and 4 bits, grey with alpha, zstd and WebP compression, tiles and pyramids written | — (read: strips and tiles, pyramids' first level, 1, 8 and 16 bits, LZW, Deflate, PackBits, CCITT, JPEG) | R W | R W (most) |
+| TIFF: Lab, floats, zstd and WebP compression, tiles and pyramids written | — (read: classic and BigTIFF, strips and tiles, pyramids' first level; greys and palettes of 1, 2, 4, 8 and 16 bits, grey with alpha, RGB with and without alpha, CMYK; LZW, Deflate, PackBits, CCITT, JPEG) | R W | R W (most) |
 | DDS, PCX, SGI, XBM, DIB | — | — | R W |
 | XPM, FITS, FLI, IM, MSP, SPIDER, BLP, DCX, FTEX, GBR, IMT, MCIDAS, PCD, PIXAR, SUN, WMF, EPS | — | — | R (some W) |
 | UltraHDR (a JPEG with a gain map) | R (the picture alone) | R W | R (the picture alone) |
@@ -101,13 +101,13 @@ What each reads (R) and writes (W). libvips is the build above (its other loader
 | What | The gap, measured | Standing |
 |---|---|---|
 | PNG encoding time | A third more time than libpng's (libvips, `filter=all`) for a file 0.8% smaller: 1.86s against 1.38s | Open |
-| Blur | 0.31s against libvips' 0.15s (its Gaussian cut off at a fifth of its peak; `BlurLibvips` here, that kernel to the byte, takes 0.70s) | Open |
+| Blur | On one thread 0.27s against libvips' 0.15s (0.28s of CPU against 0.22s: libvips decodes and encodes on other cores even when told to use one); level on four threads (0.12s against 0.13s). Its Gaussian is cut off at a fifth of its peak; `BlurLibvips` here, that kernel to the byte, takes 0.73s. Was 0.31s before the box passes along the rows took their sums from running sums | Open |
 | Rotation by 90° | 0.31s against 0.17s (0.68s before the rows of a round were written as one block) | Open: libvips holds the image in memory (97MB); here it is turned through a store that may be a file |
 | Rotation by other angles | 0.64s against 0.42s | Open |
 | GIF decoding | 0.24s against 0.19s for a 24 megapixel GIF | Open |
 | Animated GIF resized | gifsicle is twice as fast and takes 5MB less; its file is half as large again | Open |
 | JPEG against jpegli by butteraugli | 3.2 points more file at equal butteraugli (4.0 points less at equal SSIMULACRA2) | Open |
-| TIFF variants | BigTIFF, CMYK, Lab, floats, 2 and 4 bits, grey with alpha, zstd and WebP compression are not read; tiles and pyramids are not written | Open |
+| TIFF variants | Lab, floats, zstd and WebP compression are not read; tiles and pyramids are not written. BigTIFF, CMYK, 2 and 4 bits and grey with alpha are read now | Open |
 | DDS, PCX, SGI, XBM, DIB, XPM, FITS | Not read | Open |
 | JPEG 2000 | Not read | Open |
 | IPTC | Not read or kept | Open |
