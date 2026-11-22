@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"bytes"
 	"image/color"
 	"os"
 	"path/filepath"
@@ -25,7 +26,10 @@ func TestReadOnlyFormats(t *testing.T) {
 		{"dds", "ddsstream", []string{"dxt1_37x23", "dxt5_40x28", "rgba_37x23", "l_40x28", "bc7_modes_80x64"}},
 		{"fits", "fitsstream", []string{"u8_40x28", "i16_bzero_37x23", "f32_37x23"}},
 	} {
-		dir := filepath.Join("..", "internal", c.pkg, "testdata")
+		// Copies of the packages' own samples: where the tests run away from
+		// the repository (Android, iOS) only this package's data is there.
+		dir := filepath.Join("testdata", "oldformats", c.format)
+		origin := filepath.Join("..", "internal", c.pkg, "testdata")
 		for _, name := range c.files {
 			data, err := os.ReadFile(filepath.Join(dir, name+"."+c.format))
 			if err != nil {
@@ -34,6 +38,15 @@ func TestReadOnlyFormats(t *testing.T) {
 			ref, err := os.ReadFile(filepath.Join(dir, name+".png"))
 			if err != nil {
 				t.Fatal(err)
+			}
+			// Where the package's samples are at hand, the copies are them.
+			for _, f := range []struct {
+				file string
+				have []byte
+			}{{name + "." + c.format, data}, {name + ".png", ref}} {
+				if orig, err := os.ReadFile(filepath.Join(origin, f.file)); err == nil && !bytes.Equal(orig, f.have) {
+					t.Errorf("%s: the copy under testdata is not the sample of internal/%s", f.file, c.pkg)
+				}
 			}
 			what := c.format + " " + name
 			info, err := FromBytes(data).Metadata()
