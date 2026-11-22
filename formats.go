@@ -14,11 +14,14 @@ import (
 	"sync"
 
 	"github.com/whhhh1500/goimgtools/internal/bmpstream"
+	"github.com/whhhh1500/goimgtools/internal/ddsstream"
+	"github.com/whhhh1500/goimgtools/internal/fitsstream"
 	"github.com/whhhh1500/goimgtools/internal/gifstream"
 	"github.com/whhhh1500/goimgtools/internal/icnsstream"
 	"github.com/whhhh1500/goimgtools/internal/icostream"
 	"github.com/whhhh1500/goimgtools/internal/jpegstream"
 	"github.com/whhhh1500/goimgtools/internal/ops"
+	"github.com/whhhh1500/goimgtools/internal/pcxstream"
 	"github.com/whhhh1500/goimgtools/internal/pdfwrite"
 	"github.com/whhhh1500/goimgtools/internal/pngstream"
 	"github.com/whhhh1500/goimgtools/internal/pnmstream"
@@ -26,12 +29,15 @@ import (
 	"github.com/whhhh1500/goimgtools/internal/qoistream"
 	"github.com/whhhh1500/goimgtools/internal/quant"
 	"github.com/whhhh1500/goimgtools/internal/resize"
+	"github.com/whhhh1500/goimgtools/internal/sgistream"
 	"github.com/whhhh1500/goimgtools/internal/svg"
 	"github.com/whhhh1500/goimgtools/internal/tgastream"
 	"github.com/whhhh1500/goimgtools/internal/tiffstream"
 	"github.com/whhhh1500/goimgtools/internal/vp8enc"
 	"github.com/whhhh1500/goimgtools/internal/vp8lenc"
 	"github.com/whhhh1500/goimgtools/internal/webpstream"
+	"github.com/whhhh1500/goimgtools/internal/xbmstream"
+	"github.com/whhhh1500/goimgtools/internal/xpmstream"
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
@@ -403,6 +409,55 @@ var builtin = []*formatDef{
 		magic:     psdstream.Match,
 		open: func(in *input, env *pipeline.Env) (pipeline.Source, error) {
 			return in.openAt(env, psdstream.Open)
+		},
+	}, {
+		// The top image of a DirectDraw Surface (a game texture); nothing
+		// is written.
+		Format:    Format{"dds", []string{".dds"}},
+		noProfile: true,
+		magic:     ddsstream.Match,
+		open: func(in *input, env *pipeline.Env) (pipeline.Source, error) {
+			return in.openAt(env, ddsstream.Open)
+		},
+	}, {
+		// The image of a FITS file (astronomy's format); nothing is
+		// written.
+		Format:    Format{"fits", []string{".fits", ".fit", ".fts"}},
+		noProfile: true,
+		magic:     fitsstream.Match,
+		open: func(in *input, env *pipeline.Env) (pipeline.Source, error) {
+			return in.openAt(env, fitsstream.Open)
+		},
+	}, {
+		// ZSoft's PCX, the format of PC Paintbrush; nothing is written.
+		Format:    Format{"pcx", []string{".pcx"}},
+		noProfile: true,
+		magic:     pcxstream.Match,
+		open: func(in *input, env *pipeline.Env) (pipeline.Source, error) {
+			return in.openAt(env, pcxstream.Open)
+		},
+	}, {
+		// Silicon Graphics' image file; nothing is written.
+		Format:    Format{"sgi", []string{".sgi", ".rgb", ".rgba", ".bw"}},
+		noProfile: true,
+		magic:     sgistream.Match,
+		open: func(in *input, env *pipeline.Env) (pipeline.Source, error) {
+			return in.openAt(env, sgistream.Open)
+		},
+	}, {
+		// X11's bitmap and pixmap, C source text; nothing is written.
+		Format:    Format{"xbm", []string{".xbm"}},
+		noProfile: true,
+		magic:     xbmstream.Match,
+		open: func(in *input, env *pipeline.Env) (pipeline.Source, error) {
+			return in.openAt(env, xbmstream.Open)
+		},
+	}, {
+		Format:    Format{"xpm", []string{".xpm"}},
+		noProfile: true,
+		magic:     xpmstream.Match,
+		open: func(in *input, env *pipeline.Env) (pipeline.Source, error) {
+			return in.openAt(env, xpmstream.Open)
 		},
 	}, {
 		Format:    Format{"qoi", []string{".qoi"}},

@@ -199,7 +199,7 @@ func TestFormats(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if len(lines) != 14 {
+	if len(lines) != 20 {
 		t.Fatalf("formats printed %d lines:\n%s", len(lines), out)
 	}
 	if !strings.Contains(out, "psd    .psd .psb      read\n") || !strings.Contains(out, "svg    .svg           read\n") || !strings.Contains(out, "pdf    .pdf           write\n") {

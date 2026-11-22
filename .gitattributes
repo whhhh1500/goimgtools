@@ -19,3 +19,9 @@ tests/testdata/fuzz/** text eol=lf
 # Test files compared to the byte.
 *.zst binary
 *.tif binary
+*.dds binary
+*.fits binary
+*.pcx binary
+*.sgi binary
+*.xbm -text
+*.xpm -text

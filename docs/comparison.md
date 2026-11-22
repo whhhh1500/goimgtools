@@ -81,8 +81,9 @@ What each reads (R) and writes (W). libvips is the build above (its other loader
 | JPEG XL | — | — (optional) | — |
 | JPEG 2000 | — | — (optional) | R W |
 | TIFF: tiles and pyramids written | — (read: classic and BigTIFF, strips and tiles, pyramids' first level; greys and palettes of 1, 2, 4, 8 and 16 bits, grey with alpha, RGB with and without alpha, CMYK, Lab, floats; LZW, Deflate, PackBits, CCITT, JPEG, zstd, WebP) | R W (the Windows build without zstd) | R W (no tiles written; the Windows build without zstd; float RGB and float Lab not read) |
-| DDS, PCX, SGI, XBM, DIB | — | — | R W |
-| XPM, FITS, FLI, IM, MSP, SPIDER, BLP, DCX, FTEX, GBR, IMT, MCIDAS, PCD, PIXAR, SUN, WMF, EPS | — | — | R (some W) |
+| DDS, PCX, SGI, XBM | R | — | R W |
+| XPM, FITS | R (XPM with `None` and colour names, FITS with its byte order and BZERO, which Pillow 12.1.1 gets wrong) | — | R |
+| DIB, FLI, IM, MSP, SPIDER, BLP, DCX, FTEX, GBR, IMT, MCIDAS, PCD, PIXAR, SUN, WMF, EPS | — (a `.dib` file that is a whole BMP is read as one) | — | R (some W) |
 | UltraHDR (a JPEG with a gain map) | R (the picture alone) | R W | R (the picture alone) |
 
 | Capability | goimgtools | libvips / sharp | Pillow |
@@ -108,7 +109,7 @@ What each reads (R) and writes (W). libvips is the build above (its other loader
 | Animated GIF resized | gifsicle is twice as fast (0.31s against 0.71s; 0.46s with its Lanczos method and `-O3`) and takes 5MB less (17.9MB against 23.0MB); its file is half as large again. Of the time here, a third chooses and refines one palette for all frames and maps the pixels to it with dithering, and a quarter codes each frame fifteen ways to keep the smallest: what makes the file a third smaller. Of the memory, 7MB is the program itself and 6MB what is in use (the picture so far, the colour counts, a frame in work); the rest is what Go's collector lets the heap grow by before it collects. Collecting sooner (GOGC=25) brings this task to 18.6MB but costs the tasks that stream 1 to 2MB each (measured), so it is not set; gifsicle keeps frames as 8-bit indexes and does no true-colour work | Open: a faster setting for GIF output (fewer trials, less refining) is not there; the allocations were cut from 48MB to 18MB in all, which did not move the peak |
 | JPEG against jpegli by butteraugli | 3.2 points more file at equal butteraugli (4.0 points less at equal SSIMULACRA2) | Open |
 | TIFF variants | Tiles and pyramids are not written. BigTIFF, CMYK, Lab, floats, 2 and 4 bits, grey with alpha, zstd and WebP compression are read now | Open (reading closed) |
-| DDS, PCX, SGI, XBM, DIB, XPM, FITS | Not read | Open |
+| DDS, PCX, SGI, XBM, XPM, FITS | Were not read | Closed for reading. Not written, on purpose: nothing new is saved in PCX, SGI, XBM or XPM, and a DDS for a game is made by a texture tool, with mip levels and a block coder of its own. DIB (a BMP without its file header) is left: it has no signature to know it by |
 | JPEG 2000 | Not read | Open |
 | IPTC | Was not read or kept | Closed: read from JPEG, TIFF and PSD, kept in JPEG and TIFF (`KeepIptc`) |
 | Text: vertical lines, font features, variable fonts, COLR version 1 in `Text()` | Not there (SVG text has vertical lines, variable fonts and COLR version 1) | Open |
