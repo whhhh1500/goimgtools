@@ -49,6 +49,7 @@ English | [中文](zh-CN/CHANGELOG.md)
 
 ### Fixed
 
+- SVG text: `textLength` (and `lengthAdjust`) on a tspan fits its characters to it, what follows in the line moved with them (only the text element's was taken); `xml:space="preserve"` on a tspan keeps its spaces (only the text element's was read); text on a path runs on along the path's later subpaths, `startOffset` a part of their whole length (it ran along the first alone). Measured against Chrome drawing the same fonts.
 - SVG `text-anchor` anchors each chunk of text by the extent of its glyphs, as SVG 2 and Chrome do: with a `dx` that sends a glyph back past the first, `start` puts the leftmost glyph at `x` and `middle` and `end` centre and end the whole of them there (they took the distance from the first pen to the last).
 - SVG: the memory the tree of a document takes is reserved for every 1024 of its nodes, the text of HTML and of text elements among them; nodes that came as text could pass without it.
 - SVG: an element of another namespace than SVG's (bound by a prefix or a default namespace) is not drawn, whatever its name, as in Chrome; one bound to SVG's by a prefix (`svg:rect`) is, and HTML in a `foreignObject`.

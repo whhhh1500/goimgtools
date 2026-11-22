@@ -45,6 +45,7 @@ type textCtx struct {
 	baseline     int     // dominant-baseline
 	decos        []*decoration
 	path         *textPathInfo
+	preserve     bool // xml:space="preserve", of it or what it is in
 }
 
 // A decoration (text-decoration) of an element: the lines it draws under,
@@ -465,22 +466,28 @@ func (b *builder) pathFor(k *node, m matrix, st style, vp viewport) *textPathInf
 	if !ok || len(ps) == 0 {
 		return nil
 	}
-	// The first subpath: text runs along one.
-	q := ps[0]
+	// Its subpaths one after another: the move from one to the next adds no
+	// length (as Chrome runs text along them all).
 	info := &textPathInfo{}
-	for i := 0; i+1 < len(q.xy); i += 2 {
-		x, y := tm.apply(q.xy[i], q.xy[i+1])
-		l := 0.0
-		if n := len(info.xy); n > 0 {
-			l = info.cum[len(info.cum)-1] + hypot(x-info.xy[n-2], y-info.xy[n-1])
+	for _, q := range ps {
+		first := len(info.xy)
+		for i := 0; i+1 < len(q.xy); i += 2 {
+			x, y := tm.apply(q.xy[i], q.xy[i+1])
+			l := 0.0
+			if n := len(info.xy); n > 0 {
+				l = info.cum[len(info.cum)-1]
+				if n > first {
+					l += hypot(x-info.xy[n-2], y-info.xy[n-1])
+				}
+			}
+			info.xy = append(info.xy, x, y)
+			info.cum = append(info.cum, l)
 		}
-		info.xy = append(info.xy, x, y)
-		info.cum = append(info.cum, l)
-	}
-	if q.closed && len(info.xy) >= 4 {
-		x, y := info.xy[0], info.xy[1]
-		info.cum = append(info.cum, info.cum[len(info.cum)-1]+hypot(x-info.xy[len(info.xy)-2], y-info.xy[len(info.xy)-1]))
-		info.xy = append(info.xy, x, y)
+		if q.closed && len(info.xy)-first >= 4 {
+			x, y := info.xy[first], info.xy[first+1]
+			info.cum = append(info.cum, info.cum[len(info.cum)-1]+hypot(x-info.xy[len(info.xy)-2], y-info.xy[len(info.xy)-1]))
+			info.xy = append(info.xy, x, y)
+		}
 	}
 	if len(info.cum) < 2 || !(info.cum[len(info.cum)-1] > 0) {
 		return nil
@@ -532,9 +539,12 @@ func (p *textPathInfo) at(s float64) (x, y, ux, uy float64, ok bool) {
 // as its style says, with the lines of its decorations.
 func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *clip) {
 	var chars []tchar
-	preserve := n.attrs["xml:space"] == "preserve"
+	preserve := n.attrs["xml:space"] == "preserve" // the text's: its spaces at the end
 	var walk func(k *node, kst style, ctx textCtx)
 	walk = func(k *node, kst style, ctx textCtx) {
+		if v, ok := k.attrs["xml:space"]; ok {
+			ctx.preserve = strings.TrimSpace(v) == "preserve" // for it and what it holds
+		}
 		// The inherited properties of text come with the style (from the
 		// element's ancestors too); these do not inherit.
 		family, anchor := kst.fontFamily, kst.anchor
@@ -608,14 +618,14 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 			for _, r := range s {
 				switch r {
 				case '\n', '\r':
-					if !preserve {
+					if !kctx.preserve {
 						continue
 					}
 					r = ' '
 				case '\t':
 					r = ' '
 				}
-				if !preserve && r == ' ' && (len(chars) == 0 || chars[len(chars)-1].r == ' ') {
+				if !kctx.preserve && r == ' ' && (len(chars) == 0 || chars[len(chars)-1].r == ' ') {
 					continue
 				}
 				chars = append(chars, tchar{r: r, st: kst, node: k, family: family, face: face, anchor: anchor, tctx: &kctx})
@@ -856,52 +866,101 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 			prevFont = nil // kerned by the tables
 		}
 	}
-	// textLength: the advances of the text element made to add up to it,
-	// by spacing or by stretching the glyphs too.
-	if v, ok := n.attrs["textLength"]; ok && len(out) > 0 && out[0].chunk == out[len(out)-1].chunk {
-		if l, ok := parseLength(v, st.fontSize, vp, axisX); ok && l > 0 {
-			w := out[len(out)-1].end - chunkStart[out[0].chunk]
-			if w > 0 {
-				stretch := strings.TrimSpace(n.attrs["lengthAdjust"]) == "spacingAndGlyphs"
-				k := l / w
-				// Spaced, the extra between the characters (as Chrome), a
-				// shaped cluster's glyphs moving with it.
-				clusters := 0
-				for _, p := range out {
-					if !p.extra {
-						clusters++
-					}
-				}
-				delta := 0.0
-				if clusters > 1 {
-					delta = (l - w) / float64(clusters-1)
-				}
-				start := chunkStart[out[0].chunk]
-				i := -1
-				for j := range out {
-					p := &out[j]
-					if p.extra {
-						h := out[j-1]
-						p.x, p.adv, p.sx, p.end = h.x, h.adv, h.sx, h.end
-						continue
-					}
-					i++
-					if stretch {
-						p.x = start + float64((p.x-start)*k)
-						p.adv = float64(p.adv * k)
-						p.sx = k
-					} else {
-						p.x += float64(float64(i) * delta)
-						if i < clusters-1 {
-							p.adv += delta
-						}
-					}
-					p.end = p.x + p.adv
-				}
+	// textLength: the advances of an element's characters (the text's, a
+	// tspan's) made to add up to it, by spacing or by stretching the glyphs
+	// too, what follows in the chunk moved with its end; inner elements
+	// first.
+	var withLength []*node
+	var collect func(k *node, depth int)
+	collect = func(k *node, depth int) {
+		if depth > 64 {
+			return
+		}
+		for _, c := range k.children {
+			if c.name == "tspan" || c.name == "a" || c.name == "textPath" {
+				collect(c, depth+1)
 			}
 		}
+		if _, ok := k.attrs["textLength"]; ok {
+			withLength = append(withLength, k)
+		}
 	}
-	// Anchor each chunk by the extent of its glyphs (the least and the
+	collect(n, 0)
+	within := func(k, e *node) bool {
+		for ; k != nil; k = k.parent {
+			if k == e {
+				return true
+			}
+			if k == n {
+				return false
+			}
+		}
+		return false
+	}
+	for _, e := range withLength {
+		i0, i1 := -1, -1
+		for j := range out {
+			if within(out[j].c.node, e) {
+				if i0 < 0 {
+					i0 = j
+				}
+				i1 = j
+			}
+		}
+		if i0 < 0 || out[i0].chunk != out[i1].chunk {
+			continue
+		}
+		l, ok := parseLength(e.attrs["textLength"], st.fontSize, vp, axisX)
+		if !ok || !(l > 0) {
+			continue
+		}
+		start := out[i0].x
+		w := out[i1].end - start
+		if !(w > 0) {
+			continue
+		}
+		stretch := strings.TrimSpace(e.attrs["lengthAdjust"]) == "spacingAndGlyphs"
+		k := l / w
+		// Spaced, the extra between the characters (as Chrome), a shaped
+		// cluster's glyphs moving with it.
+		clusters := 0
+		for _, p := range out[i0 : i1+1] {
+			if !p.extra {
+				clusters++
+			}
+		}
+		delta := 0.0
+		if clusters > 1 {
+			delta = (l - w) / float64(clusters-1)
+		}
+		oldEnd := out[i1].end
+		i := -1
+		for j := i0; j <= i1; j++ {
+			p := &out[j]
+			if p.extra {
+				h := out[j-1]
+				p.x, p.adv, p.sx, p.end = h.x, h.adv, h.sx, h.end
+				continue
+			}
+			i++
+			if stretch {
+				p.x = start + float64((p.x-start)*k)
+				p.adv = float64(p.adv * k)
+				p.sx = k
+			} else {
+				p.x += float64(float64(i) * delta)
+				if i < clusters-1 {
+					p.adv += delta
+				}
+			}
+			p.end = p.x + p.adv
+		}
+		moved := out[i1].end - oldEnd
+		for j := i1 + 1; j < len(out) && out[j].chunk == out[i1].chunk; j++ {
+			out[j].x += moved
+			out[j].end += moved
+		}
+	} // Anchor each chunk by the extent of its glyphs (the least and the
 	// greatest of their pens and pens plus advances: a dx that sends one
 	// back counts, as SVG 2 anchors text and Chrome).
 	lo, hi := map[int]float64{}, map[int]float64{}

@@ -81,7 +81,7 @@ WebP 编码器由本模块自行实现，无标准库可供对照，因此采用
 
 渲染器在 resvg 的测试集（1,801 个带参考图的文档，按参考图尺寸渲染，像素平均差小于 2 级算通过）与取自开源项目的 399 个图标与图表 SVG 文件上检查：
 
-- 1,801 个测试通过 1,260 个。其中 387 个文字测试使用测试集自带的字体（Noto Sans 等），这里没有安装；其余 1,414 个通过 1,238 个。提供这些字体（作为渲染器能找到的字体目录）时，387 个文字测试通过 273 个；其余大多是尚未支持的竖排（`writing-mode`，16 个）与可变字体（`font-variation-settings`，14 个），以及路径上的文字（10 个）。路径、矩形、圆、椭圆、直线与折线，变换，`use`，样式表与 `style` 属性，`mix-blend-mode`，`isolation`，透明度，描边的端点、连接、斜接限制与虚线偏移，渐变色标，以及滤镜 feBlend、feComposite、feComponentTransfer、feDisplacementMap、feMerge 全部通过；多边形、线性与径向渐变、`symbol`、`transform-origin`、`paint-order`、虚线，以及 feColorMatrix、feGaussianBlur、feMorphology、feOffset、feFlood、feDropShadow、feTurbulence 只差一两个。
+- 1,801 个测试通过 1,261 个。其中 387 个文字测试使用测试集自带的字体（Noto Sans 等），这里没有安装；其余 1,414 个通过 1,238 个。提供这些字体（作为渲染器能找到的字体目录）时，387 个文字测试通过 283 个；其余大多是尚未支持的竖排（`writing-mode`，16 个）与可变字体（`font-variation-settings`，14 个），以及路径上的文字（8 个）。路径、矩形、圆、椭圆、直线与折线，变换，`use`，样式表与 `style` 属性，`mix-blend-mode`，`isolation`，透明度，描边的端点、连接、斜接限制与虚线偏移，渐变色标，以及滤镜 feBlend、feComposite、feComponentTransfer、feDisplacementMap、feMerge 全部通过；多边形、线性与径向渐变、`symbol`、`transform-origin`、`paint-order`、虚线，以及 feColorMatrix、feGaussianBlur、feMorphology、feOffset、feFlood、feDropShadow、feTurbulence 只差一两个。
 - 有意不画的：`image` 元素引用的外部文件（只读 data URI，以免文档读取本机文件），以及文档指定但未安装的字体。
 - Chrome 与 SVG 2 规范不一致处按 Chrome：标记只画在 path、line、polyline 与 polygon 上，不画在矩形与圆上；`mix-blend-mode` 与 `isolation` 只从 CSS 读取。
 - `foreignObject`：绘制其 HTML 中的文字（mermaid 图表的标签），含字体、颜色、换行（及按框宽在空格与连字符处自动折行）、对齐与背景，以及其中的 SVG；此外的 HTML 排版（浮动、flex 与 grid、表格、边框、内边距、图片）不做。

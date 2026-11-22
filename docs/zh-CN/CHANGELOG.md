@@ -49,6 +49,7 @@
 
 ### 修复
 
+- SVG 文字：tspan 上的 `textLength`（及 `lengthAdjust`）让其字符恰好排满该长度，行内其后的文字随之移动（原先只认 text 元素上的）；tspan 上的 `xml:space="preserve"` 保留其空格（原先只读 text 元素上的）；路径上的文字可延续到路径后面的子路径，`startOffset` 的百分比按全部子路径的总长计算（原先只沿第一个子路径）。均与 Chrome 用同一字体对照。
 - SVG 的 `text-anchor` 按块内字形的实际范围对齐，与 SVG 2 及 Chrome 相同：`dx` 让某个字形退到第一个字形之前时，`start` 让最左的字形从 `x` 开始，`middle`、`end` 按全部字形的范围居中或右对齐（原先按第一个笔位到最后一个笔位的距离）。
 - SVG：文档树占用的内存每 1024 个节点预约一次，HTML 与文字元素中的文字节点也计入；原先以文字形式出现的节点可能漏算。
 - SVG：命名空间不是 SVG 的元素（由前缀或默认命名空间绑定）无论叫什么名字都不画，与 Chrome 相同；用前缀绑定到 SVG 命名空间的元素（`svg:rect`）照常绘制，`foreignObject` 中的 HTML 也照常处理。

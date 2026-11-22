@@ -803,3 +803,35 @@ func TestAnchorExtent(t *testing.T) {
 		t.Errorf("a dx on the first character: ink from %d, want from about 60", x)
 	}
 }
+
+// TestTextSpans: textLength on a tspan fits its characters to it (what
+// follows moved with them); xml:space on a tspan keeps its spaces; text
+// on a path runs on along its next subpaths, startOffset of their whole
+// length.
+func TestTextSpans(t *testing.T) {
+	font := `font-family="'` + testFont + `'" font-size="16"`
+	extent := func(img image.Image) (lo, hi int) {
+		lo, hi = 100, -1
+		for x := 0; x < 100; x++ {
+			for y := 0; y < 100; y++ {
+				if rgbaAt(img, x, y)[3] > 0 {
+					lo, hi = min(lo, x), max(hi, x)
+				}
+			}
+		}
+		return lo, hi
+	}
+	lo, hi := extent(render(t, `<text x="5" y="50" `+font+`><tspan textLength="90" lengthAdjust="spacingAndGlyphs">नमस्ते</tspan></text>`))
+	if lo < 3 || lo > 8 || hi < 90 || hi > 97 {
+		t.Errorf("textLength on a tspan: ink from %d to %d, want 5 to about 95", lo, hi)
+	}
+	_, collapsed := extent(render(t, `<text x="5" y="50" `+font+`><tspan>न      न</tspan></text>`))
+	_, kept := extent(render(t, `<text x="5" y="50" `+font+`><tspan xml:space="preserve">न      न</tspan></text>`))
+	if kept < collapsed+10 {
+		t.Errorf("xml:space on a tspan: ink to %d, %d collapsed", kept, collapsed)
+	}
+	lo, _ = extent(render(t, `<text `+font+`><textPath path="M 0 50 H 40 M 60 50 H 100" startOffset="50%">न</textPath></text>`))
+	if lo < 58 {
+		t.Errorf("text on the second subpath: ink from %d, want from 60", lo)
+	}
+}
