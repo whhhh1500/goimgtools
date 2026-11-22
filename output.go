@@ -325,6 +325,18 @@ type TIFFOptions struct {
 	// Quality is the JPEG quality of TIFFJPEG, 1 to 100; 0 means 80, as
 	// sharp's.
 	Quality int
+	// Tile, when not 0, writes the image in square tiles of this many
+	// pixels a side (a multiple of 16, 16 to 8192; libvips and sharp use
+	// 256) instead of strips, each tile compressed on its own, so that a
+	// reader can take a part of the image without the rest. Samples are
+	// then 8 bits (grey, RGB, or RGB with alpha).
+	Tile int
+	// Pyramid writes, after the image in tiles (of 256 when Tile is 0),
+	// the image at half the size, a quarter and so on down to one that
+	// fits in a tile, as the pyramid of libvips and sharp: what an image
+	// server (IIIF) or a zooming viewer reads. A row of tiles of each
+	// level is held in memory while it fills.
+	Pyramid bool
 }
 
 // TIFF selects TIFF output.

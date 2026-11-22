@@ -374,6 +374,7 @@ var builtin = []*formatDef{
 			default:
 				return errors.New("goimgtools: unknown TIFF compression")
 			}
+			out.Tile, out.Pyramid = to.Tile, to.Pyramid
 			return tiffstream.Encode(w, src, out)
 		},
 		quality: func(options any) (int, bool) {

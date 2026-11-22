@@ -94,7 +94,7 @@ goimgtools batch -resize 1920x1920 -no-enlarge -quality 80 -format jpeg in_dir o
 | WebP | ✓（动画：第一帧） | ✓（有损、无损、动画） | 有损按宏块行流式解码；无损仅保留格式规定的最大回溯窗口（约 4.2MB） |
 | GIF | ✓（含动画） | ✓（含动画） | 逐行流式解码；隔行处理方式同 PNG |
 | BMP | ✓ | ✓ | 按文件偏移逐行读取 |
-| TIFF | ✓ | ✓ | 逐行流式解压；可读写 JPEG 压缩的 TIFF（libtiff、libvips、sharp 的写法）；可读 BigTIFF、CMYK、Lab、浮点样本，以及 zstd 与 WebP 压缩 |
+| TIFF | ✓ | ✓ | 逐行流式解压；可读写 JPEG 压缩的 TIFF（libtiff、libvips、sharp 的写法）；可读 BigTIFF、CMYK、Lab、浮点样本，以及 zstd 与 WebP 压缩；可写瓦片与金字塔 |
 | ICO | ✓（含 CUR：取最大的一张，同样大的取颜色最多的） | ✓（一个或多个尺寸，以 PNG 存） | 取最大的一张：PNG 项流式解码，位图项（至多 256×256）整张解码；多尺寸时把图存入工作存储，逐个尺寸缩放 |
 | ICNS | ✓（最大的一张：PNG，或旧式行程编码的） | ✓（标准尺寸的正方形 PNG，同 iconutil 的写法） | PNG 图流式解码 |
 | PSD、PSB | ✓（合成图：各种颜色模式，1 到 32 位，带透明） | — | 逐条读取，每个通道从其存储位置读 |

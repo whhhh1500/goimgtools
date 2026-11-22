@@ -46,6 +46,22 @@ func TestLutAndIptcFlags(t *testing.T) {
 		}
 	}
 
+	// -tiff-tile and -tiff-pyramid are TIFFOptions' Tile and Pyramid.
+	tif := filepath.Join(dir, "out.tif")
+	if _, _, err := cli("-tiff-tile", "32", "-tiff-pyramid", "-tiff-compression", "deflate", in, tif); err != nil {
+		t.Fatal(err)
+	}
+	wantTIFF, err := goimgtools.Open(in).TIFF(goimgtools.TIFFOptions{Tile: 32, Pyramid: true, Compression: goimgtools.TIFFDeflate}).ToBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(tif); !bytes.Equal(got, wantTIFF) {
+		t.Error("-tiff-tile -tiff-pyramid: the file differs from TIFFOptions'")
+	}
+	if strips, _ := goimgtools.Open(in).TIFF(goimgtools.TIFFOptions{Compression: goimgtools.TIFFDeflate}).ToBytes(); bytes.Equal(strips, wantTIFF) {
+		t.Error("tiles and a pyramid changed nothing")
+	}
+
 	// A JPEG with an IPTC record in an APP13 segment.
 	rec := []byte("\x1c\x02\x78\x00\x09A caption")
 	res := append([]byte("Photoshop 3.0\x008BIM\x04\x04\x00\x00\x00\x00\x00"), byte(len(rec)))

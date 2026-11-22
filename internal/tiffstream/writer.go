@@ -153,6 +153,12 @@ type Options struct {
 	// Quality is the JPEG quality of JPEG compression, 1 to 100; 0 means
 	// DefaultJPEGQuality.
 	Quality int
+	// Tile, when not 0, writes the image in square tiles of this side (a
+	// multiple of 16) instead of strips, and Pyramid adds the image at
+	// half the size, a quarter, and so on (tiles of 256 when Tile is 0):
+	// see tiled.go.
+	Tile    int
+	Pyramid bool
 }
 
 var (
@@ -316,6 +322,9 @@ func writePix(w io.Writer, pix []byte, nrows, length, stride int) error {
 // It does not close src. If it returns an error, what was written to w is
 // not a valid image and must be discarded.
 func Encode(w io.Writer, src pipeline.Source, o *Options) error {
+	if o != nil && (o.Tile != 0 || o.Pyramid) {
+		return encodeTiled(w, src, o)
+	}
 	if o != nil && o.Compression == JPEG {
 		return encodeJPEG(w, src, o)
 	}

@@ -80,7 +80,7 @@
 | AVIF、HEIC | — | R W | AVIF R W |
 | JPEG XL | — | —（可选） | — |
 | JPEG 2000 | — | —（可选） | R W |
-| TIFF：写瓦片与金字塔 | —（能读：普通 TIFF 与 BigTIFF，条带与瓦片、金字塔的第一层；1、2、4、8、16 位的灰度与调色板，灰度带透明，带或不带透明的 RGB，CMYK、Lab、浮点；LZW、Deflate、PackBits、CCITT、JPEG、zstd、WebP） | R W（Windows 版不带 zstd） | R W（不写瓦片；Windows 版不带 zstd；不读浮点 RGB 与浮点 Lab） |
+| TIFF：各种变体的读取；写瓦片与金字塔 | R W（能读：普通 TIFF 与 BigTIFF，条带与瓦片、金字塔的第一层；1、2、4、8、16 位的灰度与调色板，灰度带透明，带或不带透明的 RGB，CMYK、Lab、浮点；LZW、Deflate、PackBits、CCITT、JPEG、zstd、WebP） | R W（Windows 版不带 zstd） | R W（不写瓦片；Windows 版不带 zstd；不读浮点 RGB 与浮点 Lab） |
 | DDS、PCX、SGI、XBM | R | — | R W |
 | XPM、FITS | R（XPM 支持 `None` 与颜色名，FITS 按其字节序并计入 BZERO——这两点 Pillow 12.1.1 都读错） | — | R |
 | DIB、FLI、IM、MSP、SPIDER、BLP、DCX、FTEX、GBR、IMT、MCIDAS、PCD、PIXAR、SUN、WMF、EPS | —（本身是完整 BMP 的 `.dib` 文件按 BMP 读） | — | R（部分 W） |
@@ -108,7 +108,7 @@
 | GIF 解码 | 原先 2400 万像素的 GIF：0.24s 对 0.19s | 已追平：0.17s，LZW 数据改用自己的解码器（像素与错误同 `compress/lzw`） |
 | 动图 GIF 缩放 | gifsicle 快一倍（0.31s 对 0.71s；它用 Lanczos 方法加 `-O3` 时 0.46s）、少用 5MB（17.9MB 对 23.0MB）；它的文件大一半。本包的时间里，三分之一用于为所有帧选出并细化一个调色板、带抖动地把像素映射过去，四分之一用于把每帧按十五种方式试编码取最小者——文件小三分之一就来自这里。内存里 7MB 是程序本身，6MB 是在用的数据（当前画面、颜色统计、处理中的一帧），其余是 Go 的垃圾回收在回收前允许堆增长的余量。让它更早回收（GOGC=25）可把这项降到 18.6MB，但实测会让流式处理的各项任务各多占 1 到 2MB，所以没有这样设；gifsicle 以 8 位索引保存各帧，不做真彩色处理 | 待处理：GIF 输出还没有更快的档位（少试几种、少细化）；总分配量已从 48MB 减到 18MB，但峰值没有因此下降 |
 | JPEG 按 butteraugli 对 jpegli | 同等 butteraugli 下文件大 3.2 个点（同等 SSIMULACRA2 下小 4.0 个点） | 待处理 |
-| TIFF 的各种变体 | 不写瓦片与金字塔。BigTIFF、CMYK、Lab、浮点、2 位与 4 位、灰度带透明、zstd 与 WebP 压缩现在都能读 | 待处理（读取已补齐） |
+| TIFF 的各种变体 | 原先不读 BigTIFF、CMYK、Lab、浮点、2 位与 4 位、灰度带透明、zstd 与 WebP 压缩；不写瓦片与金字塔 | 已补齐：全部能读；能写瓦片与金字塔（`TIFFOptions.Tile`、`Pyramid`），各层与 libvips 逐像素相同。2400 万像素写成金字塔：Deflate 1.41s、21.7MB，libvips 1.31s、54.9MB；JPEG 瓦片 0.30s、30.6MB，libvips 0.16s（CPU 0.25s）、39.6MB |
 | DDS、PCX、SGI、XBM、XPM、FITS | 原先不读 | 读取已补齐。有意不写：没有新内容会存成 PCX、SGI、XBM 或 XPM；游戏用的 DDS 由纹理工具生成，带多级缩小图和它自己的块编码器。DIB（没有文件头的 BMP）不做：没有可供识别的签名 |
 | JPEG 2000 | 不读 | 待处理 |
 | IPTC | 原先不读也不保留 | 已补齐：可从 JPEG、TIFF、PSD 读取，可保留到 JPEG 与 TIFF（`KeepIptc`） |

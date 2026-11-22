@@ -108,7 +108,7 @@ goimgtools -op median:3 -op normalize -op "tint:#704214" scan.jpg out.jpg
 | `-webp-near-lossless` | 近无损 WebP，同 libwebp：按无损编码，但与邻像素本就有差别的像素各通道可略作改动，程度由 `-quality` 定（100 不改，80–99 至多差 1 级，60–79 差 2，40–59 差 4，20–39 差 8，更低差 16；默认 75）；照片比无损小约 37% |
 | `-webp-exact` | 精确保留全透明像素的颜色（默认像 libwebp、sharp、Pillow 一样丢掉，带透明的图因此更小） |
 | `-webp-alpha-quality N` | 有损 WebP：透明度的质量 1–99，取值降到较少的级数（70 以下 2–16 级），0 与 255 不变；默认（100）精确保留 |
-| `-png-level N`、`-gif-colors N`、`-gif-fixed-palette`、`-tiff-compression none\|deflate\|lzw\|jpeg`、`-tiff-predictor` | 各格式专用选项（JPEG 压缩的 TIFF 用 `-quality`） |
+| `-png-level N`、`-gif-colors N`、`-gif-fixed-palette`、`-tiff-compression none\|deflate\|lzw\|jpeg`、`-tiff-predictor`、`-tiff-tile N`、`-tiff-pyramid` | 各格式专用选项（JPEG 压缩的 TIFF 用 `-quality`；边长 N 像素的瓦片；图像之后写逐级减半的金字塔） |
 | `-gif-lossy N` | GIF：有损压缩，可接受的颜色差 1–255（照片类动画 16–32，带抖动的静态图 8–16；见[压缩](compression.md)） |
 | `-animated` | 处理 GIF、WebP 或 PNG 动画（APNG）的每一帧，按输出格式写为 GIF、WebP 或 PNG 动画（APNG，无损）；`-gif-colors`、`-no-dither` 适用于 GIF，WebP 的选项适用于 WebP，`-png-level` 适用于 PNG。输出为其他格式时报错 |
 | `-loop N`、`-frame-delay 毫秒[,毫秒...]` | 配合 `-animated`：播放次数（0 为无限）与每帧显示的毫秒数（一个值用于全部帧，或逐帧列出，最后一个用于其余帧） |

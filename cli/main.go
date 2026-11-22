@@ -129,6 +129,8 @@ type options struct {
 	animated, keepExif, stripICC, toSRGB           *bool
 	exifCopyright, exifArtist, exifDescription     *string
 	trimLineArt, keepXmp, keepIptc, tiffPredictor  *bool
+	tiffPyramid                                    *bool
+	tiffTile                                       *int
 	trimBackground                                 *string
 	trimMargin                                     *int
 	density                                        *float64
@@ -230,6 +232,8 @@ func register(fs *flag.FlagSet) *options {
 		gifLossy:        fs.Int("gif-lossy", 0, "GIF: lossy compression, the colour difference 1-255 it may accept (16-32 for photographic animations: 24-48% smaller; 8-16 for dithered stills); 0 keeps every pixel"),
 		tiffComp:        fs.String("tiff-compression", "none", "TIFF compression: none, deflate, lzw or jpeg (lossy, -quality, default 80; no transparency)"),
 		tiffPredictor:   fs.Bool("tiff-predictor", false, "TIFF: store each sample as its difference from the pixel to its left (horizontal predictor): photographs compress much better with deflate or lzw"),
+		tiffTile:        fs.Int("tiff-tile", 0, "TIFF: write the image in square tiles of `N` pixels a side (a multiple of 16; 256 is usual) instead of strips"),
+		tiffPyramid:     fs.Bool("tiff-pyramid", false, "TIFF: after the image in tiles, write it at half the size, a quarter and so on (a pyramid, as image servers read)"),
 		animated:        fs.Bool("animated", false, "process every frame of an animated GIF, WebP or PNG and write an animated GIF, WebP or PNG (APNG); only what changes is stored (GIF: one palette for all frames, -gif-colors, -no-dither); another output format is an error"),
 		loop:            fs.Int("loop", -1, "with -animated: how often the animation plays, 0 for ever (default: as the input)"),
 		frameDelay:      fs.String("frame-delay", "", "with -animated: how long each frame shows, in milliseconds: one value for every frame, or a list such as 100,50 (the last for the rest)"),
@@ -861,7 +865,7 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 		if !ok {
 			return nil, fmt.Errorf("-tiff-compression: want none, deflate, lzw or jpeg, got %q", *o.tiffComp)
 		}
-		im.TIFF(goimgtools.TIFFOptions{Compression: c, Predictor: *o.tiffPredictor, Quality: *o.quality})
+		im.TIFF(goimgtools.TIFFOptions{Compression: c, Predictor: *o.tiffPredictor, Quality: *o.quality, Tile: *o.tiffTile, Pyramid: *o.tiffPyramid})
 	case "ico":
 		var sizes []int
 		for _, s := range strings.Split(*o.icoSizes, ",") {
