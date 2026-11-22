@@ -1,0 +1,16 @@
+bg shapes 0 0 255,255,0,255 0 -
+bg_thresh shapes 0 0 255,255,0,255 40 -
+rect shapes 30 25 0,255,255,255 0 -
+rect_thresh shapes 30 25 0,255,255,255 36 -
+ellipse_border shapes 85 37 255,0,255,255 0 0,0,0,255
+below_line shapes 119 89 10,20,30,255 30 -
+same shapes 30 25 200,30,30,255 0 -
+wall spiral 0 0 255,0,0,255 0 -
+corridor spiral 1 1 0,200,0,255 0 -
+centre spiral 30 30 0,0,200,255 0 -
+clear_outside clear 0 29 255,255,255,255 0 -
+clear_inside clear 15 15 0,0,0,0 0 -
+clear_half clear 35 3 9,9,9,200 200 -
+stops_at_own shapes 0 0 0,0,0,255 0 40,180,60,255
+near_same shapes 30 25 205,30,30,255 30 -
+on_border spiral 0 0 255,0,0,255 0 0,0,0,255

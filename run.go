@@ -26,8 +26,8 @@ type Info struct {
 	// "bmp", "tiff", "ico" or one added with RegisterFormat (see
 	// Formats). For an
 	// input that is not a file it says where the pixels come from: "text"
-	// (Text), "blank" (Blank), "join" (Join), "image" (FromImage) or
-	// "source" (FromSource).
+	// (Text), "blank" (Blank), "noise" (Noise), "join" (Join), "image"
+	// (FromImage) or "source" (FromSource).
 	Format string
 	// Width and Height are the size of the image as it is stored.
 	Width, Height int

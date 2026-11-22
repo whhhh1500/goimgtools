@@ -36,6 +36,7 @@ err := goimgtools.Open("in.jpg").
 | `Text(text, TextOptions{...})` | 将文字渲染为图像，可用作水印，也可单独输出（见[文字](#文字)） |
 | `Join(images, JoinOptions{Across, Gap, Background, Align})` | 把多张图排成网格，同 sharp 的 `join`、ImageMagick 的 `montage`：每行 `Across` 张，格子与最大的图一样大，间隔 `Gap` 像素，较小的图周围填 `Background`（不给则透明），按 `Align` 放置。每张图按其自身的处理链、在写到它那一行时按几行一次读取 |
 | `Blank(width, height, colour)` | 单一颜色的图像（sharp 的 `create`、Pillow 的 `Image.new`）：用 `Composite` 往上放图片和文字的画布；半透明颜色得到带透明的图。按行现生成，不占与尺寸成比例的内存 |
+| `Noise(width, height, NoiseOptions{Mean, Sigma, Seed})` | 高斯噪声的灰度图（Pillow 的 `effect_noise`、libvips 的 `gaussnoise`；默认均值 128、标准差 30）：可 `Composite` 到图片上作胶片颗粒，或作纹理。同一种子处处相同；按行现生成 |
 | `FromImage(img)` | 内存中已有的 `image.Image` |
 | `FromSource(open)` | 调用方提供的像素流，如计算生成的图像、从其他来源读取的像素（见[扩展](extending.md)） |
 
@@ -87,7 +88,9 @@ err := goimgtools.Open("in.jpg").
 | `EnsureAlpha(alpha)` | 为不含透明的图像加上给定不透明度（0–1）的透明通道（值为 alpha·255 舍去小数，与 sharp 的 `ensureAlpha` 逐字节一致）；已含透明的图像保持不变 |
 | `RemoveAlpha()` | 去掉透明度：每个像素显示其存储的颜色（sharp 的 `removeAlpha`）；与 `Flatten` 不同，不与背景色混合 |
 | `Composite(overlay, CompositeOptions{...})` | 图像叠加 / 水印（见[水印](#水印)） |
-| `Draw(shapes...)` | 按顺序把图形画到图上，边缘平滑（抗锯齿），同 Pillow 的 ImageDraw：`Rect(x, y, w, h)`（`.Rounded(r)` 圆角）、`Ellipse(cx, cy, rx, ry)`、`Circle(cx, cy, r)`、`Polygon(x1, y1, x2, y2, ...)`、`Line(x1, y1, x2, y2)`、`Polyline(...)`，各可加 `.Fill(颜色)` 与 `.Stroke(颜色, 宽度)`。坐标以像素计、可带小数（一个像素占 x 到 x+1）；每个像素按图形覆盖它的比例上色，以整数运算求得，各处理器结果相同；不论图多大只占几行的内存 |
+| `Draw(shapes...)` | 按顺序把图形画到图上，边缘平滑（抗锯齿），同 Pillow 的 ImageDraw：`Rect(x, y, w, h)`（`.Rounded(r)` 圆角）、`Ellipse(cx, cy, rx, ry)`、`Circle(cx, cy, r)`、`Polygon(x1, y1, x2, y2, ...)`、`Line(x1, y1, x2, y2)`、`Polyline(...)`、`Arc(cx, cy, rx, ry, start, end)`、`Pie(...)`、`Chord(...)`（角度以度计、从三点钟方向顺时针，同 ImageDraw），各可加 `.Fill(颜色)` 与 `.Stroke(颜色, 宽度)`。坐标以像素计、可带小数（一个像素占 x 到 x+1）；每个像素按图形覆盖它的比例上色，以整数运算求得，各处理器结果相同；不论图多大只占几行的内存 |
+| `ColorLUT(cube)` | 让每个像素取颜色查找立方里对应的颜色（一种色调、调色结果、胶片模拟），在立方的各点之间插值，与 Pillow 的 `Color3DLUT` 逐字节相同。`ParseCube(reader)` 读 `.cube` 文件（每边最多 65 个点），`NewLUT3D(size, func(r, g, b) (r, g, b))` 由函数生成。保留透明；只占立方本身的内存（65 个点时 1.6MB） |
+| `FloodFill(x, y, colour, FloodFillOptions{Threshold, Border})` | 把某点周围同色的区域涂成指定颜色（Pillow 的 `ImageDraw.floodfill`，逐像素相同）：与该点上下左右相连、颜色相同或在 `Threshold`（各通道差之和）之内的像素；给了 `Border` 时是到该颜色为止的全部像素。图像经工作存储；内存每像素两位 |
 | `InvisibleWatermark(mark, InvisibleWatermarkOptions{Kind, Key, Strength, Density})` | 隐形地藏入 1–32 个字节，用 `inspect.ReadWatermark` 与密钥读回，不需要原图；`WatermarkBlind` 经得起对文件的处理，`WatermarkScreen` 还经得起对着屏幕拍照（见[隐形水印](watermark.md)） |
 | `Animated()` | 处理 GIF、WebP 或 PNG 动画（APNG）的每一帧并输出 GIF、WebP 或 PNG 动画（APNG）。WebP 的各帧按 libwebp 动画解码器的方式绘制（混合与否、清除与否），逐像素一致；APNG 的各帧按其规范绘制。静态图像不受影响；无法保留的动画（输出为其他格式）返回包装了 `errors.ErrUnsupported` 的错误。WebP 第一帧完整存储，之后各帧仅存储变化的矩形区域。GIF 的所有帧共用一套按画面内容选取的调色板（`GIFOptions` 的 `Colors`、`NoDither` 依然有效；颜色数不超过该值时原样保留），自第二帧起仅存储变化的部分（见[压缩](compression.md)）。APNG 为无损：所有帧共不超过 256 种颜色时共用一套调色板，否则为 RGB 或 RGBA；之后各帧存储与其底图不同的矩形（前一帧保留、清除或撤销，按 apngopt 的方法选择），原样写入或把未变像素设为透明后叠加，取最小者；`CompressionLevel` 有效，`Colors` 不适用（报错） |
 | `Loop(n)`、`FrameDelay(d...)` | 配合 `Animated()`：动画播放的次数（`0` 为无限）与每帧显示的时长（一个值用于全部帧，或逐帧给出，最后一个用于其余帧），取代输入的设置，同 sharp 的 `loop` 与 `delay` |

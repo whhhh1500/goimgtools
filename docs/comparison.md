@@ -89,7 +89,7 @@ What each reads (R) and writes (W). libvips is the build above (its other loader
 | Capability | goimgtools | libvips / sharp | Pillow |
 |---|---|---|---|
 | Operations | All of sharp's (resize with its kernels and fits, extract, extend, trim, composite with every blend mode, rotate, affine, flip, flop, sharpen, median, blur, dilate, erode, flatten, unflatten, gamma, negate, normalise, CLAHE, convolve, threshold, boolean, linear, recomb, modulate, tint, greyscale, channels), to its pixels where `…Libvips` options say so; Pillow's `ImageOps`, `ImageEnhance`, `ImageFilter` kernels and `transform`, to its pixels | Its own | Its own |
-| Missing operations | Colour lookup cubes (`Color3DLUT`), expressions over pixels (`ImageMath`), flood fill, arcs and pie slices, pictures of noise; output in CMYK or Lab; 16 bits kept through every step (through the default resize alone) | | |
+| Missing operations | Expressions over pixels (`ImageMath`); output in CMYK or Lab; 16 bits kept through every step (through the default resize alone). Colour lookup cubes (`ColorLUT`) and flood fill (`FloodFill`), both to Pillow's bytes, arcs, pie slices and chords, and pictures of noise are there now | | |
 | Metadata | EXIF read and parsed, kept, or text fields set; XMP read and kept; IPTC read and kept (JPEG, TIFF); ICC kept, removed, converted to sRGB or to an RGB profile; resolution | EXIF, XMP, ICC and IPTC kept; EXIF fields, XMP and ICC set | EXIF read and written tag by tag, XMP read, IPTC read, ICC |
 | Text | Fonts tried in order, shaping by the font's tables (HarfBuzz's port), right-to-left, wrapping, alignment, outline, shadow, colour emoji (COLR version 0, bitmaps). No vertical lines, no choice of font features, no markup | Pango: fonts by fallback, shaping, right-to-left, wrapping, alignment, justification, markup; no outline or shadow | FreeType and Raqm: one font at a time, shaping, font features, vertical lines, variable fonts, outline; lines broken by the caller |
 | Watermarks | Pictures and text, tiled, turned, by opacity and blend; an invisible mark that survives recompression, read back with a key | Composite | Paste |
@@ -113,7 +113,7 @@ What each reads (R) and writes (W). libvips is the build above (its other loader
 | JPEG 2000 | Not read | Open |
 | IPTC | Was not read or kept | Closed: read from JPEG, TIFF and PSD, kept in JPEG and TIFF (`KeepIptc`) |
 | Text: vertical lines, font features, variable fonts, COLR version 1 in `Text()` | Not there (SVG text has vertical lines, variable fonts and COLR version 1) | Open |
-| `Color3DLUT`, `ImageMath`, flood fill, arcs, noise; CMYK and Lab output; 16 bits through every step | Not there | Open |
+| `ImageMath`; CMYK and Lab output; 16 bits through every step | Not there. `Color3DLUT` (`ColorLUT`), flood fill (`FloodFill`), arcs (`Arc`, `Pie`, `Chord`) and noise (`Noise`) were added | Open |
 | AVIF, HEIC, JPEG XL | Not read or written | Left out on purpose: their codecs, translated to Go, took far more memory to build and to run than this package allows itself; they were removed on 21 November 2026 |
 | FLI, IM, MSP, SPIDER, BLP, DCX, FTEX, GBR, IMT, MCIDAS, PCD, PIXAR, SUN, WMF, EPS | Not read | Left: formats of the 1980s and 1990s that are met next to never; WMF and EPS need an interpreter of their own |
 | PDF read | Not there | Left: it takes a PDF interpreter; libvips and Pillow do not have one either without Poppler or PDFium |

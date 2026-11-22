@@ -24,11 +24,15 @@ const (
 	shapeEllipse
 	shapePolygon
 	shapePolyline
+	shapeArc
+	shapePie
+	shapeChord
 )
 
 // Shape is a figure for Draw: a rectangle, an ellipse or circle, a polygon,
-// a line or a line of several segments, made by Rect, Ellipse, Circle,
-// Polygon, Line and Polyline, and then given what to paint with Fill
+// a line or a line of several segments, an arc, a pie slice or a chord,
+// made by Rect, Ellipse, Circle, Polygon, Line, Polyline, Arc, Pie and
+// Chord, and then given what to paint with Fill
 // (inside) and Stroke (the outline, or the line itself), and for a
 // rectangle round corners with Rounded. A Shape is a value: each method
 // returns a changed copy.
@@ -68,6 +72,47 @@ func Line(x1, y1, x2, y2 float64) Shape { return Polyline(x1, y1, x2, y2) }
 // two), joined with round corners: give it a Stroke.
 func Polyline(xy ...float64) Shape {
 	return Shape{kind: shapePolyline, xy: append([]float64(nil), xy...)}
+}
+
+// Arc is the part of the ellipse centred at (cx, cy) with radii rx and ry
+// from the angle start to the angle end, in degrees measured from three
+// o'clock and growing clockwise, as Pillow's ImageDraw.arc measures them:
+// an end before the start is taken a turn further, and more than a turn is
+// the whole ellipse. It is a line: give it a Stroke.
+func Arc(cx, cy, rx, ry, start, end float64) Shape {
+	return Shape{kind: shapeArc, xy: []float64{cx, cy, rx, ry, start, end}}
+}
+
+// Pie is the slice of the ellipse between the angles start and end (as
+// Arc takes them), closed by the two lines to its centre, as Pillow's
+// ImageDraw.pieslice.
+func Pie(cx, cy, rx, ry, start, end float64) Shape {
+	return Shape{kind: shapePie, xy: []float64{cx, cy, rx, ry, start, end}}
+}
+
+// Chord is the part of the ellipse between the angles start and end (as
+// Arc takes them), closed by the straight line between its ends, as
+// Pillow's ImageDraw.chord.
+func Chord(cx, cy, rx, ry, start, end float64) Shape {
+	return Shape{kind: shapeChord, xy: []float64{cx, cy, rx, ry, start, end}}
+}
+
+// arcPoints is the points along an arc as Arc describes it.
+func arcPoints(cx, cy, rx, ry, start, end float64) []float64 {
+	sweep := math.Mod(end-start, 360)
+	if sweep < 0 {
+		sweep += 360
+	}
+	if sweep == 0 && end != start || math.Abs(end-start) >= 360 {
+		sweep = 360
+	}
+	n := max(1, int(math.Ceil(float64(sweep/90)*float64(arcSteps(max(rx, ry))))))
+	xy := make([]float64, 0, 2*n+4)
+	for i := 0; i <= n; i++ {
+		sin, cos := trig.SinCosDeg(start + float64(sweep*float64(i))/float64(n))
+		xy = append(xy, cx+float64(rx*cos), cy+float64(ry*sin))
+	}
+	return xy
 }
 
 // Fill paints the inside of the shape with c (its alpha counts). A line
@@ -170,6 +215,27 @@ func (s Shape) prepare() ([]drawn, error) {
 		}
 		add(s.fill, func(p *raster.Path) { p.Add(s.xy) })
 		add(s.stroke, func(p *raster.Path) { strokeLine(p, s.xy, hw, true) })
+	case shapeArc, shapePie, shapeChord:
+		cx, cy, rx, ry := s.xy[0], s.xy[1], s.xy[2], s.xy[3]
+		if rx < 0 || ry < 0 {
+			return nil, errors.New("goimgtools: Draw: a shape's sizes must not be negative")
+		}
+		pts := arcPoints(cx, cy, rx, ry, s.xy[4], s.xy[5])
+		if s.kind == shapeArc {
+			if s.stroke == nil {
+				return nil, errors.New("goimgtools: Draw: an Arc needs a Stroke")
+			}
+			add(s.stroke, func(p *raster.Path) { strokeLine(p, pts, hw, false) })
+			break
+		}
+		if s.fill == nil && s.stroke == nil {
+			return nil, errors.New("goimgtools: Draw: a shape needs a Fill or a Stroke")
+		}
+		if s.kind == shapePie {
+			pts = append(pts, cx, cy)
+		}
+		add(s.fill, func(p *raster.Path) { p.Add(append([]float64(nil), pts...)) })
+		add(s.stroke, func(p *raster.Path) { strokeLine(p, pts, hw, true) })
 	case shapePolyline:
 		if len(s.xy) < 4 || len(s.xy)%2 != 0 {
 			return nil, errors.New("goimgtools: Draw: a line needs at least two points, x and y each")

@@ -115,7 +115,7 @@ type options struct {
 	tileSize, tileOverlap                          *int
 	tileLayout                                     *string
 	quality, pngLevel, pngColors, gifColors        *int
-	icoSizes, icnsSizes, frameDelay, profile       *string
+	icoSizes, icnsSizes, frameDelay, profile, lut  *string
 	loop                                           *int
 	gifFixed                                       *bool
 	gifLossy                                       *int
@@ -207,6 +207,7 @@ func register(fs *flag.FlagSet) *options {
 		jpegChroma:      fs.String("jpeg-chroma", "420", "JPEG: how finely colour is kept: 420 (half across and down, the default), 422 (half across) or 444 (all of it: crisp coloured text and edges, a larger file)"),
 		jpegQuantTable:  fs.Int("jpeg-quant-table", 0, "JPEG: quantization tables: 0-8 numbered as mozjpeg's -quant-table (0 the standard's, as the standard library; 3 mozjpeg's default), 9 made as jpegli makes them (the smallest files)"),
 		pngColors:       fs.Int("png-colors", 0, "PNG: reduce to this many colours, 2-256, chosen for the image (a much smaller, lossy file)"),
+		lut:             fs.String("lut", "", "give every pixel the colour a lookup cube has for it: a `.cube file` of Adobe's or Resolve's kind, up to 65 points a side"),
 		profile:         fs.String("profile", "", "convert the colours into this ICC profile and write it: p3 (Display P3), adobe-rgb (Adobe RGB 1998) or a profile file"),
 		icnsSizes:       fs.String("icns-sizes", "", "ICNS: the sizes of the icons to write, among 16,32,64,128,256,512,1024, the image fitted into each (default: the standard sizes up to the image's)"),
 		icoSizes:        fs.String("ico-sizes", "", "ICO: the sizes of the icons to write, such as 16,32,48,256, the image fitted to each (default: the image as it is, at most 256x256)"),
@@ -811,6 +812,18 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 	kind, err := o.outputKind(out)
 	if err != nil {
 		return nil, err
+	}
+	if *o.lut != "" {
+		f, err := os.Open(*o.lut)
+		if err != nil {
+			return nil, fmt.Errorf("-lut: %w", err)
+		}
+		cube, err := goimgtools.ParseCube(f)
+		f.Close()
+		if err != nil {
+			return nil, fmt.Errorf("-lut: %w", err)
+		}
+		im.ColorLUT(cube)
 	}
 	switch p := strings.ToLower(strings.TrimSpace(*o.profile)); p {
 	case "":

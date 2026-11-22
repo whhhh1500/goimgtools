@@ -95,7 +95,7 @@ func drawOp1(name, usage, help string, min, max int, named map[string]bool, make
 		if named["fill"] && s.fill == nil && s.stroke == nil {
 			return fmt.Errorf("give fill=COLOUR or stroke=COLOUR")
 		}
-		if s.kind == shapePolyline && s.stroke == nil {
+		if (s.kind == shapePolyline || s.kind == shapeArc) && s.stroke == nil {
 			s = s.Stroke(color.Black, 1)
 		}
 		m.Draw(s)
@@ -116,6 +116,15 @@ var drawOps = map[string]OperationDef{
 	"polygon": drawOp1("polygon", "X1,Y1,X2,Y2,X3,Y3,...,[fill=COLOR],[stroke=COLOR],[width=W]",
 		"Draw the polygon through the points, filled and/or outlined",
 		6, 0, shapeNamed, func(v []float64) Shape { return Polygon(v...) }),
+	"arc": drawOp1("arc", "CX,CY,RX,RY,START,END,[stroke=COLOR],[width=W]",
+		"Draw the arc of the ellipse centred at CX,CY with radii RX and RY from the angle START to END (degrees, clockwise from three o'clock; black, 1 pixel wide by default)",
+		6, 6, lineNamed, func(v []float64) Shape { return Arc(v[0], v[1], v[2], v[3], v[4], v[5]) }),
+	"pie": drawOp1("pie", "CX,CY,RX,RY,START,END,[fill=COLOR],[stroke=COLOR],[width=W]",
+		"Draw the slice of the ellipse between the angles START and END and its centre, filled and/or outlined",
+		6, 6, shapeNamed, func(v []float64) Shape { return Pie(v[0], v[1], v[2], v[3], v[4], v[5]) }),
+	"chord": drawOp1("chord", "CX,CY,RX,RY,START,END,[fill=COLOR],[stroke=COLOR],[width=W]",
+		"Draw the part of the ellipse between the angles START and END, closed by a straight line, filled and/or outlined",
+		6, 6, shapeNamed, func(v []float64) Shape { return Chord(v[0], v[1], v[2], v[3], v[4], v[5]) }),
 	"line": drawOp1("line", "X1,Y1,X2,Y2,...,[stroke=COLOR],[width=W]",
 		"Draw a line through the points (black, 1 pixel wide by default), round where it turns",
 		4, 0, lineNamed, func(v []float64) Shape { return Polyline(v...) }),

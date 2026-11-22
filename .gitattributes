@@ -25,3 +25,4 @@ tests/testdata/fuzz/** text eol=lf
 *.sgi binary
 *.xbm -text
 *.xpm -text
+*.cube -text
