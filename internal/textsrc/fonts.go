@@ -65,6 +65,8 @@ type Font struct {
 	colour      *colorfont.Font
 	bitmaps     *colorfont.Bitmaps
 	colourTried bool
+	// Whether it makes ligatures of Latin text by default.
+	liga, ligaTried bool
 }
 
 // Close releases the font file.

@@ -164,6 +164,40 @@ func (s *Set) ShapingFace(f *Font) (*shape.Face, error) {
 	return nil, nil
 }
 
+// ligates reports whether font i makes ligatures or contextual forms of
+// Latin text by default (as Calibri and Cambria, not Arial): its text is
+// then shaped too.
+func (s *Set) ligates(i int) bool {
+	f := s.fonts[i]
+	if !f.ligaTried {
+		f.ligaTried = true
+		switch {
+		case f.file != nil:
+			f.liga = shape.Ligatures(f.file, f.Info.Index)
+		case f.data != nil:
+			f.liga = shape.Ligatures(bytes.NewReader(f.data), 0)
+		}
+	}
+	return f.liga
+}
+
+// Ligates reports whether f, a font of the set, makes ligatures of Latin
+// text by default.
+func (s *Set) Ligates(f *Font) bool {
+	for i, g := range s.fonts {
+		if g == f {
+			return s.ligates(i)
+		}
+	}
+	return false
+}
+
+// Ligated reports whether r goes with its neighbours into the shaping of a
+// font that makes ligatures: not a space, nor a place to break a line.
+func Ligated(r rune) bool {
+	return r != ' ' && r != 0x3000 && !bidi.Ignorable(r) && !breakable(r)
+}
+
 // IsMark reports whether r is a mark set on the letter before it.
 func IsMark(r rune) bool { return isMark(r) }
 
@@ -240,12 +274,29 @@ func NeedsShaping(rs []rune) []bool {
 func (s *source) shapeParagraph(rs []rune, levels []int8, size float64) ([]*shaped, error) {
 	n := len(rs)
 	need := NeedsShaping(rs)
+	fonts := make([]int, n)
+	// The text of a font that makes ligatures of Latin text is shaped too
+	// (as Calibri's ffi), but for spaces and places to break a line.
+	for i, r := range rs {
+		if need != nil && need[i] || !Ligated(r) {
+			continue
+		}
+		fi, err := s.set.pickFor(rs, i)
+		if err != nil {
+			return nil, err
+		}
+		if s.set.ligates(fi) {
+			if need == nil {
+				need = make([]bool, n)
+			}
+			need[i] = true
+		}
+	}
 	if need == nil {
 		return nil, nil
 	}
 	// The font of each: a mark or a character drawn as nothing in that of
 	// the character before it, when it has it.
-	fonts := make([]int, n)
 	for i, r := range rs {
 		if !need[i] {
 			continue

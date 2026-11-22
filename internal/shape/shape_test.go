@@ -1,6 +1,7 @@
 package shape
 
 import (
+	"bytes"
 	"os"
 	"testing"
 
@@ -120,6 +121,30 @@ func TestNeeds(t *testing.T) {
 	} {
 		if got := Needs(c.r); got != c.want {
 			t.Errorf("%q: %v", c.r, got)
+		}
+	}
+}
+
+// TestLigatures: a font whose Latin text makes ligatures by default is
+// told from one whose does not.
+func TestLigatures(t *testing.T) {
+	for _, c := range []struct {
+		font string
+		want bool
+	}{
+		{"../../tests/testdata/fonts/LigaTest.ttf", true},
+		{"../../tests/testdata/fonts/ColourTest.ttf", false},
+		{devanagari, false},
+	} {
+		data, err := os.ReadFile(c.font)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := Ligatures(bytes.NewReader(data), 0); got != c.want {
+			t.Errorf("%s: %v", c.font, got)
+		}
+		if Ligatures(bytes.NewReader(data[:40]), 0) {
+			t.Errorf("%s cut short: ligatures", c.font)
 		}
 	}
 }

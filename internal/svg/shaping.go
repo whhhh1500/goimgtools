@@ -103,6 +103,24 @@ func (b *builder) shapeChars(chars []tchar) {
 		rs[i] = c.r
 	}
 	need := textsrc.NeedsShaping(rs)
+	// The text of a font that makes ligatures of Latin text is shaped too
+	// (as Calibri's ffi), but for spaces.
+	for i := range chars {
+		c := &chars[i]
+		if need != nil && need[i] || !textsrc.Ligated(c.r) {
+			continue
+		}
+		set := b.fonts(c.family, c.face)
+		if set == nil {
+			continue
+		}
+		if f, err := set.PickFor(rs, i); err == nil && f != nil && set.Ligates(f) {
+			if need == nil {
+				need = make([]bool, len(chars))
+			}
+			need[i] = true
+		}
+	}
 	if need == nil {
 		return
 	}

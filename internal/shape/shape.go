@@ -154,6 +154,82 @@ func Open(r io.ReaderAt, index int) (f *Face, err error) {
 	return &Face{font: harfbuzz.NewFont(font.NewFace(ft)), Bytes: 3 * total}, nil
 }
 
+// Ligatures reports whether font number index of a font or collection file
+// makes ligatures or contextual forms of Latin text by default: its GSUB
+// table has liga, clig, calt or rlig among the features of the default
+// language of the script latn, or of DFLT. Only the lists of the table are
+// read.
+func Ligatures(r io.ReaderAt, index int) bool {
+	dir, err := otdir.Read(r, index)
+	if err != nil {
+		return false
+	}
+	t, ok := dir.Tables["GSUB"]
+	if !ok || t.Length < 10 {
+		return false
+	}
+	be := binary.BigEndian
+	at := func(off int64, n int) []byte {
+		if off < 0 || n < 0 || off+int64(n) > t.Length {
+			return nil
+		}
+		b := make([]byte, n)
+		if _, err := r.ReadAt(b, t.Offset+off); err != nil {
+			return nil
+		}
+		return b
+	}
+	hdr := at(0, 10)
+	if hdr == nil {
+		return false
+	}
+	scripts, features := int64(be.Uint16(hdr[4:])), int64(be.Uint16(hdr[6:]))
+	sc := at(scripts, 2)
+	if sc == nil {
+		return false
+	}
+	n := int(be.Uint16(sc))
+	recs := at(scripts+2, 6*n)
+	fc := at(features, 2)
+	if recs == nil || fc == nil {
+		return false
+	}
+	nf := int(be.Uint16(fc))
+	for i := 0; i < n; i++ {
+		tag := string(recs[6*i : 6*i+4])
+		if tag != "latn" && tag != "DFLT" {
+			continue
+		}
+		script := scripts + int64(be.Uint16(recs[6*i+4:]))
+		d := at(script, 2)
+		if d == nil || be.Uint16(d) == 0 {
+			continue
+		}
+		lang := script + int64(be.Uint16(d))
+		lh := at(lang, 6)
+		if lh == nil {
+			continue
+		}
+		k := int(be.Uint16(lh[4:]))
+		idx := at(lang+6, 2*k)
+		if idx == nil {
+			continue
+		}
+		for j := 0; j < k; j++ {
+			fi := int(be.Uint16(idx[2*j:]))
+			if fi >= nf {
+				continue
+			}
+			rec := at(features+2+6*int64(fi), 4)
+			switch string(rec) {
+			case "liga", "clig", "calt", "rlig":
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // OpenData is Open for a font held in memory.
 func OpenData(data []byte, index int) (*Face, error) {
 	return Open(bytes.NewReader(data), index)

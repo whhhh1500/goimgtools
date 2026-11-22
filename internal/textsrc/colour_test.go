@@ -117,3 +117,17 @@ func TestColourPictures(t *testing.T) {
 		t.Errorf("CBDT 😀: %d opaque pixels", n)
 	}
 }
+
+// TestLatinLigatures: the Latin text of a font that makes ligatures by
+// default is shaped: f and i are its ligature; a space still parts words.
+func TestLatinLigatures(t *testing.T) {
+	src, err := New("fi fif", Options{Size: 20, Fonts: []string{"../../tests/testdata/fonts/LigaTest.ttf"}}, pipeline.NewEnv(0, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer src.Close()
+	gs := src.(*source).lines[0].glyphs
+	if len(gs) != 6 || gs[0].sh == nil || !gs[0].sh.head || len(gs[0].sh.glyphs) != 1 || gs[1].sh == nil || gs[1].sh.head || gs[2].sh != nil {
+		t.Errorf("fi fif: %+v", gs)
+	}
+}
