@@ -35,7 +35,7 @@ Measured on 22 and 23 November 2026: Windows 10, Intel Core i7-12700K, Go 1.27.1
 | Brightness, saturation and hue | 0.46s, 9.4MB | | 1.14s, 230MB | | | ahead |
 | A logo laid on | 0.18s, 9.7MB | | 0.30s, 217MB | 0.27s, 204MB | | ahead |
 | Animated GIF (18 frames, 768×512) to 384 wide | 0.70s, 23.1MB, 942KB; 0.30s, 22.9MB, 947KB (effort 1) | | 2.03s, 75.1MB, 1405KB | | gifsicle 0.31s, 17.9MB, 1416KB (its default sampling); 0.46s, 21.1MB, 1428KB (`--resize-method lanczos3 -O3`) | file ahead (a third smaller); time level with gifsicle at effort 1, memory **behind** it by 5MB |
-| Animated GIF to animated WebP | 0.51s, 26.7MB, 854KB (effort 1); 1.28s, 25.8MB, 940KB (the default) | 0.54s, 29.9MB, 946KB | 0.60s, 78.0MB, 946KB | 0.45s, 35.2MB, 1339KB | | ahead at effort 1 |
+| Animated GIF to animated WebP | 0.50s, 26.6MB, 854KB (effort 1); 1.24s, 27.1MB, 940KB (the default) | 0.54s, 29.9MB, 946KB | 0.60s, 78.0MB, 946KB | 0.45s, 35.2MB, 1339KB | | ahead at effort 1 |
 
 With four threads (`-threads 4`, `VIPS_CONCURRENCY=4`, `sharp.concurrency(4)`):
 
