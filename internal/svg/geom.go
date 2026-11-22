@@ -105,6 +105,230 @@ func (m matrix) invert() (matrix, bool) {
 // scale is how much the transform enlarges lengths, on average.
 func (m matrix) scale() float64 { return math.Sqrt(math.Abs(m.det())) }
 
+// aboutOrigin is transform tm of element n about its transform-origin
+// (attribute or CSS), its percentages and keywords taken over a box of w
+// by h from the origin of user space (the viewport, by transform-box's
+// view-box; a unit square in a bounding box's units); def is the origin
+// it has without one, as fractions of the box.
+func aboutOrigin(n *node, tm matrix, w, h, fontSize float64, vp viewport, def [2]float64) matrix {
+	v, ok := n.cssProp("transform-origin")
+	if !ok {
+		v, ok = n.attrs["transform-origin"]
+	}
+	x, y := float64(def[0]*w), float64(def[1]*h)
+	if ok {
+		if ox, oy, ok := parseOrigin(v, w, h, fontSize, vp); ok {
+			x, y = ox, oy
+		}
+	}
+	if x == 0 && y == 0 {
+		return tm
+	}
+	return matrix{1, 0, 0, 1, x, y}.mul(tm).mul(matrix{1, 0, 0, 1, -x, -y})
+}
+
+// parseOrigin reads a transform-origin: one to three values (a third,
+// along z, is ignored), keywords for either axis in either order.
+func parseOrigin(v string, w, h, fontSize float64, vp viewport) (x, y float64, ok bool) {
+	f := strings.Fields(strings.ToLower(v))
+	if len(f) == 0 || len(f) > 3 {
+		return 0, 0, false
+	}
+	xs, ys := "center", "center"
+	if len(f) == 1 {
+		if f[0] == "top" || f[0] == "bottom" {
+			ys = f[0]
+		} else {
+			xs = f[0]
+		}
+	} else {
+		xs, ys = f[0], f[1]
+		if xs == "top" || xs == "bottom" || ys == "left" || ys == "right" {
+			xs, ys = ys, xs
+		}
+	}
+	x, okX := originPart(xs, w, "left", "right", fontSize, vp, axisX)
+	y, okY := originPart(ys, h, "top", "bottom", fontSize, vp, axisY)
+	return x, y, okX && okY
+}
+
+func originPart(s string, size float64, lo, hi string, fontSize float64, vp viewport, axis int) (float64, bool) {
+	switch s {
+	case lo:
+		return 0, true
+	case "center":
+		return size / 2, true
+	case hi:
+		return size, true
+	}
+	if p, ok := strings.CutSuffix(s, "%"); ok {
+		f, err := strconv.ParseFloat(p, 64)
+		if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
+			return 0, false
+		}
+		return float64(f/100) * size, true
+	}
+	l, ok := parseLength(s, fontSize, vp, axis)
+	return l, ok && !math.IsNaN(l) && !math.IsInf(l, 0)
+}
+
+// transformOf is an element's transform: the CSS transform property (from
+// its style attribute or the style sheets; "none" is none), or else its
+// transform attribute. has is false for none; ok false for an attribute
+// that does not parse (a CSS value that does not is passed over).
+func transformOf(n *node, fontSize float64, vp viewport) (m matrix, has, ok bool) {
+	if v, ok := n.cssProp("transform"); ok {
+		if strings.EqualFold(strings.TrimSpace(v), "none") {
+			return identity, false, true
+		}
+		if m, ok := parseCSSTransform(v, fontSize, vp); ok {
+			return m, true, true
+		}
+	}
+	v, has := n.attrs["transform"]
+	if !has {
+		return identity, false, true
+	}
+	m, ok = parseTransform(v)
+	return m, true, ok
+}
+
+// parseCSSTransform reads a transform of CSS: functions apart by spaces,
+// their arguments by commas, lengths and angles with units (a number
+// without one is taken as pixels or degrees, as in the attribute); of the
+// functions of 3D, what they do in the plane.
+func parseCSSTransform(s string, fontSize float64, vp viewport) (matrix, bool) {
+	m := identity
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return m, false
+	}
+	for len(s) > 0 {
+		open := strings.IndexByte(s, '(')
+		end := strings.IndexByte(s, ')')
+		if open < 0 || end < open {
+			return m, false
+		}
+		name := strings.ToLower(strings.TrimSpace(s[:open]))
+		var args []string
+		for _, a := range strings.Split(s[open+1:end], ",") {
+			if a = strings.TrimSpace(a); a != "" {
+				args = append(args, a)
+			}
+		}
+		s = strings.TrimSpace(s[end+1:])
+		n := len(args)
+		length := func(i, axis int) (float64, bool) {
+			v, ok := parseLength(args[i], fontSize, vp, axis)
+			return v, ok && !math.IsNaN(v) && !math.IsInf(v, 0)
+		}
+		number := func(i int) (float64, bool) {
+			v, err := strconv.ParseFloat(args[i], 64)
+			return v, err == nil && !math.IsNaN(v) && !math.IsInf(v, 0)
+		}
+		angle := func(i int) (float64, bool) { return cssAngle(args[i]) }
+		var t matrix
+		ok := true
+		switch {
+		case (name == "translate" && (n == 1 || n == 2)) || (name == "translate3d" && n == 3):
+			t = identity
+			var okY bool
+			t.e, ok = length(0, axisX)
+			if n >= 2 {
+				t.f, okY = length(1, axisY)
+				ok = ok && okY
+			}
+		case name == "translatex" && n == 1:
+			t = identity
+			t.e, ok = length(0, axisX)
+		case name == "translatey" && n == 1:
+			t = identity
+			t.f, ok = length(0, axisY)
+		case (name == "scale" && (n == 1 || n == 2)) || (name == "scale3d" && n == 3):
+			var sx, sy float64
+			var okY bool
+			sx, ok = number(0)
+			sy, okY = sx, true
+			if n >= 2 {
+				sy, okY = number(1)
+			}
+			ok = ok && okY
+			t = matrix{sx, 0, 0, sy, 0, 0}
+		case name == "scalex" && n == 1:
+			var sx float64
+			sx, ok = number(0)
+			t = matrix{sx, 0, 0, 1, 0, 0}
+		case name == "scaley" && n == 1:
+			var sy float64
+			sy, ok = number(0)
+			t = matrix{1, 0, 0, sy, 0, 0}
+		case (name == "rotate" || name == "rotatez") && n == 1:
+			var a float64
+			a, ok = angle(0)
+			sn, cs := trig.SinCosDeg(a)
+			t = matrix{cs, sn, -sn, cs, 0, 0}
+		case (name == "skew" && (n == 1 || n == 2)) || name == "skewx" && n == 1 || name == "skewy" && n == 1:
+			var ax, ay float64
+			okX, okY := true, true
+			if name == "skewy" {
+				ay, okY = angle(0)
+			} else {
+				ax, okX = angle(0)
+				if n == 2 {
+					ay, okY = angle(1)
+				}
+			}
+			ok = okX && okY
+			sx, cx := trig.SinCosDeg(ax)
+			sy, cy := trig.SinCosDeg(ay)
+			t = matrix{1, sy / cy, sx / cx, 1, 0, 0}
+		case name == "matrix" && n == 6:
+			var v [6]float64
+			for i := range v {
+				var okI bool
+				v[i], okI = number(i)
+				ok = ok && okI
+			}
+			t = matrix{v[0], v[1], v[2], v[3], v[4], v[5]}
+		case name == "matrix3d" && n == 16:
+			var v [16]float64
+			for i := range v {
+				var okI bool
+				v[i], okI = number(i)
+				ok = ok && okI
+			}
+			t = matrix{v[0], v[1], v[4], v[5], v[12], v[13]}
+		default:
+			return m, false
+		}
+		if !ok {
+			return m, false
+		}
+		m = m.mul(t)
+	}
+	return m, true
+}
+
+// cssAngle reads an angle of CSS, in degrees.
+func cssAngle(s string) (float64, bool) {
+	s = strings.ToLower(strings.TrimSpace(s))
+	k := 1.0
+	for _, u := range []struct {
+		unit string
+		k    float64
+	}{{"deg", 1}, {"grad", 0.9}, {"rad", 180 / math.Pi}, {"turn", 360}} {
+		if v, ok := strings.CutSuffix(s, u.unit); ok {
+			s, k = v, u.k
+			break
+		}
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0, false
+	}
+	return float64(v * k), true
+}
+
 // parseTransform reads a transform list.
 func parseTransform(s string) (matrix, bool) {
 	m := identity

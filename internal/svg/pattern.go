@@ -128,10 +128,8 @@ func (b *builder) pattern(p *node, opacity float64, st style, segs []seg, m matr
 		return nil
 	}
 	pm := m
-	if v, ok := attr("patternTransform"); ok {
-		if t, ok := parseTransform(v); ok {
-			pm = pm.mul(t)
-		}
+	if t, ok := chainTransform(chain, "patternTransform"); ok {
+		pm = pm.mul(aboutOrigin(p, t, vp.w, vp.h, st.fontSize, vp, [2]float64{}))
 	}
 	// The tile's pixels: as many as it covers on the device.
 	sc := maxScale(pm)

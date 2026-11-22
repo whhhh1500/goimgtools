@@ -348,10 +348,8 @@ func (b *builder) pathFor(k *node, m matrix, st style, vp viewport) *textPathInf
 		return nil
 	}
 	tm := identity
-	if v, ok := t.attr("transform"); ok {
-		if m, ok := parseTransform(v); ok {
-			tm = m
-		}
+	if m, has, ok := transformOf(t, st.fontSize, vp); has && ok {
+		tm = aboutOrigin(t, m, vp.w, vp.h, st.fontSize, vp, [2]float64{})
 	}
 	segs := shapeSegs(t, computeStyle(t, st, vp), vp)
 	ps, ok := flattenLimit(segs, m.mul(tm), maxPoints/16)

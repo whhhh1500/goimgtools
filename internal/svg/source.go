@@ -1,6 +1,7 @@
 package svg
 
 import (
+	"bytes"
 	"errors"
 	"image"
 	"image/color"
@@ -23,6 +24,7 @@ type Source struct {
 	err       error
 	started   bool
 	dataBytes int64
+	opts      buildOptions
 }
 
 // MaxBytes bounds the documents read.
@@ -55,6 +57,9 @@ func Open(data []byte, env *pipeline.Env) (*Source, error) {
 		return nil, err
 	}
 	s := &Source{env: env, root: root, reserved: need, dataBytes: need}
+	// The work of context-fill and context-stroke is done only for a
+	// document that may use them (one in UTF-16 is not searched).
+	s.opts.contextPaint = bytes.Contains(data, []byte("context-")) || utf16Order(data) != 0
 	s.iw, s.ih, s.m = size(root)
 	s.w = max(1, int(math.Round(s.iw)))
 	s.h = max(1, int(math.Round(s.ih)))
@@ -101,7 +106,7 @@ func (s *Source) start() error {
 	if s.env.Budget.Limit() <= 0 {
 		avail = nil
 	}
-	sc, err := build(s.root, s.w, s.h, m, reserve, s.env.Budget.Release, avail)
+	sc, err := build(s.root, s.w, s.h, m, reserve, s.env.Budget.Release, avail, s.opts)
 	if sc != nil {
 		// Reserved as the scene grew, and for its pictures: given back at
 		// Close, the build failed or not.

@@ -76,3 +76,11 @@ WebP 编码器由本模块自行实现，无标准库可供对照，因此采用
 - 字母需连写、重排或叠放的文种按字体自带的表格整形（HarfBuzz 整形器的 Go 移植）。`Text()` 与 SVG 中，印地语、孟加拉语、泰米尔语、泰语、阿拉伯语、波斯语各行的字迹横向与 Chrome 相差不超过一个像素。68 个整形文字的 SVG 文档（天城文、孟加拉文、古木基文、古吉拉特文、奥里亚文、泰米尔文、泰卢固文、卡纳达文、马拉雅拉姆文、僧伽罗文、泰文、老挝文、高棉文、缅甸文、藏文、阿拉伯文、波斯文、乌尔都文、带元音符号的希伯来文、用组合符号的越南文；`text-anchor`、`textPath`、`textLength`、字簇上的 `dx` 与 `rotate`、字簇中间的 `tspan`、字母间距、连接符、零宽空格、软连字符、装饰线）中 62 个与 Chrome 相差不超过一个像素；其余的：泰卢固文在 HarfBuzz 的移植与 Chrome 的 HarfBuzz 之间差两个像素；阿拉伯文单个字母上的 `dx` 按所见次序移动，与 Chrome 不同。
 - 混合方向文字的次序按 Unicode 双向算法：Unicode 17 的 `BidiTest.txt` 全部 770,241 例、`BidiCharacterTest.txt` 全部 91,707 例都对。
 - Windows 上安装的 Pillow 13.0（没有需要 FriBiDi 的 libraqm）逐字排版：印地语的合体字与元音符号散开，阿拉伯文不连写且从左到右排列。sharp（经 libvips 与 Pango）对印地语与阿拉伯文的整形与 Chrome 相同。
+
+## SVG
+
+渲染器在 resvg 的测试集（1,801 个带参考图的文档，按参考图尺寸渲染，像素平均差小于 2 级算通过）与取自开源项目的 399 个图标与图表 SVG 文件上检查：
+
+- 1,801 个测试通过 1,223 个。其中 387 个文字测试使用测试集自带的字体（Noto Sans 等），这里没有安装；其余 1,414 个通过 1,202 个。矩形、圆、直线与折线，变换，`use`，样式表与 `style` 属性，`mix-blend-mode`，`isolation`，透明度，描边的端点、连接、斜接限制与虚线偏移，渐变色标，以及滤镜 feBlend、feComposite、feComponentTransfer、feDisplacementMap、feMerge 全部通过；路径、椭圆、多边形、线性与径向渐变、`symbol`、`transform-origin`、`paint-order`、虚线，以及 feColorMatrix、feGaussianBlur、feMorphology、feOffset、feFlood、feDropShadow、feTurbulence 只差一两个。
+- 有意不画的：`image` 元素引用的外部文件（只读 data URI，以免文档读取本机文件），以及文档指定但未安装的字体。
+- Chrome 与 SVG 2 规范不一致处按 Chrome：标记只画在 path、line、polyline 与 polygon 上，不画在矩形与圆上；`mix-blend-mode` 与 `isolation` 只从 CSS 读取。

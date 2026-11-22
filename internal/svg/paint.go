@@ -149,12 +149,73 @@ func (g *gradient) at(px, py float64) [4]uint8 {
 	return g.lut[int(math.Round(float64(t*(lutSize-1))))]
 }
 
+// paintContext is the element whose fill and stroke context-fill and
+// context-stroke take (SVG 2): the shape a marker is on, a use element;
+// its paints, resolved, painted in its own space over its own bounding
+// box.
+type paintContext struct {
+	fill, stroke contextPaint
+}
+
+type contextPaint struct {
+	p    paint
+	n    *node
+	st   style
+	segs func() []seg // its outline (a use element's: its bounding box), made when a paint server needs it
+	m    matrix
+	vp   viewport
+}
+
+// withContext draws with n as the context element.
+func (b *builder) withContext(n *node, st style, segs func() []seg, m matrix, vp viewport, draw func()) {
+	outer := b.ctx
+	c := &paintContext{
+		fill:   contextPaint{st.fill, n, st, segs, m, vp},
+		stroke: contextPaint{st.stroke, n, st, segs, m, vp},
+	}
+	// Its own paints of the context of an outer element are that
+	// element's, as it paints them (none without one).
+	for _, cp := range []*contextPaint{&c.fill, &c.stroke} {
+		switch {
+		case cp.p.kind != paintContextFill && cp.p.kind != paintContextStroke:
+		case outer == nil:
+			cp.p = paint{kind: paintNone}
+		case cp.p.kind == paintContextFill:
+			*cp = outer.fill
+		default:
+			*cp = outer.stroke
+		}
+	}
+	b.ctx = c
+	defer func() { b.ctx = outer }()
+	draw()
+}
+
 // shader resolves a fill or a stroke of an element into what colours its
 // pixels; nil for none.
 func (b *builder) shader(n *node, p paint, opacity float64, st style, segs []seg, m matrix, vp viewport) *shader {
 	switch p.kind {
 	case paintNone:
 		return nil
+	case paintContextFill, paintContextStroke:
+		c := b.ctx
+		if c == nil {
+			return nil
+		}
+		q := c.fill
+		if p.kind == paintContextStroke {
+			q = c.stroke
+		}
+		if q.p.kind == paintContextFill || q.p.kind == paintContextStroke {
+			return nil
+		}
+		b.ctx = nil // its paint servers are not in a context of their own
+		defer func() { b.ctx = c }()
+		var segs []seg
+		if q.p.kind == paintURL {
+			segs = q.segs()
+		}
+		return b.shader(q.n, q.p, opacity, q.st, segs, q.m, q.vp)
 	case paintCurrent:
 		return solidShader(st.color, opacity)
 	case paintColor:
@@ -173,7 +234,43 @@ func (b *builder) shader(n *node, p paint, opacity float64, st style, segs []seg
 		}
 		return nil
 	}
-	return b.gradient(t, opacity, st, segs, m, vp)
+	sh := b.gradient(t, opacity, st, segs, m, vp)
+	if sh == nil && p.fallback != nil && !b.gradientHasStops(t) {
+		// A gradient without stops: the fallback, as Chrome paints it.
+		return b.shader(n, *p.fallback, opacity, st, segs, m, vp)
+	}
+	return sh
+}
+
+// gradientHasStops reports whether a gradient, or one it refers to, has a
+// stop.
+func (b *builder) gradientHasStops(g *node) bool {
+	for k, i := g, 0; k != nil && i < 8; k, i = b.href(k), i+1 {
+		if k.name != "linearGradient" && k.name != "radialGradient" {
+			return false
+		}
+		for _, c := range k.children {
+			if c.name == "stop" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// chainTransform is the first transform of the paint servers of a chain
+// (one and those it refers to) that is one: a value that does not parse is
+// passed over, as is one that flattens everything (as resvg, and as
+// Chrome draws it).
+func chainTransform(chain []*node, name string) (matrix, bool) {
+	for _, c := range chain {
+		if v, ok := c.attrs[name]; ok {
+			if tm, ok := parseTransform(v); ok {
+				return tm, tm.det() != 0
+			}
+		}
+	}
+	return identity, false
 }
 
 // gradient builds the shader of a gradient element for a shape.
@@ -198,6 +295,17 @@ func (b *builder) gradient(g *node, opacity float64, st style, segs []seg, m mat
 	}
 	attr := func(name string) (string, bool) {
 		for _, c := range chain {
+			// The geometry of the other kind of gradient is not its own.
+			switch name {
+			case "x1", "y1", "x2", "y2":
+				if c.name != "linearGradient" {
+					continue
+				}
+			case "cx", "cy", "r", "fx", "fy", "fr":
+				if c.name != "radialGradient" {
+					continue
+				}
+			}
 			if v, ok := c.attrs[name]; ok {
 				return v, true
 			}
@@ -226,7 +334,9 @@ func (b *builder) gradient(g *node, opacity float64, st style, segs []seg, m mat
 		a   float64
 	}
 	var sv []stopVal
-	gst := computeStyle(stopsOf, st, vp)
+	// The stops' style is that of where the gradient is (its color for
+	// currentColor among them), not of what it paints.
+	gst := b.styleOf(stopsOf, vp)
 	last := 0.0
 	for _, k := range stops {
 		ks := computeStyle(k, gst, vp)
@@ -264,10 +374,12 @@ func (b *builder) gradient(g *node, opacity float64, st style, segs []seg, m mat
 		}
 		gm = gm.mul(matrix{bx[2], 0, 0, bx[3], bx[0], bx[1]})
 	}
-	if v, ok := attr("gradientTransform"); ok {
-		if tm, ok := parseTransform(v); ok {
-			gm = gm.mul(tm)
+	if tm, ok := chainTransform(chain, "gradientTransform"); ok {
+		bw, bh := vp.w, vp.h
+		if bboxUnits {
+			bw, bh = 1, 1
 		}
+		gm = gm.mul(aboutOrigin(g, tm, bw, bh, st.fontSize, vp, [2]float64{}))
 	}
 	inv, ok := gm.invert()
 	if !ok {
@@ -330,7 +442,15 @@ func (b *builder) gradient(g *node, opacity float64, st style, segs []seg, m mat
 		gr.fr = math.Min(gr.fr, float64(gr.r*0.999))
 	}
 	// The colours along the gradient, interpolated between stops
-	// unpremultiplied, then premultiplied.
+	// unpremultiplied (in linear light by color-interpolation, inherited
+	// where the gradient is), then premultiplied.
+	linear := false
+	for p := g; p != nil; p = p.parent {
+		if v, ok := p.prop("color-interpolation"); ok && strings.TrimSpace(v) != "inherit" {
+			linear = strings.EqualFold(strings.TrimSpace(v), "linearRGB")
+			break
+		}
+	}
 	k := 0
 	for i := range gr.lut {
 		t := float64(i) / (lutSize - 1)
@@ -352,7 +472,15 @@ func (b *builder) gradient(g *node, opacity float64, st style, segs []seg, m mat
 				f = (t - s0.off) / (s1.off - s0.off)
 			}
 			lerp := func(u, v float64) float64 { return u + float64((v-u)*f) }
-			r, g2, bl = lerp(float64(s0.c.R), float64(s1.c.R)), lerp(float64(s0.c.G), float64(s1.c.G)), lerp(float64(s0.c.B), float64(s1.c.B))
+			if linear {
+				// In linear light, back in the sRGB curve.
+				ch := func(u, v uint8) float64 {
+					return float64(fromLinear(float32(lerp(float64(toLinear[u]), float64(toLinear[v])))) * 255)
+				}
+				r, g2, bl = ch(s0.c.R, s1.c.R), ch(s0.c.G, s1.c.G), ch(s0.c.B, s1.c.B)
+			} else {
+				r, g2, bl = lerp(float64(s0.c.R), float64(s1.c.R)), lerp(float64(s0.c.G), float64(s1.c.G)), lerp(float64(s0.c.B), float64(s1.c.B))
+			}
 			a = lerp(s0.a, s1.a)
 		}
 		gr.lut[i] = premul(r, g2, bl, float64(float64(a*opacity)*255))

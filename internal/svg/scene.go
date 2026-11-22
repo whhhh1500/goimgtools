@@ -57,6 +57,7 @@ type scene struct {
 	w, h       int
 	points     int   // the points of all its outlines, for the memory they take
 	imageBytes int64 // the pictures of image elements, reserved
+	usedPixels int64 // the pixels of pictures drawn, those of the documents it is a picture in among them
 	itemCount  int   // its items, those of masks among them
 	charged    int64 // reserved for its points and items
 }
@@ -126,6 +127,8 @@ type builder struct {
 	useing      map[*node]bool // the use elements being expanded, against cycles
 	outlines    map[*node]*outline
 	clipText    func(segs []seg, m matrix) // set while the text of a clip path is laid out: takes its outlines
+	ctx         *paintContext              // what context-fill and context-stroke take, while a marker or use is drawn
+	opts        buildOptions
 	depth       int
 	full        image.Rectangle
 }
@@ -169,6 +172,11 @@ func size(root *node) (w, h float64, m matrix) {
 	m = identity
 	if hasVB {
 		m = viewBoxTransform(vb, root.attrs["preserveAspectRatio"], w, h)
+	}
+	// The root's transform (SVG 2) moves its box, the viewBox's mapping
+	// within it: about its centre by default, as Chrome does.
+	if tm, has, ok := transformOf(root, 16, viewport{w, h}); has && ok {
+		m = aboutOrigin(root, tm, w, h, 16, viewport{w, h}, [2]float64{0.5, 0.5}).mul(m)
 	}
 	return w, h, m
 }
@@ -222,10 +230,17 @@ func viewBoxTransform(vb [4]float64, par string, w, h float64) matrix {
 	return matrix{s, 0, 0, s, tx, ty}
 }
 
+// buildOptions is what a scene is built with besides its document.
+type buildOptions struct {
+	nesting      int   // how deep a picture within pictures the document is
+	usedPixels   int64 // the pixels of pictures the documents it is in have drawn
+	contextPaint bool  // whether it may use context-fill or context-stroke
+}
+
 // build makes the scene of a document drawn at w by h pixels, its user
 // space taken there by m.
-func build(root *node, w, h int, m matrix, reserve func(int64) error, release func(int64), avail func() int64) (*scene, error) {
-	b := &builder{avail: avail, masking: map[*node]bool{}, patterning: map[*node]bool{}, marking: map[*node]bool{}, filtering: map[*node]bool{}, clipping: map[*node]bool{}, release: release, reserve: reserve, fontSets: map[string]*textsrc.Set{}, root: root, ids: map[string]*node{}, sc: &scene{w: w, h: h}, useing: map[*node]bool{}, full: image.Rect(0, 0, w, h)}
+func build(root *node, w, h int, m matrix, reserve func(int64) error, release func(int64), avail func() int64, opts buildOptions) (*scene, error) {
+	b := &builder{avail: avail, masking: map[*node]bool{}, patterning: map[*node]bool{}, marking: map[*node]bool{}, filtering: map[*node]bool{}, clipping: map[*node]bool{}, release: release, reserve: reserve, fontSets: map[string]*textsrc.Set{}, root: root, ids: map[string]*node{}, sc: &scene{w: w, h: h}, useing: map[*node]bool{}, full: image.Rect(0, 0, w, h), opts: opts, imagePixels: opts.usedPixels}
 	// The fonts are needed while the outlines of text are made.
 	defer func() {
 		for _, s := range b.fontSets {
@@ -253,6 +268,16 @@ func build(root *node, w, h int, m matrix, reserve func(int64) error, release fu
 		vp = viewport{vb[2], vb[3]}
 	}
 	st := computeStyle(root, initialStyle(), vp)
+	if !st.display {
+		return b.sc, nil // a root not displayed: nothing is drawn
+	}
+	// The root's background colour (CSS, as mermaid and draw.io write it)
+	// is the canvas's, under all else, as browsers draw it.
+	if c, ok := rootBackground(root); ok {
+		if sh := solidShader(c, 1); sh != nil {
+			b.add(item{op: opShape, paint: sh, bounds: b.full})
+		}
+	}
 	// The root's clip path, mask and opacity apply to all it holds (as in
 	// Chrome), in its user space.
 	own := b.clipOf(root, m, vp, st, nil)
@@ -265,6 +290,7 @@ func build(root *node, w, h int, m matrix, reserve func(int64) error, release fu
 	default:
 		b.children(root, m, st, vp, nil)
 	}
+	b.sc.usedPixels = b.imagePixels
 	if b.err != nil {
 		return b.sc, b.err
 	}
@@ -310,12 +336,11 @@ func (b *builder) element(n *node, m matrix, parent style, vp viewport, cl *clip
 	if !st.display {
 		return
 	}
-	if t, ok := n.attr("transform"); ok {
-		if tm, ok := parseTransform(t); ok {
-			m = m.mul(tm)
-		} else {
+	if tm, has, ok := transformOf(n, st.fontSize, vp); has {
+		if !ok {
 			return
 		}
+		m = m.mul(aboutOrigin(n, tm, vp.w, vp.h, st.fontSize, vp, [2]float64{}))
 	}
 	if m.det() == 0 {
 		return
@@ -395,9 +420,27 @@ func (b *builder) draw(n *node, m matrix, st style, vp viewport, ownClip, cl *cl
 		inner := st
 		inner.opacity = 1
 		b.group(n, st, ownClip, cl, func(c *clip) {
-			b.shape(n, segs, m, inner, vp, nil, c)
-			if st.visible {
-				b.markers(n, segs, m, inner, vp, c)
+			marks := func() {
+				if st.visible {
+					b.markers(n, segs, m, inner, vp, c)
+				}
+			}
+			switch inner.markersEarly {
+			case 2: // paint-order: markers first
+				marks()
+				b.shape(n, segs, m, inner, vp, nil, c)
+			case 1: // between the fill and the stroke
+				first, second := inner, inner
+				first.stroke, second.fill = paint{kind: paintNone}, paint{kind: paintNone}
+				if inner.strokeFirst {
+					first, second = second, first
+				}
+				b.shape(n, segs, m, first, vp, nil, c)
+				marks()
+				b.shape(n, segs, m, second, vp, nil, c)
+			default:
+				b.shape(n, segs, m, inner, vp, nil, c)
+				marks()
 			}
 		})
 	case "text":
@@ -523,6 +566,23 @@ func (b *builder) use(n *node, m matrix, st style, vp viewport, own, outer *clip
 	defer func() { delete(b.useing, n); b.depth-- }()
 	x, _ := parseLength(n.attrs["x"], st.fontSize, vp, axisX)
 	y, _ := parseLength(n.attrs["y"], st.fontSize, vp, axisY)
+	if !b.opts.contextPaint {
+		b.useContent(n, t, m, st, vp, x, y, own, outer)
+		return
+	}
+	// The use element is the context of the paints of what it draws, its
+	// bounding box that of its content.
+	box := func() []seg {
+		bx, ok := b.bboxOf(n, vp, st)
+		if !ok {
+			return nil
+		}
+		return rectSegs(bx[0], bx[1], bx[2], bx[3], 0, 0)
+	}
+	b.withContext(n, st, box, m, vp, func() { b.useContent(n, t, m, st, vp, x, y, own, outer) })
+}
+
+func (b *builder) useContent(n, t *node, m matrix, st style, vp viewport, x, y float64, own, outer *clip) {
 	switch t.name {
 	case "symbol", "svg":
 		w, okW := parseLength(attrOr(n, "width", attrOr(t, "width", "100%")), st.fontSize, vp, axisX)
@@ -534,9 +594,23 @@ func (b *builder) use(n *node, m matrix, st style, vp viewport, own, outer *clip
 		if !ts.display {
 			return
 		}
-		b.viewportInto(t, m, ts, x, y, w, h, own, outer, func(mm matrix, inner viewport, c *clip) {
-			b.children(t, mm, ts, inner, c)
-		})
+		if t.name == "svg" {
+			// An svg element keeps its place, moved by the use's.
+			tx, _ := parseLength(t.attrs["x"], ts.fontSize, vp, axisX)
+			ty, _ := parseLength(t.attrs["y"], ts.fontSize, vp, axisY)
+			x, y = x+tx, y+ty
+		}
+		into := func(own, outer *clip) {
+			b.viewportInto(t, m, ts, x, y, w, h, own, outer, func(mm matrix, inner viewport, c *clip) {
+				b.children(t, mm, ts, inner, c)
+			})
+		}
+		if st.opacity < 1 || st.blend != blendNormal {
+			// The use's own opacity and blending, over what it draws.
+			b.group(n, st, own, outer, func(c *clip) { into(nil, c) })
+			return
+		}
+		into(own, outer)
 	default:
 		mm := m.mul(matrix{1, 0, 0, 1, x, y})
 		b.group(n, st, own, outer, func(c *clip) { b.element(t, mm, st, vp, c) })
@@ -564,10 +638,8 @@ func (b *builder) clipOf(n *node, m matrix, vp viewport, st style, outer *clip) 
 		return nil // a reference to nothing: no clip
 	}
 	cm := m
-	if t, ok := cp.attr("transform"); ok {
-		if tm, ok := parseTransform(t); ok {
-			cm = cm.mul(tm)
-		}
+	if tm, has, ok := transformOf(cp, st.fontSize, vp); has && ok {
+		cm = cm.mul(aboutOrigin(cp, tm, vp.w, vp.h, st.fontSize, vp, [2]float64{}))
 	}
 	if cp.attrs["clipPathUnits"] == "objectBoundingBox" {
 		bx, ok := b.bboxOf(n, vp, st)
@@ -608,12 +680,11 @@ func (b *builder) clipOf(n *node, m matrix, vp viewport, st style, outer *clip) 
 		if !s.display || !s.visible {
 			return
 		}
-		if t, ok := k.attr("transform"); ok {
-			if tm, ok := parseTransform(t); ok {
-				km = km.mul(tm)
-			} else {
+		if tm, has, ok := transformOf(k, s.fontSize, vp); has {
+			if !ok {
 				return
 			}
+			km = km.mul(aboutOrigin(k, tm, vp.w, vp.h, s.fontSize, vp, [2]float64{}))
 		}
 		switch k.name {
 		case "use":
@@ -976,8 +1047,8 @@ func (b *builder) bboxOf(n *node, vp viewport, st style) ([4]float64, bool) {
 	minX, minY, maxX, maxY := math.Inf(1), math.Inf(1), math.Inf(-1), math.Inf(-1)
 	var walk func(k *node, m matrix, kst style, depth int)
 	walk = func(k *node, m matrix, kst style, depth int) {
-		if depth > 32 {
-			return
+		if depth > 32 || depth > 0 && !kst.display {
+			return // what is not drawn takes no room
 		}
 		switch k.name {
 		case "path", "rect", "circle", "ellipse", "line", "polyline", "polygon":
@@ -1003,12 +1074,11 @@ func (b *builder) bboxOf(n *node, vp viewport, st style) ([4]float64, bool) {
 		case "g", "a", "switch", "svg":
 			for _, c := range k.children {
 				cm := m
-				if t, ok := c.attr("transform"); ok {
-					if tm, ok := parseTransform(t); ok {
-						cm = cm.mul(tm)
-					}
+				cst := computeStyle(c, kst, vp)
+				if tm, has, ok := transformOf(c, cst.fontSize, vp); has && ok {
+					cm = cm.mul(aboutOrigin(c, tm, vp.w, vp.h, cst.fontSize, vp, [2]float64{}))
 				}
-				walk(c, cm, computeStyle(c, kst, vp), depth+1)
+				walk(c, cm, cst, depth+1)
 			}
 		case "use":
 			if t := b.href(k); t != nil {

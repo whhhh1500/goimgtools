@@ -1,10 +1,13 @@
 package svg
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"image"
+	"io"
 	"math"
 	"net/url"
 	"strings"
@@ -105,7 +108,7 @@ func dataURI(href string) ([]byte, bool) {
 // image draws an image element whose picture is a data URI (files it
 // names are not read).
 func (b *builder) image(n *node, m matrix, st style, vp viewport, own, outer *clip) {
-	if DecodeImage == nil || !st.visible || st.opacity <= 0 {
+	if !st.visible || st.opacity <= 0 {
 		return
 	}
 	href, ok := n.attr("href")
@@ -172,7 +175,14 @@ func (b *builder) image(n *node, m matrix, st style, vp viewport, own, outer *cl
 			return
 		}
 	}
-	pic, err := DecodeImage(data, o)
+	var pic *image.NRGBA
+	var err error
+	if doc, ok := svgPicture(data); ok {
+		// An SVG document: drawn at the size it takes on the device.
+		pic, iw, ih, err = b.svgImage(doc, o, placed)
+	} else if DecodeImage != nil {
+		pic, err = DecodeImage(data, o)
+	}
 	if errors.Is(err, pipeline.ErrMemoryLimit) {
 		b.err = err // not skipped as a broken picture is: the document is not drawn
 		return
@@ -218,4 +228,97 @@ func (b *builder) image(n *node, m matrix, st style, vp viewport, own, outer *cl
 		it.bounds = it.bounds.Intersect(c.bounds)
 	}
 	b.add(it)
+}
+
+// maxNesting bounds SVG pictures within SVG pictures.
+const maxNesting = 4
+
+// svgPicture is the document of a picture that is SVG (or SVG compressed
+// by gzip, as .svgz files are).
+func svgPicture(data []byte) ([]byte, bool) {
+	if len(data) > 2 && data[0] == 0x1f && data[1] == 0x8b {
+		zr, err := gzip.NewReader(bytes.NewReader(data))
+		if err != nil {
+			return nil, false
+		}
+		head := make([]byte, 512)
+		n, _ := io.ReadFull(zr, head)
+		if !Match(head[:n]) {
+			return nil, false
+		}
+		rest, err := io.ReadAll(io.LimitReader(zr, MaxBytes+1-int64(n)))
+		if err != nil || int64(n+len(rest)) > MaxBytes {
+			return nil, false
+		}
+		return append(head[:n:n], rest...), true
+	}
+	return data, Match(data)
+}
+
+// svgImage draws an SVG picture at the size placed gives it on the device
+// (within the pixels left to the pictures), with its own size.
+func (b *builder) svgImage(data []byte, o DecodeOptions, placed func(iw, ih float64) (matrix, float64, float64)) (*image.NRGBA, float64, float64, error) {
+	if b.opts.nesting >= maxNesting {
+		return nil, 0, 0, errors.New("goimgtools: svg: pictures nested too deeply")
+	}
+	s, err := Open(data, pipeline.NewEnv(o.Memory, ""))
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	defer s.Close()
+	s.opts.nesting = b.opts.nesting + 1
+	iw, ih := s.iw, s.ih
+	pm, w, h := placed(iw, ih)
+	if !(w > 0) || !(h > 0) {
+		return nil, iw, ih, nil
+	}
+	sx := math.Sqrt(float64(pm.a*pm.a) + float64(pm.b*pm.b))
+	sy := math.Sqrt(float64(pm.c*pm.c) + float64(pm.d*pm.d))
+	tw := math.Min(maxDimension, math.Max(1, math.Ceil(float64(iw*sx))))
+	th := math.Min(maxDimension, math.Max(1, math.Ceil(float64(ih*sy))))
+	if lim := float64(o.MaxPixels); float64(tw*th) > lim {
+		if lim < 1 {
+			return nil, iw, ih, nil
+		}
+		k := math.Sqrt(lim / float64(tw*th))
+		tw, th = math.Max(1, math.Floor(float64(tw*k))), math.Max(1, math.Floor(float64(th*k)))
+	}
+	pw, ph := int(tw), int(th)
+	s.ScaleOnLoad(pw, ph)
+	// The pictures it holds are counted with those of the documents it is in.
+	s.opts.usedPixels = b.imagePixels + int64(pw)*int64(ph)
+	// The picture is counted in the document's budget while it is drawn.
+	px := 4 * int64(pw) * int64(ph)
+	if err := s.env.Budget.Reserve(px, "svg picture"); err != nil {
+		return nil, iw, ih, err
+	}
+	defer s.env.Budget.Release(px)
+	pic := image.NewNRGBA(image.Rect(0, 0, pw, ph))
+	for {
+		band, err := s.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, iw, ih, err
+		}
+		src := band.(*image.RGBA)
+		r := src.Rect
+		for y := r.Min.Y; y < r.Max.Y; y++ {
+			sp := src.Pix[(y-r.Min.Y)*src.Stride:][:4*pw]
+			dp := pic.Pix[y*pic.Stride:][:4*pw]
+			for i := 0; i < len(sp); i += 4 {
+				a := uint32(sp[i+3])
+				if a == 0 {
+					continue
+				}
+				dp[i+3] = uint8(a)
+				for q := 0; q < 3; q++ {
+					dp[i+q] = uint8(min(255, (uint32(sp[i+q])*255+a/2)/a))
+				}
+			}
+		}
+	}
+	b.imagePixels = s.r.sc.usedPixels - int64(pw)*int64(ph) // its own canvas is counted as a picture's
+	return pic, iw, ih, nil
 }

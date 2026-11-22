@@ -97,6 +97,11 @@ func FuzzOpen(f *testing.F) {
 	// Text shaped by its font's tables: clusters moved, turned, coloured
 	// apart, stretched; right to left.
 	f.Add([]byte(`<svg width="60" height="30" font-size="12" font-family="'` + testFont + `'"><text x="1" y="12" dx="0 2 2" rotate="0 5" textLength="50">नमस्ते <tspan fill="red">क्ष</tspan>ि ◌ा</text><text x="58" y="26" direction="rtl" letter-spacing="1">abc אב (क) ‏١٢</text></svg>`))
+	// Encodings, entities, pictures that are SVG, CSS transforms and
+	// origins, context paint, paint order, a root's background.
+	f.Add(append([]byte(`<?xml version="1.0" encoding="windows-1251"?><!DOCTYPE svg [<!ENTITY c "green">]><svg width="9" height="9" style="background: #ffd; transform: rotate(5deg)"><rect width="9" height="9" fill="&c;" transform-origin="center" transform="scale(.5)"/><text>`), 0xCF, 0xF0, '<', '/', 't', 'e', 'x', 't', '>', '<', '/', 's', 'v', 'g', '>'))
+	f.Add([]byte{0xFF, 0xFE, '<', 0, 's', 0, 'v', 0, 'g', 0, ' ', 0, 'w', 0, 'i', 0, 'd', 0, 't', 0, 'h', 0, '=', 0, '"', 0, '4', 0, '"', 0, '/', 0, '>', 0})
+	f.Add([]byte(`<svg width="20" height="20"><style>[x] { transform: translate(1px, 10%) } rect[fill$="n"] { paint-order: markers stroke }</style><marker id="m" orient="0.1turn"><path d="M0 0h3v3z" fill="context-stroke"/></marker><defs><path id="p" d="M1 1h9v9" fill="context-fill"/></defs><use href="#p" fill="url(#g) red" stroke="blue" marker-mid="url(#m)"/><path d="M2 2h9v9" stroke="red" marker-mid="url(#m)" paint-order="markers"/><image width="9" height="9" href="data:image/svg+xml;utf8,%3Csvg width='4' height='4'%3E%3Cimage width='2' height='2' href='data:image/svg+xml;utf8,%3Csvg/%3E'/%3E%3C/svg%3E"/></svg>`))
 	f.Fuzz(func(t *testing.T, data []byte) {
 		env := pipeline.NewEnv(16<<20, "")
 		s, err := Open(data, env)

@@ -1,7 +1,11 @@
 package svg
 
 import (
+	"bytes"
+	"compress/gzip"
+	"encoding/base64"
 	"image"
+	"net/url"
 	"testing"
 
 	"github.com/whhhh1500/goimgtools/pipeline"
@@ -85,5 +89,325 @@ func TestClipPaths(t *testing.T) {
 	}
 	if rgbaAt(img, 25, 25)[3] != 255 || rgbaAt(img, 75, 75)[3] != 0 {
 		t.Error("a clip path on the root")
+	}
+}
+
+// renderDoc draws a whole document.
+func renderDoc(t *testing.T, doc []byte) image.Image {
+	t.Helper()
+	s, err := Open(doc, pipeline.NewEnv(0, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	img, err := pipeline.Collect(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return img
+}
+
+// TestDocumentForms: entities a doctype declares; encodings other than
+// UTF-8 (by the XML declaration, or UTF-16 by its byte order mark); a root
+// not displayed; the root's background colour; the root's transform, about
+// its centre.
+func TestDocumentForms(t *testing.T) {
+	ent := `<?xml version="1.0"?><!DOCTYPE svg [<!ENTITY fill_value "green">]>
+<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="&fill_value;"/></svg>`
+	if got := rgbaAt(renderDoc(t, []byte(ent)), 5, 5); got != [4]uint32{0, 128, 0, 255} {
+		t.Errorf("an entity: %v", got)
+	}
+	// Windows-1251: "Привет" as a gradient's id, its bytes not UTF-8.
+	name := string([]byte{0xCF, 0xF0, 0xE8, 0xE2, 0xE5, 0xF2})
+	cyr := []byte(`<?xml version="1.0" encoding="Windows-1251"?><svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><linearGradient id="` +
+		name + `"><stop stop-color="blue"/></linearGradient><rect width="10" height="10" fill="url(#` + name + `) red"/><text>` + name + `</text></svg>`)
+	if root, err := parse(cyr, func(int64) error { return nil }); err != nil || root.children[0].attrs["id"] != "Привет" {
+		t.Errorf("Windows-1251 read as %v", err)
+	}
+	if got := rgbaAt(renderDoc(t, cyr), 5, 5); got != [4]uint32{0, 0, 255, 255} {
+		t.Errorf("Windows-1251: %v", got)
+	}
+	plain := `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="green"/></svg>`
+	for _, enc := range []string{"ISO-8859-1", "GB2312", "no-such-encoding"} {
+		doc := `<?xml version="1.0" encoding="` + enc + `"?>` + plain
+		if got := rgbaAt(renderDoc(t, []byte(doc)), 5, 5); got != [4]uint32{0, 128, 0, 255} {
+			t.Errorf("%s: %v", enc, got)
+		}
+	}
+	u16 := []byte{0xFF, 0xFE}
+	for _, r := range `<?xml version="1.0" encoding="UTF-16"?>` + plain {
+		u16 = append(u16, byte(r), byte(r>>8))
+	}
+	if !Match(u16[:64]) {
+		t.Error("UTF-16 not taken for SVG")
+	}
+	if got := rgbaAt(renderDoc(t, u16), 5, 5); got != [4]uint32{0, 128, 0, 255} {
+		t.Errorf("UTF-16: %v", got)
+	}
+	hidden := `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" display="none"><rect width="10" height="10" fill="red"/></svg>`
+	if got := rgbaAt(renderDoc(t, []byte(hidden)), 5, 5); got[3] != 0 {
+		t.Errorf("a root not displayed: %v", got)
+	}
+	for _, c := range []struct {
+		style string
+		want  [4]uint32
+	}{
+		{`background-color: white`, [4]uint32{255, 255, 255, 255}},
+		{`max-width: 100%; background-color: rgb(0, 0, 255);`, [4]uint32{0, 0, 255, 255}},
+		{`background: #00ff00 none`, [4]uint32{0, 255, 0, 255}},
+		{`background: transparent; background-color: transparent;`, [4]uint32{}},
+		{`background-color: blue; background: none`, [4]uint32{}},
+	} {
+		doc := `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" style="` + c.style + `"><rect width="5" height="5" fill="red"/></svg>`
+		if got := rgbaAt(renderDoc(t, []byte(doc)), 7, 7); got != c.want {
+			t.Errorf("%s: %v, want %v", c.style, got, c.want)
+		}
+	}
+	// scale(0.5) about the centre: the square of 100 now from 25 to 75.
+	tr := `<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 10 10" transform="scale(0.5)"><rect width="10" height="10" fill="green"/></svg>`
+	img := renderDoc(t, []byte(tr))
+	if rgbaAt(img, 20, 20)[3] != 0 || rgbaAt(img, 30, 30)[3] != 255 || rgbaAt(img, 70, 70)[3] != 255 || rgbaAt(img, 80, 80)[3] != 0 {
+		t.Error("the root's transform")
+	}
+}
+
+// TestTransformOrigin: transform-origin as keywords, lengths and
+// percentages of the viewport; on a gradient in a bounding box's units, of
+// the box.
+func TestTransformOrigin(t *testing.T) {
+	for _, c := range []struct {
+		origin string
+		x, y   int // a pixel the square of 20 at (40, 40), scale(2), covers; and one it does not
+		nx, ny int
+	}{
+		{`center`, 35, 35, 25, 25},       // about (50, 50): 30 to 70
+		{`top left`, 85, 85, 75, 75},     // about (0, 0): 80 to 120
+		{`50px 50px`, 35, 35, 25, 25},    // as center
+		{`50% 50%`, 35, 35, 25, 25},      // as center
+		{`right bottom`, 15, 15, 25, 25}, // about (100, 100): -20 to 20
+		{`bottom`, 35, 15, 35, 25},       // about (50, 100): x 30 to 70, y -20 to 20
+	} {
+		img := render(t, `<rect x="40" y="40" width="20" height="20" fill="green" transform="scale(2)" transform-origin="`+c.origin+`"/>`)
+		if rgbaAt(img, c.x, c.y)[3] != 255 || rgbaAt(img, c.nx, c.ny)[3] != 0 {
+			t.Errorf("%s", c.origin)
+		}
+	}
+	css := render(t, `<rect x="40" y="40" width="20" height="20" fill="green" transform="scale(2)" style="transform-origin: center"/>`)
+	if rgbaAt(css, 35, 35)[3] != 255 {
+		t.Error("transform-origin in CSS")
+	}
+	// A gradient of the bounding box, scale(2) about its centre: its
+	// stops stretched from the centre, blue to the left edge.
+	g := render(t, `<linearGradient id="g" gradientTransform="scale(2)" transform-origin="0.5 0.5"><stop offset="0.25" stop-color="blue"/><stop offset="0.75" stop-color="red"/></linearGradient>
+<rect width="100" height="100" fill="url(#g)"/>`)
+	if c := rgbaAt(g, 1, 50); c[2] < 250 || c[0] > 5 {
+		t.Errorf("a gradient about its centre: %v", c)
+	}
+}
+
+// TestHiddenTakesNoRoom: what display none hides is left out of the
+// bounding box (a clip path in its units).
+func TestHiddenTakesNoRoom(t *testing.T) {
+	img := render(t, `<clipPath id="c" clipPathUnits="objectBoundingBox"><rect width="0.5" height="1"/></clipPath>
+<g clip-path="url(#c)"><rect width="100" height="100" fill="red" display="none"/><rect x="50" width="50" height="100" fill="green"/></g>`)
+	if rgbaAt(img, 60, 50)[3] != 255 || rgbaAt(img, 90, 50)[3] != 0 {
+		t.Error("a hidden element in a bounding box")
+	}
+}
+
+// TestGradientWithoutStops: a gradient with no stops, after which a paint
+// follows, takes that paint.
+func TestGradientWithoutStops(t *testing.T) {
+	img := render(t, `<linearGradient id="g"/><rect width="100" height="100" fill="url(#g) green"/>`)
+	if got := rgbaAt(img, 50, 50); got != [4]uint32{0, 128, 0, 255} {
+		t.Errorf("%v", got)
+	}
+}
+
+// TestCSSForms: the CSS transform property (over the attribute; "none"
+// none), with units; a style element of another type left out; comments
+// in a style attribute; attribute selectors.
+func TestCSSForms(t *testing.T) {
+	covered := func(doc string, x, y int) bool { return rgbaAt(render(t, doc), x, y)[3] > 128 }
+	sq := `<rect x="10" y="10" width="20" height="20" fill="green" `
+	if !covered(sq+`style="transform: scale(2)"/>`, 50, 50) || covered(sq+`style="transform: scale(2)"/>`, 15, 15) {
+		t.Error("transform in a style attribute")
+	}
+	if !covered(`<style>#r { transform: translate(50px, 50%) }</style>`+sq+`id="r"/>`, 65, 65) {
+		t.Error("transform in a style sheet")
+	}
+	if !covered(sq+`transform="scale(2)" style="transform:none"/>`, 15, 15) {
+		t.Error("transform: none over the attribute")
+	}
+	if !covered(sq+`transform="translate(50 0)" style="transform: rotate(1foo)"/>`, 65, 15) {
+		t.Error("a CSS transform that does not parse: the attribute")
+	}
+	// rotate(0.25turn) = rotate(90deg): (20, 20) to (-20, 20).
+	if !covered(`<g transform="translate(50 0)">`+sq+`style="transform: rotate(0.25turn)"/></g>`, 25, 15) {
+		t.Error("rotate in turns")
+	}
+	if !covered(`<style type="text/plain">rect { fill: none }</style><style type="text/css; charset=utf-8">#a { fill: green }</style><rect id="a" width="100" height="100" fill="red"/>`, 50, 50) {
+		t.Error("style types")
+	}
+	if got := rgbaAt(render(t, `<rect width="100" height="100" style="/* a */fill:green/* b */"/>`), 50, 50); got != [4]uint32{0, 128, 0, 255} {
+		t.Errorf("comments in a style attribute: %v", got)
+	}
+	for _, sel := range []string{`[x]`, `rect[x="20"]`, `[class~=b]`, `[id|=one]`, `[id^=on]`, `[id$="two"]`, `[id*=e-t]`, `[id="ONE-TWO" i]`, `[data-k='a b']`} {
+		doc := `<style>` + sel + ` { fill: green }</style><rect id="one-two" class="a b" data-k="a b" x="20" width="80" height="100" fill="red"/>`
+		if got := rgbaAt(render(t, doc), 50, 50); got != [4]uint32{0, 128, 0, 255} {
+			t.Errorf("%s: %v", sel, got)
+		}
+	}
+	for _, sel := range []string{`[y]`, `[x="2"]`, `[class~=c]`, `[id^=two]`, `[id=ONE-TWO]`} {
+		doc := `<style>` + sel + ` { fill: red }</style><rect id="one-two" class="a b" x="20" width="80" height="100" fill="green"/>`
+		if got := rgbaAt(render(t, doc), 50, 50); got != [4]uint32{0, 128, 0, 255} {
+			t.Errorf("%s matched: %v", sel, got)
+		}
+	}
+}
+
+// TestContextPaint: context-fill and context-stroke (SVG 2) in a marker
+// take the fill and stroke of its shape; in what a use element draws,
+// the use element's; with no context, none.
+func TestContextPaint(t *testing.T) {
+	marker := `<marker id="m" markerWidth="20" markerHeight="20" refX="10" refY="10" markerUnits="userSpaceOnUse"><rect width="20" height="20" fill="context-stroke"/></marker>
+<path d="M50 50 h40" stroke="blue" stroke-width="2" fill="none" marker-start="url(#m)"/>`
+	if got := rgbaAt(render(t, marker), 45, 45); got != [4]uint32{0, 0, 255, 255} {
+		t.Errorf("context-stroke in a marker: %v", got)
+	}
+	use := `<defs><rect id="r" width="40" height="40" fill="context-fill"/></defs>
+<use href="#r" x="30" y="30" fill="green"/>`
+	if got := rgbaAt(render(t, use), 50, 50); got != [4]uint32{0, 128, 0, 255} {
+		t.Errorf("context-fill in a use: %v", got)
+	}
+	grad := `<linearGradient id="g"><stop offset="0" stop-color="blue"/><stop offset="1" stop-color="red"/></linearGradient>
+<defs><rect id="r" width="40" height="40" fill="context-fill"/></defs>
+<use href="#r" x="30" y="30" fill="url(#g)"/>`
+	img := render(t, grad)
+	if l, r := rgbaAt(img, 31, 50), rgbaAt(img, 68, 50); l[2] < 200 || r[0] < 200 {
+		t.Errorf("a gradient over the use element's box: %v %v", l, r)
+	}
+	if got := rgbaAt(render(t, `<rect width="100" height="100" fill="context-fill"/>`), 50, 50); got[3] != 0 {
+		t.Errorf("context-fill with no context: %v", got)
+	}
+}
+
+// TestPaintOrder: markers placed by paint-order (first, between the fill
+// and the stroke); a value with a part twice or one unknown is none.
+func TestPaintOrder(t *testing.T) {
+	doc := func(order string) string {
+		return `<marker id="m" markerWidth="40" markerHeight="40" refX="10" refY="10" markerUnits="userSpaceOnUse"><rect width="20" height="20" fill="orange"/></marker>
+<path d="M20 20 H80 V80 H20 Z" fill="green" stroke="blue" stroke-width="10" marker-start="url(#m)" paint-order="` + order + `"/>`
+	}
+	orange, blue, green := [4]uint32{255, 165, 0, 255}, [4]uint32{0, 0, 255, 255}, [4]uint32{0, 128, 0, 255}
+	for _, c := range []struct {
+		order       string
+		edge, inner [4]uint32 // at (17, 17), under the stroke; at (27, 27), inside the fill
+	}{
+		{`normal`, orange, orange},
+		{`markers`, blue, green},
+		{`fill markers`, blue, orange},
+		{`stroke markers`, orange, green},
+		{`stroke stroke`, orange, orange},
+		{`stroke markers fill qwe`, orange, orange},
+	} {
+		img := render(t, doc(c.order))
+		if e, i := rgbaAt(img, 17, 17), rgbaAt(img, 27, 27); e != c.edge || i != c.inner {
+			t.Errorf("%s: %v %v, want %v %v", c.order, e, i, c.edge, c.inner)
+		}
+	}
+}
+
+// TestSVGPicture: an image element whose picture is an SVG document (as
+// text, base64, gzip-compressed) is drawn at the size it takes, as
+// preserveAspectRatio fits it; pictures within pictures stop at a depth.
+func TestSVGPicture(t *testing.T) {
+	inner := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 10"><rect width="10" height="10" fill="green"/><rect x="10" width="10" height="10" fill="blue"/></svg>`
+	var gz bytes.Buffer
+	zw := gzip.NewWriter(&gz)
+	zw.Write([]byte(inner))
+	zw.Close()
+	for _, href := range []string{
+		"data:image/svg+xml;utf8," + url.PathEscape(inner),
+		"data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString([]byte(inner)),
+		"data:;base64," + base64.StdEncoding.EncodeToString(gz.Bytes()),
+	} {
+		// 100 by 100, meet: 100 by 50 from y = 25.
+		img := render(t, `<image width="100" height="100" href="`+href+`"/>`)
+		if l, r, out := rgbaAt(img, 25, 50), rgbaAt(img, 75, 50), rgbaAt(img, 50, 10); l != [4]uint32{0, 128, 0, 255} || r != [4]uint32{0, 0, 255, 255} || out[3] != 0 {
+			t.Errorf("%.30s: %v %v %v", href, l, r, out)
+		}
+	}
+	// slice: 200 by 100 from x = -50, cut to the box.
+	img := render(t, `<image width="100" height="100" preserveAspectRatio="xMidYMid slice" href="data:image/svg+xml;utf8,`+url.PathEscape(inner)+`"/>`)
+	if l, r := rgbaAt(img, 25, 10), rgbaAt(img, 75, 90); l != [4]uint32{0, 128, 0, 255} || r != [4]uint32{0, 0, 255, 255} {
+		t.Errorf("slice: %v %v", l, r)
+	}
+	// Six deep: drawn to the fourth.
+	doc := `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="green"/></svg>`
+	for i := 0; i < 6; i++ {
+		doc = `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><image width="10" height="10" href="data:image/svg+xml;base64,` + base64.StdEncoding.EncodeToString([]byte(doc)) + `"/></svg>`
+		if i == 2 {
+			if got := rgbaAt(renderDoc(t, []byte(doc)), 5, 5); got != [4]uint32{0, 128, 0, 255} {
+				t.Errorf("pictures nested three deep: %v", got)
+			}
+		}
+	}
+	if got := rgbaAt(renderDoc(t, []byte(doc)), 5, 5); got[3] != 0 {
+		t.Errorf("pictures nested six deep: %v", got)
+	}
+}
+
+// TestGradientForms: stops styled where the gradient is (currentColor of
+// its ancestors; inherit of stop-color); geometry not taken from the other
+// kind of gradient; a gradientTransform that does not parse passed over
+// for the one it refers to; linearRGB interpolation; an attribute of
+// another namespace not taken for the attribute.
+func TestGradientForms(t *testing.T) {
+	green := [4]uint32{0, 128, 0, 255}
+	cur := `<g color="green"><linearGradient id="g"><stop offset="0" stop-color="currentColor"/><stop offset="1" stop-color="currentColor"/></linearGradient></g>
+<rect width="100" height="100" fill="url(#g)" color="red"/>`
+	if got := rgbaAt(render(t, cur), 50, 50); got != green {
+		t.Errorf("currentColor where the gradient is: %v", got)
+	}
+	inh := `<linearGradient id="g" stop-color="green"><stop offset="0" stop-color="inherit"/><stop offset="1" stop-color="inherit"/></linearGradient>
+<rect width="100" height="100" fill="url(#g)"/>`
+	if got := rgbaAt(render(t, inh), 50, 50); got != green {
+		t.Errorf("stop-color inherit: %v", got)
+	}
+	// A radial gradient referring to a linear one with cx: its own centre.
+	cross := `<linearGradient id="l" cx="0"/><radialGradient id="r" href="#l"><stop offset="0" stop-color="white"/><stop offset="1" stop-color="black"/></radialGradient>
+<rect width="100" height="100" fill="url(#r)"/>`
+	if got := rgbaAt(render(t, cross), 50, 50); got[0] < 250 {
+		t.Errorf("geometry from a linear gradient: %v", got)
+	}
+	// Vertical through the referred gradient: green at the top.
+	bad := `<linearGradient id="a" gradientTransform="rotate(90 0.5 0.5)"><stop offset="0" stop-color="green"/><stop offset="1" stop-color="blue"/></linearGradient>
+<linearGradient id="b" href="#a" gradientTransform="invalid"/><rect width="100" height="100" fill="url(#b)"/>`
+	if top, bottom := rgbaAt(render(t, bad), 50, 2), rgbaAt(render(t, bad), 50, 97); top[1] < 120 || bottom[2] < 240 {
+		t.Errorf("an invalid gradientTransform: %v %v", top, bottom)
+	}
+	lin := `<linearGradient id="g" color-interpolation="linearRGB"><stop offset="0" stop-color="black"/><stop offset="1" stop-color="white"/></linearGradient>
+<rect width="101" height="10" fill="url(#g)"/>`
+	if got := rgbaAt(render(t, lin), 50, 5); got[0] < 185 || got[0] > 191 {
+		t.Errorf("linearRGB half way: %v, want about 188", got)
+	}
+	ns := `<rect width="100" height="100" fill="green" xmlns:x="http://example.org/x" x:fill="red" x:width="10"/>`
+	if got := rgbaAt(render(t, ns), 80, 80); got != green {
+		t.Errorf("an attribute of another namespace: %v", got)
+	}
+}
+
+// TestUseForms: a use element's opacity over the symbol it draws; an svg
+// element it draws keeps its x and y.
+func TestUseForms(t *testing.T) {
+	sym := `<symbol id="s"><rect width="100" height="100" fill="#008000"/></symbol><use href="#s" opacity="0.5"/>`
+	if got := rgbaAt(render(t, sym), 50, 50); got[3] < 120 || got[3] > 135 {
+		t.Errorf("opacity on a use of a symbol: %v", got)
+	}
+	svg := `<defs><svg id="s" x="40" y="40" width="20" height="20"><rect width="100" height="100" fill="green"/></svg></defs><use href="#s" width="30" height="30"/>`
+	img := render(t, svg)
+	if rgbaAt(img, 35, 35)[3] != 0 || rgbaAt(img, 65, 65)[3] != 255 || rgbaAt(img, 75, 75)[3] != 0 {
+		t.Error("x and y of an svg element a use draws")
 	}
 }

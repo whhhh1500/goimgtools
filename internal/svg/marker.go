@@ -2,7 +2,6 @@ package svg
 
 import (
 	"math"
-	"strconv"
 	"strings"
 
 	"github.com/whhhh1500/goimgtools/internal/trig"
@@ -147,6 +146,15 @@ func (b *builder) markers(n *node, segs []seg, m matrix, st style, vp viewport, 
 	if start == nil && mid == nil && end == nil {
 		return
 	}
+	// The shape is the context of the paints of its markers.
+	if !b.opts.contextPaint {
+		b.drawMarkers(segs, m, st, vp, cl, start, mid, end)
+		return
+	}
+	b.withContext(n, st, func() []seg { return segs }, m, vp, func() { b.drawMarkers(segs, m, st, vp, cl, start, mid, end) })
+}
+
+func (b *builder) drawMarkers(segs []seg, m matrix, st style, vp viewport, cl *clip, start, mid, end *node) {
 	vs := vertices(segs)
 	for i, v := range vs {
 		var mk *node
@@ -189,7 +197,7 @@ func (b *builder) marker(mk *node, v vertex, m matrix, st style, vp viewport, cl
 			angle += 180
 		}
 	default:
-		if a, err := strconv.ParseFloat(strings.TrimSuffix(o, "deg"), 64); err == nil {
+		if a, ok := cssAngle(o); ok { // in degrees, or with a unit of CSS
 			angle = a
 		}
 	}

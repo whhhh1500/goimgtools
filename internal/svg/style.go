@@ -3,6 +3,7 @@ package svg
 import (
 	"image/color"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -28,12 +29,95 @@ func (d decl) beats(e decl) bool {
 	return d.order > e.order
 }
 
-// compound is a simple selector: a type, an id and classes.
+// compound is a simple selector: a type, an id, classes and attributes.
 type compound struct {
 	tag     string // "" for any
 	id      string
 	classes []string
+	attrs   []attrSel
 	root    bool // :root, the document's element
+}
+
+// attrSel is an attribute selector: [name], or [name op value] with op
+// one of = ~= |= ^= $= *=, its value compared in any case with i.
+type attrSel struct {
+	name, op, value string
+	fold            bool
+}
+
+func (a attrSel) matches(n *node) bool {
+	v, ok := n.attrs[a.name]
+	if !ok {
+		return false
+	}
+	want := a.value
+	if a.fold {
+		v, want = strings.ToLower(v), strings.ToLower(want)
+	}
+	switch a.op {
+	case "":
+		return true
+	case "=":
+		return v == want
+	case "~=":
+		for _, f := range strings.Fields(v) {
+			if f == want {
+				return true
+			}
+		}
+		return false
+	case "|=":
+		return v == want || strings.HasPrefix(v, want+"-")
+	case "^=":
+		return want != "" && strings.HasPrefix(v, want)
+	case "$=":
+		return want != "" && strings.HasSuffix(v, want)
+	case "*=":
+		return want != "" && strings.Contains(v, want)
+	}
+	return false
+}
+
+// parseAttrSel reads what is between the brackets of an attribute
+// selector.
+func parseAttrSel(s string) (attrSel, bool) {
+	s = strings.TrimSpace(s)
+	i := strings.IndexAny(s, "=~|^$*")
+	if i < 0 {
+		return attrSel{name: s}, s != "" && !strings.ContainsAny(s, " \t\"'")
+	}
+	a := attrSel{name: strings.TrimSpace(s[:i])}
+	rest := s[i:]
+	if rest[0] == '=' {
+		a.op, rest = "=", rest[1:]
+	} else if len(rest) > 1 && rest[1] == '=' {
+		a.op, rest = rest[:2], rest[2:]
+	} else {
+		return a, false
+	}
+	rest = strings.TrimSpace(rest)
+	if len(rest) > 0 && (rest[0] == '"' || rest[0] == '\'') {
+		end := strings.IndexByte(rest[1:], rest[0])
+		if end < 0 {
+			return a, false
+		}
+		a.value, rest = rest[1:1+end], strings.TrimSpace(rest[2+end:])
+	} else {
+		f := strings.Fields(rest)
+		if len(f) == 0 {
+			return a, false
+		}
+		a.value, rest = f[0], strings.TrimSpace(strings.TrimPrefix(rest, f[0]))
+	}
+	switch strings.ToLower(rest) {
+	case "":
+	case "i":
+		a.fold = true
+	case "s":
+	default:
+		return a, false
+	}
+	return a, a.name != "" && !strings.ContainsAny(a.name, " \t\"'")
 }
 
 func (c compound) matches(n *node) bool {
@@ -45,6 +129,11 @@ func (c compound) matches(n *node) bool {
 	}
 	if c.id != "" && n.attrs["id"] != c.id {
 		return false
+	}
+	for _, a := range c.attrs {
+		if !a.matches(n) {
+			return false
+		}
 	}
 	if len(c.classes) > 0 {
 		have := strings.Fields(n.attrs["class"])
@@ -95,7 +184,8 @@ func (s selector) matchFrom(n *node, i int) bool {
 }
 
 // parseSelector reads one selector; ok is false for what is not supported
-// (pseudo-classes, attribute selectors), which then matches nothing.
+// (pseudo-classes but :root, sibling combinators), which then matches
+// nothing.
 func parseSelector(src string) (selector, bool) {
 	var s selector
 	src = strings.TrimSpace(src)
@@ -110,15 +200,58 @@ func parseSelector(src string) (selector, bool) {
 			src = src[1:]
 			continue
 		}
-		end := strings.IndexAny(src, " >\t\n\r")
-		if end < 0 {
-			end = len(src)
+		// The compound: to a space or '>' outside brackets and quotes.
+		end, depth := len(src), 0
+		var quote byte
+	scan:
+		for i := 0; i < len(src); i++ {
+			switch ch := src[i]; {
+			case quote != 0:
+				if ch == quote {
+					quote = 0
+				}
+			case ch == '"' || ch == '\'':
+				quote = ch
+			case ch == '[':
+				depth++
+			case ch == ']':
+				depth--
+			case depth <= 0 && (ch == ' ' || ch == '>' || ch == '\t' || ch == '\n' || ch == '\r'):
+				end = i
+				break scan
+			}
 		}
 		tok := src[:end]
 		src = src[end:]
 		var c compound
 		for len(tok) > 0 {
-			k := strings.IndexAny(tok[1:], ".#") + 1
+			if tok[0] == '[' {
+				close, q := -1, byte(0)
+				for i := 1; i < len(tok) && close < 0; i++ {
+					switch {
+					case q != 0:
+						if tok[i] == q {
+							q = 0
+						}
+					case tok[i] == '"' || tok[i] == '\'':
+						q = tok[i]
+					case tok[i] == ']':
+						close = i
+					}
+				}
+				if close < 0 {
+					return s, false
+				}
+				a, ok := parseAttrSel(tok[1:close])
+				if !ok {
+					return s, false
+				}
+				c.attrs = append(c.attrs, a)
+				s.spec += 100 // as a class
+				tok = tok[close+1:]
+				continue
+			}
+			k := strings.IndexAny(tok[1:], ".#[:") + 1
 			if k == 0 {
 				k = len(tok)
 			}
@@ -131,7 +264,7 @@ func parseSelector(src string) (selector, bool) {
 			case '#':
 				c.id = part[1:]
 				s.spec += 10000
-			case ':', '[':
+			case ':':
 				if part == ":root" {
 					c.root = true
 					s.spec += 100 // a pseudo-class counts as a class
@@ -163,6 +296,9 @@ func parseSelector(src string) (selector, bool) {
 // declarations reads "a: b; c: d !important".
 func declarations(src string) [][3]string {
 	var out [][3]string
+	if strings.Contains(src, "/*") {
+		src = stripComments(src)
+	}
 	for _, d := range strings.Split(src, ";") {
 		k, v, ok := strings.Cut(d, ":")
 		if !ok {
@@ -190,7 +326,7 @@ func applySheets(root *node) {
 	var css strings.Builder
 	var walk func(n *node)
 	walk = func(n *node) {
-		if n.name == "style" {
+		if n.name == "style" && isCSS(n.attrs["type"]) {
 			css.WriteString(n.text)
 			css.WriteByte('\n')
 		}
@@ -277,6 +413,14 @@ func applySheets(root *node) {
 	apply(root)
 }
 
+// isCSS reports whether a style element's type is CSS: none, or text/css
+// (with parameters, in any case).
+func isCSS(typ string) bool {
+	t, _, _ := strings.Cut(typ, ";")
+	t = strings.TrimSpace(t)
+	return t == "" || strings.EqualFold(t, "text/css")
+}
+
 func stripComments(s string) string {
 	var b strings.Builder
 	for {
@@ -294,6 +438,46 @@ func stripComments(s string) string {
 	}
 }
 
+// styleValue is the value of the last declaration of a property in a style
+// attribute, as declarations reads them, found without making them all
+// (an element's properties are each looked up).
+func styleValue(st, name string) (string, bool) {
+	if strings.Contains(st, "/*") {
+		st = stripComments(st)
+	}
+	custom := strings.HasPrefix(name, "--")
+	var found string
+	ok := false
+	for len(st) > 0 {
+		d := st
+		if i := strings.IndexByte(st, ';'); i >= 0 {
+			d, st = st[:i], st[i+1:]
+		} else {
+			st = ""
+		}
+		k, v, has := strings.Cut(d, ":")
+		if !has {
+			continue
+		}
+		k = strings.TrimSpace(k)
+		if custom || strings.HasPrefix(k, "--") {
+			if k != name {
+				continue
+			}
+		} else if !strings.EqualFold(k, name) {
+			continue
+		}
+		v = strings.TrimSpace(v)
+		if i := strings.Index(strings.ToLower(v), "!important"); i >= 0 {
+			v = strings.TrimSpace(v[:i])
+		}
+		if v != "" {
+			found, ok = v, true
+		}
+	}
+	return found, ok
+}
+
 // prop is the specified value of a property of an element: its style
 // attribute, then the style sheets, then its presentation attribute (an
 // important sheet declaration beats the style attribute).
@@ -303,15 +487,8 @@ func (n *node) prop(name string) (string, bool) {
 		return sheet.value, true
 	}
 	if st, ok := n.attrs["style"]; ok {
-		var found string
-		var ok bool
-		for _, d := range declarations(st) {
-			if d[0] == name {
-				found, ok = d[1], true
-			}
-		}
-		if ok {
-			return found, true
+		if v, ok := styleValue(st, name); ok {
+			return v, true
 		}
 	}
 	if hasSheet {
@@ -330,18 +507,116 @@ func (n *node) cssProp(name string) (string, bool) {
 		return sheet.value, true
 	}
 	if st, ok := n.attrs["style"]; ok {
-		var found string
-		var ok bool
-		for _, d := range declarations(st) {
-			if d[0] == name {
-				found, ok = d[1], true
-			}
-		}
-		if ok {
-			return found, true
+		if v, ok := styleValue(st, name); ok {
+			return v, true
 		}
 	}
 	return sheet.value, hasSheet
+}
+
+// parsePaintOrder reads paint-order: normal, or fill, stroke and markers
+// each at most once, those named first and the others after in their
+// usual order; anything else is not one (and leaves it as it was).
+func parsePaintOrder(v string) ([3]string, bool) {
+	order := [3]string{"fill", "stroke", "markers"}
+	f := strings.Fields(strings.ToLower(v))
+	if len(f) == 1 && f[0] == "normal" {
+		return order, true
+	}
+	if len(f) == 0 || len(f) > 3 {
+		return order, false
+	}
+	var out [3]string
+	n := 0
+	for _, w := range f {
+		if w != "fill" && w != "stroke" && w != "markers" || slices.Contains(out[:n], w) {
+			return order, false
+		}
+		out[n] = w
+		n++
+	}
+	for _, w := range order {
+		if !slices.Contains(out[:n], w) {
+			out[n] = w
+			n++
+		}
+	}
+	return out, true
+}
+
+// rootBackground is the colour of the background or background-color
+// property of the root (CSS only: from its style sheets, then its style
+// attribute, then sheets' !important declarations; the later of the two
+// properties wins within each).
+func rootBackground(n *node) (color.NRGBA, bool) {
+	var c color.NRGBA
+	found := false
+	take := func(name, v string) {
+		switch name {
+		case "background-color":
+			if k, ok := csscolor.Parse(strings.TrimSpace(v)); ok {
+				c, found = k, true
+			}
+		case "background":
+			// The shorthand: its colour, if it names one; else none.
+			c, found = color.NRGBA{}, false
+			for _, t := range cssTokens(v) {
+				if k, ok := csscolor.Parse(t); ok {
+					c, found = k, true
+				}
+			}
+		}
+	}
+	sheet := func(important bool) {
+		a, okA := n.sheet["background"]
+		b, okB := n.sheet["background-color"]
+		okA = okA && a.important == important
+		okB = okB && b.important == important
+		if okA && okB && !a.beats(b) {
+			take("background", a.value)
+			take("background-color", b.value)
+			return
+		}
+		if okB {
+			take("background-color", b.value)
+		}
+		if okA {
+			take("background", a.value)
+		}
+	}
+	sheet(false)
+	if st, ok := n.attrs["style"]; ok {
+		for _, d := range declarations(st) {
+			take(d[0], d[1])
+		}
+	}
+	sheet(true)
+	return c, found && c.A > 0
+}
+
+// cssTokens splits a CSS value at the spaces outside parentheses.
+func cssTokens(v string) []string {
+	var out []string
+	depth, start := 0, -1
+	for i := 0; i <= len(v); i++ {
+		if i == len(v) || depth == 0 && (v[i] == ' ' || v[i] == '\t' || v[i] == '\n' || v[i] == '\r') {
+			if start >= 0 {
+				out = append(out, v[start:i])
+				start = -1
+			}
+			continue
+		}
+		if start < 0 {
+			start = i
+		}
+		switch v[i] {
+		case '(':
+			depth++
+		case ')':
+			depth = max(0, depth-1)
+		}
+	}
+	return out
 }
 
 // Kinds of paint.
@@ -350,6 +625,8 @@ const (
 	paintColor
 	paintURL
 	paintCurrent
+	paintContextFill   // context-fill (SVG 2): the fill of a marker's shape, of a use element
+	paintContextStroke // context-stroke: its stroke
 )
 
 type paint struct {
@@ -367,6 +644,10 @@ func parsePaint(s string) (paint, bool) {
 		return paint{kind: paintNone}, true
 	case "currentcolor":
 		return paint{kind: paintCurrent}, true
+	case "context-fill":
+		return paint{kind: paintContextFill}, true
+	case "context-stroke":
+		return paint{kind: paintContextStroke}, true
 	}
 	if strings.HasPrefix(s, "url(") {
 		end := strings.IndexByte(s, ')')
@@ -415,6 +696,7 @@ type style struct {
 	visible                    bool
 	fontSize                   float64
 	strokeFirst                bool // paint-order: the stroke before the fill
+	markersEarly               int8 // and the markers: 0 after both, 1 between, 2 before both
 	// Of text: font-family, -weight and -style, text-anchor,
 	// letter-spacing, word-spacing and dominant-baseline.
 	fontFamily       string
@@ -541,16 +823,22 @@ func computeStyle(n *node, parent style, vp viewport) style {
 		}
 		s.vars = vars
 	}
-	get := func(name string) (string, bool) {
+	raw := func(name string) (string, bool) {
 		v, ok := n.prop(name)
 		if ok && strings.Contains(v, "var(") {
 			v, ok = resolveVars(v, s.vars, 0)
 		}
+		return v, ok
+	}
+	get := func(name string) (string, bool) {
+		v, ok := raw(name)
 		if ok && strings.TrimSpace(v) == "inherit" {
 			return "", false
 		}
 		return v, ok
 	}
+	// inherit, for a property that is not inherited: the parent's.
+	inherit := func(v string) bool { return strings.TrimSpace(v) == "inherit" }
 	// The font shorthand: [style] [variant] [weight] size[/line-height]
 	// family, its parts as their own properties (which, given, win).
 	if v, ok := get("font"); ok {
@@ -691,8 +979,12 @@ func computeStyle(n *node, parent style, vp viewport) style {
 	if v, ok := get("stroke-opacity"); ok {
 		s.strokeOpacity = opacityValue(v, s.strokeOpacity)
 	}
-	if v, ok := get("opacity"); ok {
-		s.opacity = opacityValue(v, 1)
+	if v, ok := raw("opacity"); ok {
+		if inherit(v) {
+			s.opacity = parent.opacity
+		} else {
+			s.opacity = opacityValue(v, 1)
+		}
 	}
 	if v, ok := get("fill-rule"); ok {
 		s.evenOdd = strings.TrimSpace(v) == "evenodd"
@@ -724,18 +1016,10 @@ func computeStyle(n *node, parent style, vp viewport) style {
 		}
 	}
 	if v, ok := get("paint-order"); ok {
-		// The parts named come first, the others after in their usual
-		// order (fill, stroke, markers).
-		fill, stroke := -1, -1
-		for i, f := range strings.Fields(v) {
-			switch f {
-			case "fill":
-				fill = i
-			case "stroke":
-				stroke = i
-			}
+		if order, ok := parsePaintOrder(v); ok {
+			s.strokeFirst = order[0] == "stroke" || order[0] == "markers" && order[1] == "stroke"
+			s.markersEarly = int8(2 - slices.Index(order[:], "markers"))
 		}
-		s.strokeFirst = stroke >= 0 && (fill < 0 || stroke < fill)
 	}
 	if v, ok := n.prop("vector-effect"); ok {
 		s.nonScalingStroke = strings.TrimSpace(v) == "non-scaling-stroke"
@@ -790,15 +1074,21 @@ func computeStyle(n *node, parent style, vp viewport) style {
 	if v, ok := get("display"); ok {
 		s.display = strings.TrimSpace(v) != "none"
 	}
-	if v, ok := get("stop-color"); ok {
-		if strings.EqualFold(strings.TrimSpace(v), "currentcolor") {
+	if v, ok := raw("stop-color"); ok {
+		if inherit(v) {
+			s.stopColor = parent.stopColor
+		} else if strings.EqualFold(strings.TrimSpace(v), "currentcolor") {
 			s.stopColor = s.color
 		} else if c, ok := csscolor.Parse(v); ok {
 			s.stopColor = c
 		}
 	}
-	if v, ok := get("stop-opacity"); ok {
-		s.stopOpacity = opacityValue(v, 1)
+	if v, ok := raw("stop-opacity"); ok {
+		if inherit(v) {
+			s.stopOpacity = parent.stopOpacity
+		} else {
+			s.stopOpacity = opacityValue(v, 1)
+		}
 	}
 	return s
 }

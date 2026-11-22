@@ -11,6 +11,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"io"
+	"regexp"
 	"strings"
 )
 
@@ -44,6 +45,9 @@ func (n *node) attr(name string) (string, bool) {
 // element, or the XML declaration, a doctype or a comment that may come
 // before it (the document read tells).
 func Match(head []byte) bool {
+	if o := utf16Order(head); o != 0 {
+		head = fromUTF16(head[:min(len(head), 512)], o)
+	}
 	h := bytes.TrimLeft(head, " \t\r\n")
 	h = bytes.TrimPrefix(h, []byte("\xef\xbb\xbf"))
 	h = bytes.TrimLeft(h, " \t\r\n")
@@ -55,15 +59,48 @@ func Match(head []byte) bool {
 	return false
 }
 
+var entityDecl = regexp.MustCompile(`<!ENTITY\s+([A-Za-z_][\w.\-]*)\s+("([^"]*)"|'([^']*)')\s*>`)
+
+// docEntities reads the entities of text a doctype declares: at most 1000,
+// of 1MB in all; those that hold markup are left out.
+func docEntities(d xml.Directive) map[string]string {
+	s := string(d)
+	if !strings.Contains(s, "ENTITY") {
+		return nil
+	}
+	out := map[string]string{}
+	size := 0
+	for _, m := range entityDecl.FindAllStringSubmatch(s, 1000) {
+		v := m[3]
+		if v == "" {
+			v = m[4]
+		}
+		if strings.ContainsAny(v, "<&") || size+len(v) > 1<<20 {
+			continue
+		}
+		size += len(v)
+		out[m[1]] = v
+	}
+	return out
+}
+
 // nodeBytes is about what an element of the tree takes.
 const nodeBytes = 320
 
 // parse reads a document into its tree; reserve is called as it grows.
 func parse(data []byte, reserve func(int64) error) (*node, error) {
+	if o := utf16Order(data); o != 0 {
+		// UTF-16, read as UTF-8: up to half as large again.
+		if err := reserve(int64(len(data)) * 3 / 2); err != nil {
+			return nil, err
+		}
+		data = fromUTF16(data, o)
+	}
 	d := xml.NewDecoder(bytes.NewReader(data))
 	d.Strict = false
 	d.AutoClose = xml.HTMLAutoClose
 	d.Entity = xml.HTMLEntity
+	d.CharsetReader = charsetReader
 	var root *node
 	var stack []*node
 	count := 0
@@ -79,6 +116,21 @@ func parse(data []byte, reserve func(int64) error) (*node, error) {
 			return nil, errFormat
 		}
 		switch t := tok.(type) {
+		case xml.Directive:
+			// The entities a doctype declares, as Illustrator writes them for
+			// its namespaces and values: those of text, taken as they are.
+			if root == nil {
+				if ents := docEntities(t); len(ents) > 0 {
+					m := make(map[string]string, len(xml.HTMLEntity)+len(ents))
+					for k, v := range xml.HTMLEntity {
+						m[k] = v
+					}
+					for k, v := range ents {
+						m[k] = v
+					}
+					d.Entity = m
+				}
+			}
 		case xml.StartElement:
 			count++
 			if count > maxNodes || len(stack) >= maxDepth {
@@ -92,11 +144,17 @@ func parse(data []byte, reserve func(int64) error) (*node, error) {
 			n := &node{name: t.Name.Local, attrs: make(map[string]string, len(t.Attr))}
 			for _, a := range t.Attr {
 				k := a.Name.Local
-				if a.Name.Space == "xlink" || strings.HasSuffix(a.Name.Space, "/xlink") {
+				switch sp := a.Name.Space; {
+				case sp == "":
+				case sp == "xlink" || strings.HasSuffix(sp, "/xlink"):
 					k = "xlink:" + k
-				}
-				if a.Name.Space == "xml" || a.Name.Space == "http://www.w3.org/XML/1998/namespace" {
+				case sp == "xml" || sp == "http://www.w3.org/XML/1998/namespace":
 					k = "xml:" + k
+				default:
+					// Of another namespace (Inkscape's sodipodi:cx, a
+					// namespace declared, svg:href): kept apart from the
+					// attribute of that name.
+					k = sp + ":" + k
 				}
 				n.attrs[k] = a.Value
 			}
