@@ -27,9 +27,11 @@ type item struct {
 	paint  *shader
 	clip   *clip
 	bounds image.Rectangle // the device pixels it can touch
-	// A group: its opacity, clip and mask, and where it ends.
+	// A group: its opacity, clip and mask, its blend mode, and where it
+	// ends.
 	opacity float64
 	mask    *mask
+	blend   int
 	end     int
 }
 
@@ -44,6 +46,7 @@ type mask struct {
 // clip is the coverage of a clip path: the union of its shapes.
 type clip struct {
 	paths  []*raster.Path
+	subs   []*clip // the clip paths of the outlines, by their index (to its length; nil: none)
 	bounds image.Rectangle
 	parent *clip // a clip path's own clip path, or the clip of an outer group
 }
@@ -111,6 +114,7 @@ type builder struct {
 	patterning  map[*node]bool // and the patterns
 	marking     map[*node]bool // and the markers
 	filtering   map[*node]bool // and the filters
+	clipping    map[*node]bool // and the clip paths
 	release     func(int64)
 	reserve     func(int64) error
 	avail       func() int64 // memory the budget has left
@@ -221,7 +225,7 @@ func viewBoxTransform(vb [4]float64, par string, w, h float64) matrix {
 // build makes the scene of a document drawn at w by h pixels, its user
 // space taken there by m.
 func build(root *node, w, h int, m matrix, reserve func(int64) error, release func(int64), avail func() int64) (*scene, error) {
-	b := &builder{avail: avail, masking: map[*node]bool{}, patterning: map[*node]bool{}, marking: map[*node]bool{}, filtering: map[*node]bool{}, release: release, reserve: reserve, fontSets: map[string]*textsrc.Set{}, root: root, ids: map[string]*node{}, sc: &scene{w: w, h: h}, useing: map[*node]bool{}, full: image.Rect(0, 0, w, h)}
+	b := &builder{avail: avail, masking: map[*node]bool{}, patterning: map[*node]bool{}, marking: map[*node]bool{}, filtering: map[*node]bool{}, clipping: map[*node]bool{}, release: release, reserve: reserve, fontSets: map[string]*textsrc.Set{}, root: root, ids: map[string]*node{}, sc: &scene{w: w, h: h}, useing: map[*node]bool{}, full: image.Rect(0, 0, w, h)}
 	// The fonts are needed while the outlines of text are made.
 	defer func() {
 		for _, s := range b.fontSets {
@@ -249,7 +253,18 @@ func build(root *node, w, h int, m matrix, reserve func(int64) error, release fu
 		vp = viewport{vb[2], vb[3]}
 	}
 	st := computeStyle(root, initialStyle(), vp)
-	b.children(root, m, st, vp, nil)
+	// The root's clip path, mask and opacity apply to all it holds (as in
+	// Chrome), in its user space.
+	own := b.clipOf(root, m, vp, st, nil)
+	switch mk := b.maskOf(root, m, vp, st); {
+	case own == errClip || mk == errMask:
+	case mk != nil:
+		b.groupMasked(root, st, own, nil, mk, func(c *clip) { b.children(root, m, st, vp, c) })
+	case own != nil || st.opacity < 1:
+		b.group(root, st, own, nil, func(c *clip) { b.children(root, m, st, vp, c) })
+	default:
+		b.children(root, m, st, vp, nil)
+	}
 	if b.err != nil {
 		return b.sc, b.err
 	}
@@ -330,6 +345,14 @@ func (b *builder) element(n *node, m matrix, parent style, vp viewport, cl *clip
 		b.filtered(n, f, m, st, vp, ownClip, cl)
 		return
 	}
+	if st.blend != blendNormal || st.isolate {
+		// Drawn apart, then blended with what is under it (or, isolated,
+		// its own content blended among itself).
+		inner := st
+		inner.opacity, inner.blend, inner.isolate = 1, blendNormal, false
+		b.group(n, st, ownClip, cl, func(c *clip) { b.draw(n, m, inner, vp, nil, c) })
+		return
+	}
 	b.draw(n, m, st, vp, ownClip, cl)
 }
 
@@ -400,7 +423,7 @@ func (b *builder) groupMasked(n *node, st style, own, outer *clip, mk *mask, dra
 	if st.opacity <= 0 {
 		return
 	}
-	if st.opacity >= 1 && own == nil && mk == nil {
+	if st.opacity >= 1 && own == nil && mk == nil && st.blend == blendNormal && !st.isolate {
 		draw(outer)
 		return
 	}
@@ -413,7 +436,7 @@ func (b *builder) groupMasked(n *node, st style, own, outer *clip, mk *mask, dra
 		return
 	}
 	c := chainClip(own, outer)
-	pop := b.add(item{op: opPop, opacity: st.opacity, clip: c, mask: mk})
+	pop := b.add(item{op: opPop, opacity: st.opacity, clip: c, mask: mk, blend: st.blend})
 	if pop < 0 {
 		return
 	}
@@ -553,9 +576,33 @@ func (b *builder) clipOf(n *node, m matrix, vp viewport, st style, outer *clip) 
 		}
 		cm = cm.mul(matrix{bx[2], 0, 0, bx[3], bx[0], bx[1]})
 	}
+	// A clip path that refers to itself, through its children or its own
+	// clip path: the second time, no clip (as Chrome).
+	if b.clipping[cp] {
+		return nil
+	}
+	b.clipping[cp] = true
+	defer delete(b.clipping, cp)
 	c := &clip{}
-	cst := computeStyle(cp, st, vp)
+	// Its children inherit what it has where it is (its clip-rule), not
+	// from the element that refers to it.
+	cst := b.styleOf(cp, vp)
 	var add func(k *node, km matrix, kst style, depth int)
+	// part adds the outline of a child, within the child's own clip path.
+	part := func(k *node, km matrix, s style, p *raster.Path) {
+		sub := b.clipOf(k, km, vp, s, nil)
+		if sub == errClip {
+			return // clipped away
+		}
+		c.paths = append(c.paths, p)
+		if sub != nil {
+			for len(c.subs) < len(c.paths)-1 {
+				c.subs = append(c.subs, nil)
+			}
+			c.subs = append(c.subs, sub)
+		}
+		c.bounds = c.bounds.Union(pathBounds(p, b.full))
+	}
 	add = func(k *node, km matrix, kst style, depth int) {
 		s := computeStyle(k, kst, vp)
 		if !s.display || !s.visible {
@@ -580,24 +627,12 @@ func (b *builder) clipOf(n *node, m matrix, vp viewport, st style, outer *clip) 
 			if len(segs) == 0 {
 				return
 			}
-			rule := s.evenOdd
-			if r, ok := k.prop("clip-rule"); ok {
-				rule = strings.TrimSpace(r) == "evenodd"
-			} else if r, ok := cp.prop("clip-rule"); ok {
-				rule = strings.TrimSpace(r) == "evenodd"
-			}
-			p := fillPath(flatten(segs, km), km, rule)
+			p := fillPath(flatten(segs, km), km, s.clipEvenOdd)
 			b.sc.points += countPoints(segs)
-			c.paths = append(c.paths, p)
-			c.bounds = c.bounds.Union(pathBounds(p, b.full))
+			part(k, km, s, p)
 		case "text":
 			// Its glyphs' outlines, as it would draw them.
-			rule := s.evenOdd
-			if r, ok := k.prop("clip-rule"); ok {
-				rule = strings.TrimSpace(r) == "evenodd"
-			} else if r, ok := cp.prop("clip-rule"); ok {
-				rule = strings.TrimSpace(r) == "evenodd"
-			}
+			rule := s.clipEvenOdd
 			b.clipText = func(segs []seg, m matrix) {
 				p := fillPath(flatten(segs, m), m, rule)
 				b.sc.points += countPoints(segs)
@@ -614,7 +649,27 @@ func (b *builder) clipOf(n *node, m matrix, vp viewport, st style, outer *clip) 
 	if len(c.paths) == 0 {
 		return errClip
 	}
+	// The clip path's own clip path, in the same user space.
+	if own := b.clipOf(cp, m, vp, cst, nil); own == errClip {
+		return errClip
+	} else if own != nil {
+		c.parent = own
+	}
 	return c
+}
+
+// styleOf is the style a node has where it is in the document, computed
+// down from the root through its ancestors.
+func (b *builder) styleOf(n *node, vp viewport) style {
+	var chain []*node
+	for p := n; p != nil; p = p.parent {
+		chain = append(chain, p)
+	}
+	st := initialStyle()
+	for i := len(chain) - 1; i >= 0; i-- {
+		st = computeStyle(chain[i], st, vp)
+	}
+	return st
 }
 
 func segsBBox(segs []seg) ([4]float64, bool) {

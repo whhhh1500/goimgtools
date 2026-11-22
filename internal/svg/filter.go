@@ -1190,27 +1190,39 @@ func (c *fctx) blend(p *node) (fbuf, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The modes of SVG 1.1 as they were; those of CSS (SVG 2) by the
+	// compositing spec.
 	mode := strings.TrimSpace(p.attrs["mode"])
+	m, ok := parseBlend(mode)
+	if !ok || m == blendPlusLighter { // plus-lighter is mix-blend-mode's only
+		m = blendNormal
+	}
 	for i := 0; i < len(out); i += 4 {
 		qa, qb := a[i+3], b[i+3]
-		for q := 0; q < 3; q++ {
-			ca, cb := a[i+q], b[i+q]
-			var v float32
-			switch mode {
-			case "multiply":
-				v = float32(ca*(1-qb)) + float32(cb*(1-qa)) + float32(ca*cb)
-			case "screen":
-				v = cb + ca - float32(cb*ca)
-			case "darken":
-				v = min(float32(ca*(1-qb))+cb, float32(cb*(1-qa))+ca)
-			case "lighten":
-				v = max(float32(ca*(1-qb))+cb, float32(cb*(1-qa))+ca)
-			default: // normal
-				v = ca + float32(cb*(1-qa))
+		switch m {
+		case blendNormal, blendMultiply, blendScreen, blendDarken, blendLighten:
+			for q := 0; q < 3; q++ {
+				ca, cb := a[i+q], b[i+q]
+				var v float32
+				switch m {
+				case blendMultiply:
+					v = float32(ca*(1-qb)) + float32(cb*(1-qa)) + float32(ca*cb)
+				case blendScreen:
+					v = cb + ca - float32(cb*ca)
+				case blendDarken:
+					v = min(float32(ca*(1-qb))+cb, float32(cb*(1-qa))+ca)
+				case blendLighten:
+					v = max(float32(ca*(1-qb))+cb, float32(cb*(1-qa))+ca)
+				default: // normal
+					v = ca + float32(cb*(1-qa))
+				}
+				out[i+q] = v
 			}
-			out[i+q] = v
+			out[i+3] = qa + qb - float32(qa*qb)
+		default:
+			o := blendPixel(m, [4]float32{a[i], a[i+1], a[i+2], qa}, [4]float32{b[i], b[i+1], b[i+2], qb})
+			copy(out[i:i+4], o[:])
 		}
-		out[i+3] = qa + qb - float32(qa*qb)
 	}
 	return out, nil
 }

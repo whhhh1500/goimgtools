@@ -321,6 +321,29 @@ func (n *node) prop(name string) (string, bool) {
 	return strings.TrimSpace(v), ok
 }
 
+// cssProp is the value of a property that is not a presentation attribute
+// (mix-blend-mode, isolation): from the style attribute or style sheets
+// only.
+func (n *node) cssProp(name string) (string, bool) {
+	sheet, hasSheet := n.sheet[name]
+	if hasSheet && sheet.important {
+		return sheet.value, true
+	}
+	if st, ok := n.attrs["style"]; ok {
+		var found string
+		var ok bool
+		for _, d := range declarations(st) {
+			if d[0] == name {
+				found, ok = d[1], true
+			}
+		}
+		if ok {
+			return found, true
+		}
+	}
+	return sheet.value, hasSheet
+}
+
 // Kinds of paint.
 const (
 	paintNone = iota
@@ -380,6 +403,9 @@ type style struct {
 	fill, stroke               paint
 	fillOpacity, strokeOpacity float64
 	evenOdd                    bool
+	clipEvenOdd                bool // clip-rule
+	blend                      int  // mix-blend-mode
+	isolate                    bool // isolation: isolate
 	strokeWidth                float64
 	lineCap, lineJoin          int
 	miterLimit                 float64
@@ -489,6 +515,7 @@ func opacityValue(s string, def float64) float64 {
 func computeStyle(n *node, parent style, vp viewport) style {
 	s := parent
 	s.opacity, s.display, s.stopColor, s.stopOpacity, s.nonScalingStroke = 1, true, color.NRGBA{0, 0, 0, 255}, 1, false
+	s.blend, s.isolate = blendNormal, false
 	// The custom properties it declares, in the style sheets and its style
 	// attribute (which wins).
 	var own [][2]string
@@ -669,6 +696,17 @@ func computeStyle(n *node, parent style, vp viewport) style {
 	}
 	if v, ok := get("fill-rule"); ok {
 		s.evenOdd = strings.TrimSpace(v) == "evenodd"
+	}
+	if v, ok := get("clip-rule"); ok {
+		s.clipEvenOdd = strings.TrimSpace(v) == "evenodd"
+	}
+	if v, ok := n.cssProp("mix-blend-mode"); ok {
+		if m, ok := parseBlend(v); ok {
+			s.blend = m
+		}
+	}
+	if v, ok := n.cssProp("isolation"); ok {
+		s.isolate = strings.TrimSpace(v) == "isolate"
 	}
 	if v, ok := get("stroke-width"); ok {
 		if f, ok := parseLength(v, s.fontSize, vp, axisDiag); ok && f >= 0 {

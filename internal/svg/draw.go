@@ -103,14 +103,46 @@ func (r *renderer) coverage(p *raster.Path, dx, dy float64, c *clip, rows image.
 	}
 	for ; c != nil; c = c.parent {
 		cc := r.ccov[:w*h]
-		clear(cc)
-		for _, cp := range c.paths {
-			t := r.tmp[:w*h]
-			cp.Render(t, w, rows.Min.X, rows.Min.Y, w, h, &r.cells)
-			for i, v := range t {
-				cc[i] = uint8(min(255, uint32(cc[i])+uint32(v)))
-			}
+		r.clipCover(c, rows, cc)
+		for i, v := range cc {
+			cov[i] = uint8(mul255(uint32(cov[i]), uint32(v)))
 		}
+	}
+	return cov
+}
+
+// clipCover renders the outlines of a clip path (not its parents) over rows
+// into cc: their union, each within its own clip path.
+func (r *renderer) clipCover(c *clip, rows image.Rectangle, cc []uint8) {
+	w, h := rows.Dx(), rows.Dy()
+	clear(cc)
+	for i, cp := range c.paths {
+		var sub []uint8
+		if i < len(c.subs) && c.subs[i] != nil {
+			sub = r.chainCover(c.subs[i], rows) // before tmp is used here
+		}
+		t := r.tmp[:w*h]
+		cp.Render(t, w, rows.Min.X, rows.Min.Y, w, h, &r.cells)
+		for i, v := range t {
+			if sub != nil {
+				v = uint8(mul255(uint32(v), uint32(sub[i])))
+			}
+			cc[i] = uint8(min(255, uint32(cc[i])+uint32(v)))
+		}
+	}
+}
+
+// chainCover is the coverage of a clip path with its parents, over rows, in
+// buffers of its own (the clip path of an outline of a clip path: rare).
+func (r *renderer) chainCover(c *clip, rows image.Rectangle) []uint8 {
+	n := rows.Dx() * rows.Dy()
+	cov := make([]uint8, n)
+	for i := range cov {
+		cov[i] = 255
+	}
+	cc := make([]uint8, n)
+	for ; c != nil; c = c.parent {
+		r.clipCover(c, rows, cc)
 		for i, v := range cc {
 			cov[i] = uint8(mul255(uint32(cov[i]), uint32(v)))
 		}
@@ -210,7 +242,23 @@ func (r *renderer) putDown(it *item, rows image.Rectangle, y0, n, depth int) {
 			if mask != nil {
 				a = mul255(a, uint32(mask[j0+i]))
 			}
+			if it.blend != blendNormal {
+				blendOver(dst[o+4*x:o+4*x+4:o+4*x+4], p, a, it.blend)
+				continue
+			}
 			over(dst[o+4*x:o+4*x+4:o+4*x+4], [4]uint8{p[0], p[1], p[2], p[3]}, a)
 		}
+	}
+}
+
+// blendOver puts premultiplied pixel p, with coverage c, on d with a blend
+// mode.
+func blendOver(d, p []uint8, c uint32, mode int) {
+	k := float32(c) / (255 * 255)
+	s := [4]float32{float32(float32(p[0]) * k), float32(float32(p[1]) * k), float32(float32(p[2]) * k), float32(float32(p[3]) * k)}
+	b := [4]float32{float32(d[0]) / 255, float32(d[1]) / 255, float32(d[2]) / 255, float32(d[3]) / 255}
+	o := blendPixel(mode, s, b)
+	for q := 0; q < 4; q++ {
+		d[q] = uint8(min(255, max(0, float32(o[q]*255)+0.5)))
 	}
 }
