@@ -49,6 +49,7 @@ English | [中文](zh-CN/CHANGELOG.md)
 
 ### Fixed
 
+- SVG `text-anchor` anchors each chunk of text by the extent of its glyphs, as SVG 2 and Chrome do: with a `dx` that sends a glyph back past the first, `start` puts the leftmost glyph at `x` and `middle` and `end` centre and end the whole of them there (they took the distance from the first pen to the last).
 - SVG: the memory the tree of a document takes is reserved for every 1024 of its nodes, the text of HTML and of text elements among them; nodes that came as text could pass without it.
 - SVG: an element of another namespace than SVG's (bound by a prefix or a default namespace) is not drawn, whatever its name, as in Chrome; one bound to SVG's by a prefix (`svg:rect`) is, and HTML in a `foreignObject`.
 - SVG: a filter used again on an element inside one it is already on is drawn there too (the inner element was not drawn); only a filter met again within the element one of its own feImages draws is left out, against a cycle.

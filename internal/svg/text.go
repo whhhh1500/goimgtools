@@ -696,7 +696,7 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 	var buf sfnt.Buffer
 	penX, penY := 0.0, 0.0
 	chunk := 0
-	var chunkStart []float64
+	var chunkStart, chunkFirst []float64
 	var chunkPath []*textPathInfo
 	var prev sfnt.GlyphIndex
 	var prevFont *textsrc.Font
@@ -710,7 +710,8 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 		c := &chars[i]
 		path := c.tctx.path
 		newPath := path != nil && (i == 0 || chars[i-1].tctx.path != path)
-		if c.x != nil || c.y != nil || i == 0 || newPath || path == nil && i > 0 && chars[i-1].tctx.path != nil {
+		newChunk := c.x != nil || c.y != nil || i == 0 || newPath || path == nil && i > 0 && chars[i-1].tctx.path != nil
+		if newChunk {
 			if i > 0 {
 				chunk++
 			}
@@ -731,6 +732,9 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 		}
 		penX += c.dx
 		penY += c.dy
+		if newChunk {
+			chunkFirst = append(chunkFirst, penX) // its first character's place, its dx in it
+		}
 		if c.sh != nil && !c.sh.head {
 			continue // drawn with the first of its cluster
 		}
@@ -897,11 +901,19 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 			}
 		}
 	}
-	// Anchor each chunk: its width is from its start to its last pen.
-	ends := map[int]float64{}
+	// Anchor each chunk by the extent of its glyphs (the least and the
+	// greatest of their pens and pens plus advances: a dx that sends one
+	// back counts, as SVG 2 anchors text and Chrome).
+	lo, hi := map[int]float64{}, map[int]float64{}
 	anchors := map[int]int{}
 	for _, p := range out {
-		ends[p.chunk] = p.end
+		a, z := math.Min(p.x, p.x+p.adv), math.Max(p.x, p.x+p.adv)
+		if v, ok := lo[p.chunk]; !ok || a < v {
+			lo[p.chunk] = a
+		}
+		if v, ok := hi[p.chunk]; !ok || z > v {
+			hi[p.chunk] = z
+		}
 		if _, ok := anchors[p.chunk]; !ok {
 			a := p.c.anchor
 			if p.c.st.rtl {
@@ -924,12 +936,14 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 	for i, p := range out {
 		shift := 0.0
 		if p.chunk < len(chunkStart) {
-			w := ends[p.chunk] - chunkStart[p.chunk]
+			x0 := chunkFirst[p.chunk]
 			switch anchors[p.chunk] {
 			case anchorMiddle:
-				shift = -w / 2
+				shift = x0 - float64((lo[p.chunk]+hi[p.chunk])/2)
 			case anchorEnd:
-				shift = -w
+				shift = x0 - hi[p.chunk]
+			default:
+				shift = x0 - lo[p.chunk]
 			}
 		}
 		down := p.base - p.c.tctx.shift // the baseline, down from the pen

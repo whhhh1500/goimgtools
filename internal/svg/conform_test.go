@@ -777,3 +777,29 @@ func TestTextPathForms(t *testing.T) {
 		t.Errorf("x on a textPath taken: ink from %d, %d without it", b, a)
 	}
 }
+
+// TestAnchorExtent: a chunk is anchored by the extent of its glyphs, as
+// SVG 2 and Chrome have it: start puts its leftmost glyph at x, though a
+// dx sends a glyph back past its first.
+func TestAnchorExtent(t *testing.T) {
+	font := `font-family="'` + testFont + `'" font-size="16"`
+	leftmost := func(img image.Image) int {
+		for x := 0; x < 100; x++ {
+			for y := 0; y < 100; y++ {
+				if rgbaAt(img, x, y)[3] > 0 {
+					return x
+				}
+			}
+		}
+		return -1
+	}
+	back := render(t, `<text x="50" y="50" dx="0 -40" `+font+`>नमस्ते</text>`)
+	if x := leftmost(back); x < 48 {
+		t.Errorf("start with a dx back: ink from %d, want from about 50", x)
+	}
+	// A dx on the first character moves it all the same.
+	first := render(t, `<text x="50" y="50" dx="10" `+font+`>नमस्ते</text>`)
+	if x := leftmost(first); x < 58 {
+		t.Errorf("a dx on the first character: ink from %d, want from about 60", x)
+	}
+}
