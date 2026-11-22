@@ -741,3 +741,39 @@ func TestReviewFixes(t *testing.T) {
 		t.Errorf("a filter on a foreignObject: %v", got)
 	}
 }
+
+// TestTextPathForms: SVG 2's path attribute of textPath (what parses of
+// it, before a reference); an absolute x on a path is the distance along
+// it; x and y on a textPath are none.
+func TestTextPathForms(t *testing.T) {
+	font := `font-family="'` + testFont + `'" font-size="16"`
+	firstInk := func(img image.Image) int {
+		for x := 0; x < 100; x++ {
+			for y := 0; y < 100; y++ {
+				if rgbaAt(img, x, y)[3] > 0 {
+					return x
+				}
+			}
+		}
+		return -1
+	}
+	// Along y = 50 by the path attribute (the reference, along y = 90, not
+	// taken); "Error" ends what parses.
+	byAttr := render(t, `<path id="p" d="M0 90 H100"/><text `+font+`><textPath href="#p" path="M 0 50 H 100 Error L 0 0">नमस्ते</textPath></text>`)
+	ink50 := false
+	for x := 0; x < 100; x++ {
+		ink50 = ink50 || rgbaAt(byAttr, x, 47)[3] > 0
+	}
+	if !ink50 {
+		t.Error("the path attribute of textPath")
+	}
+	plain := render(t, `<text `+font+`><textPath path="M 0 50 H 100">नमस्ते</textPath></text>`)
+	moved := render(t, `<text x="40" `+font+`><textPath path="M 0 50 H 100">नमस्ते</textPath></text>`)
+	if a, b := firstInk(plain), firstInk(moved); b < a+35 {
+		t.Errorf("an absolute x on a path: ink from %d, %d without it", b, a)
+	}
+	onPath := render(t, `<text `+font+`><textPath path="M 0 50 H 100" x="40" y="10">नमस्ते</textPath></text>`)
+	if a, b := firstInk(plain), firstInk(onPath); a != b {
+		t.Errorf("x on a textPath taken: ink from %d, %d without it", b, a)
+	}
+}

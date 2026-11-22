@@ -431,28 +431,36 @@ func baselineOf(v string) (int, bool) {
 // pathFor flattens the path a textPath refers to, in the text's user
 // space, as finely as the text's transform m to the device needs.
 func (b *builder) pathFor(k *node, m matrix, st style, vp viewport) *textPathInfo {
-	href, ok := k.attr("href")
-	if !ok {
-		href, ok = k.attr("xlink:href")
-	}
-	href = strings.TrimSpace(href)
-	if !ok || !strings.HasPrefix(href, "#") {
-		return nil
-	}
-	t := b.ids[href[1:]]
-	if t == nil {
-		return nil
-	}
-	switch t.name {
-	case "path", "rect", "circle", "ellipse", "line", "polyline", "polygon":
-	default:
-		return nil
-	}
 	tm := identity
-	if m, has := transformOf(t, st.fontSize, vp); has {
-		tm = aboutOrigin(t, m, vp.w, vp.h, st.fontSize, vp, [2]float64{})
+	var segs []seg
+	// SVG 2's path attribute (what of it parses, to its first error) comes
+	// before a reference, as Chrome takes it.
+	if d, ok := k.attrs["path"]; ok {
+		segs = parsePath(d)
 	}
-	segs := shapeSegs(t, computeStyle(t, st, vp), vp)
+	if len(segs) == 0 {
+		href, ok := k.attr("href")
+		if !ok {
+			href, ok = k.attr("xlink:href")
+		}
+		href = strings.TrimSpace(href)
+		if !ok || !strings.HasPrefix(href, "#") {
+			return nil
+		}
+		t := b.ids[href[1:]]
+		if t == nil {
+			return nil
+		}
+		switch t.name {
+		case "path", "rect", "circle", "ellipse", "line", "polyline", "polygon":
+		default:
+			return nil
+		}
+		if m, has := transformOf(t, st.fontSize, vp); has {
+			tm = aboutOrigin(t, m, vp.w, vp.h, st.fontSize, vp, [2]float64{})
+		}
+		segs = shapeSegs(t, computeStyle(t, st, vp), vp)
+	}
 	ps, ok := flattenLimit(segs, m.mul(tm), maxPoints/16)
 	if !ok || len(ps) == 0 {
 		return nil
@@ -588,6 +596,9 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 		dxs := lengths(k.attrs["dx"], kst, vp, axisX)
 		dys := lengths(k.attrs["dy"], kst, vp, axisY)
 		rots, _ := numbers(k.attrs["rotate"])
+		if k.name == "textPath" {
+			xs, ys, dxs, dys, rots = nil, nil, nil, nil, nil // not attributes of a textPath (Chrome passes them over)
+		}
 		first := len(chars)
 		kctx := ctx
 		// White space is collapsed as the characters are added (newlines
@@ -706,7 +717,9 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 			if newPath {
 				penX, penY = 0, 0
 			}
-			if c.x != nil && path == nil {
+			if c.x != nil {
+				// On a path, an absolute x is the distance along it (as
+				// SVG 2 lays text on paths out, and Chrome).
 				penX = *c.x
 			}
 			if c.y != nil && path == nil {

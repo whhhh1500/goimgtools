@@ -6,6 +6,7 @@
 
 ### 新增
 
+- SVG 路径上的文字按 Chrome 的方式排：支持 SVG 2 中 `textPath` 的 `path` 属性（取解析到第一个错误之前的部分，优先于 `href`）；路径上字符的绝对 `x` 即沿路径的距离（text 上或 textPath 内 tspan 上的 `x` 会让文字沿路径移动，原先被忽略）；写在 textPath 自身上的 `x`、`y` 不是它的属性，不再采用（原先采用）。
 - SVG：CSS 的滤镜函数（`filter="blur(2px) drop-shadow(4px 5px 6px blue) grayscale(0.5)"`：blur、brightness、contrast、drop-shadow、grayscale、hue-rotate、invert、opacity、saturate、sepia，也可夹 url()），各按 Filter Effects 规范给出的等效原语依次计算，在 sRGB 中进行，区域为元素的包围盒（含描边）加上各函数所及的范围（url() 引用的滤镜裁到其自身区域），与 Chrome 相同：drop-shadow 的第三个长度即模糊的标准差，不带单位的长度按像素；Chrome 视为无效的写法（blur 用百分比、角度不带单位、参数间用逗号）则不加滤镜。resvg 的滤镜函数测试 44 个通过 36 个（原 15 个；其余只差在标签字体）。
 - SVG 样式表应用媒体查询成立的规则，条件按浅色方案、屏幕显示判断（`@media (prefers-color-scheme: light)`、`screen`、`not print`，支持 `and`、`not` 与逗号）；涉及尺寸或其他特性的查询视为不成立。原先所有 `@media` 中的规则都不用（深色方案的规则，例如为 GitHub 准备的图片所带的，仍然不用）。
 - SVG：绘制 `foreignObject` 中的 HTML（mermaid 的图表标签就是这样写的，且没有对应的 SVG 文字）：文字按其 CSS 给出的字体、字号、字重与颜色（同 HTML 用 `color` 属性；文档的样式表也作用于这些元素），由 `br`、段落、标题等块元素分行（块的外边距同浏览器；`line-height: normal` 按该行实际用到的字体计算，回退字体更高时行也更高，同 Chrome），按 `text-align` 对齐（可从所在的 SVG 元素继承），行内元素与块的背景画在文字下面，HTML 里的 SVG 文档按 SVG 绘制，超出框的部分裁掉；浏览器不显示的元素（style、script、head）不画；比框宽的行在 `white-space` 允许时（如 mermaid 长标签的 `break-spaces`）于空格处、字母间的连字符后以及中日韩文字的字与字之间折行（闭标点前不断），被行内元素分开的同一个词不在中间断开。在取自开源项目的 7 个 mermaid 图表上，标签位置与 Chrome 一致（原先没有标签）；draw.io 的标签仍用其导出时附带的 SVG 文字。
