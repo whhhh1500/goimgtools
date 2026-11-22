@@ -146,3 +146,32 @@ func TestLetterSpacingJoined(t *testing.T) {
 		t.Errorf("مرحبا: %d pixels wide spaced, %d not", b, a)
 	}
 }
+
+// TestColourPicture: a glyph of a bitmap colour font is its picture,
+// scaled to the font size.
+func TestColourPicture(t *testing.T) {
+	doc := `<svg xmlns="http://www.w3.org/2000/svg" width="100" height="80"><text x="10" y="60" font-size="40" font-family="'../../tests/testdata/fonts/SbixTest.ttf'">✨</text></svg>`
+	s, err := Open([]byte(doc), pipeline.NewEnv(0, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err := pipeline.Collect(s)
+	s.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 40 by 40 pixels from (10, 24): red to x 30, blue after.
+	at := func(x, y int) [4]uint32 {
+		r, g, b, a := img.At(x, y).RGBA()
+		return [4]uint32{r >> 8, g >> 8, b >> 8, a >> 8}
+	}
+	if c := at(20, 40); c != [4]uint32{255, 0, 0, 255} {
+		t.Errorf("left: %v", c)
+	}
+	if c := at(40, 40); c != [4]uint32{0, 0, 255, 255} {
+		t.Errorf("right: %v", c)
+	}
+	if c := at(60, 40); c[3] != 0 {
+		t.Errorf("beyond: %v", c)
+	}
+}

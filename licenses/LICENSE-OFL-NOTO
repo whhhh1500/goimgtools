@@ -1,6 +1,9 @@
 Noto Sans Devanagari (cut down to a few words for the tests: tests/testdata/fonts/NotoSansDevanagari-subset.ttf)
 Copyright 2015 Google Inc. All Rights Reserved.
 
+Noto Color Emoji (cut down to two emoji for the tests: tests/testdata/fonts/NotoColorEmoji-subset.ttf)
+Copyright 2022 Google Inc.
+
 This Font Software is licensed under the SIL Open Font License, Version 1.1.
 This license is copied below, and is also available with a FAQ at:
 http://scripts.sil.org/OFL

@@ -97,3 +97,23 @@ func TestColourFontFirst(t *testing.T) {
 		src.Close()
 	}
 }
+
+// TestColourPictures: glyphs of bitmap colour fonts (sbix, CBDT) are their
+// pictures, scaled to the size of the text.
+func TestColourPictures(t *testing.T) {
+	cs := colours(renderText(t, "✨", Options{Size: 40, Fonts: []string{"../../tests/testdata/fonts/SbixTest.ttf"}}))
+	// 20 by 20 pixels at 20 pixels, twice as large: half red, half blue.
+	for _, want := range []color.RGBA{{255, 0, 0, 255}, {0, 0, 255, 255}} {
+		if cs[want] < 500 {
+			t.Errorf("sbix ✨: %d pixels of %v", cs[want], want)
+		}
+	}
+	img := renderText(t, "😀", Options{Size: 40, Fonts: []string{"../../tests/testdata/fonts/NotoColorEmoji-subset.ttf"}})
+	n := 0
+	for _, c := range colours(img) {
+		n += c
+	}
+	if n < 600 {
+		t.Errorf("CBDT 😀: %d opaque pixels", n)
+	}
+}

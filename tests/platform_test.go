@@ -81,6 +81,9 @@ func TestSameOnEveryProcessor(t *testing.T) {
 		{"shaped svg", FromBytes([]byte(shapedSVG)), "bec51a52c180107c"},
 		// Colour glyphs, layer by layer, half transparent; an emoji sequence.
 		{"colour text", Text("A ✨ 👨‍👩", TextOptions{Fonts: []string{colourFont}, Size: 33.7, Color: color.NRGBA{40, 90, 160, 200}, StrokeWidth: 1.5}), "95d3e9dfd6b8defe"},
+		// Pictures of bitmap colour fonts (sbix, CBDT), scaled.
+		{"picture text", Text("✨😀", TextOptions{Fonts: []string{"testdata/fonts/SbixTest.ttf", "testdata/fonts/NotoColorEmoji-subset.ttf"}, Size: 27.3}), "e69e0d35c857ef60"},
+		{"picture svg", FromBytes([]byte(`<svg xmlns="http://www.w3.org/2000/svg" width="120" height="60"><text x="5" y="44" font-size="30.7" rotate="0 9" font-family="'testdata/fonts/SbixTest.ttf', 'testdata/fonts/NotoColorEmoji-subset.ttf'">✨😀</text></svg>`)), "d61247f516ae69ef"},
 		{"colour svg", FromBytes([]byte(`<svg xmlns="http://www.w3.org/2000/svg" width="140" height="50"><text x="4" y="38" font-size="31.3" rotate="7" font-family="'` + colourFont + `'" fill="#357">A✨👨&#x200D;👩</text></svg>`)), "538b140dd65ea03d"},
 	}
 	for _, c := range cases {

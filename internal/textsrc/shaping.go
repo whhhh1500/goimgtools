@@ -3,7 +3,11 @@ package textsrc
 import (
 	"bytes"
 	"image"
+	"image/color"
 	"image/draw"
+	"image/png"
+	"io"
+	"math"
 	"unicode"
 
 	"golang.org/x/image/font/sfnt"
@@ -12,7 +16,9 @@ import (
 
 	"github.com/whhhh1500/goimgtools/internal/bidi"
 	"github.com/whhhh1500/goimgtools/internal/colorfont"
+	"github.com/whhhh1500/goimgtools/internal/resize"
 	"github.com/whhhh1500/goimgtools/internal/shape"
+	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
 // sglyph is a glyph of a shaped cluster: its index in its font, and where
@@ -76,22 +82,42 @@ func (s *Set) colourFont(i int) (*colorfont.Font, error) {
 		return f.colour, nil
 	}
 	f.colourTried = true
-	var c *colorfont.Font
-	var err error
+	var r io.ReaderAt
+	index := f.Info.Index
 	switch {
 	case f.file != nil:
-		c, err = colorfont.Open(f.file, f.Info.Index)
+		r = f.file
 	case f.data != nil:
-		c, err = colorfont.Open(bytes.NewReader(f.data), 0)
+		r, index = bytes.NewReader(f.data), 0
+	default:
+		return nil, nil
 	}
-	if err != nil || c == nil {
-		return nil, nil // drawn in one colour
+	// Layers (COLR) or pictures (CBDT, sbix); a font that cannot be read
+	// for them is drawn in one colour.
+	c, err := colorfont.Open(r, index)
+	if err != nil {
+		c = nil
 	}
-	if err := s.reserve(c.Bytes); err != nil {
-		return nil, err
+	var bm *colorfont.Bitmaps
+	if c == nil {
+		if bm, err = colorfont.OpenBitmaps(r, index); err != nil {
+			bm = nil
+		}
 	}
-	s.held += c.Bytes
-	f.colour = c
+	var n int64
+	if c != nil {
+		n += c.Bytes
+	}
+	if bm != nil {
+		n += bm.Bytes
+	}
+	if n > 0 {
+		if err := s.reserve(n); err != nil {
+			return nil, err
+		}
+		s.held += n
+	}
+	f.colour, f.bitmaps = c, bm
 	return c, nil
 }
 
@@ -108,6 +134,22 @@ func (s *Set) ColourLayers(f *Font, id sfnt.GlyphIndex, buf []colorfont.Layer) (
 		}
 	}
 	return buf, nil
+}
+
+// Picture is the colour picture of glyph id of f, a font of the set (a PNG
+// of a bitmap colour font), for text of ppem pixels; ok is false for a
+// glyph without one.
+func (s *Set) Picture(f *Font, id sfnt.GlyphIndex, ppem float64) (bm colorfont.Bitmap, ok bool, err error) {
+	for i, g := range s.fonts {
+		if g == f {
+			if _, err := s.colourFont(i); err != nil {
+				return bm, false, err
+			}
+			bm, ok = g.bitmaps.Glyph(uint16(id), ppem)
+			return bm, ok, nil
+		}
+	}
+	return bm, false, nil
 }
 
 // ShapingFace is the shaping tables of f, a font of the set, read (and
@@ -318,20 +360,24 @@ func arabicForms(rs []rune, from, to int) {
 // hasColour reports whether a line has a colour glyph.
 func (s *source) hasColour(l line) bool {
 	for _, g := range l.glyphs {
-		c := s.set.fonts[g.font].colour
-		if c == nil {
+		c, bm := s.set.fonts[g.font].colour, s.set.fonts[g.font].bitmaps
+		if c == nil && bm == nil {
 			continue
+		}
+		colour := func(id uint16) bool {
+			s.layers = c.Layers(id, s.layers[:0])
+			return len(s.layers) > 0 || bm.Has(id)
 		}
 		if g.sh != nil {
 			for _, sg := range g.sh.glyphs {
-				if s.layers = c.Layers(uint16(sg.id), s.layers[:0]); len(s.layers) > 0 {
+				if colour(uint16(sg.id)) {
 					return true
 				}
 			}
 			continue
 		}
 		if id, err := s.set.fonts[g.font].f.GlyphIndex(&s.set.buf, g.r); err == nil {
-			if s.layers = c.Layers(uint16(id), s.layers[:0]); len(s.layers) > 0 {
+			if colour(uint16(id)) {
 				return true
 			}
 		}
@@ -347,7 +393,7 @@ func (s *source) hasColour(l line) bool {
 func (s *source) drawColour(dst draw.Image, src image.Image, fi int, id sfnt.GlyphIndex, dot fixed.Point26_6) bool {
 	c := s.set.fonts[fi].colour // read at layout
 	if c == nil {
-		return false
+		return s.drawPicture(dst, src, fi, id, dot)
 	}
 	s.layers = c.Layers(uint16(id), s.layers[:0])
 	if len(s.layers) == 0 {
@@ -365,6 +411,68 @@ func (s *source) drawColour(dst draw.Image, src image.Image, fi int, id sfnt.Gly
 		s.drawGlyph(dst, lsrc, fi, sfnt.GlyphIndex(l.Glyph), dot, s.size)
 	}
 	return true
+}
+
+// drawPicture draws the colour picture of glyph id of font fi (a PNG of a
+// bitmap colour font) at dot, if it has one (false if not): scaled from its
+// strike to the size of the text (as Pillow's Lanczos filter), its alpha
+// times that of the text's colour; when src is not the text's colour (the
+// shape of the text), its alpha as the shape.
+func (s *source) drawPicture(dst draw.Image, src image.Image, fi int, id sfnt.GlyphIndex, dot fixed.Point26_6) bool {
+	bm, ok := s.set.fonts[fi].bitmaps.Glyph(uint16(id), s.size)
+	if !ok {
+		return false
+	}
+	pic := s.picture(bm)
+	if pic == nil {
+		return false
+	}
+	scale := s.size / float64(bm.PPEM)
+	w, h := bm.Width, bm.Height
+	if w == 0 || h == 0 {
+		w, h = pic.Bounds().Dx(), pic.Bounds().Dy()
+	}
+	dw, dh := max(1, int(math.Round(float64(float64(w)*scale)))), max(1, int(math.Round(float64(float64(h)*scale))))
+	x0 := int(math.Round(float64(float64(dot.X)/64) + float64(float64(bm.Left)*scale)))
+	y0 := int(math.Round(float64(float64(dot.Y)/64) - float64(float64(bm.Top)*scale)))
+	scaled := pic
+	if dw != pic.Bounds().Dx() || dh != pic.Bounds().Dy() {
+		// Its memory is in what each font is counted as: the buffers its
+		// glyphs are drawn in, which grow with the square of the size.
+		r, err := resize.Pillow(pipeline.FromImage(pic, pipeline.NewEnv(0, "")), dw, dh, resize.PillowLanczos, resize.PillowOptions{})
+		if err != nil {
+			return false
+		}
+		img, err := pipeline.Collect(r)
+		r.Close()
+		if err != nil {
+			return false
+		}
+		scaled = img
+	}
+	rect := image.Rect(x0, y0, x0+dw, y0+dh)
+	sp := scaled.Bounds().Min
+	if src == image.Image(s.fg) {
+		_, _, _, fa := s.fg.C.RGBA()
+		draw.DrawMask(dst, rect, scaled, sp, image.NewUniform(color.Alpha16{A: uint16(fa)}), image.Point{}, draw.Over)
+	} else {
+		draw.DrawMask(dst, rect, src, image.Point{}, scaled, sp, draw.Over)
+	}
+	return true
+}
+
+// picture decodes the PNG of a glyph's picture: nil if it is not one, or
+// one larger than its strike says.
+func (s *source) picture(bm colorfont.Bitmap) image.Image {
+	cfg, err := png.DecodeConfig(bytes.NewReader(bm.PNG))
+	if err != nil || cfg.Width > 1024 || cfg.Height > 1024 {
+		return nil
+	}
+	pic, err := png.Decode(bytes.NewReader(bm.PNG))
+	if err != nil {
+		return nil
+	}
+	return pic
 }
 
 // drawGlyph draws glyph id of font fi with its origin at dot, as the

@@ -1,6 +1,7 @@
 package svg
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -984,6 +985,20 @@ func (b *builder) text(n *node, m matrix, st style, vp viewport, own, outer *cli
 			var err error
 			if layers, err = set.ColourLayers(p.f, p.gi, layers[:0]); err != nil {
 				b.err = err
+			}
+		}
+		// A glyph of a bitmap colour font: its picture.
+		if set := b.fonts(p.c.family, p.c.face); set != nil && len(layers) == 0 {
+			ppem := float64(p.c.st.fontSize * math.Sqrt(math.Abs(m.det())))
+			bm, ok, err := set.Picture(p.f, p.gi, ppem)
+			if err != nil {
+				b.err = err
+			}
+			if ok {
+				flush()
+				fm := matrix{fr.ux, fr.uy, fr.vx, fr.vy, fr.ox, fr.oy}
+				b.glyphPicture(p.c.node, bm, m.mul(fm), p.gx, p.gy, p.c.st.fontSize, p.c.st, own, outer)
+				continue
 			}
 		}
 		if len(layers) > 0 {

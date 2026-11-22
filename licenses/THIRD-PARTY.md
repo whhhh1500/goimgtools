@@ -420,12 +420,12 @@ this file. Tables generated from its data files of Unicode 17.0.0:
 
 The bracket pairs of `internal/bidi/tables.go` are those of `BidiBrackets.txt` as
 `golang.org/x/text` holds them.
-## Noto Sans Devanagari (a font for the tests)
+## Noto Sans Devanagari and Noto Color Emoji (fonts for the tests)
 
 SIL Open Font License 1.1, copyright Google Inc. The full text is in
 `LICENSE-OFL-NOTO`, next to this file. `tests/testdata/fonts/NotoSansDevanagari-subset.ttf`
 is the font cut down (with fontTools' pyftsubset, its layout features kept) to the characters of the
-texts the tests shape. It is used by the tests only.
+texts the tests shape; `tests/testdata/fonts/NotoColorEmoji-subset.ttf` is Noto Color Emoji (version 2.051) cut down to 😀 and ❤. They are used by the tests only. The other fonts of `tests/testdata/fonts` were made for the tests (with fontTools) and are under this module's license.
 ## Acknowledgements (no code taken)
 
 - **gifsicle**: `internal/gifstream/optimize.go` and `localpal.go` try,

@@ -63,6 +63,7 @@ type Font struct {
 	// Its colour glyphs (as colour emoji), read the first time a glyph of
 	// it is drawn.
 	colour      *colorfont.Font
+	bitmaps     *colorfont.Bitmaps
 	colourTried bool
 }
 
@@ -328,13 +329,14 @@ func fallbackFiles() []string {
 		return out
 	case "darwin":
 		return []string{"/System/Library/Fonts/Apple Symbols.ttf", "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
-			"/Library/Fonts/Arial Unicode.ttf", "/System/Library/Fonts/Supplemental/STIXTwoMath.otf"}
+			"/Library/Fonts/Arial Unicode.ttf", "/System/Library/Fonts/Supplemental/STIXTwoMath.otf", "/System/Library/Fonts/Apple Color Emoji.ttc"}
 	}
 	return []string{
 		"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/dejavu/DejaVuSans.ttf",
 		"/usr/share/fonts/truetype/noto/NotoSansSymbols-Regular.ttf", "/usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf",
 		"/usr/share/fonts/noto/NotoSansSymbols-Regular.ttf", "/usr/share/fonts/noto/NotoSansSymbols2-Regular.ttf",
 		"/usr/share/fonts/google-noto/NotoSansSymbols-Regular.ttf", "/usr/share/fonts/google-noto/NotoSansSymbols2-Regular.ttf",
+		"/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf", "/usr/share/fonts/noto/NotoColorEmoji.ttf", "/usr/share/fonts/google-noto-emoji/NotoColorEmoji.ttf",
 	}
 }
 
@@ -565,6 +567,9 @@ func (s *Set) pickFor(rs []rune, i int) (int, error) {
 			return 0, err
 		}
 		if len(c.Layers(uint16(id), nil)) > 0 {
+			return k, nil
+		}
+		if s.fonts[k].bitmaps.Has(uint16(id)) {
 			return k, nil
 		}
 	}

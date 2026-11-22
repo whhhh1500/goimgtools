@@ -1,9 +1,14 @@
 package svg
 
 import (
+	"bytes"
+	"image"
+	"image/draw"
+	"image/png"
 	"unicode"
 
 	"github.com/whhhh1500/goimgtools/internal/bidi"
+	"github.com/whhhh1500/goimgtools/internal/colorfont"
 	"github.com/whhhh1500/goimgtools/internal/shape"
 	"github.com/whhhh1500/goimgtools/internal/textsrc"
 )
@@ -16,6 +21,59 @@ type svgShape struct {
 	font   *textsrc.Font
 	head   bool
 	glyphs []shape.Glyph
+}
+
+// glyphPicture draws the picture of a glyph of a bitmap colour font: its
+// pixels to the glyph's frame (fm, from user space to the device) at
+// (gx, gy), scaled from its strike to the font size, sampled as an image
+// element's are.
+func (b *builder) glyphPicture(n *node, bm colorfont.Bitmap, fm matrix, gx, gy, fontSize float64, st style, own, outer *clip) {
+	cfg, err := png.DecodeConfig(bytes.NewReader(bm.PNG))
+	if err != nil || cfg.Width <= 0 || cfg.Height <= 0 || cfg.Width > 1024 || cfg.Height > 1024 || bm.PPEM <= 0 {
+		return
+	}
+	px := int64(cfg.Width) * int64(cfg.Height)
+	if b.imagePixels+px > maxImagePixels {
+		return
+	}
+	if err := b.reserve(4 * px); err != nil {
+		b.err = err
+		return
+	}
+	b.sc.imageBytes += 4 * px
+	b.imagePixels += px
+	img, err := png.Decode(bytes.NewReader(bm.PNG))
+	if err != nil {
+		return
+	}
+	pic := image.NewNRGBA(img.Bounds())
+	draw.Draw(pic, pic.Rect, img, img.Bounds().Min, draw.Src)
+	w, h := bm.Width, bm.Height
+	if w == 0 || h == 0 {
+		w, h = cfg.Width, cfg.Height
+	}
+	// A pixel of the strike is k units of the text; the picture's top left
+	// corner is at (Left, Top) pixels from the glyph's origin, Top up.
+	k := fontSize / float64(bm.PPEM)
+	sm := matrix{float64(k*float64(w)) / float64(cfg.Width), 0, 0, float64(k*float64(h)) / float64(cfg.Height),
+		gx + float64(k*float64(bm.Left)), gy - float64(k*float64(bm.Top))}
+	pm := fm.mul(sm)
+	inv, ok := pm.invert()
+	if !ok {
+		return
+	}
+	area := fillPath(flatten(rectSegs(0, 0, float64(cfg.Width), float64(cfg.Height), 0, 0), pm), pm, false)
+	sh := &shader{img: &sampler{img: pic, inv: inv}}
+	if st.fillOpacity < 1 {
+		sh.opacity = st.fillOpacity
+	}
+	it := item{op: opShape, path: area, paint: sh, bounds: pathBounds(area, b.full)}
+	c := chainClip(own, outer)
+	it.clip = c
+	if c != nil {
+		it.bounds = it.bounds.Intersect(c.bounds)
+	}
+	b.add(it)
 }
 
 // cursive reports whether r is of a script whose letters join (Arabic and
