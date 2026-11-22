@@ -1,0 +1,21 @@
+This directory holds files for testing zstd.NewReader.
+
+Each one is a Zstandard compressed file named as hash.arbitrary-name.zst,
+where hash is the first eight hexadecimal digits of the SHA256 hash
+of the expected uncompressed content:
+
+	zstd -d < 1890a371.gettysburg.txt-100x.zst | sha256sum | head -c 8
+	1890a371
+
+The test uses hash value to verify decompression result.
+
+gettysburg, helloworld and zero-dictionary-ids are those of Go's
+internal/zstd. The picture files were made with Python 3.14's
+compression.zstd (libzstd 1.5.7), with a checksum, at the level in their
+name: the rows of an RGB picture of the size in their name, each sample
+the difference from the same sample of the pixel before (as TIFF's
+horizontal predictor has them), where pixel (x, y) is
+
+	(x*3 + y*2) & 255, ((x/8)*29 + (y/8)*17 + (x*y)%5) & 255, (x&15)*16 + (y*y/9)%7
+
+512x260 is 399,360 bytes: four blocks, rows that repeat 1,536 bytes on.

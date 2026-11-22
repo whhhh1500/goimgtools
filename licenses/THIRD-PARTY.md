@@ -24,6 +24,7 @@ rows at a time instead of on a whole image; the pixel arithmetic is theirs.
 | `internal/resize/resize.go` (weights and per-pixel arithmetic) | `golang.org/x/image/draw` |
 | `internal/vp8enc/tables.go` (tables fixed by the VP8 format) | `golang.org/x/image/vp8` |
 | `internal/gflate` (the compressor, as it is; `ResetDict` and the loads of `load_store_unsafe.go` added) | `compress/flate` of Go 1.27 |
+| `internal/zstd` (the decompressor of zstd, as it is; `SetMaxWindow` added; three of its test files) | `internal/zstd` of Go 1.27 |
 | `internal/bidi/uax9.go` (the Unicode Bidirectional Algorithm for a paragraph; no checks of the input, the bracket pairs sorted once) | `golang.org/x/text/unicode/bidi` (`core.go`, `bracket.go`), a port of Unicode's reference implementation |
 | `internal/textsrc/shaping.go` (`drawGlyph`: a glyph of shaped text drawn by its index, rasterized as a face draws a character) | `golang.org/x/image/font/opentype` (`Face.Glyph`) |
 

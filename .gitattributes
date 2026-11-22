@@ -16,3 +16,6 @@ tests/testdata/fuzz/** text eol=lf
 *.ppm binary
 *.qoi binary
 **/testdata/fuzz/** text eol=lf
+# Test files compared to the byte.
+*.zst binary
+*.tif binary

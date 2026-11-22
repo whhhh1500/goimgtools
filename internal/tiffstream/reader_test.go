@@ -395,8 +395,27 @@ func compressBlock(comp uint32, data []byte) []byte {
 		return lzwLiteral(data)
 	case cPackBits:
 		return packBits(data)
+	case cZstd:
+		return zstdStored(data)
 	}
 	return data
+}
+
+// zstdStored is data as a zstd frame of blocks that are not compressed (a
+// window of 1MB, no checksum, blocks of at most 100,000 bytes).
+func zstdStored(data []byte) []byte {
+	out := []byte{0x28, 0xb5, 0x2f, 0xfd, 0x00, 0x50}
+	for first := true; first || len(data) > 0; first = false {
+		n := min(len(data), 100000)
+		h := uint32(n) << 3
+		if n == len(data) {
+			h |= 1 // the last block
+		}
+		out = append(out, byte(h), byte(h>>8), byte(h>>16))
+		out = append(out, data[:n]...)
+		data = data[n:]
+	}
+	return out
 }
 
 // build writes the TIFF described by s, with random samples from r.

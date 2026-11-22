@@ -115,6 +115,9 @@ type decoder struct {
 	// grayAlpha: grey with an alpha sample after it (the mode mGray or
 	// mGrayInvert); premult: the grey multiplied by it.
 	grayAlpha, premult bool
+	// stored: the samples of a file of floats or of Lab, which convert
+	// makes the samples the features describe (convert.go).
+	stored *stored
 
 	buf   []byte
 	off   int    // Current offset in buf.
@@ -369,15 +372,13 @@ func (d *decoder) parseIFD(p []byte) (int, error) {
 		// the value is not 1 [= unsigned integer data], a Baseline
 		// TIFF reader that cannot handle the SampleFormat value
 		// must terminate the import process gracefully.
+		// (goimgtools: floats are read, see convert.go; setupStored
+		// refuses the other formats.)
 		val, err := d.ifdUint(p, smallEntryMaxCount)
 		if err != nil {
 			return 0, err
 		}
-		for _, v := range val {
-			if v != 1 {
-				return 0, UnsupportedError("sample format")
-			}
-		}
+		d.features[int(tag)] = val
 	}
 	return int(tag), nil
 }
@@ -797,6 +798,9 @@ func newDecoder(r io.ReaderAt) (*decoder, error) {
 	if _, ok := d.features[tBitsPerSample]; !ok {
 		// Default is 1 per specification.
 		d.features[tBitsPerSample] = []uint{1}
+	}
+	if err := d.setupStored(); err != nil {
+		return nil, err
 	}
 	d.bpp = d.firstVal(tBitsPerSample)
 	switch d.bpp {

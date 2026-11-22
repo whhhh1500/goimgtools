@@ -376,6 +376,18 @@ func labToXYZ(L, a, b float64) [3]float64 {
 // connection space is taken to sRGB.
 func LabToSRGB(L, a, b float64) [3]float64 { return srgbOf(labToXYZ(L, a, b)) }
 
+// LabToLinear is the linear light of sRGB, 0 to 1 and clipped to the
+// gamut, of a CIELAB colour (D50, L 0 to 100): LabToSRGB before sRGB's
+// tone curve.
+func LabToLinear(L, a, b float64) [3]float64 {
+	xyz, m := labToXYZ(L, a, b), toSRGBMatrix()
+	var out [3]float64
+	for i := range out {
+		out[i] = clamp01(float64(m[i][0]*xyz[0]) + float64(m[i][1]*xyz[1]) + float64(m[i][2]*xyz[2]))
+	}
+	return out
+}
+
 // srgbOf takes D50 XYZ to sRGB on 0 to 255, unrounded, relative
 // colorimetric: clipped to the gamut.
 func srgbOf(xyz [3]float64) [3]float64 {

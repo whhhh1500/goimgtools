@@ -80,7 +80,7 @@ What each reads (R) and writes (W). libvips is the build above (its other loader
 | AVIF, HEIC | — | R W | AVIF R W |
 | JPEG XL | — | — (optional) | — |
 | JPEG 2000 | — | — (optional) | R W |
-| TIFF: Lab, floats, zstd and WebP compression, tiles and pyramids written | — (read: classic and BigTIFF, strips and tiles, pyramids' first level; greys and palettes of 1, 2, 4, 8 and 16 bits, grey with alpha, RGB with and without alpha, CMYK; LZW, Deflate, PackBits, CCITT, JPEG) | R W | R W (most) |
+| TIFF: tiles and pyramids written | — (read: classic and BigTIFF, strips and tiles, pyramids' first level; greys and palettes of 1, 2, 4, 8 and 16 bits, grey with alpha, RGB with and without alpha, CMYK, Lab, floats; LZW, Deflate, PackBits, CCITT, JPEG, zstd, WebP) | R W (the Windows build without zstd) | R W (no tiles written; the Windows build without zstd; float RGB and float Lab not read) |
 | DDS, PCX, SGI, XBM, DIB | — | — | R W |
 | XPM, FITS, FLI, IM, MSP, SPIDER, BLP, DCX, FTEX, GBR, IMT, MCIDAS, PCD, PIXAR, SUN, WMF, EPS | — | — | R (some W) |
 | UltraHDR (a JPEG with a gain map) | R (the picture alone) | R W | R (the picture alone) |
@@ -107,7 +107,7 @@ What each reads (R) and writes (W). libvips is the build above (its other loader
 | GIF decoding | 0.24s against 0.19s for a 24 megapixel GIF | Open |
 | Animated GIF resized | gifsicle is twice as fast and takes 5MB less; its file is half as large again | Open |
 | JPEG against jpegli by butteraugli | 3.2 points more file at equal butteraugli (4.0 points less at equal SSIMULACRA2) | Open |
-| TIFF variants | Lab, floats, zstd and WebP compression are not read; tiles and pyramids are not written. BigTIFF, CMYK, 2 and 4 bits and grey with alpha are read now | Open |
+| TIFF variants | Tiles and pyramids are not written. BigTIFF, CMYK, Lab, floats, 2 and 4 bits, grey with alpha, zstd and WebP compression are read now | Open (reading closed) |
 | DDS, PCX, SGI, XBM, DIB, XPM, FITS | Not read | Open |
 | JPEG 2000 | Not read | Open |
 | IPTC | Not read or kept | Open |

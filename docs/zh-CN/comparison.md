@@ -80,7 +80,7 @@
 | AVIF、HEIC | — | R W | AVIF R W |
 | JPEG XL | — | —（可选） | — |
 | JPEG 2000 | — | —（可选） | R W |
-| TIFF：Lab、浮点、zstd 与 WebP 压缩，写瓦片与金字塔 | —（能读：普通 TIFF 与 BigTIFF，条带与瓦片、金字塔的第一层；1、2、4、8、16 位的灰度与调色板，灰度带透明，带或不带透明的 RGB，CMYK；LZW、Deflate、PackBits、CCITT、JPEG） | R W | R W（大部分） |
+| TIFF：写瓦片与金字塔 | —（能读：普通 TIFF 与 BigTIFF，条带与瓦片、金字塔的第一层；1、2、4、8、16 位的灰度与调色板，灰度带透明，带或不带透明的 RGB，CMYK、Lab、浮点；LZW、Deflate、PackBits、CCITT、JPEG、zstd、WebP） | R W（Windows 版不带 zstd） | R W（不写瓦片；Windows 版不带 zstd；不读浮点 RGB 与浮点 Lab） |
 | DDS、PCX、SGI、XBM、DIB | — | — | R W |
 | XPM、FITS、FLI、IM、MSP、SPIDER、BLP、DCX、FTEX、GBR、IMT、MCIDAS、PCD、PIXAR、SUN、WMF、EPS | — | — | R（部分 W） |
 | UltraHDR（带增益图的 JPEG） | R（只读图像本身） | R W | R（只读图像本身） |
@@ -107,7 +107,7 @@
 | GIF 解码 | 2400 万像素的 GIF：0.24s 对 0.19s | 待处理 |
 | 动图 GIF 缩放 | gifsicle 快一倍、少用 5MB 内存；它的文件大一半 | 待处理 |
 | JPEG 按 butteraugli 对 jpegli | 同等 butteraugli 下文件大 3.2 个点（同等 SSIMULACRA2 下小 4.0 个点） | 待处理 |
-| TIFF 的各种变体 | 不读 Lab、浮点、zstd 与 WebP 压缩；不写瓦片与金字塔。BigTIFF、CMYK、2 位与 4 位、灰度带透明现在都能读 | 待处理 |
+| TIFF 的各种变体 | 不写瓦片与金字塔。BigTIFF、CMYK、Lab、浮点、2 位与 4 位、灰度带透明、zstd 与 WebP 压缩现在都能读 | 待处理（读取已补齐） |
 | DDS、PCX、SGI、XBM、DIB、XPM、FITS | 不读 | 待处理 |
 | JPEG 2000 | 不读 | 待处理 |
 | IPTC | 不读也不保留 | 待处理 |

@@ -15,6 +15,7 @@ import (
 	"github.com/whhhh1500/goimgtools/internal/density"
 	"github.com/whhhh1500/goimgtools/internal/inflate"
 	"github.com/whhhh1500/goimgtools/internal/tiffstream/lzw"
+	"github.com/whhhh1500/goimgtools/internal/zstd"
 	"golang.org/x/image/ccitt"
 
 	"github.com/whhhh1500/goimgtools/pipeline"
@@ -46,6 +47,7 @@ type stream struct {
 	n        int         // rows per output strip
 	y        int         // next row to hand out
 	row      []byte      // one decompressed block row
+	crow     []byte      // that row as convert makes it, of floats or Lab
 	reserved int64
 	err      error
 	done     bool
@@ -55,7 +57,8 @@ type stream struct {
 	lz        *lzw.Reader     // LZW reader, reused from block to block
 	zr        *inflate.Reader // zlib reader, reused from block to block
 	zbuf      *bufio.Reader   // its input: a block read 64KB at a time
-	jr        *jpegRows       // the JPEG decoder of the block, if any
+	jr        *jpegRows       // the JPEG or WebP decoder of the block, if any
+	zs        *zstd.Reader    // zstd reader, reused from block to block
 	blkW      int
 	blkH      int
 	blockRead int64 // decompressed bytes read from the block so far
@@ -181,8 +184,19 @@ func open(r io.ReaderAt, env *pipeline.Env) (_ *stream, err error) {
 
 	// The reference decoder finds the next two problems while decoding the
 	// first block; they do not depend on the pixel data, so report them now.
+	if c := d.firstVal(tCompression); d.stored != nil && (c == cG3 || c == cG4 || c == cJPEG || c == cWebP) {
+		return nil, UnsupportedError("this compression of floats or Lab")
+	}
 	switch d.firstVal(tCompression) {
-	case cNone, 0, cG3, cG4, cLZW, cDeflate, cDeflateOld, cPackBits:
+	case cNone, 0, cG3, cG4, cLZW, cDeflate, cDeflateOld, cPackBits, cZstd:
+	case cWebP:
+		// RGB of 8 bits, with or without alpha.
+		if d.bpp != 8 || (d.mode != mRGB && d.mode != mRGBA && d.mode != mNRGBA) {
+			return nil, UnsupportedError("WebP compression of this kind of image")
+		}
+		if d.firstVal(tPredictor) == prHorizontal {
+			return nil, UnsupportedError("a predictor with WebP compression")
+		}
 	case cJPEG:
 		// 8-bit grey or colour only.
 		if d.bpp != 8 || d.grayAlpha || (d.mode != mRGB && d.mode != mGray && d.mode != mGrayInvert) {
@@ -208,6 +222,9 @@ func open(r io.ReaderAt, env *pipeline.Env) (_ *stream, err error) {
 		// Maximum data per pixel is 8 bytes (RGBA64).
 		blockMaxDataSize: int64(blockWidth) * int64(blockHeight) * 8,
 	}
+	if st := d.stored; st != nil && st.rowBits() > 64 {
+		s.blockMaxDataSize = int64(blockWidth) * int64(blockHeight) * int64(st.rowBits()/8)
+	}
 
 	// The row layout of a block's decompressed data, as in decoder.decode.
 	numSamples := 1
@@ -221,6 +238,11 @@ func open(r io.ReaderAt, env *pipeline.Env) (_ *stream, err error) {
 		numSamples = 2
 	}
 	s.rowBytes = int((int64(blockWidth)*int64(numSamples)*int64(d.bpp) + 7) / 8)
+	var converted int64 // a row as convert makes it, beside the row as stored
+	if st := d.stored; st != nil {
+		converted = int64(s.rowBytes)
+		s.rowBytes = int((int64(blockWidth)*int64(st.rowBits()) + 7) / 8)
+	}
 
 	// A stripped image is handed out in strips of about 256KB, whatever the
 	// TIFF's own strip size. A tiled image is handed out one tile row at a
@@ -233,7 +255,7 @@ func open(r io.ReaderAt, env *pipeline.Env) (_ *stream, err error) {
 	}
 	full := image.Rect(0, 0, d.config.Width, s.n)
 	rowCap := max(s.rowBytes, drainChunk)
-	need := pipeline.BandBytes(proto, full) + int64(rowCap)
+	need := pipeline.BandBytes(proto, full) + int64(rowCap) + converted
 	switch d.firstVal(tCompression) {
 	case cG3, cG4:
 		// The CCITT reader keeps two rows of one byte per pixel.
@@ -242,6 +264,8 @@ func open(r io.ReaderAt, env *pipeline.Env) (_ *stream, err error) {
 		need += inflate.Size + zbufSize
 	case cLZW:
 		need += lzw.Size
+	case cZstd:
+		need += s.zstdWindow() + zstdRoom
 	}
 	if err := env.Budget.Reserve(need, "tiff strip buffers"); err != nil {
 		return nil, err
@@ -249,6 +273,7 @@ func open(r io.ReaderAt, env *pipeline.Env) (_ *stream, err error) {
 	s.reserved = need
 	s.band = s.newImage(full)
 	s.row = make([]byte, rowCap)
+	s.crow = make([]byte, converted)
 	return s, nil
 }
 
@@ -502,6 +527,21 @@ func (s *stream) openBlock(i, j int) (err error) {
 			return err
 		}
 		s.br = s.jr
+	case cWebP:
+		s.jr, err = newWebPRows(d.r, offset, n, d.mode != mRGB, s.env)
+		if err != nil {
+			return err
+		}
+		s.br = s.jr
+	case cZstd:
+		sr := io.NewSectionReader(d.r, offset, n)
+		if s.zs == nil {
+			s.zs = zstd.NewReader(sr)
+			s.zs.SetMaxWindow(int(s.zstdWindow()))
+		} else {
+			s.zs.Reset(sr)
+		}
+		s.br = s.zs
 	case cPackBits:
 		// unpackBits has no silent limit: it reads to the end of the block
 		// and fails if that yields more than blockMaxDataSize bytes.
@@ -551,6 +591,9 @@ func (s *stream) decodeRow(dst image.Image, xmin, y int) error {
 		return err
 	}
 	s.d.buf = s.row[:n]
+	if s.d.stored != nil {
+		s.d.buf = s.d.convert(s.crow, s.row[:n], s.blockWidth)
+	}
 	return s.d.decode(dst, xmin, y, xmin+s.blkW, y+1)
 }
 
@@ -594,6 +637,17 @@ func (s *stream) finishBlock() error {
 
 // zbufSize is the buffer the input of a Deflate block is read through.
 const zbufSize = 64 << 10
+
+// zstdRoom is what a zstd reader holds besides its window: a compressed
+// block, its literals and what it decodes to, of 128KB each at most, and
+// its tables.
+const zstdRoom = 512 << 10
+
+// zstdWindow is the window a zstd reader of this file needs: no match
+// reaches back beyond the block, and none beyond 8MB.
+func (s *stream) zstdWindow() int64 {
+	return max(1, min(8<<20, int64(s.rowBytes)*int64(s.blockHeight)))
+}
 
 func (s *stream) closeBlock() {
 	s.br = nil

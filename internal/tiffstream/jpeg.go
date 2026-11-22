@@ -7,6 +7,7 @@ import (
 	"io"
 
 	"github.com/whhhh1500/goimgtools/internal/jpegstream"
+	"github.com/whhhh1500/goimgtools/internal/webpstream"
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
@@ -19,10 +20,11 @@ import (
 
 // jpegRows reads a block coded as JPEG as uncompressed rows.
 type jpegRows struct {
-	src  pipeline.Source
-	gray bool
-	buf  []byte // decoded bytes not handed out yet
-	out  []byte
+	src   pipeline.Source
+	gray  bool
+	alpha bool   // four samples a pixel, of a WebP block
+	buf   []byte // decoded bytes not handed out yet
+	out   []byte
 }
 
 // newJPEGRows starts decoding the n bytes at off as a JPEG stream, with
@@ -50,6 +52,19 @@ func newJPEGRows(r io.ReaderAt, off, n int64, tables []byte, gray bool, env *pip
 		src = pipeline.Map(src, func(*image.NRGBA) error { return nil })
 	}
 	return &jpegRows{src: src, gray: gray}, nil
+}
+
+// newWebPRows starts decoding the n bytes at off as a WebP image, as
+// libtiff stores a block with WebP compression: rows of RGB, or with alpha
+// of RGBA.
+func newWebPRows(r io.ReaderAt, off, n int64, alpha bool, env *pipeline.Env) (*jpegRows, error) {
+	src, err := webpstream.Open(io.NewSectionReader(r, off, n), n, env)
+	if err != nil {
+		return nil, err
+	}
+	// To RGB as libwebp converts, which libtiff has it do.
+	src = pipeline.Map(webpstream.ToRGB(src), func(*image.NRGBA) error { return nil })
+	return &jpegRows{src: src, alpha: alpha}, nil
 }
 
 func (j *jpegRows) Read(p []byte) (int, error) {
@@ -82,6 +97,13 @@ func (j *jpegRows) rows(s image.Image) []byte {
 		return j.out
 	}
 	m := s.(*image.NRGBA)
+	if j.alpha {
+		j.out = j.out[:0]
+		for y := r.Min.Y; y < r.Max.Y; y++ {
+			j.out = append(j.out, m.Pix[m.PixOffset(r.Min.X, y):][:4*w]...)
+		}
+		return j.out
+	}
 	if cap(j.out) < 3*w*r.Dy() {
 		j.out = make([]byte, 0, 3*w*r.Dy())
 	}

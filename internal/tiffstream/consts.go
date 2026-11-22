@@ -103,6 +103,10 @@ const (
 	cDeflate    = 8 // zlib compression.
 	cPackBits   = 32773
 	cDeflateOld = 32946 // Superseded by cDeflate.
+	// goimgtools additions, as libtiff numbers them: each block a zstd
+	// frame, or a WebP image.
+	cZstd = 50000
+	cWebP = 50001
 )
 
 // Photometric interpretation values (see p. 37 of the spec).
