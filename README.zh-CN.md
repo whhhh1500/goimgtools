@@ -79,6 +79,7 @@ goimgtools batch -resize 1920x1920 -no-enlarge -quality 80 -format jpeg in_dir o
 | [命令行](docs/zh-CN/cli.md) | 全部选项与目录批处理 |
 | [扩展](docs/zh-CN/extending.md) | 自定义操作、输入与格式，按名称注册操作，钩子，自定义命令行程序 |
 | [性能与基准测试](docs/zh-CN/performance.md) | 内存控制机制、多核并行、实测数据与复测方法 |
+| [与其他工具的对比](docs/zh-CN/comparison.md) | 每项能力对照该项最强的工具（libvips、sharp、Pillow、cwebp、mozjpeg、jpegli、gifsicle）：时间、内存、画质与功能的实测；落后的项及原因 |
 | [一致性与对比](docs/zh-CN/compatibility.md) | 与标准库、Pillow、sharp 逐字节一致的范围、有意的差异、与 libwebp 的对比 |
 | [测试](docs/zh-CN/testing.md) | 测试方法、已验证平台、模糊测试 |
 | [变更记录](docs/zh-CN/CHANGELOG.md) | 各版本的变更 |

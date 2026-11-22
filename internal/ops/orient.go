@@ -250,6 +250,19 @@ type turned struct {
 	n        int // rows per output strip
 	y        int // next output row
 	reserved int64
+	// A transposed image is stored as it comes: each round of source rows
+	// as one block, the rows of the result that wide (the columns the round
+	// fills), one after the other; a strip of the result is put together
+	// from the blocks.
+	blocks []turnBlock
+	tmp    []uint8 // the rows of a strip in one block
+}
+
+// turnBlock is a block of a transposed image in the store: the columns
+// [dx, dx+w) of every row of the result, at off.
+type turnBlock struct {
+	off   int64
+	dx, w int
 }
 
 func (t *turned) Env() *pipeline.Env      { return t.env }
@@ -275,6 +288,8 @@ func (t *turned) load() error {
 	dw := t.rect.Dx()
 	var (
 		buf    []uint8 // source rows collected for one round of writes
+		blk    []uint8 // transposed: the round as a block of the result
+		blkOff int64   // where the next block goes
 		run    []uint8
 		rows   int // rows buf can hold
 		have   int // rows in buf
@@ -309,26 +324,32 @@ func (t *turned) load() error {
 			return nil
 		}
 		// Transposed: source column x becomes result row x (or its mirror),
-		// and the collected rows are a run of consecutive pixels in it.
+		// and the collected rows are a run of consecutive pixels in it. The
+		// runs of all the rows make one block, written in one piece (a write
+		// for every row took most of the time of a quarter turn).
 		for x := 0; x < sw; x++ {
+			dy := x
+			if t.o.MirrorY {
+				dy = sw - 1 - x
+			}
+			row := blk[dy*have*bpp : (dy+1)*have*bpp]
 			for i := 0; i < have; i++ {
 				j := i
 				if t.o.MirrorX {
 					j = have - 1 - i
 				}
-				copy(run[j*bpp:(j+1)*bpp], buf[(i*sw+x)*bpp:(i*sw+x+1)*bpp])
-			}
-			dy, dx := x, y0
-			if t.o.MirrorY {
-				dy = sw - 1 - x
-			}
-			if t.o.MirrorX {
-				dx = sh - y0 - have
-			}
-			if _, err := t.sc.WriteAt(run[:have*bpp], (int64(dy)*int64(dw)+int64(dx))*int64(bpp)); err != nil {
-				return err
+				copy(row[j*bpp:(j+1)*bpp], buf[(i*sw+x)*bpp:(i*sw+x+1)*bpp])
 			}
 		}
+		dx := y0
+		if t.o.MirrorX {
+			dx = sh - y0 - have
+		}
+		if _, err := t.sc.WriteAt(blk[:sw*have*bpp], blkOff); err != nil {
+			return err
+		}
+		t.blocks = append(t.blocks, turnBlock{off: blkOff, dx: dx, w: have})
+		blkOff += int64(sw) * int64(have) * int64(bpp)
 		y0, have = y0+have, 0
 		return nil
 	}
@@ -365,14 +386,29 @@ func (t *turned) load() error {
 			if t.sc.OnDisk() {
 				room = min(4<<20, t.env.Budget.Limit()/8)
 			}
+			if t.o.Swap && t.sc.OnDisk() {
+				room /= 2 // the rows and their block share it
+			}
 			rows = int(max(1, min(int64(sh), room/rowBytes)))
 			bufRes = rowBytes*int64(rows) + int64(max(sw, rows))*int64(bpp)
-			if err := t.env.Budget.Reserve(bufRes, "rotation buffer"); err != nil {
+			// Transposed: the block of a round, and the rows of an output
+			// strip in one block (held until Close).
+			var tmpRes int64
+			if t.o.Swap {
+				bufRes += rowBytes * int64(rows)
+				tmpRes = int64(t.n) * int64(rows) * int64(bpp)
+			}
+			if err := t.env.Budget.Reserve(bufRes+tmpRes, "rotation buffer"); err != nil {
 				bufRes = 0
 				return err
 			}
+			t.reserved += tmpRes
 			buf = make([]uint8, rowBytes*int64(rows))
 			run = make([]uint8, max(sw, rows)*bpp)
+			if t.o.Swap {
+				blk = make([]uint8, rowBytes*int64(rows))
+				t.tmp = make([]uint8, tmpRes)
+			}
 		} else if b != bpp {
 			return errors.New("goimgtools: source changed pixel type")
 		}
@@ -413,7 +449,19 @@ func (t *turned) Next() (image.Image, error) {
 	out := pipeline.Relabel(t.band, image.Rect(0, t.y, t.rect.Dx(), y1))
 	pix, stride, bpp, _, _ := pipeline.Pix(out)
 	rowBytes := t.rect.Dx() * bpp
-	if stride == rowBytes {
+	if t.o.Swap {
+		// From each block, its columns of these rows.
+		n := y1 - t.y
+		for _, b := range t.blocks {
+			seg := t.tmp[:n*b.w*bpp]
+			if _, err := t.sc.ReadAt(seg, b.off+int64(t.y)*int64(b.w)*int64(bpp)); err != nil {
+				return nil, err
+			}
+			for i := 0; i < n; i++ {
+				copy(pix[i*stride+b.dx*bpp:], seg[i*b.w*bpp:(i+1)*b.w*bpp])
+			}
+		}
+	} else if stride == rowBytes {
 		if _, err := t.sc.ReadAt(pix[:(y1-t.y)*rowBytes], int64(t.y)*int64(rowBytes)); err != nil {
 			return nil, err
 		}

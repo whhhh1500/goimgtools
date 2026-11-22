@@ -6,6 +6,7 @@
 
 ### 新增
 
+- [与其他工具的对比](comparison.md)：每项能力对照该项最强的工具（libvips 8.18.7、sharp 0.35.5、Pillow 12.1.1、cwebp、mozjpeg、jpegli、gifsicle、LittleCMS、librsvg），同一任务同一输入，整个进程的时间与峰值内存，按 SSIMULACRA2 与 butteraugli 比画质，各家的格式与功能，以及落后项的清单；测量脚本在 `tests/compare`。
 - SVG 文字绘制 COLR 第 1 版的彩色字形（Noto Color Emoji 即此格式，与 Chrome 一致）：按其绘制图——裁剪用的字形轮廓、纯色、线性 / 径向 / 扫描渐变（颜色按预乘插值；色标可超出 0 到 1，延伸方式 pad、repeat、reflect）、变换（平移、缩放、旋转、斜切，可绕中心）、裁剪框与合成（各混合模式；Porter-Duff 模式中 clear、源、目标照做，其余按源覆盖），前景色为文字的填充色。含此类字形的字体会被选作表情的彩色字体。此类字体的可变数据不应用。`Text()` 绘制的文字仍以单色绘制它们。
 - 可变字体（含 `fvar` 表：带 `gvar` 的 TrueType 轮廓或 CFF2）中的 SVG 文字按样式对应的实例绘制，与 Chrome 的设定一致：`font-weight` 对应 `wght` 轴，`font-stretch`（关键字与百分比，现已读取）对应 `wdth`，`font-style: oblique`（及其角度）对应 `slnt`，`italic` 对应 `ital`，字号对应 `opsz`（光学尺寸，CSS 的默认行为），`font-variation-settings` 优先于以上各项；轮廓、前进宽度与整形都随之变化（原先按字体的默认实例绘制，只有一个可变字体文件的字族，粗体也画成常规）。只有这类字体才读取轮廓及其变化数据，并计入内存上限。
 - SVG 竖排文字：text 元素上的 `writing-mode` 为 `tb`、`tb-rl`、`vertical-rl`、`vertical-lr` 时（可继承，同 Chrome；写在 tspan 上不生效），从 `y` 向下排，`x` 处为其中线：多数文字的字母横躺；中日韩文字及其标点、全角字符与表情直立居中，按字体的竖排度量（`vhea` 与 `vmtx`，字形顶端在笔位下方 top bearing 处，同 HarfBuzz 为 Chrome 放置的位置；没有竖排度量的字体按字高与上升高度）前进与放置，括号与破折号横躺；`text-orientation` 为 `upright` 时全部直立，为 `sideways` 时全部横躺。`x`、`y`、`dx`、`dy`、`text-anchor`、`rotate`、装饰线与文字的包围盒都随这一行。路径上的文字仍为横排。
@@ -78,6 +79,7 @@
 
 ### 变更
 
+- 旋转四分之一圈（`Rotate(90)`、`Rotate(270)`，以及交换宽高的 EXIF 方向）：每一轮的行作为一整块写入暂存区，输出的条带再从各块拼出，不再每轮对结果的每一行各写一次（2400 万像素要写 14 万次）：6000×4000 的 JPEG 旋转后再写出，单线程从 0.68s 降到 0.31s，内存仍是 14MB，输出逐字节不变。
 - SVG：从 `style` 属性中查找元素的各项属性时，不再每查一项就把整个属性重新解析一遍：Inkscape 写法的 30,000 条路径的 SVG 绘制由 1.34 秒降到 0.70 秒，峰值内存由 150MB 降到 113MB（`-mem 512`），像素相同。
 - 至多 16 色的无损 WebP：不打包、不用预测器的像素与颜色表打包的像素同时参与比较，在分 Huffman 组之前小 5% 以上就用它：打包使重复只能整符号开始和结束，少级数的平滑图（降级后的透明通道、蒙版）因此吃亏（降到 2–12 级的透明通道小 5.6%，一张小 9%；`AlphaQuality` 50 与 20 时透明通道块小 2.7%）。不打包胜出时这类图耗时最多约为原来的 5 倍。
 - WebP 默认不再保留全透明像素的颜色，与 libwebp、sharp、Pillow 一致（`WebPOptions.Exact` 可保留）：无损输出把它们存为透明黑，有预测器时存为邻像素预测出的颜色（libwebp 的 `WebPReplaceTransparentPixels` 及其预测器中的清理）；有损输出与以前一样把它们的样本抹平（设了 `Exact` 则不抹）。看得见的部分不变；透明处下面有噪点的抠图照片无损小 27%，图标与绘图变化约 1%，有大有小。不透明图像文件不变。

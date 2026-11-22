@@ -79,6 +79,7 @@ goimgtools batch -resize 1920x1920 -no-enlarge -quality 80 -format jpeg in_dir o
 | [Command line](docs/cli.md) | All options; batch processing of directories |
 | [Extending](docs/extending.md) | Custom operations, inputs and formats; operations by name; hooks; custom command-line programs |
 | [Performance and benchmarks](docs/performance.md) | Memory control, multi-core processing, measurements and how to reproduce them |
+| [Comparison with other tools](docs/comparison.md) | Every capability against the strongest tool for it (libvips, sharp, Pillow, cwebp, mozjpeg, jpegli, gifsicle): time, memory, quality and features, measured; what is behind and why |
 | [Compatibility and comparisons](docs/compatibility.md) | Where output matches the standard library, Pillow or sharp byte for byte, intentional differences, comparison with libwebp |
 | [Testing](docs/testing.md) | Test methods, verified platforms, fuzz testing |
 | [Changelog](docs/CHANGELOG.md) | Changes by version |
