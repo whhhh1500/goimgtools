@@ -1,6 +1,7 @@
 package svg
 
 import (
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -24,15 +25,35 @@ const cssFrac = "\x00frac"
 
 // cssFilter is the filter of a list of filter functions, or nil for a list
 // that is not one (no filter, as CSS takes an invalid value).
+// One filter serves the elements whose lists and what they depend on (the
+// colour of currentColor, the size of em) are the same; the nodes it is
+// made of are counted in the memory budget.
 func (b *builder) cssFilter(n *node, v string, st style, vp viewport) *node {
-	if f, ok := b.cssFilters[n]; ok {
+	key := fmt.Sprintf("%s\x00%v\x00%g\x00%g\x00%g", v, st.color, st.fontSize, vp.w, vp.h)
+	if f, ok := b.cssFilters[key]; ok {
 		return f
 	}
 	f := b.makeCSSFilter(v, st, vp)
-	if b.cssFilters == nil {
-		b.cssFilters = map[*node]*node{}
+	if f != nil {
+		nodes := 1
+		var count func(k *node)
+		count = func(k *node) {
+			for _, c := range k.children {
+				nodes++
+				count(c)
+			}
+		}
+		count(f)
+		if err := b.reserve(int64(nodes) * nodeBytes); err != nil {
+			b.err = err
+			return nil
+		}
+		b.sc.imageBytes += int64(nodes) * nodeBytes // given back when the scene goes
 	}
-	b.cssFilters[n] = f
+	if b.cssFilters == nil {
+		b.cssFilters = map[string]*node{}
+	}
+	b.cssFilters[key] = f
 	return f
 }
 

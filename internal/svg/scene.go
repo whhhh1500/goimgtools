@@ -110,14 +110,15 @@ var errTooMuch = errors.New(errTooLarge)
 // builder walks the document into a scene.
 type builder struct {
 	imagePixels int64
-	inputPixels int64           // of the files of the pictures, against maxInputPixels
-	masking     map[*node]bool  // the masks being built, against cycles
-	patterning  map[*node]bool  // and the patterns
-	marking     map[*node]bool  // and the markers
-	filtering   map[*node]bool  // and the filters
-	merged      map[*node]*node // filters with what they take by href
-	cssFilters  map[*node]*node // the filters of elements' lists of filter functions
-	clipping    map[*node]bool  // and the clip paths
+	inputPixels int64            // of the files of the pictures, against maxInputPixels
+	masking     map[*node]bool   // the masks being built, against cycles
+	patterning  map[*node]bool   // and the patterns
+	marking     map[*node]bool   // and the markers
+	filtering   map[*node]bool   // and the filters
+	applying    []*node          // the filters being applied, outermost first
+	merged      map[*node]*node  // filters with what they take by href
+	cssFilters  map[string]*node // the filters of lists of filter functions
+	clipping    map[*node]bool   // and the clip paths
 	release     func(int64)
 	reserve     func(int64) error
 	avail       func() int64 // memory the budget has left
@@ -1058,7 +1059,7 @@ func (b *builder) bboxOf(n *node, vp viewport, st style) ([4]float64, bool) {
 					minY, maxY = math.Min(minY, y), math.Max(maxY, y)
 				}
 			}
-		case "image":
+		case "image", "foreignObject": // a foreignObject's box is its x, y, width and height
 			x, _ := parseLength(k.attrs["x"], kst.fontSize, vp, axisX)
 			y, _ := parseLength(k.attrs["y"], kst.fontSize, vp, axisY)
 			w, okW := parseLength(k.attrs["width"], kst.fontSize, vp, axisX)

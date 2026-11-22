@@ -111,11 +111,35 @@ func (b *builder) unmeasured(n *node, depth int) bool {
 	return false
 }
 
+// strokeReach is how far the strokes of an element and of what it holds
+// reach beyond their outlines, in its user units: half their width, more
+// at miter joins (to the miter limit) and square caps.
+func (b *builder) strokeReach(n *node, st style, vp viewport, depth int) float64 {
+	r := 0.0
+	if st.stroke.kind != paintNone && st.strokeWidth > 0 {
+		k := 0.75 // a square cap's corner: half the width times √2, and some
+		if st.lineJoin == joinMiter {
+			k = math.Max(k, st.miterLimit/2)
+		}
+		r = float64(st.strokeWidth * k)
+	}
+	if depth < 32 {
+		for _, c := range n.children {
+			if c.name != "#text" {
+				r = math.Max(r, b.strokeReach(c, computeStyle(c, st, vp), vp, depth+1))
+			}
+		}
+	}
+	return r
+}
+
 // filtered draws an element through its filter.
 func (b *builder) filtered(n *node, f *node, m matrix, st style, vp viewport, own, outer *clip) {
 	if b.filtering[f] {
-		return // within the element of one of its own feImages: a cycle
+		return // within the element of an feImage of a filter being applied: a cycle
 	}
+	b.applying = append(b.applying, f)
+	defer func() { b.applying = b.applying[:len(b.applying)-1] }()
 	bx, hasBox := b.bboxOf(n, vp, st)
 	bboxUnits := f.attrs["filterUnits"] != "userSpaceOnUse"
 	primBox := f.attrs["primitiveUnits"] == "objectBoundingBox"
@@ -153,6 +177,7 @@ func (b *builder) filtered(n *node, f *node, m matrix, st style, vp viewport, ow
 			return
 		}
 		margin, _ := strconv.ParseFloat(mg, 64)
+		margin += b.strokeReach(n, st, vp, 0) // the box is the fill's: the strokes reach beyond it
 		frac, _ := strconv.ParseFloat(f.attrs[cssFrac], 64)
 		mx, my := margin+float64(frac*bx[2]), margin+float64(frac*bx[3])
 		rx, ry, rw, rh = bx[0]-mx, bx[1]-my, bx[2]+float64(2*mx), bx[3]+float64(2*my)
@@ -291,10 +316,21 @@ func (b *builder) filtered(n *node, f *node, m matrix, st style, vp viewport, ow
 				continue
 			}
 			draw = func() {
-				// The filter is not drawn again within it (a nested use of
-				// the filter elsewhere is).
-				b.filtering[f] = true
-				defer delete(b.filtering, f)
+				// No filter being applied (this one, those of the elements
+				// it is within) is applied again within it, against cycles;
+				// a nested use of a filter elsewhere is.
+				var set []*node
+				for _, a := range b.applying {
+					if !b.filtering[a] {
+						b.filtering[a] = true
+						set = append(set, a)
+					}
+				}
+				defer func() {
+					for _, a := range set {
+						delete(b.filtering, a)
+					}
+				}()
 				b.element(t, cm, inner, vp, nil)
 			}
 		} else if strings.HasPrefix(href, "data:") {

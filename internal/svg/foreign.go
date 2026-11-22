@@ -6,6 +6,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/sfnt"
@@ -97,6 +98,7 @@ func (b *builder) foreignObject(n *node, m matrix, st style, vp viewport, own, o
 	}
 	tst := st
 	tst.fill, tst.stroke = paint{kind: paintColor, c: st.color}, paint{kind: paintNone}
+	tst.baseline = baseAlphabetic // SVG's dominant-baseline is not HTML's
 	// What overflows the box is clipped (unless overflow says otherwise).
 	rect := own
 	if ov, _ := n.prop("overflow"); ov != "visible" && ov != "auto" {
@@ -306,16 +308,7 @@ func (b *builder) htmlLines(n *node, st style, vp, box viewport) ([]hline, []hsv
 				calign = strings.ToLower(strings.TrimSpace(v))
 			}
 			if v, ok := c.prop("line-height"); ok && strings.TrimSpace(v) != "inherit" {
-				clh = strings.TrimSpace(v)
-				if strings.HasSuffix(clh, "%") || strings.HasSuffix(clh, "em") {
-					// A length of the element's size, inherited as that.
-					if f, ok := parseLength(clh, cst.fontSize, vp, axisY); ok {
-						if strings.HasSuffix(clh, "%") {
-							f = float64(parseFloatOr(strings.TrimSuffix(clh, "%"), 0) / 100 * cst.fontSize)
-						}
-						clh = fmtNum(f) + "px"
-					}
-				}
+				clh = lineHeightPx(v, cst.fontSize, vp)
 			}
 			if v, ok := c.prop("text-decoration"); ok {
 				cdeco = strings.TrimSpace(v)
@@ -378,7 +371,7 @@ func (b *builder) htmlLines(n *node, st style, vp, box viewport) ([]hline, []hsv
 	align = strings.ToLower(align)
 	lh := "normal"
 	if v, ok := inherited("line-height"); ok {
-		lh = v
+		lh = lineHeightPx(v, st.fontSize, vp)
 	}
 	if v, ok := inherited("white-space"); ok {
 		st.whitePre, st.noWrap = whiteSpace(v)
@@ -386,6 +379,22 @@ func (b *builder) htmlLines(n *node, st style, vp, box viewport) ([]hline, []hsv
 	walk(n, st, align, lh, "", color.NRGBA{}, 0)
 	closeLine(false)
 	return lines, svgs, boxes
+}
+
+// lineHeightPx is a line-height as it is inherited: a percentage or a
+// length in em of the size of the element it is given on, as pixels; a
+// number (a factor of each element's size) or normal as they are.
+func lineHeightPx(v string, fontSize float64, vp viewport) string {
+	v = strings.TrimSpace(v)
+	if p, ok := strings.CutSuffix(v, "%"); ok {
+		return fmtNum(float64(parseFloatOr(p, 0)/100*fontSize)) + "px"
+	}
+	if strings.HasSuffix(v, "em") {
+		if f, ok := parseLength(v, fontSize, vp, axisY); ok {
+			return fmtNum(f) + "px"
+		}
+	}
+	return v
 }
 
 // htmlDefaults gives an element of HTML what browsers give it before its
@@ -605,8 +614,11 @@ func runAttrs(r hrun) map[string]string {
 	if st.weight == 0 {
 		a["font-weight"] = "400"
 	}
-	if st.color.A < 255 {
-		a["fill-opacity"] = fmtNum(float64(st.color.A) / 255)
+	// SVG's own properties do not reach HTML: its opacity of fill is its
+	// colour's alone.
+	a["fill-opacity"] = fmtNum(float64(st.color.A) / 255)
+	if !st.visible {
+		a["visibility"] = "hidden" // its place kept, nothing drawn
 	}
 	if st.italic {
 		a["font-style"] = "italic"
@@ -637,32 +649,58 @@ func (b *builder) wrapLine(ln hline, width float64) []hline {
 	if !wraps || total <= width+0.5 {
 		return []hline{ln}
 	}
+	// The pieces between the places a line may break, each of the run it
+	// is in; a run's start is such a place only if its text and the one
+	// before allow a break there.
+	type part struct {
+		run  int
+		text string
+	}
+	var units [][]part
+	var prev rune
+	for ri, r := range ln.runs {
+		for i, word := range splitWords(r.text) {
+			first, _ := utf8.DecodeRuneInString(word)
+			if len(units) == 0 || i > 0 || !r.st.noWrap && breakBetween(prev, first) {
+				units = append(units, nil)
+			}
+			units[len(units)-1] = append(units[len(units)-1], part{ri, word})
+			prev, _ = utf8.DecodeLastRuneInString(word)
+		}
+	}
 	var out []hline
 	cur := hline{align: ln.align, st: ln.st, lh: ln.lh}
 	w := 0.0
-	for ri, r := range ln.runs {
-		for _, word := range splitWords(r.text) {
-			ww := b.textWidth(r, strings.TrimRight(word, " "))
-			if w+ww > width+0.5 && len(cur.runs) > 0 && !r.st.noWrap {
-				// A new line: the spaces at the old one's end and the new
-				// one's start go.
-				last := &cur.runs[len(cur.runs)-1]
-				last.text = strings.TrimRight(last.text, " ")
-				out = append(out, cur)
-				cur, w = hline{align: ln.align, st: ln.st, lh: ln.lh}, 0
-				if word = strings.TrimLeft(word, " "); word == "" {
-					continue
-				}
+	for _, u := range units {
+		uw := 0.0 // its width, the spaces at its end left out
+		for j, p := range u {
+			t := p.text
+			if j == len(u)-1 {
+				t = strings.TrimRight(t, " ")
 			}
-			if n := len(cur.runs); n > 0 && cur.runs[n-1].text != "" && runIndex(cur, ri) {
-				cur.runs[n-1].text += word
+			uw += b.textWidth(ln.runs[p.run], t)
+		}
+		if w+uw > width+0.5 && len(cur.runs) > 0 && !ln.runs[u[0].run].st.noWrap {
+			// A new line: the spaces at the old one's end and the new one's
+			// start go.
+			last := &cur.runs[len(cur.runs)-1]
+			last.text = strings.TrimRight(last.text, " ")
+			out = append(out, cur)
+			cur, w = hline{align: ln.align, st: ln.st, lh: ln.lh}, 0
+			u[0].text = strings.TrimLeft(u[0].text, " ")
+		}
+		for _, p := range u {
+			if p.text == "" {
+				continue
+			}
+			if n := len(cur.runs); n > 0 && runIndex(cur, p.run) {
+				cur.runs[n-1].text += p.text
 			} else {
-				nr := r
-				nr.text = word
-				nr.index = ri
+				nr := ln.runs[p.run]
+				nr.text, nr.index = p.text, p.run
 				cur.runs = append(cur.runs, nr)
 			}
-			w += b.textWidth(r, word)
+			w += b.textWidth(ln.runs[p.run], p.text)
 		}
 	}
 	if len(cur.runs) > 0 {
@@ -673,26 +711,58 @@ func (b *builder) wrapLine(ln hline, width float64) []hline {
 
 func runIndex(l hline, ri int) bool { return l.runs[len(l.runs)-1].index == ri }
 
-// splitWords splits text where lines may break: after each run of spaces,
-// and after a hyphen between letters ("a b-c  d" is "a ", "b-", "c  ",
-// "d").
+// splitWords splits text where lines may break (breakBetween): "a b-c  d"
+// is "a ", "b-", "c  ", "d"; Chinese, Japanese and Korean, between their
+// characters.
 func splitWords(s string) []string {
 	var out []string
 	start := 0
-	letter := func(c byte) bool { return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' }
-	for i := 0; i < len(s); i++ {
-		space := s[i] == ' ' && (i+1 == len(s) || s[i+1] != ' ')
-		hyphen := s[i] == '-' && i > start && letter(s[i-1]) && i+1 < len(s) && letter(s[i+1])
-		if space || hyphen {
-			out = append(out, s[start:i+1])
-			start = i + 1
+	var prev, prev2 rune
+	for i, r := range s {
+		if i > start && breakBetween(prev, r) && !(prev == '-' && !isLetter(prev2)) {
+			out = append(out, s[start:i])
+			start = i
 		}
+		prev2, prev = prev, r
 	}
 	if start < len(s) {
 		out = append(out, s[start:])
 	}
 	return out
 }
+
+// breakBetween reports whether a line may break between two characters,
+// as UAX #14 has it for the text of labels: after spaces, after a hyphen
+// before a letter, and before or after a character of Chinese, Japanese
+// or Korean (not before closing punctuation, nor after opening).
+func breakBetween(a, b rune) bool {
+	switch {
+	case a == 0 || b == 0 || b == ' ':
+		return false
+	case a == ' ':
+		return true
+	case a == '-':
+		return isLetter(b)
+	case closingPunct(b) || openingPunct(a):
+		return false
+	}
+	return wideScript(a) || wideScript(b)
+}
+
+func isLetter(r rune) bool { return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' }
+
+// wideScript reports whether r is of the scripts written without spaces
+// between words that lines break between any two characters of.
+func wideScript(r rune) bool {
+	return r >= 0x2E80 && r <= 0x9FFF || r >= 0xAC00 && r <= 0xD7AF || r >= 0xF900 && r <= 0xFAFF ||
+		r >= 0xFF00 && r <= 0xFF60 || r >= 0x20000 && r <= 0x3FFFF
+}
+
+func closingPunct(r rune) bool {
+	return strings.ContainsRune("，。、！？：；）」』》〉】〕｝”’…‥・ー々ゝゞヽヾぁぃぅぇぉっゃゅょゎゕゖァィゥェォッャュョヮヵヶ,.!?:;)]}％", r)
+}
+
+func openingPunct(r rune) bool { return strings.ContainsRune("（「『《〈【〔｛“‘([{", r) }
 
 // textWidth is the advance of a run's text as it is laid out.
 func (b *builder) textWidth(r hrun, s string) float64 {

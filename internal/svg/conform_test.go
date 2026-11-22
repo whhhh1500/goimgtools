@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/base64"
+	"fmt"
 	"image"
 	"net/url"
 	"slices"
@@ -666,5 +667,77 @@ func TestForeignNamespace(t *testing.T) {
 	doc := `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><s:g xmlns="http://example.org/notsvg" xmlns:s="http://www.w3.org/2000/svg"><s:rect width="10" height="10" fill="green"/><rect width="10" height="10" fill="red"/></s:g></svg>`
 	if got := rgbaAt(renderDoc(t, []byte(doc)), 5, 5); got != [4]uint32{0, 128, 0, 255} {
 		t.Errorf("%v", got)
+	}
+}
+
+// TestReviewFixes: lines break between the characters of Chinese and the
+// like (not before closing punctuation) and not between inline elements
+// within a word; a percentage line-height inherited from SVG; SVG's
+// fill-opacity does not reach HTML; a filter function's region holds the
+// strokes; currentColor of a filter function where it is used; an XHTML
+// style sheet applies; a foreignObject has a box.
+func TestReviewFixes(t *testing.T) {
+	if got := splitWords("用户提交订单。然后ab cd"); !slices.Equal(got, []string{"用", "户", "提", "交", "订", "单。", "然", "后", "ab ", "cd"}) {
+		t.Errorf("break opportunities: %q", got)
+	}
+	if breakBetween('b', 'c') || !breakBetween(' ', 'c') || !breakBetween('a', '中') || breakBetween('中', '，') || breakBetween('（', '中') {
+		t.Error("breakBetween")
+	}
+	font := `font-family="'` + testFont + `'" font-size="16"`
+	ink := func(img image.Image, y0, y1 int) (n, maxX int) {
+		for y := y0; y < y1; y++ {
+			for x := 0; x < 100; x++ {
+				if c := rgbaAt(img, x, y); c[3] > 0 && c[1] < 100 {
+					n++
+					maxX = max(maxX, x)
+				}
+			}
+		}
+		return n, maxX
+	}
+	one := render(t, `<foreignObject width="100" height="30" `+font+`><div xmlns="http://www.w3.org/1999/xhtml">नमस्ते</div></foreignObject>`)
+	_, w1 := ink(one, 0, 22)
+	// One word fits; the second and third are one word (no space between
+	// the bold and what follows), wrapped together.
+	box := w1 + w1*7/10
+	joined := render(t, fmt.Sprintf(`<foreignObject width="%d" height="60" %s><div xmlns="http://www.w3.org/1999/xhtml">नमस्ते <b>नम</b>स्ते</div></foreignObject>`, box, font))
+	spaced := render(t, fmt.Sprintf(`<foreignObject width="%d" height="60" %s><div xmlns="http://www.w3.org/1999/xhtml">नमस्ते <b>नम</b> स्ते</div></foreignObject>`, box, font))
+	_, xj := ink(joined, 0, 20)
+	_, xsp := ink(spaced, 0, 20)
+	if xj > w1+2 || xsp < w1+5 {
+		t.Errorf("a line broken within a word: ink to %d (with a space between, %d), a word %d", xj, xsp, w1)
+	}
+	pct := render(t, `<g `+font+` style="line-height:150%"><foreignObject width="100" height="80"><div xmlns="http://www.w3.org/1999/xhtml">नमस्ते<br/>नमस्ते</div></foreignObject></g>`)
+	if n, _ := ink(pct, 26, 50); n == 0 {
+		t.Error("an inherited percentage line-height: the second line not below the first")
+	}
+	faded := render(t, `<g fill-opacity="0.3" `+font+`><foreignObject width="100" height="30"><div xmlns="http://www.w3.org/1999/xhtml">नमस्ते</div></foreignObject></g>`)
+	full := false
+	for y := 0; y < 30 && !full; y++ {
+		for x := 0; x < 100; x++ {
+			if rgbaAt(faded, x, y)[3] == 255 {
+				full = true
+				break
+			}
+		}
+	}
+	if !full {
+		t.Error("SVG's fill-opacity on HTML text")
+	}
+	if got := rgbaAt(render(t, `<rect x="20" y="20" width="40" height="40" fill="red" stroke="#00f" stroke-width="10" style="filter:grayscale(1)"/>`), 17, 40); got[3] != 255 {
+		t.Errorf("a stroke cut by a filter function's region: %v", got)
+	}
+	use := `<symbol id="s" overflow="visible"><rect width="10" height="10" fill="#000" style="filter: drop-shadow(30px 0px currentColor)"/></symbol><use href="#s" color="#f00"/><use href="#s" y="50" color="#00f"/>`
+	img := render(t, use)
+	if a, b := rgbaAt(img, 35, 5), rgbaAt(img, 35, 55); a != [4]uint32{255, 0, 0, 255} || b != [4]uint32{0, 0, 255, 255} {
+		t.Errorf("currentColor of drop-shadow where it is used: %v %v", a, b)
+	}
+	xs := `<style xmlns="http://www.w3.org/1999/xhtml">rect { fill: green }</style><rect width="100" height="100" fill="red"/>`
+	if got := rgbaAt(render(t, xs), 50, 50); got != [4]uint32{0, 128, 0, 255} {
+		t.Errorf("an XHTML style sheet: %v", got)
+	}
+	fo := `<filter id="f"><feFlood flood-color="green"/></filter><foreignObject width="50" height="50" filter="url(#f)"><div xmlns="http://www.w3.org/1999/xhtml">x</div></foreignObject>`
+	if got := rgbaAt(render(t, fo), 25, 25); got != [4]uint32{0, 128, 0, 255} {
+		t.Errorf("a filter on a foreignObject: %v", got)
 	}
 }

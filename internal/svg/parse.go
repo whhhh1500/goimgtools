@@ -26,6 +26,8 @@ var errFormat = errors.New("goimgtools: svg: not a valid SVG document")
 
 const svgNS = "http://www.w3.org/2000/svg"
 
+var errTooBig = errors.New("goimgtools: svg: the document is too large or too deep")
+
 // node is an element of the document.
 type node struct {
 	name     string // local name, svg namespace assumed
@@ -107,6 +109,22 @@ func parse(data []byte, reserve func(int64) error) (*node, error) {
 	var stack []*node
 	count := 0
 	foreign := 0 // foreignObject elements open: their HTML's text is kept
+	// grow counts a node of the tree: no more than maxNodes, those of each
+	// 1024 reserved as they come.
+	reserved := 0
+	grow := func() error {
+		count++
+		if count > maxNodes {
+			return errTooBig
+		}
+		for count >= reserved+1024 {
+			if err := reserve(1024 * nodeBytes); err != nil {
+				return err
+			}
+			reserved += 1024
+		}
+		return nil
+	}
 	rootNS := ""
 	for {
 		tok, err := d.Token()
@@ -136,14 +154,11 @@ func parse(data []byte, reserve func(int64) error) (*node, error) {
 				}
 			}
 		case xml.StartElement:
-			count++
-			if count > maxNodes || len(stack) >= maxDepth {
-				return nil, errors.New("goimgtools: svg: the document is too large or too deep")
+			if len(stack) >= maxDepth {
+				return nil, errTooBig
 			}
-			if count%1024 == 0 {
-				if err := reserve(1024 * nodeBytes); err != nil {
-					return nil, err
-				}
+			if err := grow(); err != nil {
+				return nil, err
 			}
 			n := &node{name: t.Name.Local, attrs: make(map[string]string, len(t.Attr))}
 			// An element of another namespace than SVG's (or the root's) is
@@ -151,7 +166,8 @@ func parse(data []byte, reserve func(int64) error) (*node, error) {
 			// foreignObject).
 			if sp := t.Name.Space; root == nil {
 				rootNS = sp
-			} else if foreign == 0 && sp != "" && sp != svgNS && sp != rootNS && strings.Contains(sp, ":") {
+			} else if foreign == 0 && sp != "" && sp != svgNS && sp != rootNS && strings.Contains(sp, ":") &&
+				!(t.Name.Local == "style" && sp == "http://www.w3.org/1999/xhtml") { // HTML's style sheets apply
 				n.name = "\x00" + sp + " " + t.Name.Local
 			}
 			for _, a := range t.Attr {
@@ -202,7 +218,9 @@ func parse(data []byte, reserve func(int64) error) (*node, error) {
 				}
 				// In text, character data keeps its place among the tspans.
 				if top.name == "text" || top.name == "tspan" || top.name == "a" || top.name == "textPath" || foreign > 0 {
-					count++
+					if err := grow(); err != nil {
+						return nil, err
+					}
 					top.children = append(top.children, &node{name: "#text", text: string(t), parent: top, attrs: map[string]string{}})
 				}
 			}
