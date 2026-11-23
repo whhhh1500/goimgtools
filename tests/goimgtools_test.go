@@ -392,3 +392,55 @@ func TestFastShrinkOnLoadWebP(t *testing.T) {
 	same("alpha", must(FromImage(smooth(640, 480, true)).WebP(WebPOptions{Quality: 90}).ToBytes()), 100)
 	same("small reduction", must(FromImage(smooth(640, 480, false)).WebP(WebPOptions{Quality: 90}).ToBytes()), 300)
 }
+
+// TestFastShrinkOnLoadTIFFPyramid: with the option a pyramid TIFF is read
+// from its smallest level at least the size of the result (as libvips'
+// thumbnail picks a page): the same size, pixels close to those from the
+// image itself. A tiled TIFF without levels, and a reduction the image
+// alone can give, are left alone.
+func TestFastShrinkOnLoadTIFFPyramid(t *testing.T) {
+	m := image.NewNRGBA(image.Rect(0, 0, 1200, 800))
+	for y := 0; y < 800; y++ {
+		for x := 0; x < 1200; x++ {
+			m.SetNRGBA(x, y, color.NRGBA{uint8(x * 255 / 1200), uint8(y * 255 / 800), uint8((x + y) * 255 / 2000), 255})
+		}
+	}
+	fast := ResizeOptions{Fit: FitInside, FastShrinkOnLoad: true}
+	slow := ResizeOptions{Fit: FitInside}
+	pyr := must(FromImage(m).TIFF(TIFFOptions{Tile: 64, Pyramid: true, Compression: TIFFDeflate}).ToBytes())
+	for _, box := range []int{500, 150, 37} {
+		ma := decodePNG(t, must(FromBytes(pyr).Resize(box, box, fast).PNG().ToBytes()))
+		mb := decodePNG(t, must(FromBytes(pyr).Resize(box, box, slow).PNG().ToBytes()))
+		if ma.Bounds() != mb.Bounds() {
+			t.Fatalf("box %d: size %v with the option, %v without", box, ma.Bounds(), mb.Bounds())
+		}
+		var sum, n int
+		r := ma.Bounds()
+		for y := r.Min.Y; y < r.Max.Y; y++ {
+			for x := r.Min.X; x < r.Max.X; x++ {
+				r1, g1, b1, _ := ma.At(x, y).RGBA()
+				r2, g2, b2, _ := mb.At(x, y).RGBA()
+				for _, d := range []int{int(r1>>8) - int(r2>>8), int(g1>>8) - int(g2>>8), int(b1>>8) - int(b2>>8)} {
+					sum += max(d, -d)
+					n++
+				}
+			}
+		}
+		if sum == 0 {
+			t.Errorf("box %d: the option changed nothing", box)
+		}
+		if mean := float64(sum) / float64(n); mean > 1.5 {
+			t.Errorf("box %d: mean difference %.2f levels", box, mean)
+		}
+	}
+	same := func(what string, in []byte, box int) {
+		t.Helper()
+		a := must(FromBytes(in).Resize(box, box, fast).PNG().ToBytes())
+		b := must(FromBytes(in).Resize(box, box, slow).PNG().ToBytes())
+		if !bytes.Equal(a, b) {
+			t.Errorf("%s: the option changed the output", what)
+		}
+	}
+	same("no levels", must(FromImage(m).TIFF(TIFFOptions{Tile: 64, Compression: TIFFDeflate}).ToBytes()), 150)
+	same("level 0 is the nearest", pyr, 700)
+}

@@ -136,6 +136,12 @@ func (d *decoded) ShrinkOnLoadLibjpeg(k int) bool {
 
 // ScaleOnLoad passes on a request to a WebP decoder to decode the image
 // scaled to w x h as libwebp does; false where the decoder cannot.
+// UseLevel forwards the TIFF decoder's (see tiffstream).
+func (d *decoded) UseLevel(w, h int) bool {
+	j, is := d.Source.(interface{ UseLevel(w, h int) bool })
+	return is && j.UseLevel(w, h)
+}
+
 func (d *decoded) ScaleOnLoad(w, h int) bool {
 	j, is := d.Source.(interface{ ScaleOnLoad(w, h int) bool })
 	return is && j.ScaleOnLoad(w, h)

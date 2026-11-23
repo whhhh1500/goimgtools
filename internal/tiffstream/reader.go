@@ -95,6 +95,12 @@ func safeReadAt(r io.ReaderAt, n uint64, off int64) ([]byte, error) {
 }
 
 type decoder struct {
+	// next is the place of the directory after this one (0: none), and
+	// reduced whether this one is a reduced version of an image (its
+	// NewSubfileType, read apart: see levelInfo).
+	next    int64
+	reduced bool
+
 	r         io.ReaderAt
 	byteOrder binary.ByteOrder
 	config    image.Config
@@ -736,7 +742,11 @@ func (d *decoder) decodeGrayAlpha(dst image.Image, xmin, ymin, xmax, rMaxX, rMax
 // used for conservative bounds checking.
 const maxBytesPerPixel = 8
 
-func newDecoder(r io.ReaderAt) (*decoder, error) {
+func newDecoder(r io.ReaderAt) (*decoder, error) { return newDecoderAt(r, -1) }
+
+// newDecoderAt is newDecoder of the directory at ifd, or with ifd < 0 the
+// first one, which the header gives.
+func newDecoderAt(r io.ReaderAt, ifd int64) (*decoder, error) {
 	d := &decoder{
 		r:        r,
 		features: make(map[int][]uint),
@@ -778,6 +788,9 @@ func newDecoder(r io.ReaderAt) (*decoder, error) {
 		if ifdOffset = d.pointer(p); ifdOffset < 0 {
 			return nil, FormatError("malformed header")
 		}
+		if ifd >= 0 {
+			ifdOffset = ifd
+		}
 		if _, err := d.r.ReadAt(p, ifdOffset); err != nil {
 			return nil, err
 		}
@@ -785,6 +798,9 @@ func newDecoder(r io.ReaderAt) (*decoder, error) {
 			return nil, FormatError("too many IFD entries")
 		}
 	} else {
+		if ifd >= 0 {
+			ifdOffset = ifd
+		}
 		if _, err := d.r.ReadAt(p[0:2], ifdOffset); err != nil {
 			return nil, err
 		}
@@ -810,6 +826,7 @@ func newDecoder(r io.ReaderAt) (*decoder, error) {
 		prevTag = tag
 	}
 	d.exif = readExif(d.r, d.byteOrder, p, d.big)
+	d.levelInfo(p, ifdOffset+head+int64(len(p)))
 
 	if d.config.Width, err = d.firstIntVal(tImageWidth); err != nil {
 		return nil, err

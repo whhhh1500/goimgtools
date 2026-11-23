@@ -89,6 +89,7 @@ English | [中文](zh-CN/CHANGELOG.md)
 
 ### Changed
 
+- With `FastShrinkOnLoad` (and the default method, not in linear light) a pyramid TIFF is read from its smallest level at least the size the image is reduced to, as libvips' thumbnail picks a page: the output differs a little from that without the option (the level's own pixels are reduced). A 6000×4000 pyramid to a JPEG of 1536 wide: 0.31s → 0.088s, 13.3MB of memory.
 - Animated GIF output takes less memory: the two other ways each frame of changes is tried (without transparency, and with it over runs) are written into the same storage from frame to frame instead of copied anew (51MB of the 75MB allocated for 18 frames of 768×512). Reduced to a GIF of the same size, lossy 24: 34.8MB → 23.8MB; without loss 35.1MB → 24.4MB; the same files.
 - Rotation as Pillow's (`RotatePillow`, bicubic): the 4×4 pixels a point is worked out from are read from the cached tile at once when they are in one, and the tile before is used again otherwise, instead of looking up the cache for each: a 6000×4000 photograph turned by 15° in 2.44s instead of 4.60s, the same pixels.
 - `Recomb`, `Convolve`, `Linear`, the levels operations, the blend modes and the conversions through lookup-table colour profiles clamp with the built-in `min` and `max` instead of `math.Min` and `math.Max` (the same results for every value, NaN and zeros included, without a call): `Recomb` of a 6000×4000 photograph 0.73s → 0.34s, a 3×3 `Convolve` 0.83s → 0.64s, a watermark tiled with `multiply` 0.66s → 0.52s; the same pixels.

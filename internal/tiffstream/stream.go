@@ -30,6 +30,7 @@ const drainChunk = 4096
 // pulls one row of samples at a time from it.
 type stream struct {
 	d   *decoder
+	r   io.ReaderAt // the file, for UseLevel
 	env *pipeline.Env
 
 	// Block layout, as computed at the top of x/image's Decode.
@@ -96,6 +97,11 @@ func open(r io.ReaderAt, env *pipeline.Env) (_ *stream, err error) {
 	if err != nil {
 		return nil, err
 	}
+	return openDecoder(r, env, d)
+}
+
+// openDecoder is open of the directory d has read.
+func openDecoder(r io.ReaderAt, env *pipeline.Env, d *decoder) (_ *stream, err error) {
 
 	blockPadding := false
 	blockWidth := d.config.Width
@@ -211,6 +217,7 @@ func open(r io.ReaderAt, env *pipeline.Env) (_ *stream, err error) {
 
 	s := &stream{
 		d:            d,
+		r:            r,
 		env:          env,
 		blockPadding: blockPadding,
 		blockWidth:   blockWidth,

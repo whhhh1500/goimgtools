@@ -232,6 +232,21 @@ func (m *Image) buildFrom(env *pipeline.Env, top bool, f *input, format string, 
 			}
 		}
 	}
+	if format == "tiff" {
+		// With FastShrinkOnLoad a pyramid's level is read instead of the
+		// image, the smallest that is at least the size the resize scales
+		// to, as libvips' thumbnail picks one.
+		if z, turn, ok := firstResize(m.chain, r); ok && z.spec.o.FastShrinkOnLoad && z.spec.o.Method == MethodDefault && !z.spec.o.LinearLight && (len(m.hooks) == 0 || turn == ops.Upright && len(m.chain) > 0 && isResize(m.chain[0])) {
+			if j, can := src.(interface{ UseLevel(w, h int) bool }); can {
+				b := src.Bounds()
+				dw, dh := z.spec.target(turn.Size(b.Dx(), b.Dy()))
+				iw, ih := turn.Size(dw, dh)
+				if r.fits(dw, dh) == nil && iw > 0 && ih > 0 && j.UseLevel(iw, ih) {
+					pre = preShrunk{orig: b.Size(), whole: true}
+				}
+			}
+		}
+	}
 	if format == "svg" {
 		// A vector is drawn at the size the resize scales to, sharp at any
 		// size, rather than drawn at its own and resampled.

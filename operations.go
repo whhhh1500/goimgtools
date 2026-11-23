@@ -97,13 +97,15 @@ type ResizeOptions struct {
 	// or less be shrunk by 2, 4 or 8 while it is decoded (each 8×8 block
 	// decoded straight to the averages of its pixels), and a lossy WebP
 	// without alpha reduced to a third or less be decoded at twice the size
-	// of the result (as libwebp scales while decoding), leaving less for the
+	// of the result (as libwebp scales while decoding), and a pyramid TIFF
+	// be read from its smallest level at least the size of the result (with
+	// the default method, not in linear light), leaving less for the
 	// resize itself. It is markedly faster and uses less memory; the pixels
 	// differ slightly from a resize of the full image, the size of the
 	// result does not. With MethodLibvips it is sharp's fastShrinkOnLoad,
 	// sizes included, every WebP scaled as sharp has libwebp scale it. It
-	// applies when Resize is the first operation on a JPEG or WebP, and is
-	// ignored otherwise.
+	// applies when Resize is the first operation on a JPEG, WebP or TIFF,
+	// and is ignored otherwise.
 	FastShrinkOnLoad bool
 	// Background fills the bars FitContain adds. The default is black.
 	Background color.Color
