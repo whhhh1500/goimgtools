@@ -216,36 +216,60 @@ func Stats(img *goimgtools.Image) (st Statistics, err error) {
 				sum[c] += s[c]
 				sum2[c] += s2[c]
 			}
-			for x := 0; x < len(row); x += 4 {
-				p := row[x : x+4 : x+4]
-				a := uint64(p[3])
-				// (Most pixels are the colour of the one before them.)
-				if c := [4]uint8{p[0], p[1], p[2], p[3]}; !many && (!haveLast || c != last) {
-					seen[c], last, haveLast = struct{}{}, c, true
-					many = len(seen) > 256
-				}
-				if a != 255 {
-					st.Opaque = false
-					if a == 0 {
-						clear++
-						continue
+			if mn[3] == 255 {
+				// An opaque row: its sums are those of its levels, each
+				// weighted by 255.
+				n := uint64(len(row) / 4)
+				sr, sg, sb, sa = sr+255*s[0], sg+255*s[1], sb+255*s[2], sa+255*n
+				luma += 255 * (299*s[0] + 587*s[1] + 114*s[2])
+				visible += n
+				for x := 0; x < len(row); x += 4 {
+					p := row[x : x+4 : x+4]
+					if c := [4]uint8{p[0], p[1], p[2], p[3]}; !many && (!haveLast || c != last) {
+						seen[c], last, haveLast = struct{}{}, c, true
+						many = len(seen) > 256
 					}
+					if st.Gray && (p[0] != p[1] || p[1] != p[2]) {
+						st.Gray = false
+					}
+					k := &bins[int(p[0])>>(8-binBits)<<(2*binBits)|int(p[1])>>(8-binBits)<<binBits|int(p[2])>>(8-binBits)]
+					k.n++
+					k.r += uint64(p[0])
+					k.g += uint64(p[1])
+					k.b += uint64(p[2])
 				}
-				if p[0] != p[1] || p[1] != p[2] {
-					st.Gray = false
+			} else {
+				for x := 0; x < len(row); x += 4 {
+					p := row[x : x+4 : x+4]
+					a := uint64(p[3])
+					// (Most pixels are the colour of the one before them.)
+					if c := [4]uint8{p[0], p[1], p[2], p[3]}; !many && (!haveLast || c != last) {
+						seen[c], last, haveLast = struct{}{}, c, true
+						many = len(seen) > 256
+					}
+					if a != 255 {
+						st.Opaque = false
+						if a == 0 {
+							clear++
+							continue
+						}
+					}
+					if p[0] != p[1] || p[1] != p[2] {
+						st.Gray = false
+					}
+					// Weighted by how opaque the pixel is.
+					sr += uint64(p[0]) * a
+					sg += uint64(p[1]) * a
+					sb += uint64(p[2]) * a
+					sa += a
+					luma += (299*uint64(p[0]) + 587*uint64(p[1]) + 114*uint64(p[2])) * a
+					visible++
+					k := &bins[int(p[0])>>(8-binBits)<<(2*binBits)|int(p[1])>>(8-binBits)<<binBits|int(p[2])>>(8-binBits)]
+					k.n++
+					k.r += uint64(p[0])
+					k.g += uint64(p[1])
+					k.b += uint64(p[2])
 				}
-				// Weighted by how opaque the pixel is.
-				sr += uint64(p[0]) * a
-				sg += uint64(p[1]) * a
-				sb += uint64(p[2]) * a
-				sa += a
-				luma += (299*uint64(p[0]) + 587*uint64(p[1]) + 114*uint64(p[2])) * a
-				visible++
-				k := &bins[int(p[0])>>(8-binBits)<<(2*binBits)|int(p[1])>>(8-binBits)<<binBits|int(p[2])>>(8-binBits)]
-				k.n++
-				k.r += uint64(p[0])
-				k.g += uint64(p[1])
-				k.b += uint64(p[2])
 			}
 			// The row before this one has both its neighbours now.
 			if rows++; rows >= 2 {

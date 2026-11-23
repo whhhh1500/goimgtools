@@ -75,6 +75,20 @@ func TestStats(t *testing.T) {
 	if st, err := inspect.Stats(FromBytes(jpegBytes(photoLike(120, 90), 85))); err != nil || st.Gray || st.Colors != 0 {
 		t.Errorf("colour photo: %+v, %v", st, err)
 	}
+	// Grey but for the blue of one pixel, opaque or not.
+	for _, a := range []uint8{255, 128} {
+		m := image.NewNRGBA(image.Rect(0, 0, 9, 7))
+		for i := range m.Pix {
+			m.Pix[i] = uint8(i / 4 * 3)
+			if i%4 == 3 {
+				m.Pix[i] = a
+			}
+		}
+		m.Pix[m.PixOffset(5, 4)+2]++
+		if st, err := inspect.Stats(FromImage(m)); err != nil || st.Gray {
+			t.Errorf("one blue pixel, alpha %d: Gray=%v, %v", a, st.Gray, err)
+		}
+	}
 
 	// A photograph: the average is the mean of its pixels.
 	photo := photoLike(311, 207)

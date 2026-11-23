@@ -90,6 +90,7 @@ English | [中文](zh-CN/CHANGELOG.md)
 
 ### Changed
 
+- `inspect.Stats` (`stats`) takes the sums of an opaque row from those of its levels instead of weighting each pixel by its alpha: the same figures; a 6000×4000 JPEG 0.41s → 0.37s.
 - `Text` whose every colour (text, outline, shadow, background) is grey, on an opaque background and without colour glyphs, is a grey image: a PNG or JPEG of it has one channel, the same pixels. Black text of 40 lines, 2000 wide, on white, to a PNG: 0.22s → 0.14s, 536KB → 337KB.
 - Animated GIF output (without loss) is faster, with the same files: a trial of how a frame codes stops once it is no smaller than the best so far, the colours of a frame are counted in a small table of their own instead of maps, and the LZW coder keeps its state in registers. An APNG of 18 photographs (768×512) to a GIF: 1.41s → 1.15s.
 - Animated PNG output compresses each way of writing a frame only once: a way whose rows would be those of one tried before (the same rectangle without blending, or blending that clears the same pixels, or none) is left out, its data being the same. The same files; the GIF of 18 photographs (768×512) to an APNG: 3.06s → 1.35s.
