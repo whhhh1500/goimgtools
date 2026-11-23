@@ -48,6 +48,10 @@ type gaussKernel struct {
 	weight []uint32 // what each box adds to the weight of the pixels within it
 	shift  uint     // the vector path: (sum + 1<<(shift-1)) >> shift
 	scale  uint32   // the integer path, when not 0: (sum + scale/2) / scale
+	// For the SIMD passes: the byte offsets of the running totals of each
+	// box's two ends from those of the pixel, and its weight eight times.
+	hiOff, loOff []int64
+	wt8          []uint32
 }
 
 // newGaussKernel makes the mask of sigma cut off below minAmpl of its peak.
@@ -100,6 +104,13 @@ func newGaussKernel(sigma, minAmpl float64) (*gaussKernel, error) {
 			k.radius = append(k.radius, i)
 			k.weight = append(k.weight, w[i]-cur)
 			cur = w[i]
+		}
+	}
+	for j, b := range k.radius {
+		k.hiOff = append(k.hiOff, int64(16*(r+b+1)))
+		k.loOff = append(k.loOff, int64(16*(r-b)))
+		for range 8 {
+			k.wt8 = append(k.wt8, k.weight[j])
 		}
 	}
 	return k, nil
@@ -183,17 +194,31 @@ func (h *hkernel) apply(dst, row []uint8) {
 	for i := 0; i < r; i++ {
 		edge(i, row)
 	}
-	body, run := t[4*r:4*(r+w)+4], row[:4*w]
-	body = body[:len(run)+4]
-	for i, p := range run {
-		body[i+4] = body[i] + uint32(p)
+	simd := useKernelSIMD && k.scale == 0 && len(k.radius) > 0
+	if simd {
+		kernelPrefixSIMD(&t[4*r], &row[0], w)
+	} else {
+		body, run := t[4*r:4*(r+w)+4], row[:4*w]
+		body = body[:len(run)+4]
+		for i, p := range run {
+			body[i+4] = body[i] + uint32(p)
+		}
 	}
 	for i := r + w; i < w+2*r; i++ {
 		edge(i, row[4*(w-1):])
 	}
 	// A box of radius b about x is the pixels from x+r-b to x+r+b of the
 	// row with its ends repeated.
-	sum := h.sum[:4*w]
+	sum, d := h.sum[:4*w], dst[:4*w]
+	if simd {
+		// Eight bytes at a time, the alpha of an opaque image too (vkernel
+		// makes it 255 again); the rest below.
+		n8 := 4 * w &^ 7
+		if n8 > 0 {
+			kernelHSIMD(&d[0], &t[0], &k.hiOff[0], &k.loOff[0], &k.wt8[0], len(k.radius), n8, 1<<(k.shift-1), uint32(k.shift), 0)
+		}
+		sum, d, t = sum[n8:], d[n8:], t[n8:]
+	}
 	clear(sum)
 	for j, b := range k.radius {
 		wt, hi, lo := k.weight[j], t[4*(r+b+1):], t[4*(r-b):]
@@ -202,8 +227,7 @@ func (h *hkernel) apply(dst, row []uint8) {
 			sum[i] += wt * (hi[i] - lo[i])
 		}
 	}
-	d := dst[:4*w]
-	if h.nc == 4 {
+	if h.nc == 4 || simd {
 		for i, v := range sum {
 			d[i] = k.value(v)
 		}
@@ -235,6 +259,8 @@ type vkernel struct {
 	box       []uint32 // a box, while the sum about the first row is made
 	out       [][]uint8
 	in, gone  [][][]uint8 // the rows that move each box, for each row of the batch
+	inP       [][]*byte   // the starts of in and gone, for the SIMD pass
+	goneP     [][]*byte
 	work      batch
 	got, next int // input rows taken; next output row to work out
 	n, handed int // rows of the batch, of them handed out
@@ -336,11 +362,19 @@ func (v *vkernel) nextRow() ([]uint8, error) {
 		}
 	} else {
 		// A store in memory hands out its rows as they are, without fail.
+		simd := useKernelSIMD && k.scale == 0 && len(k.radius) > 0
 		for i := 0; i < n; i++ {
 			for j, b := range k.radius {
 				v.in[i][j], _ = v.row(y0 + i + b + 1)
 				v.gone[i][j], _ = v.row(y0 + i - b)
+				if simd {
+					v.inP[i][j], v.goneP[i][j] = &v.in[i][j][0], &v.gone[i][j][0]
+				}
 			}
+		}
+		var alpha uint64
+		if v.opaque {
+			alpha = 0xff000000ff000000
 		}
 		// A few thousand columns at a time, whose sums stay in the cache
 		// while every box moves them.
@@ -348,6 +382,21 @@ func (v *vkernel) nextRow() ([]uint8, error) {
 			for t := lo; t < hi; t += 2048 {
 				te := min(t+2048, hi)
 				for i := 0; i < n; i++ {
+					if simd {
+						// Eight bytes at a time; the rest below.
+						if n8 := (te - t) &^ 7; n8 > 0 {
+							kernelVSIMD(&v.out[i][t], &v.sum[t], &v.inP[i][0], &v.goneP[i][0], &k.wt8[0], len(k.radius), n8, t,
+								1<<(k.shift-1), uint32(k.shift), alpha)
+							if t+n8 == te {
+								continue
+							}
+							emit(i, t+n8, te)
+							for j, wt := range k.weight {
+								move(wt, v.in[i][j], v.gone[i][j], t+n8, te)
+							}
+							continue
+						}
+					}
 					emit(i, t, te)
 					for j, wt := range k.weight {
 						move(wt, v.in[i][j], v.gone[i][j], t, te)
@@ -397,8 +446,10 @@ func (f *filterStage) kernelPasses(k *gaussKernel) (rowSource, error) {
 		sum: make([]uint32, w4), box: make([]uint32, w4), out: rowBatch(rows, w4), work: f.work}
 	if !disk {
 		v.in, v.gone = make([][][]uint8, rows), make([][][]uint8, rows)
+		v.inP, v.goneP = make([][]*byte, rows), make([][]*byte, rows)
 		for i := range v.in {
 			v.in[i], v.gone[i] = make([][]uint8, nb), make([][]uint8, nb)
+			v.inP[i], v.goneP[i] = make([]*byte, nb), make([]*byte, nb)
 		}
 	}
 	return v, nil
