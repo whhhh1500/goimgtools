@@ -66,31 +66,38 @@ func (z *deferLZW) put(code uint32) {
 }
 
 func (z *deferLZW) write(pix []byte) {
+	if len(pix) == 0 {
+		return
+	}
+	if !z.started {
+		z.cur, z.started, z.run = uint32(pix[0]), true, 1
+		pix = pix[1:]
+	}
+	// The string being built and its length in locals, kept in registers.
+	cur, run := z.cur, z.run
+	table := &z.table
+next:
 	for _, p := range pix {
 		lit := uint32(p)
-		if !z.started {
-			z.cur, z.started, z.run = lit, true, 1
-			continue
-		}
-		z.run++
-		key := z.cur<<8 | lit
+		run++
+		key := cur<<8 | lit
 		h := (key>>12 ^ key) & deferTableMask
-		found := false
-		for t := z.table[h]; t != 0; t = z.table[h] {
-			if t>>12 == key {
-				z.cur, found = t&lzwMaxCode, true
+		for {
+			t := table[h]
+			if t == 0 {
 				break
+			}
+			if t>>12 == key {
+				cur = t & lzwMaxCode
+				continue next
 			}
 			h = (h + 1) & deferTableMask
 		}
-		if found {
-			continue
-		}
-		z.put(z.cur)
-		z.cur = lit
+		z.put(cur)
+		cur = lit
 		// The average length of the codes, over about the last sixteen.
-		z.avg += (z.run-1)<<8/16 - z.avg/16
-		z.run = 1
+		z.avg += (run-1)<<8/16 - z.avg/16
+		run = 1
 		if z.full && z.avg*256 < z.atFull*z.clearBelow {
 			z.put(z.clear)
 			z.forget()
@@ -98,11 +105,12 @@ func (z *deferLZW) write(pix []byte) {
 		}
 		// Define the string just ended plus lit, as the decoder does.
 		if z.inc() {
-			z.table[h] = key<<12 | z.hi
+			table[h] = key<<12 | z.hi
 		} else if z.full && z.atFull == 0 {
 			z.atFull = max(z.avg, 1)
 		}
 	}
+	z.cur, z.run = cur, run
 }
 
 // inc implies the next code, as compress/lzw's incHi but for clearing:

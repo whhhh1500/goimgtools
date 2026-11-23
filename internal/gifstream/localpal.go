@@ -127,6 +127,7 @@ func (t *frameTee) writeLocal(w io.Writer, env *pipeline.Env, stored *pipeline.S
 	row := make([]byte, 4*fw)
 	var bufs [3][]byte
 	var wayBufs [2][]uint32 // see waysOf
+	colours := new(colourTable)
 	rd := pipeline.NewSeqReader(stored, 0, stored.Size(), 64<<10)
 	prevDisposal := byte(disposalBackground)
 	for k := range infos {
@@ -158,20 +159,20 @@ func (t *frameTee) writeLocal(w io.Writer, env *pipeline.Env, stored *pipeline.S
 		var bestPal color.Palette
 		bestTI, bestSize, bestPolicy := -1, -1, 0
 		for i, way := range ways {
-			pal, index, ti := paletteOf(way)
+			pal, ti := paletteOf(way, colours)
 			if len(pal) > 256 {
 				continue
 			}
 			pix := bufs[i][:0]
 			for _, c := range way {
-				pix = append(pix, index[c])
+				pix = append(pix, colours.get(c))
 			}
 			bufs[i] = pix
 			for policy := range clearPolicies {
 				if policy > 0 && (o.Lossy > 0 || aw.effort >= 1 && aw.effort <= 8) {
 					break
 				}
-				size, err := aw.codedSize(pal, true, rect, ti, pix, policy)
+				size, err := aw.codedSize(pal, true, rect, ti, pix, policy, bestSize)
 				if err != nil {
 					return err
 				}
@@ -243,37 +244,79 @@ func waysOf(keys []uint32, r image.Rectangle, screen []uint32, sw int, into1, in
 // paletteOf returns the palette of the colour keys (sorted, the transparent
 // entry last when there is one), the index of each key and the transparent
 // index (-1 for none). The palette may come out longer than 256.
-func paletteOf(keys []uint32) (color.Palette, map[uint32]byte, int) {
-	seen := map[uint32]struct{}{}
+func paletteOf(keys []uint32, index *colourTable) (color.Palette, int) {
+	index.reset()
 	for _, c := range keys {
-		seen[c] = struct{}{}
-		if len(seen) > 257 {
+		if index.add(c) && index.n > 257 {
 			break
 		}
 	}
-	sorted := make([]uint32, 0, len(seen))
-	for c := range seen {
-		sorted = append(sorted, c)
+	sorted := make([]uint32, 0, index.n)
+	for _, k := range index.keys {
+		if k != 0 {
+			sorted = append(sorted, uint32(k))
+		}
 	}
 	slices.Sort(sorted) // noColour first, when there
 	pal := make(color.Palette, 0, len(sorted))
-	index := make(map[uint32]byte, len(sorted))
 	ti := -1
 	for _, c := range sorted {
 		if c != noColour {
-			index[c] = byte(len(pal))
+			index.set(c, byte(len(pal)))
 			pal = append(pal, color.RGBA{uint8(c >> 16), uint8(c >> 8), uint8(c), 0xff})
 		}
 	}
 	if len(sorted) > 0 && sorted[0] == noColour {
 		ti = len(pal)
-		index[noColour] = byte(ti)
+		index.set(noColour, byte(ti))
 		pal = append(pal, color.RGBA{})
 	}
 	if len(pal) == 0 {
 		pal = append(pal, color.RGBA{})
 	}
-	return pal, index, ti
+	return pal, ti
 }
+
+// colourTable holds the colour keys of a frame, up to a few hundred, and
+// their indices in its palette: open addressing in 1024 places, a place
+// holding 1<<32 | key (0 for none).
+type colourTable struct {
+	keys [1024]uint64
+	idx  [1024]byte
+	n    int
+}
+
+func (t *colourTable) reset() {
+	clear(t.keys[:])
+	t.n = 0
+}
+
+// place is where c is, or would go.
+func (t *colourTable) place(c uint32) int {
+	h := int(c * 0x9e3779b1 >> 22)
+	for {
+		if k := t.keys[h]; k == 0 || uint32(k) == c {
+			return h
+		}
+		h = (h + 1) & 1023
+	}
+}
+
+// add puts c in, if it is not there and there is room (some places are
+// always left empty), and reports whether it did.
+func (t *colourTable) add(c uint32) bool {
+	h := t.place(c)
+	if t.keys[h] != 0 || t.n >= 512 {
+		return false
+	}
+	t.keys[h] = 1<<32 | uint64(c)
+	t.n++
+	return true
+}
+
+func (t *colourTable) set(c uint32, i byte) { t.idx[t.place(c)] = i }
+
+// get is the index of c, which must be in.
+func (t *colourTable) get(c uint32) byte { return t.idx[t.place(c)] }
 
 var errLocalPalette = errors.New("goimgtools: gif: internal error: a frame does not fit a palette of its own")

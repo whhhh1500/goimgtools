@@ -317,7 +317,7 @@ func (aw *AnimWriter) smallest(pal color.Palette, local bool, r image.Rectangle,
 			if policy > 0 && aw.e.lossy > 0 {
 				break
 			}
-			size, err := aw.codedSize(pal, local, r, ti, way, policy)
+			size, err := aw.codedSize(pal, local, r, ti, way, policy, bestSize)
 			if err != nil {
 				return nil, 0, err
 			}
@@ -329,9 +329,15 @@ func (aw *AnimWriter) smallest(pal color.Palette, local bool, r image.Rectangle,
 	return best, bestPolicy, nil
 }
 
+// boundTrials lets codedSize stop at its limit; tests turn it off to
+// compare.
+var boundTrials = true
+
 // codedSize is how many bytes the pixels of a frame take, coded as
-// AnimWriter codes them.
-func (aw *AnimWriter) codedSize(pal color.Palette, local bool, r image.Rectangle, ti int, pix []byte, policy int) (int, error) {
+// AnimWriter codes them; or, when limit is positive and they come to at
+// least that many, some number not below it (the coding stops there:
+// the way cannot be the smallest).
+func (aw *AnimWriter) codedSize(pal color.Palette, local bool, r image.Rectangle, ti int, pix []byte, policy, limit int) (int, error) {
 	global := pal
 	if local {
 		global = nil
@@ -346,7 +352,14 @@ func (aw *AnimWriter) codedSize(pal color.Palette, local bool, r image.Rectangle
 	aw.counted.n = 0
 	e.err, e.globalPalette, e.lossy, e.clearPolicy = nil, global, aw.e.lossy, policy
 	e.beginImage(pal, r, 0, 0, ti)
-	e.writePixels(pix)
+	for len(pix) > 0 {
+		n := min(len(pix), 16<<10)
+		e.writePixels(pix[:n])
+		pix = pix[n:]
+		if limit > 0 && boundTrials && aw.counted.n >= limit {
+			break
+		}
+	}
 	e.endImage()
 	e.flush()
 	return aw.counted.n, e.err

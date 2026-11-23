@@ -90,6 +90,7 @@ English | [中文](zh-CN/CHANGELOG.md)
 
 ### Changed
 
+- Animated GIF output (without loss) is faster, with the same files: a trial of how a frame codes stops once it is no smaller than the best so far, the colours of a frame are counted in a small table of their own instead of maps, and the LZW coder keeps its state in registers. An APNG of 18 photographs (768×512) to a GIF: 1.41s → 1.15s.
 - Animated PNG output compresses each way of writing a frame only once: a way whose rows would be those of one tried before (the same rectangle without blending, or blending that clears the same pixels, or none) is left out, its data being the same. The same files; the GIF of 18 photographs (768×512) to an APNG: 3.06s → 1.35s.
 - `Dilate` and `Erode` combine two pixels at a time as 64-bit words, across one by one for squares up to 9 wide and in blocks without a division per pixel beyond: the same bytes. A 6000×4000 JPEG, width 2: 0.37s → 0.25s (libvips 0.18s); width 40: 1.77s → 0.98s.
 - `BlurLibvips` with AVX2 on amd64 (the `purego` build tag leaves it out): the running totals of a row, the weighted sums of the boxes across and their moving down, eight sums at a time, in the same uint32 arithmetic, so the same bytes. A 6000×4000 JPEG blurred with sigma 3 and written again: 0.84s → 0.26s (libvips 0.20s).
