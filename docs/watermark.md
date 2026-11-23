@@ -22,7 +22,7 @@ err := goimgtools.Open("in.jpg").
 mark, found, err := inspect.ReadWatermark(goimgtools.Open("leaked.jpg"), "our secret")
 ```
 
-Reading a picture of 3000×2000 takes about 0.9 seconds when the mark is there and 5 to 6 when it is not (more ways are tried, in more places, and a picture in colour is read twice, see below), and about 90MB (100 when nothing is found). With `Threads` (or `SetDefaultThreads`) the search shares its work out and finds the same: on 8 cores, 0.5 and 2.2 seconds.
+Reading a picture of 3000×2000 takes about 0.9 seconds when the mark is there and 5 to 6 when it is not (more ways are tried, in more places, and a picture in colour is read twice, see below), and, the program included, about 54MB at its peak (57MB when nothing is found). With `Threads` (or `SetDefaultThreads`) the search shares its work out and finds the same: on 8 cores, 0.5 and 2.2 seconds, and about 72MB (69MB when nothing is found).
 
 ```bash
 goimgtools -mark user-1234 -mark-key "our secret" -mark-kind screen in.jpg shown.jpg

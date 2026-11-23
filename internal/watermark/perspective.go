@@ -24,10 +24,16 @@ func (d *detector) perspective(B mat2) (mapping, bool) {
 	windows := [4][2]int{{h / 4, 0}, {h / 4, w / 2}, {0, w / 4}, {h / 2, w / 4}}
 	var found [4]bool
 	var each [4][3]float64
+	// One window at a time, they take turns with one spectrum's memory.
+	var shared []complex64
+	if d.par == nil {
+		shared = make([]complex64, pow2(ch)*pow2(cw))
+	}
 	d.parallel(len(windows), func(i int) {
 		o := windows[i]
-		dw := &detector{k: d.k, p: d.p, w: cw, h: ch, par: d.par}
-		dw.prepare(d.window(o[0], o[1], ch, cw))
+		dw := &detector{k: d.k, p: d.p, w: cw, h: ch, par: d.par, specBuf: shared}
+		dw.prepareOf(d.r[o[0]*d.w+o[1]:], d.w)
+		dw.searched() // no search: magBox at once
 		Bw := dw.polishFrom(B)
 		Bl, ok := dw.lsq(Bw)
 		if !ok {

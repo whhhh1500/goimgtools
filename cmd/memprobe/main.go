@@ -11,7 +11,6 @@ package main
 
 import (
 	"bufio"
-	"crypto/sha256"
 	"fmt"
 	"image"
 	"image/color"
@@ -32,6 +31,7 @@ import (
 	_ "golang.org/x/image/webp"
 
 	"github.com/whhhh1500/goimgtools"
+	"github.com/whhhh1500/goimgtools/internal/sha256"
 )
 
 func main() {

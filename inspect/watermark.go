@@ -5,6 +5,7 @@ import (
 	"image"
 	"image/color"
 	"io"
+	"runtime/debug"
 
 	"github.com/whhhh1500/goimgtools"
 	"github.com/whhhh1500/goimgtools/internal/watermark"
@@ -31,10 +32,11 @@ import (
 // longer) is reduced first. For one of that size the search takes under a
 // second when the mark is there (five or six when it is not, or is badly
 // damaged: more ways are tried, in more places, and a picture in colour is
-// read again with its brightness less what its colour explains) and about
-// 90MB (100 when nothing is found). It shares its work with the cores img
-// may use (Threads, SetDefaultThreads), finding the same: with 8, about 0.5
-// and 2 seconds. The operations of img, if it has any, are run first.
+// read again with its brightness less what its colour explains) and, the
+// program included, about 58MB at its peak, mark or none. It shares its
+// work with the cores img may use (Threads, SetDefaultThreads), finding the
+// same: with 8, about 0.5 and 2 seconds, and up to 80MB.
+// The operations of img, if it has any, are run first.
 func ReadWatermark(img *goimgtools.Image, key string) ([]byte, bool, error) {
 	if img == nil {
 		return nil, false, errors.New("goimgtools/inspect: ReadWatermark needs an image")
@@ -48,69 +50,86 @@ func ReadWatermark(img *goimgtools.Image, key string) ([]byte, bool, error) {
 		m.Resize(max(1, int(float64(float64(w)*s)+0.5)), max(1, int(float64(float64(h)*s)+0.5)), goimgtools.ResizeOptions{
 			Fit: goimgtools.FitFill, Kernel: goimgtools.KernelBox, Method: goimgtools.MethodPillow, FastShrinkOnLoad: true})
 	}
-	src, err := m.Stream(nil)
-	if err != nil {
-		return nil, false, err
-	}
-	defer func() { src.Close() }()
-	// The brightness, and the colour of a picture that has any, are taken
-	// from the strips as they come, held against the memory limit; the
-	// picture itself is not kept.
-	b := src.Bounds()
-	lw, lh := b.Dx(), b.Dy()
-	env := pipeline.EnvOf(src)
-	need := int64(8) * int64(lw) * int64(lh)
-	if err := env.Budget.Reserve(need, "the brightness of the picture (ReadWatermark)"); err != nil {
-		return nil, false, err
-	}
-	defer env.Budget.Release(need)
-	// The colour is kept for the second reading (below) where the limit
-	// leaves room for it; otherwise the brightness is read once, as it
-	// would be from a grey picture.
-	colour := src.ColorModel() != color.GrayModel && src.ColorModel() != color.Gray16Model
-	if colour {
-		if env.Budget.Reserve(need, "the colour of the picture (ReadWatermark)") == nil {
-			defer env.Budget.Release(need)
-		} else {
-			colour = false
-		}
-	}
-	l := make([]float64, lw*lh)
-	var cb, cr []float32
-	if colour {
-		cb, cr = make([]float32, lw*lh), make([]float32, lw*lh)
-	}
-	for {
-		strip, err := src.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, false, err
-		}
-		sb := strip.Bounds()
-		o := (sb.Min.Y - b.Min.Y) * lw
-		if colour {
-			luma(l[o:], cb[o:], cr[o:], lw, strip)
-		} else {
-			luma(l[o:], nil, nil, lw, strip)
-		}
-	}
-	// The search shares its work with the cores the image may use
-	// (Threads, SetDefaultThreads); what it finds does not depend on them.
-	var par watermark.Parallel
-	if env.Helpers() > 0 {
-		par = env.Parallel
-	}
 	k := watermark.NewKey(key)
-	payload, ok := watermark.Detect(l, lw, lh, k, par)
+	// pass takes the brightness from the strips as they come (with colour,
+	// blue and red less the brightness too: see luma), held against the
+	// memory limit, and looks for the mark in it; the picture itself is not
+	// kept. colour tells whether the picture has any.
+	pass := func(withColour bool) (payload []byte, found, colour bool, err error) {
+		src, err := m.Stream(nil)
+		if err != nil {
+			return nil, false, false, err
+		}
+		defer func() { src.Close() }()
+		b := src.Bounds()
+		lw, lh := b.Dx(), b.Dy()
+		env := pipeline.EnvOf(src)
+		colour = src.ColorModel() != color.GrayModel && src.ColorModel() != color.Gray16Model
+		need := int64(8) * int64(lw) * int64(lh)
+		if withColour {
+			// The colour is read where the limit leaves room for it, with
+			// the brightness once more.
+			need *= 2
+			if !colour || env.Budget.Reserve(need, "the brightness and colour of the picture (ReadWatermark)") != nil {
+				return nil, false, colour, nil
+			}
+		} else if err := env.Budget.Reserve(need, "the brightness of the picture (ReadWatermark)"); err != nil {
+			return nil, false, colour, err
+		}
+		defer env.Budget.Release(need)
+		l := make([]float64, lw*lh)
+		// The colour in storage the search then takes over (see
+		// watermark.ChromaStore).
+		var chroma []float64
+		var cb, cr []float32
+		if withColour {
+			chroma, cb, cr = watermark.ChromaStore(lw * lh)
+		}
+		for {
+			strip, err := src.Next()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				return nil, false, colour, err
+			}
+			sb := strip.Bounds()
+			o := (sb.Min.Y - b.Min.Y) * lw
+			if withColour {
+				luma(l[o:], cb[o:], cr[o:], lw, strip)
+			} else {
+				luma(l[o:], nil, nil, lw, strip)
+			}
+		}
+		if withColour {
+			if !watermark.CleanChroma(l, cb, cr, lw, lh) {
+				return nil, false, colour, nil
+			}
+			cb, cr = nil, nil
+		}
+		// The search shares its work with the cores the image may use
+		// (Threads, SetDefaultThreads); what it finds does not depend on them.
+		var par watermark.Parallel
+		if env.Helpers() > 0 {
+			par = env.Parallel
+		}
+		payload, found = watermark.DetectInPlace(l, chroma, lw, lh, k, par)
+		return payload, found, colour, nil
+	}
+	payload, ok, colour, err := pass(false)
+	if err != nil || ok || !colour {
+		return payload, ok, err
+	}
 	// Not found, the brightness is read again less what its colour explains
 	// (see watermark.CleanChroma): more is read cropped and turned, less
-	// after a camera's white balance, so both are tried.
-	if !ok && colour && watermark.CleanChroma(l, cb, cr, lw, lh) {
-		payload, ok = watermark.Detect(l, lw, lh, k, par)
-	}
-	return payload, ok, nil
+	// after a camera's white balance, so both are tried. The picture is read
+	// a second time for it rather than its colour kept through the first
+	// search, a picture's worth of memory more all along (what is read is the
+	// same). What the first search left is collected first and its memory
+	// given back (why: see detect in internal/watermark).
+	debug.FreeOSMemory()
+	payload, ok, _, err = pass(true)
+	return payload, ok, err
 }
 
 // luma writes the brightness of each pixel of pic, 0 to 255, of the

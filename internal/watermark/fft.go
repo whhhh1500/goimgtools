@@ -3,6 +3,7 @@ package watermark
 import (
 	"math"
 	"math/bits"
+	"sync"
 )
 
 // fftPlan holds the twiddle factors and bit reversal of a power-of-two
@@ -13,6 +14,18 @@ type fftPlan struct {
 	n   int
 	tw  []complex64 // exp(-2 pi i k / n), k < n/2
 	rev []int32
+}
+
+// plans are the plans made so far, by length (read only once made).
+var plans sync.Map
+
+// planOf is the plan of length n, made once.
+func planOf(n int) *fftPlan {
+	if p, ok := plans.Load(n); ok {
+		return p.(*fftPlan)
+	}
+	p, _ := plans.LoadOrStore(n, newFFTPlan(n))
+	return p.(*fftPlan)
 }
 
 func newFFTPlan(n int) *fftPlan {
@@ -70,24 +83,43 @@ func fft2(a []complex64, h, w int, inverse bool) { fft2Par(a, h, w, inverse, nil
 // fft2Par is fft2 with its rows, then its columns, shared out by par (nil:
 // one at a time); the result is the same.
 func fft2Par(a []complex64, h, w int, inverse bool, par Parallel) {
+	fft2With(a, h, w, inverse, par, nil)
+}
+
+// fftCols is how many columns fft2 copies out at a time.
+const fftCols = 8
+
+// fft2With is fft2Par with col for the columns when one share is done at a
+// time (fftCols times h at least; nil, or shorter: its own).
+func fft2With(a []complex64, h, w int, inverse bool, par Parallel, col []complex64) {
+	const cols = fftCols // columns copied out at a time
+	const blocks = 8     // of them a share at a time
+	// One share at a time, they take turns with one buffer.
+	var one []complex64
 	if par == nil {
+		if cap(col) >= cols*h {
+			one = col[:cols*h]
+		} else {
+			one = make([]complex64, cols*h)
+		}
 		par = func(n int, fn func(i int)) {
 			for i := range n {
 				fn(i)
 			}
 		}
 	}
-	pw, ph := newFFTPlan(w), newFFTPlan(h)
+	pw, ph := planOf(w), planOf(h)
 	const rows = 32 // rows a share at a time
 	par((h+rows-1)/rows, func(i int) {
 		for y := i * rows; y < min(h, (i+1)*rows); y++ {
 			pw.transform(a[y*w:], inverse)
 		}
 	})
-	const cols = 8   // columns copied out at a time
-	const blocks = 8 // of them a share at a time
 	par((w+cols*blocks-1)/(cols*blocks), func(i int) {
-		buf := make([]complex64, cols*h)
+		buf := one
+		if buf == nil {
+			buf = make([]complex64, cols*h)
+		}
 		for x0 := i * cols * blocks; x0 < min(w, (i+1)*cols*blocks); x0 += cols {
 			n := min(cols, w-x0)
 			for y := range h {
@@ -116,3 +148,11 @@ func fft2Par(a []complex64, h, w int, inverse bool, par Parallel) {
 }
 
 func pow2(n int) int { return 1 << bits.Len(uint(n-1)) }
+
+// fft2 is fft2 with d's buffer for the columns.
+func (d *detector) fft2(a []complex64, h, w int, inverse bool) {
+	if cap(d.fftCol) < fftCols*h {
+		d.fftCol = make([]complex64, fftCols*max(h, ns))
+	}
+	fft2With(a, h, w, inverse, nil, d.fftCol)
+}

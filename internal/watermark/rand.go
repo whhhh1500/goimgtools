@@ -18,8 +18,9 @@
 package watermark
 
 import (
-	"crypto/sha256"
 	"encoding/binary"
+
+	"github.com/whhhh1500/goimgtools/internal/sha256"
 )
 
 // Key is the hash of a user's key that every pattern is derived from.

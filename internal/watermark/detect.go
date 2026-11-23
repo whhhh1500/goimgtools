@@ -2,8 +2,11 @@ package watermark
 
 import (
 	"math"
+	"runtime/debug"
 	"slices"
+	"sync"
 	"sync/atomic"
+	"unsafe"
 )
 
 // WorkingSide is the most pixels along the shorter side, and twice that
@@ -25,17 +28,50 @@ type Parallel func(n int, fn func(i int))
 // (w x h values, 0 to 255, rows top to bottom) and returns its payload.
 // par, if not nil, shares the work out; the result does not depend on it.
 func Detect(lum []float64, w, h int, k Key, par Parallel) ([]byte, bool) {
+	return detect(lum, w, h, k, par, false, nil)
+}
+
+// DetectInPlace is Detect using lum for its own work: what lum holds
+// afterwards is not the picture. It needs a picture's worth of memory less;
+// with spare (w x h values at least, or nil) one more.
+func DetectInPlace(lum, spare []float64, w, h int, k Key, par Parallel) ([]byte, bool) {
+	return detect(lum, w, h, k, par, true, spare)
+}
+
+// ChromaStore is storage for the colour CleanChroma reads (cb and cr, n
+// values each, in store's memory), which DetectInPlace can then be given as
+// spare.
+func ChromaStore(n int) (store []float64, cb, cr []float32) {
+	store = make([]float64, n)
+	f := float32s(store)
+	return store, f[:n:n], f[n:]
+}
+
+func detect(lum []float64, w, h int, k Key, par Parallel, own bool, spare []float64) ([]byte, bool) {
 	if w < 32 || h < 32 {
 		return nil, false
 	}
 	p := newPatterns(k)
 	// The detectors keep par as it is: nil, they work alone and share their
 	// scratch.
-	d := &detector{k: k, p: p, w: w, h: h, par: par}
+	d := &detector{k: k, p: p, w: w, h: h, par: par, pool: new(scratchPool)}
 	par = d.parallel
 	// The whole picture's residual first: the windows below take theirs
 	// from it.
-	d.residual(lum)
+	d.residualOf(lum, own, spare)
+	lum = nil
+	// What the passes left (the first pass, a picture's worth) is collected
+	// now, while little is in use, and the memory given back, rather than the
+	// heap left to grow to twice what is in use and the next stages to ask
+	// for more where what they need does not fit in what was freed; the same
+	// before the corners and before the second reading
+	// (inspect.ReadWatermark). (The peak of reading, the program included, a
+	// photograph of 3000 x 2000 without a mark, one of 6000 x 4000 without,
+	// one turned by 30° and cropped, which reads nothing, and one with a mark:
+	// 57.4, 50.9, 49.9 and 57.8MB, against 91.0, 85.0, 83.6 and 63.3MB
+	// without the three, and 68.4, 55.3, 54.3 and 57.9MB collecting without
+	// giving back; 2% to 5% longer where nothing is found.)
+	debug.FreeOSMemory()
 	// The tiling is looked for in the whole picture and in its middle,
 	// half as wide and high: in a photograph, perspective changes the
 	// tile's size and angle across the picture, which spreads the
@@ -53,12 +89,12 @@ func Detect(lum []float64, w, h int, k Key, par Parallel) ([]byte, bool) {
 		if cw >= 128 && ch >= 128 {
 			par(len(at), func(i int) {
 				dw := &detector{k: k, p: p, w: cw, h: ch, par: d.par}
-				dw.prepare(d.window(at[i][1], at[i][0], ch, cw))
+				dw.prepareOf(d.r[at[i][1]*w+at[i][0]:], w)
 				for _, c := range dw.search() {
 					searched[i] = append(searched[i], found{c, dw})
 				}
 				// Only its spectrum is wanted from here on (polish, lsq).
-				dw.magMax = nil
+				dw.searched()
 			})
 		}
 		var all []found
@@ -71,10 +107,12 @@ func Detect(lum []float64, w, h int, k Key, par Parallel) ([]byte, bool) {
 	var whole, middle []found
 	par(2, func(i int) {
 		if i == 0 {
-			d.prepare(d.r)
+			d.prepareOf(d.r, w)
 			for _, c := range d.search() {
 				whole = append(whole, found{c, d})
 			}
+			// As for the windows: only the spectrum is wanted from here on.
+			d.searched()
 			return
 		}
 		middle = within([][2]int{{w / 4, h / 4}}, 4)
@@ -110,6 +148,7 @@ func Detect(lum []float64, w, h int, k Key, par Parallel) ([]byte, bool) {
 			}
 			f := cands[rank]
 			dd := d.worker()
+			defer d.done(dd)
 			dd.quick = rank >= from
 			B := f.in.polish(f.c)
 			if b2, ok := f.in.lsq(B); ok {
@@ -178,6 +217,7 @@ func Detect(lum []float64, w, h int, k Key, par Parallel) ([]byte, bool) {
 	slow := make([]result, 2*len(best))
 	par(len(slow), func(j int) {
 		t, dd := best[j/2], d.worker()
+		defer d.done(dd)
 		if j%2 == 0 {
 			// Read whatever its score: adjusted to a fraction of a pixel, the
 			// payload stands out more even where the sync pattern hardly
@@ -207,6 +247,10 @@ func Detect(lum []float64, w, h int, k Key, par Parallel) ([]byte, bool) {
 	// corners' tilings, or the best placed region by region too, read no more
 	// and took longer where nothing is found; searched with the rest at first,
 	// the corners took a marked picture 76% longer to read.)
+	// The whole picture's spectrum is not wanted from here on: the corners
+	// have their own, and what follows them reads only the residual.
+	d.mag, d.magBox, d.magMax = nil, nil, nil
+	debug.FreeOSMemory() // see above, after the residual
 	corners := [][2]int{{0, 0}, {w - cw, 0}, {0, h - ch}, {w - cw, h - ch}}
 	if payload, ok := quickly(within(corners, 4), 0); ok {
 		return payload, true
@@ -230,6 +274,7 @@ func Detect(lum []float64, w, h int, k Key, par Parallel) ([]byte, bool) {
 	got := make([][]byte, len(native))
 	par(len(native), func(j int) {
 		dd, p := d.worker(), native[j]
+		defer d.done(dd)
 		m, z := dd.align(mat2{{1 / p, 0}, {0, 1 / p}})
 		if z < 4.5 {
 			return
@@ -284,10 +329,62 @@ type detector struct {
 	// scores low.
 	quick bool
 	// Scratch of fold and corr, which are called a few thousand times.
-	foldCnt []float64
-	corrBuf []complex64
-	class   []uint8  // see classOf
-	par     Parallel // nil: one thing at a time
+	foldAcc  []float64
+	foldCnt  []float64
+	corrBuf  []complex64
+	corrOut  [2][]float64
+	corrNext int
+	// Memory for spectrum, when it is given some.
+	specBuf []complex64
+	// The columns of fft2 (see fft2With).
+	fftCol []complex64
+	// Scratch of decode: foldWeighed's sums and the trellis.
+	wSum, wCnt []float64
+	trel       *trellis
+	class      []uint8  // see classOf
+	par        Parallel // nil: one thing at a time
+	// The scratch the workers of one reading take turns with (see worker).
+	pool *scratchPool
+}
+
+// scratch is a worker's scratch: the detector's fields of that name.
+type scratch struct {
+	foldAcc, foldCnt []float64
+	corrBuf          []complex64
+	corrOut          [2][]float64
+	corrNext         int
+	fftCol           []complex64
+	wSum, wCnt       []float64
+	trel             *trellis
+}
+
+// scratchPool holds the scratch no worker is using (nil: none is kept).
+type scratchPool struct {
+	mu   sync.Mutex
+	free []scratch
+}
+
+func (p *scratchPool) get() scratch {
+	if p == nil {
+		return scratch{}
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if n := len(p.free); n > 0 {
+		s := p.free[n-1]
+		p.free = p.free[:n-1]
+		return s
+	}
+	return scratch{}
+}
+
+func (p *scratchPool) put(s scratch) {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	p.free = append(p.free, s)
+	p.mu.Unlock()
 }
 
 // parallel runs fn(0) to fn(n-1) with d's Parallel, or one after another.
@@ -302,14 +399,25 @@ func (d *detector) parallel(n int, fn func(i int)) {
 }
 
 // worker is d for one goroutine: what d has worked out is shared, read
-// only, and the scratch is its own. Without a Parallel it is d.
+// only, and the scratch is its own, taken from d's pool: give it back with
+// done. Without a Parallel it is d.
 func (d *detector) worker() *detector {
 	if d.par == nil {
 		return d
 	}
 	c := *d
-	c.foldCnt, c.corrBuf = nil, nil
+	s := d.pool.get()
+	c.foldAcc, c.foldCnt, c.corrBuf, c.corrOut, c.corrNext = s.foldAcc, s.foldCnt, s.corrBuf, s.corrOut, s.corrNext
+	c.fftCol, c.wSum, c.wCnt, c.trel = s.fftCol, s.wSum, s.wCnt, s.trel
 	return &c
+}
+
+// done gives the scratch of w, from worker, back to the pool.
+func (d *detector) done(w *detector) {
+	if w == d {
+		return
+	}
+	d.pool.put(scratch{w.foldAcc, w.foldCnt, w.corrBuf, w.corrOut, w.corrNext, w.fftCol, w.wSum, w.wCnt, w.trel})
 }
 
 // evenRadius is the radius of the window evenOut evens the picture out
@@ -333,18 +441,25 @@ const (
 	whitenRadius = 7
 )
 
-// prepare works out the spectrum the tiling is looked for in: that of the
-// residual (see residual), whitened.
-func (d *detector) prepare(r []float64) {
-	mag := d.spectrum(r)
+// prepareOf works out the spectrum the tiling is looked for in: that of
+// the residual (see residual), whitened; r is d.h rows of d.w values,
+// stride apart. The search's map (magMax) and then what follows it
+// (magBox, see searched) share the transform's memory with the spectrum.
+func (d *detector) prepareOf(r []float64, stride int) {
+	mag, rest := d.spectrum(r, stride)
 	if m := float32(median(mag)); m > 0 {
 		for i := range mag {
 			mag[i] /= m
 		}
 	}
 	d.mag = mag
-	d.magMax = maxWrap3(mag, d.wp, d.hp)
-	d.magBox = boxWrap3(mag, d.wp, d.hp)
+	d.magMax = maxWrap3Rows(rest, mag, d.wp, d.hp)
+}
+
+// searched is for when the search is done: magMax gives way to magBox.
+func (d *detector) searched() {
+	d.magBox = boxWrapRows(d.magMax, d.mag, d.wp, d.hp, 1)
+	d.magMax = nil
 }
 
 // residual works out what the tiles are folded from (r), and the spectrum
@@ -362,27 +477,44 @@ func (d *detector) prepare(r []float64) {
 // the mapping found, blocks of 16, 64 and 128 kept less of the payload, as
 // did the picture whitened as a whole first. The spectrum of the picture
 // whitened as a whole, with the tiles folded from this, read 1239 and 155.)
-func (d *detector) residual(lum []float64) {
-	r := d.localWhiten(lum, localFloorFirst)
-	d.evenOut(r)
-	d.r = d.localWhiten(r, localFloorSecond)
+func (d *detector) residual(lum []float64) { d.residualOf(lum, false, nil) }
+
+// residualOf is residual; with own, lum is d's to use and the second pass
+// is written over it (it is not read again); the first pass goes into spare
+// when that is not nil.
+func (d *detector) residualOf(lum []float64, own bool, spare []float64) {
+	r := d.localWhitenInto(lum, localFloorFirst, spare)
+	// lum, when it is d's, is free between the passes: evenOut's scratch.
+	var into []float64
+	var loc []float32
+	if own {
+		into, loc = lum, float32s(lum)
+	}
+	d.evenOutWith(r, loc)
+	d.r = d.localWhitenInto(r, localFloorSecond, into)
+	// The classes of the places (wanted by every reading) now, with the
+	// first pass's memory, done with, for their energy.
+	d.classOfWith(float32s(r))
 }
 
-// window is the residual of the h x w window at (y, x), as the whole
-// picture's: block by block, it is the window's own but near its edges.
-func (d *detector) window(y, x, h, w int) []float64 {
-	o := make([]float64, w*h)
-	for j := range h {
-		copy(o[j*w:], d.r[(y+j)*d.w+x:][:w])
-	}
-	return o
+// float32s is v's memory as twice as many float32s.
+func float32s(v []float64) []float32 {
+	return unsafe.Slice((*float32)(unsafe.Pointer(unsafe.SliceData(v))), 2*len(v))
 }
 
 // evenOut divides each place by the size of the picture around it, so
 // that flat areas, where the whitened picture is mostly the mark, count as
 // much as busy ones.
-func (d *detector) evenOut(r []float64) {
-	loc := make([]float32, len(r))
+func (d *detector) evenOut(r []float64) { d.evenOutWith(r, nil) }
+
+// evenOutWith is evenOut with scratch (as long as r at least), or its own
+// when that is nil.
+func (d *detector) evenOutWith(r []float64, scratch []float32) {
+	loc := scratch
+	if loc == nil {
+		loc = make([]float32, len(r))
+	}
+	loc = loc[:len(r)]
 	for i, v := range r {
 		loc[i] = float32(v * v)
 	}
@@ -430,6 +562,12 @@ const (
 // blocks two apart do not overlap: the even ones, then the odd ones, are
 // added in, so the sum is the same however the work is shared out.
 func (d *detector) localWhiten(y []float64, floor float64) []float64 {
+	return d.localWhitenInto(y, floor, nil)
+}
+
+// localWhitenInto is localWhiten written to into (cleared first; not y)
+// when that is not nil.
+func (d *detector) localWhitenInto(y []float64, floor float64, into []float64) []float64 {
 	w, h := d.w, d.h
 	const bs, hop, n = localBlock, localBlock / 2, localBlock * localBlock
 	var win [bs]float64
@@ -524,7 +662,13 @@ func (d *detector) localWhiten(y []float64, floor float64) []float64 {
 			base[f] = float32(float64(floor*total[f]) / float64(cnt))
 		}
 	}
-	out := make([]float64, w*h)
+	out := into
+	if out == nil {
+		out = make([]float64, w*h)
+	} else {
+		out = out[:w*h]
+		clear(out)
+	}
 	for parity := range 2 {
 		d.parallel((rows-parity+1)/2, func(k int) {
 			by := (2*k+parity)*hop - hop
@@ -629,35 +773,50 @@ func mirror(i, n int) int {
 
 // spectrum returns the magnitude of y's spectrum (hp x wp, y windowed and
 // padded to powers of two) over its mean around each frequency, 15 x 15
-// (whitened).
-func (d *detector) spectrum(y []float64) []float32 {
+// (whitened), in the first half of the transform's memory, and the other
+// half, as many float32s, for the caller (rather than garbage for the
+// collector to catch up with). y is d.h rows of d.w values, stride apart.
+func (d *detector) spectrum(y []float64, stride int) (mag, rest []float32) {
 	w, h := d.w, d.h
 	d.hp, d.wp = pow2(h), pow2(w)
 	var mean float64
-	for _, v := range y {
-		mean += v
+	for j := range h {
+		for _, v := range y[j*stride:][:w] {
+			mean += v
+		}
 	}
-	mean /= float64(len(y))
+	mean /= float64(w * h)
 	ty, tx := tukey(h), tukey(w)
-	a := make([]complex64, d.hp*d.wp)
+	// A window's own memory when it is given one (see perspective).
+	a := d.specBuf
+	if cap(a) >= d.hp*d.wp {
+		a = a[:d.hp*d.wp]
+		clear(a)
+	} else {
+		a = make([]complex64, d.hp*d.wp)
+	}
 	for j := range h {
 		for i := range w {
-			a[j*d.wp+i] = complex(float32(float64((y[j*w+i]-mean)*ty[j])*tx[i]), 0)
+			a[j*d.wp+i] = complex(float32(float64((y[j*stride+i]-mean)*ty[j])*tx[i]), 0)
 		}
 	}
 	fft2Par(a, d.hp, d.wp, false, d.par)
-	white := make([]float32, len(a))
-	for i, v := range a {
+	// The magnitudes over the transform, as float32s: the one at i goes
+	// where a[i/2] was, which has been read by then.
+	n := len(a)
+	f := unsafe.Slice((*float32)(unsafe.Pointer(unsafe.SliceData(a))), 2*n)
+	white, rest := f[:n:n], f[n:]
+	for i := range n {
+		v := a[i]
 		re, im := real(v), imag(v)
 		white[i] = float32(math.Sqrt(float64(float32(re*re) + float32(im*im))))
 	}
-	a = nil
-	sm := boxWrap(white, d.wp, d.hp, whitenRadius)
+	sm := boxWrapRows(rest, white, d.wp, d.hp, whitenRadius)
 	for i := range white {
 		white[i] /= sm[i] + 1e-9
 	}
 	white[0] = 0
-	return white
+	return white, rest
 }
 
 // tukey is a window that is flat but for 5% at each end.
@@ -723,8 +882,9 @@ func (d *detector) search() []candidate {
 	}
 	const na = 450
 	var out []candidate
+	// Every score is written for each way round: one table for both.
+	sc := make([]float64, len(periods)*na)
 	for _, flip := range [2]float64{1, -1} {
-		sc := make([]float64, len(periods)*na)
 		for ai := range na {
 			s, c := math.Sincos(float64(ai) * math.Pi / na)
 			for pi, p := range periods {

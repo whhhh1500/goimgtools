@@ -22,7 +22,7 @@ err := goimgtools.Open("in.jpg").
 mark, found, err := inspect.ReadWatermark(goimgtools.Open("leaked.jpg"), "our secret")
 ```
 
-读取一张 3000×2000 的图，有水印时约 0.9 秒，没有时 5 到 6 秒（要在更多地方多试几种方法，彩色图像还要读第二遍，见下文），内存约 90MB（读不到时约 100MB）。设置 `Threads`（或 `SetDefaultThreads`）后搜索会分摊到多个核上，结果相同：8 核时为 0.5 秒与 2.2 秒。
+读取一张 3000×2000 的图，有水印时约 0.9 秒，没有时 5 到 6 秒（要在更多地方多试几种方法，彩色图像还要读第二遍，见下文），内存峰值（含程序本身）约 54MB（读不到时约 57MB）。设置 `Threads`（或 `SetDefaultThreads`）后搜索会分摊到多个核上，结果相同：8 核时为 0.5 秒与 2.2 秒，内存约 72MB（读不到时约 69MB）。
 
 ```bash
 goimgtools -mark user-1234 -mark-key "our secret" -mark-kind screen in.jpg shown.jpg

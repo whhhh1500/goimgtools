@@ -22,13 +22,14 @@
 package iccprof
 
 import (
-	"crypto/sha256"
 	_ "embed"
 	"encoding/binary"
 	"errors"
 	"image/color"
 	"math"
 	"sync"
+
+	"github.com/whhhh1500/goimgtools/internal/sha256"
 )
 
 // chemicalProof is libvips's CMYK profile, which it (and so sharp) takes a

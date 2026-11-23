@@ -99,6 +99,17 @@ type trellis struct {
 	nbits, steps int
 	bm           []float64 // per step, the metric of each pattern of coded bits
 	alpha        []float64 // per step and state; -Inf where no path goes
+	// list's storage, used again by the next list.
+	nodes []listNode
+	heap  []int32
+}
+
+// listNode is a partial end of a path in list's search.
+type listNode struct {
+	score, metric float64
+	step, state   int32
+	parent        int32 // the node a step later; -1 at the end
+	order         int32 // ties go to the earlier
 }
 
 // forward runs Viterbi's algorithm over soft values for nbits bits, the
@@ -109,8 +120,11 @@ func forward(t *trellis, soft []float64, nbits int) *trellis {
 		t = new(trellis)
 	}
 	t.nbits, t.steps = nbits, steps
-	t.bm = grow(t.bm, steps<<rate)
-	t.alpha = grow(t.alpha, (steps+1)*states)
+	// Room for the longest payload's at once: decode tries every length,
+	// shortest first.
+	most := max(steps, 8*(MaxPayload+4)+constraint-1)
+	t.bm = grow(t.bm, steps<<rate, most<<rate)
+	t.alpha = grow(t.alpha, (steps+1)*states, (most+1)*states)
 	// A step's branch metrics: the soft values signed by the coded bits,
 	// for each of the 2^rate patterns (built up a bit at a time).
 	for st := range steps {
@@ -151,10 +165,11 @@ func forward(t *trellis, soft []float64, nbits int) *trellis {
 	return t
 }
 
-// grow is s with length n, reusing its storage.
-func grow(s []float64, n int) []float64 {
+// grow is s with length n, reusing its storage, or new storage of room
+// for c.
+func grow(s []float64, n, c int) []float64 {
 	if cap(s) < n {
-		return make([]float64, n)
+		return make([]float64, n, max(n, c))
 	}
 	return s[:n]
 }
@@ -172,14 +187,9 @@ func (t *trellis) list(L int) [][]uint8 {
 	if t.best() == ninf {
 		return nil
 	}
-	type node struct {
-		score, metric float64
-		step, state   int32
-		parent        int32 // the node a step later; -1 at the end
-		order         int32 // ties go to the earlier
-	}
-	var nodes []node
-	var heap []int32
+	type node = listNode
+	nodes, heap := t.nodes[:0], t.heap[:0]
+	defer func() { t.nodes, t.heap = nodes[:0], heap[:0] }()
 	before := func(a, b int32) bool {
 		na, nb := &nodes[a], &nodes[b]
 		if na.score != nb.score {

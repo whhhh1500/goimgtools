@@ -30,25 +30,30 @@ func CleanChroma(l []float64, cb, cr []float32, w, h int) bool {
 		return false
 	}
 	const m = cleanHP + cleanFit
-	load := func(v []float32, a, b int) []float64 {
-		o := make([]float64, (b-a)*w)
+	// The strips' storage, made once: rows of a strip and its margins.
+	size := min(h, cleanRows+2*m) * w
+	buf := func() []float64 { return make([]float64, size) }
+	tmp, means, prod := buf(), buf(), buf()
+	load := func(o []float64, v []float32, a, b int) []float64 {
+		o = o[:(b-a)*w]
 		for i := range o {
 			o[i] = float64(v[a*w+i])
 		}
 		return o
 	}
 	highPass := func(v []float64, rows int) {
-		mean := boxClamp(v, w, rows, cleanHP)
+		mean := boxClampInto(means, tmp, v, w, rows, cleanHP)
 		for i := range v {
 			v[i] -= mean[i]
 		}
 	}
+	Bs, Cs := buf(), buf()
 	// The ridge: a two-hundredth of the colour's high-pass power.
 	var e float64
 	for y0 := 0; y0 < h; y0 += cleanRows {
 		y1 := min(h, y0+cleanRows)
 		a, b := max(0, y0-cleanHP), min(h, y1+cleanHP)
-		B, C := load(cb, a, b), load(cr, a, b)
+		B, C := load(Bs, cb, a, b), load(Cs, cr, a, b)
 		highPass(B, b-a)
 		highPass(C, b-a)
 		for i := (y0 - a) * w; i < (y1-a)*w; i++ {
@@ -62,27 +67,33 @@ func CleanChroma(l []float64, cb, cr []float32, w, h int) bool {
 	lam := float64(0.005 * e)
 	// Strip by strip; a strip is written back once the next is done, which
 	// reads at most m rows of it.
+	Ys := buf()
+	var fits [5][]float64
+	for i := range fits {
+		fits[i] = buf()
+	}
+	outs := [2][]float64{make([]float64, cleanRows*w), make([]float64, cleanRows*w)}
 	var pend []float64
 	pendY := 0
-	for y0 := 0; y0 < h; y0 += cleanRows {
+	for k, y0 := 0, 0; y0 < h; k, y0 = k+1, y0+cleanRows {
 		y1 := min(h, y0+cleanRows)
 		a, b := max(0, y0-m), min(h, y1+m)
 		rows := b - a
-		Y := make([]float64, rows*w)
+		Y := Ys[:rows*w]
 		copy(Y, l[a*w:b*w])
-		B, C := load(cb, a, b), load(cr, a, b)
+		B, C := load(Bs, cb, a, b), load(Cs, cr, a, b)
 		highPass(Y, rows)
 		highPass(B, rows)
 		highPass(C, rows)
-		fit := func(p, q []float64) []float64 {
-			o := make([]float64, len(p))
+		fit := func(into, p, q []float64) []float64 {
+			o := prod[:len(p)]
 			for i := range o {
 				o[i] = float64(p[i] * q[i])
 			}
-			return boxClamp(o, w, rows, cleanFit)
+			return boxClampInto(into, tmp, o, w, rows, cleanFit)
 		}
-		bb, cc, bc, yb, yc := fit(B, B), fit(C, C), fit(B, C), fit(Y, B), fit(Y, C)
-		out := make([]float64, (y1-y0)*w)
+		bb, cc, bc, yb, yc := fit(fits[0], B, B), fit(fits[1], C, C), fit(fits[2], B, C), fit(fits[3], Y, B), fit(fits[4], Y, C)
+		out := outs[k%2][:(y1-y0)*w]
 		for y := y0; y < y1; y++ {
 			o := (y - a) * w
 			for x := range w {

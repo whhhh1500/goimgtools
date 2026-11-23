@@ -24,9 +24,14 @@ func (m *mapping) at(y, x float64) (float64, float64) {
 type rect struct{ y0, x0, y1, x1 int }
 
 // fold averages the whitened picture over every copy of the tile, in ns x
-// ns samples, within a region.
+// ns samples, within a region. The result is d's scratch, good until the
+// next fold.
 func (d *detector) fold(m *mapping, g rect) []float64 {
-	acc := make([]float64, ns*ns)
+	if d.foldAcc == nil {
+		d.foldAcc = make([]float64, ns*ns)
+	}
+	acc := d.foldAcc
+	clear(acc)
 	if d.foldCnt == nil {
 		d.foldCnt = make([]float64, ns*ns)
 	}
@@ -68,11 +73,19 @@ const classes = 12
 // classOf is each place's class (once for a picture): by the energy of
 // the whitened picture within 8 pixels, in classes of equal numbers of
 // places.
-func (d *detector) classOf() []uint8 {
+func (d *detector) classOf() []uint8 { return d.classOfWith(nil) }
+
+// classOfWith is classOf with scratch for the energy (as long as the
+// picture at least), or its own when that is nil.
+func (d *detector) classOfWith(scratch []float32) []uint8 {
 	if d.class != nil {
 		return d.class
 	}
-	e := make([]float32, len(d.r))
+	e := scratch
+	if e == nil {
+		e = make([]float32, len(d.r))
+	}
+	e = e[:len(d.r)]
 	for i, v := range d.r {
 		e[i] = float32(v * v)
 	}
@@ -105,8 +118,12 @@ func (d *detector) classOf() []uint8 {
 func (d *detector) foldWeighed(m *mapping) ([]float64, []float64) {
 	class := d.classOf()
 	const nn = ns * ns
-	sum := make([]float64, classes*nn)
-	cnt := make([]float64, classes*nn)
+	if d.wSum == nil {
+		d.wSum, d.wCnt = make([]float64, classes*nn), make([]float64, classes*nn)
+	}
+	sum, cnt := d.wSum, d.wCnt
+	clear(sum)
+	clear(cnt)
 	for y := range d.h {
 		row := d.r[y*d.w : y*d.w+d.w]
 		cl := class[y*d.w : y*d.w+d.w]
@@ -274,7 +291,8 @@ func field(t []float64, cy, cx float64) float64 {
 }
 
 // corr is the circular correlation of a folded tile with the sync pattern,
-// as z-scores.
+// as z-scores. The result is d's scratch, good until the corr after next
+// (two are compared at most).
 func (d *detector) corr(f []float64, o int) []float64 {
 	if d.corrBuf == nil {
 		d.corrBuf = make([]complex64, ns*ns)
@@ -283,13 +301,17 @@ func (d *detector) corr(f []float64, o int) []float64 {
 	for i, v := range f {
 		a[i] = complex(float32(v), 0)
 	}
-	fft2(a, ns, ns, false)
+	d.fft2(a, ns, ns, false)
 	s := d.syncFFT(o)
 	for i := range a {
 		a[i] = cmul(a[i], s[i])
 	}
-	fft2(a, ns, ns, true)
-	c := make([]float64, ns*ns)
+	d.fft2(a, ns, ns, true)
+	d.corrNext ^= 1
+	if d.corrOut[d.corrNext] == nil {
+		d.corrOut[d.corrNext] = make([]float64, ns*ns)
+	}
+	c := d.corrOut[d.corrNext]
 	var mean float64
 	for i, v := range a {
 		c[i] = float64(real(v))
@@ -348,7 +370,11 @@ func (d *detector) align(B mat2) (mapping, float64) {
 	h, w := d.h, d.w
 	A := mat2{{B[0][0], B[1][0]}, {B[0][1], B[1][1]}} // tile coordinates per pixel: B transposed
 	m := affine(A, 0, 0)
-	f := d.fold(&m, d.all())
+	// The whole picture's fold, kept: d.fold's own is used again for the
+	// halves below.
+	var f []float64
+	foldAll := func() { f = append(f[:0], d.fold(&m, d.all())...) }
+	foldAll()
 	z0, y0, x0 := peak(d.corr(f, 0), 0, 0, 0)
 	if z1, _, _ := peak(d.corr(f, 1), 0, 0, 0); z1 > z0 {
 		// Half a turn: the tile's axes the other way round.
@@ -358,7 +384,7 @@ func (d *detector) align(B mat2) (mapping, float64) {
 			}
 		}
 		m = affine(A, 0, 0)
-		f = d.fold(&m, d.all())
+		foldAll()
 		z0, y0, x0 = peak(d.corr(f, 0), 0, 0, 0)
 	}
 	for range 4 {
@@ -394,7 +420,7 @@ func (d *detector) align(B mat2) (mapping, float64) {
 			}
 		}
 		m = affine(A, 0, 0)
-		f = d.fold(&m, d.all())
+		foldAll()
 		z0, y0, x0 = peak(d.corr(f, 0), 0, 0, 0)
 		if max(math.Abs(E[0][0]), math.Abs(E[0][1]), math.Abs(E[1][0]), math.Abs(E[1][1]))*float64(max(h, w)) < 0.1/N {
 			break
@@ -463,6 +489,7 @@ func (d *detector) regions(m *mapping, reg int) (mapping, bool) {
 	hits := make([]hit, len(grid))
 	d.parallel(len(grid), func(i int) {
 		g, dd := grid[i], d.worker()
+		defer d.done(dd)
 		c := dd.corr(dd.fold(m, g), 0)
 		zr, py, px := peak(c, 0, 0, ns/6)
 		if zr < 5 {
@@ -633,7 +660,11 @@ func (d *detector) decode(m mapping) ([]byte, bool) {
 		score float64
 	}
 	var fits []fit
-	var t *trellis
+	// The decoder's storage is d's, for every reading.
+	if d.trel == nil {
+		d.trel = new(trellis)
+	}
+	t := d.trel
 	for n := 1; n <= MaxPayload; n++ {
 		soft := softOf(n)
 		t = forward(t, soft, 8*(n+4))
@@ -697,12 +728,12 @@ func (d *detector) payloadChips(m mapping) []float64 {
 			a[cy*N+cx] = complex(float32(s/(sub*sub)), 0)
 		}
 	}
-	fft2(a, N, N, false)
+	d.fft2(a, N, N, false)
 	kn := make([]complex64, N*N)
 	for i := range kn {
 		kn[i] = complex(float32(float64(wSync*d.p.sync[i])+float64(wRef*d.p.refPat[i])), 0)
 	}
-	fft2(kn, N, N, false)
+	d.fft2(kn, N, N, false)
 	// The response by distance from the centre of the spectrum: the
 	// least-squares gain of what is known there.
 	const rings = N
@@ -755,7 +786,7 @@ func (d *detector) payloadChips(m mapping) []float64 {
 		wt := weight[ring(i)] * float32(shapeWeight(i/N, i%N))
 		a[i] = complex(real(a[i])*wt, imag(a[i])*wt)
 	}
-	fft2(a, N, N, true)
+	d.fft2(a, N, N, true)
 	chips := make([]float64, N*N)
 	for i, v := range a {
 		chips[i] = float64(real(v))
