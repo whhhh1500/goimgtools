@@ -263,6 +263,9 @@ type ICNSOptions struct {
 	// 256, 512 and 1024; by default the ones up to the image's own (16 for
 	// a smaller image).
 	Sizes []int
+	// CompressionLevel is the PNG level of each image, as for ICOOptions;
+	// 0 means 9.
+	CompressionLevel int
 }
 
 // ICNS selects ICNS output, the icon file of macOS: square PNG images of
@@ -479,6 +482,10 @@ type ICOOptions struct {
 	// fit each, in its proportions, as Pillow writes them. Without them the
 	// image is written as it is, which must then be at most 256x256.
 	Sizes []int
+	// CompressionLevel is the PNG level of each image, 1 to 10 as
+	// PNGOptions.CompressionLevel; 0 means 9, the smallest files short of
+	// 10 (7 writes them several times as fast, a few percent larger).
+	CompressionLevel int
 }
 
 // ICO selects ICO output, the icon file of Windows and of web sites

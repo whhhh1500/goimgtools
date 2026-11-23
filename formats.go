@@ -170,6 +170,15 @@ func optionsOf[T any](options any, format string) (T, error) {
 	return zero, fmt.Errorf("goimgtools: %s output takes a %T, not a %T", format, zero, options)
 }
 
+// iconLevel is the PNG level of the images of an icon file: 9, the
+// smallest files, unless another is asked for.
+func iconLevel(level int) int {
+	if level == 0 {
+		return 9
+	}
+	return level
+}
+
 func checks[T any](format string) func(any) error {
 	return func(options any) error {
 		_, err := optionsOf[T](options, format)
@@ -403,7 +412,7 @@ var builtin = []*formatDef{
 			if err != nil {
 				return err
 			}
-			return encodeICO(w, src, ico.Sizes)
+			return encodeICO(w, src, ico.Sizes, iconLevel(ico.CompressionLevel))
 		},
 		check: checks[ICOOptions]("ico"),
 	}, {
@@ -497,7 +506,7 @@ var builtin = []*formatDef{
 			if err != nil {
 				return err
 			}
-			return encodeICNS(w, src, opt.Sizes)
+			return encodeICNS(w, src, opt.Sizes, iconLevel(opt.CompressionLevel))
 		},
 		check: checks[ICNSOptions]("icns"),
 	}, {
@@ -916,8 +925,9 @@ func nearLosslessBits(q int) (int, error) {
 }
 
 // encodeICO writes src as an icon: as it is, or resized to fit each of the
-// sizes (Lanczos3, as Pillow resizes them), each as a PNG at level 9.
-func encodeICO(w io.Writer, src pipeline.Source, sizes []int) error {
+// sizes (Lanczos3, as Pillow resizes them), each as a PNG at level (see
+// iconLevel).
+func encodeICO(w io.Writer, src pipeline.Source, sizes []int, level int) error {
 	env := pipeline.EnvOf(src)
 	b := src.Bounds()
 	var imgs []icostream.Image
@@ -925,7 +935,7 @@ func encodeICO(w io.Writer, src pipeline.Source, sizes []int) error {
 	defer func() { env.Budget.Release(held) }()
 	add := func(s pipeline.Source) error {
 		var buf bytes.Buffer
-		if err := pngstream.Encode(&buf, s, &pngstream.Options{Level: 9}); err != nil {
+		if err := pngstream.Encode(&buf, s, &pngstream.Options{Level: level}); err != nil {
 			return err
 		}
 		if err := env.Budget.Reserve(int64(buf.Len()), "ico images"); err != nil {
@@ -991,7 +1001,7 @@ func encodeICO(w io.Writer, src pipeline.Source, sizes []int) error {
 // asked for (by default the standard ones up to the image's own), the
 // image fitted into each in its proportions (Lanczos3) and centred on
 // transparency.
-func encodeICNS(w io.Writer, src pipeline.Source, sizes []int) error {
+func encodeICNS(w io.Writer, src pipeline.Source, sizes []int, level int) error {
 	env := pipeline.EnvOf(src)
 	b := src.Bounds()
 	if len(sizes) == 0 {
@@ -1058,7 +1068,7 @@ func encodeICNS(w io.Writer, src pipeline.Source, sizes []int) error {
 		held += bound
 		var buf bytes.Buffer
 		buf.Grow(int(bound))
-		err = pngstream.Encode(&buf, out, &pngstream.Options{Level: 9})
+		err = pngstream.Encode(&buf, out, &pngstream.Options{Level: level})
 		out.Close()
 		rs.Close()
 		if err != nil {

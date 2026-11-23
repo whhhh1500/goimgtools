@@ -214,7 +214,7 @@ func register(fs *flag.FlagSet) *options {
 		icnsSizes:       fs.String("icns-sizes", "", "ICNS: the sizes of the icons to write, among 16,32,64,128,256,512,1024, the image fitted into each (default: the standard sizes up to the image's)"),
 		icoSizes:        fs.String("ico-sizes", "", "ICO: the sizes of the icons to write, such as 16,32,48,256, the image fitted to each (default: the image as it is, at most 256x256)"),
 		noDither:        fs.Bool("no-dither", false, "no dithering when colours are reduced (-png-colors, GIF output, -animated)"),
-		pngLevel:        fs.Int("png-level", 0, fmt.Sprintf("PNG compression 1 (fastest) to 10 (smallest, slowest); default %d", goimgtools.DefaultPNGLevel)),
+		pngLevel:        fs.Int("png-level", 0, fmt.Sprintf("PNG compression 1 (fastest) to 10 (smallest, slowest); default %d (9 for the images of ICO and ICNS)", goimgtools.DefaultPNGLevel)),
 		format:          fs.String("format", "", "output format: "+formatNames()+" (default: from the output file name)"),
 		skipLarger:      fs.Bool("skip-larger", false, "when the result is not smaller than the input file (same format), keep the input file as it is; for runs that only compress"),
 		tileSize:        fs.Int("tile-size", 256, "the side of a tile, for an output named .dzi or .dz (a Deep Zoom pyramid of tiles, as sharp's tile)"),
@@ -879,7 +879,7 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 			}
 			sizes = append(sizes, n)
 		}
-		im.ICO(goimgtools.ICOOptions{Sizes: sizes})
+		im.ICO(goimgtools.ICOOptions{Sizes: sizes, CompressionLevel: *o.pngLevel})
 	case "pdf":
 		im.PDF(goimgtools.PDFOptions{Quality: *o.quality})
 	case "icns":
@@ -894,7 +894,7 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 			}
 			sizes = append(sizes, n)
 		}
-		im.ICNS(goimgtools.ICNSOptions{Sizes: sizes})
+		im.ICNS(goimgtools.ICNSOptions{Sizes: sizes, CompressionLevel: *o.pngLevel})
 	}
 	// (A name without a known extension: the library reports it.)
 	return im, nil

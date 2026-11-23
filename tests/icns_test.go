@@ -46,6 +46,18 @@ func TestICNS(t *testing.T) {
 	if _, err := FromImage(src).ICNS(ICNSOptions{Sizes: []int{48}}).ToBytes(); err == nil {
 		t.Error("size 48 accepted")
 	}
+	// Another PNG level: other bytes, the same pixels; 9 is the default.
+	fast := must(FromImage(src).ICNS(ICNSOptions{CompressionLevel: 1}).ToBytes())
+	nine := must(FromImage(src).ICNS(ICNSOptions{CompressionLevel: 9}).ToBytes())
+	if bytes.Equal(fast, data) || !bytes.Equal(nine, data) || len(fast) <= len(data) {
+		t.Errorf("level 1: %d bytes, level 9: %d, default %d", len(fast), len(nine), len(data))
+	}
+	if d := worstDiff(t, decodeNRGBA(t, fast), decodeNRGBA(t, data)); d != 0 {
+		t.Errorf("level 1 read back %d off", d)
+	}
+	if _, err := FromImage(src).ICNS(ICNSOptions{CompressionLevel: 11}).ToBytes(); err == nil {
+		t.Error("level 11 accepted")
+	}
 	small, err := FromImage(image.NewNRGBA(image.Rect(0, 0, 5, 5))).ICNS().ToBytes()
 	if err != nil || !bytes.Contains(small, []byte("icp4")) {
 		t.Errorf("a 5x5 image: %v", err)

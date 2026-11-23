@@ -52,6 +52,14 @@ func TestICO(t *testing.T) {
 	if info, _ := FromBytes(b).Metadata(); info.Width != 256 || info.Height != 192 {
 		t.Errorf("read: %dx%d, want the largest", info.Width, info.Height)
 	}
+	// Another PNG level: other bytes, the same pixels.
+	fast := must(FromImage(big).ICO(ICOOptions{Sizes: []int{48, 16, 256, 32, 32}, CompressionLevel: 1}).ToBytes())
+	if bytes.Equal(fast, b) || len(fast) <= len(b) {
+		t.Errorf("level 1: %d bytes, default %d", len(fast), len(b))
+	}
+	if d := worstDiff(t, decodeNRGBA(t, fast), decodeNRGBA(t, b)); d != 0 {
+		t.Errorf("level 1 read back %d off", d)
+	}
 	p := filepath.Join(t.TempDir(), "favicon.ico")
 	if err := FromImage(small).ToFile(p); err != nil {
 		t.Fatal(err)
@@ -59,7 +67,8 @@ func TestICO(t *testing.T) {
 	if data, _ := os.ReadFile(p); !bytes.HasPrefix(data, []byte{0, 0, 1, 0, 1, 0}) {
 		t.Error("not an icon by its extension")
 	}
-	for _, bad := range []*Image{FromImage(big).ICO(), FromImage(small).ICO(ICOOptions{Sizes: []int{0}}), FromImage(small).ICO(ICOOptions{Sizes: []int{300}})} {
+	for _, bad := range []*Image{FromImage(big).ICO(), FromImage(small).ICO(ICOOptions{Sizes: []int{0}}), FromImage(small).ICO(ICOOptions{Sizes: []int{300}}),
+		FromImage(small).ICO(ICOOptions{CompressionLevel: -1})} {
 		if _, err := bad.ToBytes(); err == nil {
 			t.Error("no error")
 		}
