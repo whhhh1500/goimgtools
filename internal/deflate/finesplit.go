@@ -64,22 +64,49 @@ func xlog(v uint32) int64 {
 // sideCounts are the counts of the symbols on one side of a point.
 type sideCounts struct {
 	f         freqs
-	sum       int64 // of xlog over the counts
+	xl        [numLitlenSyms + numOffsetSyms]int64 // xlog of each count: the offsets' after the others
+	sum       int64                                // of xl
 	nLL, nOff uint32
+	xOff      int64 // xlog of nOff
 	used      int32 // symbols with a count
 }
 
+// set makes the side's counts f.
+func (s *sideCounts) set(f *freqs) {
+	*s = sideCounts{f: *f}
+	for sym, v := range f.litlen {
+		s.xl[sym] = xlog(v)
+		s.sum += s.xl[sym]
+		s.nLL += v
+		if v != 0 {
+			s.used++
+		}
+	}
+	for sym, v := range f.offset {
+		s.xl[numLitlenSyms+sym] = xlog(v)
+		s.sum += s.xl[numLitlenSyms+sym]
+		s.nOff += v
+		if v != 0 {
+			s.used++
+		}
+	}
+	s.xOff = xlog(s.nOff)
+}
+
 func (s *sideCounts) add(sym int, off bool, d int32) {
-	p := &s.f.litlen[sym]
-	n := &s.nLL
+	p, x := &s.f.litlen[sym], &s.xl[sym]
 	if off {
-		p, n = &s.f.offset[sym], &s.nOff
+		p, x = &s.f.offset[sym], &s.xl[numLitlenSyms+sym]
+		s.nOff = uint32(int32(s.nOff) + d)
+		s.xOff = xlog(s.nOff)
+	} else {
+		s.nLL = uint32(int32(s.nLL) + d)
 	}
 	old := *p
 	nw := uint32(int32(old) + d)
-	s.sum += xlog(nw) - xlog(old)
-	*p = nw
-	*n = uint32(int32(*n) + d)
+	v := xlog(nw)
+	s.sum += v - *x
+	*p, *x = nw, v
 	switch {
 	case old == 0 && nw != 0:
 		s.used++
@@ -91,7 +118,7 @@ func (s *sideCounts) add(sym int, off bool, d int32) {
 // entropy is the bits of the side's symbols by their entropy, with the
 // estimate of a header, in 1/1024 bit.
 func (s *sideCounts) entropy() int64 {
-	return xlog(s.nLL) + xlog(s.nOff) - s.sum + fineHeaderBits*int64(s.used)
+	return xlog(s.nLL) + s.xOff - s.sum + fineHeaderBits*int64(s.used)
 }
 
 // itemSyms returns the litlen symbol of the item at i, its offset slot
@@ -114,14 +141,9 @@ type fineCand struct {
 // [a, b), an item start fineWindow items before their cheapest points.
 func (c *Compressor) candidatePoints(a, b int) []int {
 	var left, right sideCounts
-	for i := a; i < b; {
-		ll, off, n := c.itemSyms(i)
-		right.add(ll, false, 1)
-		if off >= 0 {
-			right.add(off, true, 1)
-		}
-		i += n
-	}
+	var all freqs
+	c.itemFreqs(a, b, &all)
+	right.set(&all)
 	lo, hi := a+minSplitBlock, b-minSplitBlock // the points allowed
 	var ring [fineWindow]int
 	for k := range ring {

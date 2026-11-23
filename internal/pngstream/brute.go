@@ -1,7 +1,6 @@
 package pngstream
 
 import (
-	"encoding/binary"
 	"slices"
 
 	"github.com/whhhh1500/goimgtools/internal/deflate"
@@ -75,10 +74,10 @@ type bruteFilter struct {
 	buf  []byte
 	base int64
 	prev []uint16 // distance back to the last position with the same hash, by position modulo its length; 0 for none
-	head []int64  // the last position with each hash; -1 for none
+	head []int64  // the last position with each hash; bruteNone for none
 	mask int64
-	pos  int64 // where the next row starts
-	undo []undoEntry
+	pos  int64   // where the next row starts
+	undo []int64 // what each position of the row being tried replaced in head
 
 	// The symbols of the rows chosen, the last bruteLines-1 of them, and
 	// their sum.
@@ -119,11 +118,6 @@ func bruteReal(rowBytes int) deflate.Params {
 	return p
 }
 
-type undoEntry struct {
-	h   int32
-	old int64
-}
-
 const (
 	bruteLines = 4
 	// bruteHashBits: with 13 the chains of a photograph's rows were mostly
@@ -131,6 +125,9 @@ const (
 	// 6000×4000 photograph at level 9 took 9% less time, the file the same.
 	bruteHashBits = 15
 	bruteWindow   = 32 << 10 // deflate's
+	// bruteNone is head's value for no position: so far back that every
+	// position is out of the window from it.
+	bruteNone = -bruteWindow
 	// bruteChain is how many earlier positions a match is looked for at:
 	// at level 8 bruteChain, at 9 bruteChain9 (the 17 images of level 9
 	// 0.05% smaller, in 15% more time with eight threads; 64: 0.04%).
@@ -142,10 +139,12 @@ const (
 // bruteBytes is the memory a bruteFilter takes for rows of rowBytes, with
 // real when the rows are scored by compressing them.
 func bruteBytes(rowBytes int, real bool) int64 {
-	n := int64(nFilter*rowBytes) + int64(bufSize(rowBytes, real)) + int64(2*prevSize(rowBytes)) + 8<<bruteHashBits +
-		int64(bruteLines)*8*nSyms + int64(2*nFilter+2)*8*nSyms + 16*int64(rowBytes)
+	n := int64(nFilter*rowBytes) + int64(bufSize(rowBytes, real)) + int64(2*prevSize(rowBytes)+2) + 8<<bruteHashBits +
+		int64(bruteLines)*8*nSyms + int64(2*nFilter+2)*8*nSyms
 	if real {
 		n += scorerBytes(rowBytes)
+	} else {
+		n += 8 * int64(rowBytes) // undo
 	}
 	return n
 }
@@ -203,7 +202,7 @@ func newBruteFilter(env *pipeline.Env, rowBytes, chain int, real bool, keep int6
 		chain:    chain,
 		buf:      make([]byte, bufSize(rowBytes, real)),
 		kept:     keptBytes(rowBytes, real),
-		prev:     make([]uint16, ps),
+		prev:     make([]uint16, ps, ps+1), // an entry more than its length, for markChains
 		head:     make([]int64, 1<<bruteHashBits),
 		mask:     int64(ps - 1),
 		hists:    make([][nSyms]int64, bruteLines-1),
@@ -217,7 +216,10 @@ func newBruteFilter(env *pipeline.Env, rowBytes, chain int, real bool, keep int6
 		b.cands[i] = make([]byte, rowBytes)
 	}
 	for i := range b.head {
-		b.head[i] = -1
+		b.head[i] = bruteNone
+	}
+	if !real {
+		b.undo = make([]int64, rowBytes)
 	}
 	if real {
 		in := realInSize(rowBytes)
@@ -334,11 +336,6 @@ func (b *bruteFilter) chooseReal(cur, prev []byte, bpp int) []byte {
 	return b.cands[best]
 }
 
-func (b *bruteFilter) hash(p int64) int32 {
-	v := binary.LittleEndian.Uint32(b.buf[p-b.base:])
-	return int32(v * 2654435761 >> (32 - bruteHashBits))
-}
-
 // place copies row to the end of the data, after moving the window back
 // to the start of the buffer if the row would not fit.
 func (b *bruteFilter) place(row []byte) {
@@ -350,85 +347,127 @@ func (b *bruteFilter) place(row []byte) {
 	copy(b.buf[b.pos-b.base:], row)
 }
 
-// insert enters position p, of hash h, in the hash chains, noting what it
-// replaces when trying.
-func (b *bruteFilter) insert(p int64, h int32, trying bool) {
-	c := b.head[h]
-	if trying {
-		b.undo = append(b.undo, undoEntry{h, c})
-	}
-	b.head[h] = p
-	d := uint16(0)
-	if c >= 0 && p-c < bruteWindow {
-		d = uint16(p - c)
-	}
-	b.prev[p&b.mask] = d
+// near returns dist if it is within the window, else 0, without a branch.
+func near(dist int64) int64 { return dist & ((dist - bruteWindow) >> 63) }
+
+// some returns 1 for a distance of 1 to 65535, 0 for 0.
+func some(dist int) uint32 { return uint32(dist+0xffff) >> 16 }
+
+// load32 is the four bytes of d from i on, as one number.
+func load32(d []byte, i int) uint32 {
+	b := d[i : i+4]
+	return uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16 | uint32(b[3])<<24
 }
+
+// bruteHash is the hash of the four bytes v.
+func bruteHash(v uint32) uint32 { return v * 2654435761 >> (32 - bruteHashBits) }
 
 // parse counts the symbols of a greedy deflate parse of row placed at the
 // end of the data, into candHist[f] and candExtra[f]. When trying, the
 // hash chains are left as they were; otherwise the row is entered.
+//
+// At a position, the match is the longest at the positions before it with
+// its hash, the nearest first, up to b.chain of them within the window. In
+// a photograph's rows most positions have none, or one or two that only
+// share the hash; which, the processor cannot guess, and looking as the
+// parse goes it guessed wrong at most positions, each time at the cost of
+// all else done there. So the row is worked a stretch at a time, in three
+// steps. Its positions are entered in the chains, all of them: a position's
+// chain is of the positions before it, whenever it is followed. Then the
+// first two positions of each chain are looked at, without a branch, and
+// the position is marked when one of them starts with its three bytes or
+// the chain goes on (see markChains). Then the parse: a literal at an
+// unmarked position; at a marked one the longest match of what the mark
+// says is there (see longestMatch). The matches found are the same.
 func (b *bruteFilter) parse(row []byte, f int, trying bool) {
-	m := b.mask
 	b.place(row)
-	d, base := b.buf, b.base
+	d, base, m := b.buf, b.base, b.mask
+	prev := b.prev
 	hist := &b.candHist[f]
 	*hist = [nSyms]int64{}
 	var extra int64
-	n := int64(len(row))
-	end := b.pos + n
-	b.undo = b.undo[:0]
-	for p := b.pos; p < end; {
-		if p+4 <= end {
-			h := b.hash(p)
-			c := b.head[h]
-			b.insert(p, h, trying)
-			l, at := 0, int64(-1)
-			pi := int(p - base)
-			maxLen := int(min(258, end-p))
-			for k := 0; k < b.chain && c >= 0 && p-c < bruteWindow; k++ {
-				ci := int(c - base)
-				if d[ci] == d[pi] && d[ci+1] == d[pi+1] && d[ci+2] == d[pi+2] {
-					if j := matchLen(d, pi, ci, 3, maxLen); j > l {
-						l, at = j, c
-					}
-				}
-				d := int64(b.prev[c&m])
-				if d == 0 {
-					break
-				}
-				c -= d
-			}
-			if at >= 0 {
-				ls, lx := lengthCode(l)
-				ds, dx := distCode(int(p - at))
-				hist[ls]++
-				hist[286+ds]++
-				extra += int64(lx + dx)
-				for q := p + 1; q < p+int64(l) && q+4 <= end; q++ {
-					b.insert(q, b.hash(q), trying)
-				}
-				p += int64(l)
-				continue
-			}
+	pos := b.pos
+	end := pos + int64(len(row))
+	last := end - 4 // the last position with four bytes: those up to it are entered
+	var marks [bruteStretch]uint8
+	p := pos
+	for a := pos; a <= last; a += bruteStretch {
+		z := min(a+bruteStretch-1, last)
+		n := int(z - a + 1)
+		var undo []int64
+		if trying {
+			undo = b.undo[a-pos:][:n]
 		}
+		b.enterStretch(a, n, undo)
+		markChains(d, prev, int(a-base), int(a&m), bruteWindow, marks[:n])
+		for p <= z {
+			pi := int(p - base)
+			if mark := marks[p-a]; mark != 0 {
+				if l, dist := longestMatch(d, prev, pi, int(p&m), mark, int(min(258, end-p)), bruteWindow, b.chain); l > 0 {
+					ls, lx := lengthCode(l)
+					ds, dx := distCode(dist)
+					hist[ls]++
+					hist[286+ds]++
+					extra += int64(lx + dx)
+					p += int64(l)
+					continue
+				}
+			}
+			hist[d[pi]]++
+			p++
+		}
+	}
+	for ; p < end; p++ {
 		hist[d[p-base]]++
-		p++
 	}
 	b.candExtra[f] = extra
-	if trying {
-		for i := len(b.undo) - 1; i >= 0; i-- {
-			b.head[b.undo[i].h] = b.undo[i].old
+	if trying && last >= pos {
+		// Each hash gets back the position it had before the row's first
+		// with it.
+		head := (*[1 << bruteHashBits]int64)(b.head)
+		w := d[pos-base : end-base]
+		for k := len(w) - 4; k >= 0; k-- {
+			head[bruteHash(load32(w, k))] = b.undo[k]
 		}
+	}
+}
+
+// bruteStretch is how many positions of a row are entered and looked at
+// before they are parsed (no more than a row is long: the chains keep the
+// positions of the window and a row).
+const bruteStretch = 4096
+
+// enterStretch enters the n positions from p on in the hash chains, and
+// with undo notes what each replaced in head.
+func (b *bruteFilter) enterStretch(p int64, n int, undo []int64) {
+	head := (*[1 << bruteHashBits]int64)(b.head)
+	prev, m := b.prev, b.mask
+	w := b.buf[p-b.base:][:n+3]
+	if undo == nil {
+		for k := 0; k+3 < len(w); k++ {
+			h := bruteHash(load32(w, k))
+			q := p + int64(k)
+			prev[q&m] = uint16(near(q - head[h]))
+			head[h] = q
+		}
+		return
+	}
+	undo = undo[:len(w)-3]
+	for k := range undo {
+		h := bruteHash(load32(w, k))
+		q := p + int64(k)
+		c := head[h]
+		head[h] = q
+		undo[k] = c
+		prev[q&m] = uint16(near(q - c))
 	}
 }
 
 // enter places the chosen row at the end of the data, in the hash chains.
 func (b *bruteFilter) enter(row []byte) {
 	b.place(row)
-	end := b.pos + int64(len(row))
-	for p := b.pos; p+4 <= end; p++ {
-		b.insert(p, b.hash(p), false)
+	if len(row) >= 4 {
+		b.enterStretch(b.pos, len(row)-3, nil)
 	}
 }
 

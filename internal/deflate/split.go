@@ -138,6 +138,14 @@ func (c *Compressor) markBefore(p int) *splitMark {
 // rangeFreqs counts the symbols of the items starting in [a, b) of c.items
 // (a an item's start), with the end of block, and returns the extra bits.
 func (c *Compressor) rangeFreqs(a, b int, f *freqs) (extra uint32) {
+	extra = c.itemFreqs(a, b, f)
+	f.litlen[endOfBlock]++
+	return extra
+}
+
+// itemFreqs adds to f the counts of the symbols of the items starting in
+// [a, b) of c.items (a an item's start), and returns their extra bits.
+func (c *Compressor) itemFreqs(a, b int, f *freqs) (extra uint32) {
 	if ma, mb := c.markBefore(a), c.markBefore(b); ma != nil && mb.pos-ma.pos > 2*splitStride {
 		// The counts before b less those before a.
 		m := splitMark{extra: mb.extra - ma.extra}
@@ -159,7 +167,6 @@ func (c *Compressor) rangeFreqs(a, b int, f *freqs) (extra uint32) {
 		for s := range f.offset {
 			f.offset[s] += m.f.offset[s]
 		}
-		f.litlen[endOfBlock]++
 		return m.extra
 	}
 	for i := a; i < b; {
@@ -177,7 +184,6 @@ func (c *Compressor) rangeFreqs(a, b int, f *freqs) (extra uint32) {
 		extra += uint32(extraLengthBits[ls]) + uint32(extraOffsetBits[os])
 		i += int(length)
 	}
-	f.litlen[endOfBlock]++
 	return extra
 }
 
@@ -300,18 +306,33 @@ func (c *Compressor) findSplits(n int) []int {
 // findMinimum looks for the split point of [a, b) where the two parts
 // cost least, as zopfli's FindMinimum does: nine points evenly spaced,
 // then the stretch around the best, until it stops improving.
+//
+// The symbols before a point are counted on from the point before it (the
+// points of a round go up, and the next round starts after one of them), and
+// those after it are the rest of the range's: the counts, and so the costs,
+// are those of counting each part of each point anew.
 func (c *Compressor) findMinimum(a, b int) (int, uint32) {
 	const num = 9
 	lo, hi := a+minSplitBlock, b-minSplitBlock
 	best, bestCost := -1, uint32(1<<32-1)
 	last := uint32(1<<32 - 1)
+	var whole, left freqs // of the items of [a, b), and of [a, at)
+	wholeExtra := c.itemFreqs(a, b, &whole)
+	leftExtra, at := uint32(0), a
 	for hi-lo > num {
 		var ps [num]int
 		var vs [num]uint32
+		var before [num + 1]freqs // of the items of [a, ps[i-1]); the first as the round starts
+		var beforeExtra [num + 1]uint32
+		before[0], beforeExtra[0] = left, leftExtra
+		start := at
 		bi := 0
 		for i := range ps {
 			ps[i] = c.nextItem(a, lo+(i+1)*((hi-lo)/(num+1)), b)
-			vs[i] = c.rangeCost(a, ps[i]) + c.rangeCost(ps[i], b)
+			leftExtra += c.itemFreqs(at, ps[i], &left)
+			at = ps[i]
+			before[i+1], beforeExtra[i+1] = left, leftExtra
+			vs[i] = partsCost(&left, leftExtra, &whole, wholeExtra, ps[i]-a, b-ps[i])
 			if vs[i] < vs[bi] {
 				bi = i
 			}
@@ -332,6 +353,30 @@ func (c *Compressor) findMinimum(a, b int) (int, uint32) {
 			break
 		}
 		lo, hi = nlo, nhi
+		// The next round's points are after the point before the best (or
+		// where this round started).
+		left, leftExtra, at = before[bi], beforeExtra[bi], start
+		if bi > 0 {
+			at = ps[bi-1]
+		}
 	}
 	return best, bestCost
+}
+
+// partsCost is rangeCost of the two parts of a range, of nl and nr bytes:
+// left are the counts of the first part's symbols, with their extra bits,
+// and whole those of the range's.
+func partsCost(left *freqs, leftExtra uint32, whole *freqs, wholeExtra uint32, nl, nr int) uint32 {
+	var right freqs
+	for s := range right.litlen {
+		right.litlen[s] = whole.litlen[s] - left.litlen[s]
+	}
+	for s := range right.offset {
+		right.offset[s] = whole.offset[s] - left.offset[s]
+	}
+	right.litlen[endOfBlock]++
+	left.litlen[endOfBlock]++
+	cost := freqsCost(left, leftExtra, nl) + freqsCost(&right, wholeExtra-leftExtra, nr)
+	left.litlen[endOfBlock]--
+	return cost
 }

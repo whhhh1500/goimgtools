@@ -6,8 +6,9 @@ English | [中文](zh-CN/CHANGELOG.md)
 
 ### Changed
 
-- PNG at level 9 takes 45% less time (a 6000×4000 photograph 26s rather than 48s), the file the same: the search for the split points of a block takes the counts of the symbols from marks kept every 8KB of the parse rather than counting the part again at each point, and the hash tables of the search for matches of the rows' filters have 15 bits rather than 13.
-- PNG at level 8 takes 13% less time on that photograph (20s rather than 23s), for the larger hash tables; its file can differ by a few bytes (17 images 5 bytes larger, the photograph 0.002%).
+- PNG at level 9 takes 73% less time (a 6000×4000 photograph 12.7s rather than 48s; 17 screenshots, photographs and drawings on 8 threads 21.7s rather than 31.5s), the photograph's file and the memory the same (the 17 images 152 bytes smaller in all, for the hash tables): the search for the split points of a block takes the counts of the symbols from marks kept every 8KB of the parse and counts on from one point tried to the next, rather than counting each part again at each point; the hash tables of the search for matches of the rows' filters have 15 bits rather than 13; the parse of a block, the search of each row's filter and the estimate of each segment of rows no longer branch on which matches a position has (the processor guessed that wrong at most positions of a photograph): the positions are looked at a stretch at a time, eight at once with AVX2, and the inner loop of the parse is in assembly on x86-64; the cheapest length of a long match is found with vector instructions (x86-64 and ARM64), which the long matches of a screenshot need most; and a segment of rows whose filters come out the same both ways is estimated once.
+- PNG at level 8 takes 55% less time on that photograph (10.4s rather than 23s; the 17 images 8.6s rather than 12.7s), for the same changes; for the larger hash tables its file can differ from 0.3.0's by a few bytes (17 images 5 bytes larger, the photograph 0.002%).
+- PNG at level 10 takes 8% less time on that photograph at 1536 wide (24.5s rather than 26.8s), the file the same: the compressors that score its filters use the same parse.
 
 ## 0.3.0 (2026-11-23)
 

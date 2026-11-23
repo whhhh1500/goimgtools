@@ -10,3 +10,9 @@ var useSIMD = true
 //
 //go:noescape
 func filterRunSIMD(cur, prev, up, sub, avg, paeth *byte, bpp, chunks int, sums *[5]uint64)
+
+var chainsSIMD = false
+
+func markChainsSIMD(d *byte, prev *uint16, mask, ring, window int, marks *uint8, n int) {
+	panic("unreachable")
+}

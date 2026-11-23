@@ -165,6 +165,16 @@ type costs struct {
 	offsetSlot [numOffsetSyms]uint32
 }
 
+// dpTables are the costs as findMinCostPath works with them (its assembly,
+// dp_amd64.s, knows where each is): of the literals, of the offset slots, and
+// of the lengths, each shifted left by packedCostShift with its length in the
+// low bits.
+type dpTables struct {
+	literal [numLiterals]uint32
+	slot    [numOffsetSyms]uint32
+	length  [maxMatch + 1]uint32
+}
+
 type codes struct {
 	litlenCodewords [numLitlenSyms]uint32
 	offsetCodewords [numOffsetSyms]uint32
@@ -209,6 +219,7 @@ type Compressor struct {
 	items     []uint32 // the choice at each position: a literal, or a match's length<<optimumLenShift | offset
 
 	costs, costsSaved costs
+	dp                dpTables // of findMinCostPath
 	freqs             freqs
 	codes             codes
 

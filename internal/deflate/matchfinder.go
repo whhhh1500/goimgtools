@@ -52,6 +52,16 @@ func (mf *btMatchfinder) init() {
 // slide moves the base on by the window: positions in the window before
 // become negative, and older ones none.
 func (mf *btMatchfinder) slide() {
+	if useSIMD {
+		slideSIMD(&mf.hash3[0][0], 2*len(mf.hash3))
+		slideSIMD(&mf.hash4[0], len(mf.hash4))
+		slideSIMD(&mf.child[0], len(mf.child))
+		return
+	}
+	mf.slideGo()
+}
+
+func (mf *btMatchfinder) slideGo() {
 	// v - windowSize for v >= 0 (setting the sign bit), else none.
 	rebase := func(t []int16) {
 		for i, v := range t {
