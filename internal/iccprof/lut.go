@@ -206,7 +206,7 @@ func readCurveSized(t []byte) (curve, int, error) {
 	}
 }
 
-func clamp01(v float64) float64 { return math.Max(0, math.Min(1, v)) }
+func clamp01(v float64) float64 { return max(0, min(1, v)) }
 
 // eval takes device values (in of them, each in [0, 1]) to the
 // connection space, normalized.
@@ -456,6 +456,6 @@ func (t *lutGrid) convert(dev []uint8) (uint8, uint8, uint8) {
 	}
 	var o [3]float64
 	interp(t.val, t.grid, x[:t.in], o[:])
-	r := func(v float64) uint8 { return uint8(math.Max(0, math.Min(255, math.Round(v)))) }
+	r := func(v float64) uint8 { return uint8(max(0, min(255, math.Round(v)))) }
 	return r(o[0]), r(o[1]), r(o[2])
 }

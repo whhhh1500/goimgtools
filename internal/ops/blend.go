@@ -112,13 +112,13 @@ func porterDuff(mode int, A, B *[3]float64, aA, aB float64) (float64, bool) {
 			B[c] = float64((1-aB)*A[c]) + float64((1-aA)*B[c])
 		}
 	case BlendAdd:
-		aR = math.Min(1, aA+aB)
+		aR = min(1, aA+aB)
 		for c := range B {
 			B[c] = A[c] + B[c]
 		}
 	case BlendSaturate:
-		aR = math.Min(1, aA+aB)
-		t := math.Min(aA, 1-aB)
+		aR = min(1, aA+aB)
+		t := min(aA, 1-aB)
 		for c := range B {
 			B[c] = float64(t*A[c]) + B[c]
 		}
@@ -155,14 +155,14 @@ func blendOf(mode int) func(a, b float64) float64 {
 	case BlendColorDodge:
 		return func(a, b float64) float64 {
 			if a < 1 {
-				return math.Min(1, b/(1-a))
+				return min(1, b/(1-a))
 			}
 			return 1
 		}
 	case BlendColorBurn:
 		return func(a, b float64) float64 {
 			if a > 0 {
-				return 1 - math.Min(1, (1-b)/a)
+				return 1 - min(1, (1-b)/a)
 			}
 			return 0
 		}
@@ -215,7 +215,7 @@ func drawBlend(out, base *image.RGBA, r image.Rectangle, top *image.NRGBA, sp im
 				A := float64(s[i+c]) / 255 * aA
 				B := float64(d[i+c]) / 255
 				v := (float64((1-aB)*A) + float64((1-aA)*B) + float64(aA*aB*f(A, B))) / aR
-				cut := uint32(math.Max(0, math.Min(255, v*255)))
+				cut := uint32(max(0, min(255, v*255)))
 				// Kept multiplied by alpha, as the band is.
 				d[i+c] = uint8((cut*uint32(ar) + 127) / 255)
 			}
@@ -239,13 +239,13 @@ func drawPorterDuff(out, base *image.RGBA, r image.Rectangle, top *image.NRGBA, 
 				B[c] = float64(b[i+c]) / 255
 			}
 			aR, _ := porterDuff(mode, &A, &B, aA, aB)
-			ar := uint8(math.Max(0, math.Min(255, aR*255))) // cut, as libvips casts
+			ar := uint8(max(0, min(255, aR*255))) // cut, as libvips casts
 			for c := 0; c < 3; c++ {
 				var v float64
 				if aR > 0 {
 					v = B[c] / aR
 				}
-				cut := uint32(math.Max(0, math.Min(255, v*255)))
+				cut := uint32(max(0, min(255, v*255)))
 				d[i+c] = uint8((cut*uint32(ar) + 127) / 255)
 			}
 			d[i+3] = ar

@@ -82,7 +82,7 @@ func LinearLUT(a, b float64) (*[256]uint8, error) {
 	var t [256]uint8
 	for i := range t {
 		// The product rounded before b is added, on every processor.
-		t[i] = uint8(math.Max(0, math.Min(255, float64(a*float64(i))+b)))
+		t[i] = uint8(max(0, min(255, float64(a*float64(i))+b)))
 	}
 	return &t, nil
 }
@@ -180,7 +180,7 @@ func (g *grayOf) Next() (image.Image, error) {
 }
 
 func clampLevel(v float64) uint8 {
-	return uint8(math.Round(math.Max(0, math.Min(255, v))))
+	return uint8(math.Round(max(0, min(255, v))))
 }
 
 // grayLevels is Levels for an opaque greyscale source.

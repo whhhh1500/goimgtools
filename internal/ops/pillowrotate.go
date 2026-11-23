@@ -338,7 +338,7 @@ func (t *rotated) renderPillow(out *image.RGBA, x0, x1 int, c *tileCache) error 
 				if m.filter == PillowBilinear {
 					v, ok, err = t.pillowBilinear(xin, yin, sample)
 				} else {
-					v, ok, err = t.pillowBicubic(xin, yin, sample)
+					v, ok, err = t.pillowBicubic(xin, yin, sample, c)
 				}
 				if err != nil {
 					return err
@@ -404,7 +404,10 @@ func (t *rotated) pillowBilinear(xin, yin float64, at func(x, y int) ([4]uint8, 
 	return v, true, nil
 }
 
-func (t *rotated) pillowBicubic(xin, yin float64, at func(x, y int) ([4]uint8, error)) ([4]uint8, bool, error) {
+// c, when not nil, is the cache at reads through: a window of 4 x 4 within
+// the image and within one of its tiles is read from the tile at once (the
+// same pixels at gives).
+func (t *rotated) pillowBicubic(xin, yin float64, at func(x, y int) ([4]uint8, error), c *tileCache) ([4]uint8, bool, error) {
 	if !t.inside(xin, yin) {
 		return [4]uint8{}, false, nil
 	}
@@ -421,7 +424,47 @@ func (t *rotated) pillowBicubic(xin, yin float64, at func(x, y int) ([4]uint8, e
 	}
 	var rows [4][4][4]uint8
 	have := [4]bool{true}
-	for j := 0; j < 4; j++ {
+	if c != nil && x >= 0 && y >= 0 && x+3 < t.sw && y+3 < t.sh && x/tileSide == (x+3)/tileSide && y/tileSide == (y+3)/tileSide {
+		tl, err := c.tile(t.sc, (y/tileSide)*t.tilesX+x/tileSide)
+		if err != nil {
+			return [4]uint8{}, false, err
+		}
+		for j := 0; j < 4; j++ {
+			o := (((y+j)%tileSide)*tileSide + x%tileSide) * 4
+			for i := 0; i < 4; i++ {
+				p := tl[o+4*i : o+4*i+4 : o+4*i+4]
+				if t.pil.premul {
+					rows[j][i] = pilPremul(p)
+				} else {
+					rows[j][i] = [4]uint8{p[0], p[1], p[2], p[3]}
+				}
+			}
+		}
+		have = [4]bool{true, true, true, true}
+	}
+	// Otherwise each pixel at gives, the tile of the one before used again
+	// when it is the same.
+	if c != nil && !have[3] {
+		last := -1
+		var tl []uint8
+		at = func(xx, yy int) ([4]uint8, error) {
+			xx, yy = max(0, min(xx, t.sw-1)), max(0, min(yy, t.sh-1))
+			if ti := (yy/tileSide)*t.tilesX + xx/tileSide; ti != last {
+				var err error
+				if tl, err = c.tile(t.sc, ti); err != nil {
+					return [4]uint8{}, err
+				}
+				last = ti
+			}
+			o := ((yy%tileSide)*tileSide + xx%tileSide) * 4
+			p := tl[o : o+4 : o+4]
+			if t.pil.premul {
+				return pilPremul(p), nil
+			}
+			return [4]uint8{p[0], p[1], p[2], p[3]}, nil
+		}
+	}
+	for j := 0; j < 4 && !have[3]; j++ {
 		if j > 0 {
 			have[j] = y+j >= 0 && y+j < t.sh
 			if !have[j] {

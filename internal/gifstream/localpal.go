@@ -126,6 +126,7 @@ func (t *frameTee) writeLocal(w io.Writer, env *pipeline.Env, stored *pipeline.S
 	keys := make([]uint32, 0, px)
 	row := make([]byte, 4*fw)
 	var bufs [3][]byte
+	var wayBufs [2][]uint32 // see waysOf
 	rd := pipeline.NewSeqReader(stored, 0, stored.Size(), 64<<10)
 	prevDisposal := byte(disposalBackground)
 	for k := range infos {
@@ -150,8 +151,8 @@ func (t *frameTee) writeLocal(w io.Writer, env *pipeline.Env, stored *pipeline.S
 		// a frame of changes, with no transparency or with it over runs.
 		ways := [][]uint32{keys}
 		if k > 0 && infos[k].diff && prevDisposal == disposalNone {
-			opaque, runs := waysOf(keys, rect, screen, fw)
-			ways = append(ways, opaque, runs)
+			wayBufs[0], wayBufs[1] = waysOf(keys, rect, screen, fw, wayBufs[0], wayBufs[1])
+			ways = append(ways, wayBufs[0], wayBufs[1])
 		}
 		var best []byte
 		var bestPal color.Palette
@@ -206,9 +207,11 @@ func (t *frameTee) writeLocal(w io.Writer, env *pipeline.Env, stored *pipeline.S
 // waysOf returns a frame of changes (its unchanged pixels transparent) with
 // those pixels as the picture shows them instead, and with transparency
 // only over stretches of them of more than one colour (see bestFrame).
-func waysOf(keys []uint32, r image.Rectangle, screen []uint32, sw int) (opaque, runs []uint32) {
-	opaque = slices.Clone(keys)
-	runs = slices.Clone(keys)
+// The two are written into the storage of into1 and into2 when it is large
+// enough (the frames of an animation one after another).
+func waysOf(keys []uint32, r image.Rectangle, screen []uint32, sw int, into1, into2 []uint32) (opaque, runs []uint32) {
+	opaque = append(into1[:0], keys...)
+	runs = append(into2[:0], keys...)
 	w := r.Dx()
 	same, start := 0, 0
 	for i, c := range keys {

@@ -539,5 +539,8 @@ func convolveRow(win [][]uint8, dst []uint8, w, rx, ry, width int, cols []int, w
 // truncLevel keeps v within 0 to 255 and drops its fraction, as libvips
 // casts to 8 bits.
 func truncLevel(v float64) uint8 {
-	return uint8(math.Max(0, math.Min(255, v)))
+	// The built-in min and max, which are math.Min and math.Max for every
+	// value this is given (no infinity; NaN stays NaN either way), without
+	// their calls.
+	return uint8(max(0, min(255, v)))
 }
