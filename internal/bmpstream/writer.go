@@ -5,6 +5,7 @@
 package bmpstream
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"image"
@@ -14,6 +15,7 @@ import (
 	"reflect"
 
 	"github.com/whhhh1500/goimgtools/internal/density"
+	"github.com/whhhh1500/goimgtools/internal/outfile"
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
 
@@ -260,9 +262,37 @@ func EncodeDensity(w io.Writer, src pipeline.Source, dpi float64) error {
 		in = 4 * dx
 	}
 
-	sp := pipeline.NewSpill(env)
-	defer sp.Close()
-	sp.Expect(int64(in) * int64(dy))
+	// direct: rows go straight to their places in w, last row first in the
+	// file, and the header in front at the end (outfile.Patcher); else they
+	// are staged and read back last first. Not for rows whose layout waits
+	// on their alpha (raw), nor a palette that may grow strip by strip.
+	pw, direct := w.(outfile.Patcher)
+	direct = direct && !raw && kind != kPaletted
+	pixOff := int64(14 + 40)
+	if kind == kGray {
+		pixOff += 1024
+	}
+	var sp *pipeline.Spill
+	var chunk []byte
+	rowsAt := max(1, min(dy, outChunk/step)) // a chunk's rows (direct)
+	held, done := 0, 0                       // rows in the chunk, rows put out before it
+	put := func() error {
+		off := pixOff + int64(dy-done-held)*int64(step)
+		err := pw.Patch(chunk[(rowsAt-held)*step:rowsAt*step], off)
+		done, held = done+held, 0
+		return err
+	}
+	if direct {
+		if err := env.Budget.Reserve(int64(rowsAt)*int64(step), "bmp output rows"); err != nil {
+			return err
+		}
+		defer env.Budget.Release(int64(rowsAt) * int64(step))
+		chunk = make([]byte, rowsAt*step)
+	} else {
+		sp = pipeline.NewSpill(env)
+		defer sp.Close()
+		sp.Expect(int64(in) * int64(dy))
+	}
 
 	var row []byte
 	if !raw {
@@ -301,6 +331,15 @@ func EncodeDensity(w io.Writer, src pipeline.Source, dpi float64) error {
 			default:
 				genericRow(row, m, sb.Min.Y+y)
 				out = row
+			}
+			if direct {
+				copy(chunk[(rowsAt-1-held)*step:][:step], out)
+				if held++; held == rowsAt {
+					if err := put(); err != nil {
+						return err
+					}
+				}
+				continue
 			}
 			if _, err := sp.Write(out); err != nil {
 				return err
@@ -357,6 +396,20 @@ func EncodeDensity(w io.Writer, src pipeline.Source, dpi float64) error {
 	h.imageSize = uint32(int64(dy) * int64(step))
 	h.fileSize += uint32(len(palette)) + h.imageSize
 	h.pixOffset += uint32(len(palette))
+	if direct {
+		if held > 0 {
+			if err := put(); err != nil {
+				return err
+			}
+		}
+		if done != dy {
+			return io.ErrUnexpectedEOF
+		}
+		var head bytes.Buffer
+		binary.Write(&head, binary.LittleEndian, h)
+		head.Write(palette)
+		return pw.Patch(head.Bytes(), 0)
+	}
 
 	if err := binary.Write(w, binary.LittleEndian, h); err != nil {
 		return err

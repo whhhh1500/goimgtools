@@ -11,6 +11,7 @@ import (
 
 	"github.com/whhhh1500/goimgtools/internal/density"
 	"github.com/whhhh1500/goimgtools/internal/jpegstream"
+	"github.com/whhhh1500/goimgtools/internal/outfile"
 	"github.com/whhhh1500/goimgtools/internal/tiffstream/lzw"
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
@@ -39,7 +40,11 @@ type tileLevel struct {
 	// y how many rows went before it.
 	band    []byte
 	rows, y int
-	sp      *pipeline.Spill
+	// sp is where the level's tiles go: a spill, staged until the levels
+	// above it are written, or for the image itself (the first level) the
+	// output, when it can be written over (outfile.Patcher).
+	sp    sizedWriter
+	spill *pipeline.Spill
 	// Where each tile is in sp, and how long.
 	offsets, counts []uint32
 	// For the level below: the first row of a pair, and the row made of
@@ -142,10 +147,24 @@ func encodeTiled(w io.Writer, src pipeline.Source, o *Options) error {
 		return err
 	}
 	defer env.Budget.Release(need)
+	_, patch := w.(outfile.Patcher)
+	if patch {
+		// The header, its first directory's place filled in at the end.
+		var hdr [8]byte
+		copy(hdr[:], leHeader)
+		if _, err := w.Write(hdr[:]); err != nil {
+			return err
+		}
+	}
 	for i, l := range t.levels {
 		l.band = make([]byte, l.w*t.spp*min(tile, l.h))
-		l.sp = pipeline.NewSpill(env)
-		defer l.sp.Close()
+		if i == 0 && patch {
+			l.sp = &counting{w: w}
+		} else {
+			l.spill = pipeline.NewSpill(env)
+			defer l.spill.Close()
+			l.sp = l.spill
+		}
 		if i > 0 {
 			up := t.levels[i-1]
 			up.pair, up.half = make([]byte, up.w*t.spp), make([]byte, l.w*t.spp)
@@ -316,11 +335,13 @@ func encodeTiled(w io.Writer, src pipeline.Source, o *Options) error {
 	if at > math.MaxUint32 {
 		return errTooLarge
 	}
-	var hdr [8]byte
-	copy(hdr[:], leHeader)
-	enc.PutUint32(hdr[4:], uint32(first))
-	if _, err := w.Write(hdr[:]); err != nil {
-		return err
+	if !patch {
+		var hdr [8]byte
+		copy(hdr[:], leHeader)
+		enc.PutUint32(hdr[4:], uint32(first))
+		if _, err := w.Write(hdr[:]); err != nil {
+			return err
+		}
 	}
 	if err := env.Budget.Reserve(copyBuf, "tiff copy buffer"); err != nil {
 		return err
@@ -329,9 +350,9 @@ func encodeTiled(w io.Writer, src pipeline.Source, o *Options) error {
 	buf := make([]byte, copyBuf)
 	for _, l := range t.levels {
 		size := l.sp.Size()
-		for off := int64(0); off < size; {
+		for off := int64(0); off < size && l.spill != nil; {
 			k := int(min(int64(len(buf)), size-off))
-			if _, err := l.sp.ReadAt(buf[:k], off); err != nil {
+			if _, err := l.spill.ReadAt(buf[:k], off); err != nil {
 				if err == io.EOF {
 					err = io.ErrUnexpectedEOF
 				}
@@ -352,6 +373,11 @@ func encodeTiled(w io.Writer, src pipeline.Source, o *Options) error {
 		if _, err := w.Write(dir); err != nil {
 			return err
 		}
+	}
+	if patch {
+		var off [4]byte
+		enc.PutUint32(off[:], uint32(first))
+		return w.(outfile.Patcher).Patch(off[:], 4)
 	}
 	return nil
 }
@@ -429,7 +455,7 @@ func (t *tiler) flush(l *tileLevel) error {
 }
 
 // write compresses the tile in t.block into sp.
-func (t *tiler) write(sp *pipeline.Spill) error {
+func (t *tiler) write(sp io.Writer) error {
 	tile, spp := t.tile, t.spp
 	switch t.comp {
 	case cNone:

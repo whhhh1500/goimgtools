@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/whhhh1500/goimgtools/internal/testutil"
@@ -290,6 +291,54 @@ func TestSpillExpect(t *testing.T) {
 	small.Close()
 	if n := tempFiles(t, dir); n != 0 || env.Budget.Used() != 0 {
 		t.Fatalf("after Close: %d temp files, %d bytes reserved", n, env.Budget.Used())
+	}
+}
+
+// TestSpillSmall: a spill told it will hold a few kilobytes takes about
+// that much memory, not a whole chunk of a megabyte (a tile's JPEG is
+// staged a thousand times in a pyramid), and still holds more than it was
+// told, read back the same.
+func TestSpillSmall(t *testing.T) {
+	env := pipeline.NewEnv(64<<20, t.TempDir())
+	data := make([]byte, 3000)
+	for i := range data {
+		data[i] = byte(i * 7)
+	}
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	for range 100 {
+		s := pipeline.NewSpill(env)
+		s.Expect(int64(len(data)))
+		if _, err := s.Write(data); err != nil {
+			t.Fatal(err)
+		}
+		s.Close()
+	}
+	runtime.ReadMemStats(&after)
+	if per := (after.TotalAlloc - before.TotalAlloc) / 100; per > 64<<10 {
+		t.Errorf("a 3000-byte spill allocated %d bytes", per)
+	}
+	// More than expected: past the first chunk's size and past a megabyte.
+	s := pipeline.NewSpill(env)
+	defer s.Close()
+	s.Expect(100)
+	big := make([]byte, 3<<20+5)
+	for i := range big {
+		big[i] = byte(i * 13)
+	}
+	for p := big; len(p) > 0; {
+		k := min(len(p), 70000)
+		if _, err := s.Write(p[:k]); err != nil {
+			t.Fatal(err)
+		}
+		p = p[k:]
+	}
+	got := make([]byte, len(big))
+	if _, err := s.ReadAt(got, 0); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, big) {
+		t.Error("read back differs")
 	}
 }
 

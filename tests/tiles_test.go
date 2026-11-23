@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	. "github.com/whhhh1500/goimgtools"
+	"github.com/whhhh1500/goimgtools/internal/testutil"
 )
 
 // tileSums is the sha256 (first 16 hex digits) of every file under dir,
@@ -260,5 +261,23 @@ func TestTileLayouts(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "bad.zip")); err == nil {
 		t.Error("a failed archive was left")
+	}
+}
+
+// TestTilesInMemory: the tiles' JPEGs are staged in memory, whatever the
+// image's own stages hold: with a temporary directory that cannot be
+// written, a pyramid whose rows of tiles take more than an eighth of the
+// limit (the part staged data may take) is written all the same. Counted
+// against the image's budget, every tile went to a temporary file.
+func TestTilesInMemory(t *testing.T) {
+	img := testutil.Natural(2400, 1200, 5)
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "no", "such", "dir")
+	err := FromImage(img).MemoryLimit(16 << 20).TempDir(missing).ToTiles(filepath.Join(dir, "t.dzi"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "t_files", "0", "0_0.jpeg")); err != nil {
+		t.Fatal(err)
 	}
 }

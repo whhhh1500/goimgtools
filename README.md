@@ -102,7 +102,7 @@ goimgtools batch -resize 1920x1920 -no-enlarge -quality 80 -format jpeg in_dir o
 | QOI | ✓ | ✓ (Pillow's bytes, marked sRGB) | Streaming both ways |
 | TGA | ✓ (colour-mapped, 15 to 32-bit colour, grey; compressed or not; any corner; TGA 2.0 alpha attributes) | ✓ (run-length compressed, Pillow's bytes) | Stored rows by file offset; compressed ones streamed (bottom-up ones through working storage) |
 | SVG | ✓ (drawn: shapes, paths, transforms, fills and strokes with dashes, joins and caps, gradients, opacity, CSS, use and symbol, clip paths, masks, patterns, markers, filters (every primitive: blur, shadows, lighting, turbulence, displacement and the others), text in installed fonts (shaped, right to left, vertical, variable fonts, colour emoji of COLR versions 0 and 1 and bitmaps), embedded pictures; at the size a resize asks for) | — | Drawn a band of rows at a time from the scene, its outlines built once |
-| PDF | — | ✓ (a page the size of the image at its resolution, or one for each image with `Pages`; lossless, or JPEG with a quality; transparency as a soft mask; colour profile) | Written as the image is read |
+| PDF | — | ✓ (a page the size of the image at its resolution, or one for each image with `Pages`; lossless (a JPEG as it is), or JPEG with a quality; transparency as a soft mask; colour profile) | Written as the image is read |
 | Netpbm (PBM, PGM, PPM, PAM, PFM) | ✓ (text or binary, any maximum, as Pillow scales it; PAM with transparency) | ✓ (PGM or PPM, Pillow's bytes) | Rows read by file offset |
 
 Staged data is kept in memory up to 1/8 of the memory limit (8MB by default); beyond that it is written to temporary files, which are deleted after use.

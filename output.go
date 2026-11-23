@@ -21,6 +21,7 @@ import (
 	"github.com/whhhh1500/goimgtools/internal/jpegstream"
 	"github.com/whhhh1500/goimgtools/internal/metric"
 	"github.com/whhhh1500/goimgtools/internal/ops"
+	"github.com/whhhh1500/goimgtools/internal/pdfwrite"
 	"github.com/whhhh1500/goimgtools/internal/pngstream"
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
@@ -790,7 +791,7 @@ func (m *Image) ToFile(path string) (err error) {
 		}
 	}()
 	bw := bufio.NewWriterSize(tmp, 64<<10)
-	if err = m.write(bw, strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), ".")); err != nil {
+	if err = m.write(&fileOut{bw, tmp}, strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), ".")); err != nil {
 		return err
 	}
 	if err = bw.Flush(); err != nil {
@@ -860,6 +861,27 @@ func (m *Image) write(w io.Writer, ext string) (err error) {
 			return err
 		}
 	}
+	if format == "pdf" {
+		// A JPEG as it is, when it can be (see asJPEGPage).
+		po, err := optionsOf[PDFOptions](m.options, "pdf")
+		if err != nil {
+			f.Close()
+			return err
+		}
+		p, err := m.asJPEGPage(po, nil)
+		if err != nil {
+			f.Close()
+			return err
+		}
+		if p != nil {
+			f.Close()
+			doc := pdfwrite.NewDocument(w)
+			if err := m.writeJPEGPage(doc, p); err != nil {
+				return err
+			}
+			return doc.Close()
+		}
+	}
 	if def := formatNamed(format); len(m.toProfile) > 0 && def != nil && def.noProfile {
 		f.Close()
 		return fmt.Errorf("goimgtools: ToProfile: %s output cannot carry a colour profile", format)
@@ -885,6 +907,21 @@ func (m *Image) write(w io.Writer, ext string) (err error) {
 		return m.writeAtSSIM(w, src, format, out)
 	}
 	return m.encode(w, src, format, 0, out)
+}
+
+// fileOut is the file ToFile writes, buffered, which encoders may write
+// over where they have written (outfile.Patcher).
+type fileOut struct {
+	*bufio.Writer
+	f *os.File
+}
+
+func (o *fileOut) Patch(p []byte, off int64) error {
+	if err := o.Flush(); err != nil {
+		return err
+	}
+	_, err := o.f.WriteAt(p, off)
+	return err
 }
 
 // createBeside creates a new, empty file in the directory of path, for a

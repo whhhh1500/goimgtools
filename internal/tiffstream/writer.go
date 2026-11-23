@@ -17,6 +17,7 @@ import (
 	"sort"
 
 	"github.com/whhhh1500/goimgtools/internal/density"
+	"github.com/whhhh1500/goimgtools/internal/outfile"
 	"github.com/whhhh1500/goimgtools/internal/tiffstream/lzw"
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
@@ -256,6 +257,14 @@ func swap16(dst, src []byte) {
 	}
 }
 
+// dropAlpha writes the colour of the pixels of src (four samples of bps
+// bytes each) to dst, three samples a pixel.
+func dropAlpha(dst, src []byte, bps int) {
+	for i, j := 0, 0; i+4*bps <= len(src); i, j = i+4*bps, j+3*bps {
+		copy(dst[j:j+3*bps], src[i:i+3*bps])
+	}
+}
+
 // genericRow writes row y of m as 8-bit RGBA, the way the reference
 // encoder's At() loop does. RGBA64At is by contract the same value as
 // At().RGBA() without the interface allocation.
@@ -309,9 +318,11 @@ func writePix(w io.Writer, pix []byte, nrows, length, stride int) error {
 // It is the golang.org/x/image/tiff encoder reading strips, and the bytes
 // are the ones tiff.Encode writes for the same image: Paletted, Gray,
 // Gray16, RGBA, NRGBA, RGBA64 and NRGBA64 strips keep their pixel format,
-// every other pixel type is written as 8-bit RGBA through At().RGBA(). (The
-// one difference: an image wider or taller than 65535 gets its size written
-// as a LONG, where the reference truncates it to a SHORT.)
+// every other pixel type is written as 8-bit RGBA through At().RGBA(). The
+// differences: an image known to be opaque (pipeline.IsOpaque) is written as
+// RGB, without the alpha the reference writes, as libtiff's writers do;
+// and an image wider or taller than 65535 gets its size written as a LONG,
+// where the reference truncates it to a SHORT.
 //
 // The file is a single strip of pixel data followed by the directory, with
 // the directory's offset in the header. Uncompressed rows go straight to w.
@@ -370,6 +381,13 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 	if generic {
 		bpp = 4
 	}
+	// An image known to be opaque is written without its alpha, as RGB (as
+	// libtiff's writers do): three samples of each four.
+	rgb := pipeline.IsOpaque(src) && (bpp == 4 || bpp == 8)
+	inBpp := bpp
+	if rgb {
+		bpp = bpp / 4 * 3
+	}
 	rowLen := int64(dx) * int64(bpp)
 	// imageLen is the length of the pixel data in bytes.
 	// The offset of the IFD is imageLen + 8 header bytes.
@@ -389,8 +407,16 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 	var strips *stripWriter
 
 	// Rows that are not written as they are get converted a chunk at a time.
-	var conv []byte
-	if swap || generic {
+	var conv, wide []byte
+	if rgb && (generic || swap) {
+		// A row of four samples, before the alpha is left out.
+		if err := env.Budget.Reserve(int64(dx)*int64(inBpp), "tiff row"); err != nil {
+			return err
+		}
+		defer env.Budget.Release(int64(dx) * int64(inBpp))
+		wide = make([]byte, dx*inBpp)
+	}
+	if swap || generic || rgb {
 		n := int64(max(1, min(dy, encChunk/int(rowLen))))
 		if err := env.Budget.Reserve(n*rowLen, "tiff rows"); err != nil {
 			return err
@@ -404,6 +430,10 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 	var (
 		dst io.Writer
 		sp  *pipeline.Spill
+		// direct: the compressed data goes straight to w, whose header is
+		// written over at the end (outfile.Patcher), instead of staged to
+		// learn its size first.
+		direct *counting
 	)
 	if compression == cNone {
 		// Write IFD offset before outputting pixel data.
@@ -419,28 +449,40 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 		// know the compressed size. The hint is the uncompressed size: the
 		// compressed one is unknown, and going to disk a little early costs
 		// less than filling the budget first.
-		sp = pipeline.NewSpill(env)
-		defer sp.Close()
-		sp.Expect(imageLen)
+		var sink sizedWriter
+		if _, ok := w.(outfile.Patcher); ok {
+			var hdr [8]byte
+			copy(hdr[:], leHeader)
+			if _, err := w.Write(hdr[:]); err != nil {
+				return err
+			}
+			direct = &counting{w: w}
+			sink = direct
+		} else {
+			sp = pipeline.NewSpill(env)
+			defer sp.Close()
+			sp.Expect(imageLen)
+			sink = sp
+		}
 		var zw *zlib.Writer
 		var lw *lzw.Writer
 		comp := func() io.WriteCloser {
 			if compression == cLZW {
 				if lw == nil {
-					lw = lzw.NewWriter(sp)
+					lw = lzw.NewWriter(sink)
 				} else {
-					lw.Reset(sp)
+					lw.Reset(sink)
 				}
 				return lw
 			}
 			if zw == nil {
-				zw = zlib.NewWriter(sp)
+				zw = zlib.NewWriter(sink)
 			} else {
-				zw.Reset(sp)
+				zw.Reset(sink)
 			}
 			return zw
 		}
-		strips = &stripWriter{sp: sp, comp: comp, size: rowsPerStrip * rowLen}
+		strips = &stripWriter{sp: sink, comp: comp, size: rowsPerStrip * rowLen}
 		if h := env.Helpers(); h > 0 {
 			// The strips are compressed on helpers, a few at a time, each
 			// with a compressor of its own, and go into the spill in order.
@@ -499,15 +541,24 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 		}
 		switch {
 		case sb.Dy() == 0:
-		case !swap && !generic:
+		case !swap && !generic && !rgb:
 			err = writePix(dst, pix, sb.Dy(), int(rowLen), stride)
 		default:
 			fill := 0
 			for y := 0; y < sb.Dy() && err == nil; y++ {
 				row := conv[fill : fill+int(rowLen)]
-				if swap {
+				switch {
+				case rgb && swap:
+					swap16(wide, pix[y*stride:y*stride+dx*inBpp])
+					dropAlpha(row, wide, 2)
+				case rgb && generic:
+					genericRow(wide, m, sb.Min.Y+y)
+					dropAlpha(row, wide, 1)
+				case rgb:
+					dropAlpha(row, pix[y*stride:y*stride+dx*inBpp], 1)
+				case swap:
 					swap16(row, pix[y*stride:y*stride+int(rowLen)])
-				} else {
+				default:
 					genericRow(row, m, sb.Min.Y+y)
 				}
 				if fill += int(rowLen); fill == len(conv) || y == sb.Dy()-1 {
@@ -530,10 +581,16 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 		if err = dst.(io.Closer).Close(); err != nil {
 			return err
 		}
-		imageLen = sp.Size()
+		if direct != nil {
+			imageLen = direct.n
+		} else {
+			imageLen = sp.Size()
+		}
 		if imageLen+8+maxIFD+8*int64(len(strips.offsets))+int64(len(icc)+len(xmp)+len(iptc)) > math.MaxUint32 {
 			return errTooLarge
 		}
+	}
+	if compression != cNone && direct == nil {
 		var hdr [8]byte
 		copy(hdr[:], leHeader)
 		enc.PutUint32(hdr[4:], uint32(imageLen+8))
@@ -600,6 +657,10 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 		extraSamples = 1 // Associated alpha.
 	}
 
+	if rgb {
+		samplesPerPixel, bitsPerSample, extraSamples = 3, bitsPerSample[:3], 0
+	}
+
 	// The reference writes the image size as SHORTs whatever it is; a size
 	// that does not fit in one is written as a LONG instead.
 	sizeType := func(v int) int {
@@ -652,7 +713,16 @@ func Encode(w io.Writer, src pipeline.Source, o *Options) error {
 	}
 	ifd = append(ifd, exif...)
 
-	return writeIFD(w, imageLen+8, ifd)
+	if err := writeIFD(w, imageLen+8, ifd); err != nil {
+		return err
+	}
+	if direct != nil {
+		// The directory's place, in the header written first.
+		var off [4]byte
+		enc.PutUint32(off[:], uint32(imageLen+8))
+		return w.(outfile.Patcher).Patch(off[:], 4)
+	}
+	return nil
 }
 
 // predictor applies horizontal differencing (Predictor 2) to the rows
@@ -704,12 +774,33 @@ func (p *predictor) Close() error {
 	return p.w.Close()
 }
 
+// sizedWriter is where compressed strips go: a spill, or the output itself
+// (counting).
+type sizedWriter interface {
+	io.Writer
+	Size() int64
+}
+
+// counting is w, counting what is written to it.
+type counting struct {
+	w io.Writer
+	n int64
+}
+
+func (c *counting) Write(p []byte) (int, error) {
+	n, err := c.w.Write(p)
+	c.n += int64(n)
+	return n, err
+}
+
+func (c *counting) Size() int64 { return c.n }
+
 // stripWriter compresses the pixel data written through it strip by strip
 // into the spill, each strip a stream of its own, and notes where each
 // begins (from the start of the data) and how long it is. Close ends the
 // last strip.
 type stripWriter struct {
-	sp      *pipeline.Spill
+	sp      sizedWriter
 	comp    func() io.WriteCloser // a compressor writing to sp, started anew
 	cur     io.WriteCloser
 	size, n int64 // bytes of pixel data a strip holds, and the current one has

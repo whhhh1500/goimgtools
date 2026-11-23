@@ -137,54 +137,8 @@ func (d *Document) AddPage(src pipeline.Source, o *Options) error {
 		return err
 	}
 	defer env.Budget.Release(need)
-	// A profile of other channels than the picture's (an RGB one on what
-	// was made grey) is left out: a reader could not apply it.
-	icc := o.ICC
-	if len(icc) >= 20 && (string(icc[16:20]) == "GRAY") != grey {
-		icc = nil
-	}
+	picture, pictureLen, mask, maskLen, space, channels := d.head(b.Dx(), b.Dy(), grey, alpha, o.ICC, o.Density)
 	c := d.c
-	page, contents, picture, pictureLen := d.alloc(), d.alloc(), d.alloc(), d.alloc()
-	var mask, maskLen, profile int
-	if alpha {
-		mask, maskLen = d.alloc(), d.alloc()
-	}
-	if len(icc) > 0 {
-		profile = d.alloc()
-	}
-	d.kids = append(d.kids, page)
-	dpi := o.Density
-	if !(dpi > 0) {
-		dpi = 72
-	}
-	pw, ph := float64(b.Dx())*72/dpi, float64(b.Dy())*72/dpi
-	// Acrobat's largest page is 14400 units (200 inches): a larger one is
-	// made smaller, the picture keeping all its pixels.
-	if big := max(pw, ph); big > 14400 {
-		pw, ph = float64(pw*14400)/big, float64(ph*14400)/big
-	}
-	d.obj(page)
-	c.printf("<< /Type /Page /Parent %d 0 R /MediaBox [0 0 %s %s] /Resources << /XObject << /Im0 %d 0 R >> /ProcSet [/PDF /ImageC /ImageB] >> /Contents %d 0 R >>\nendobj\n",
-		pages, num(pw), num(ph), picture, contents)
-	draw := fmt.Sprintf("q %s 0 0 %s 0 0 cm /Im0 Do Q\n", num(pw), num(ph))
-	d.obj(contents)
-	c.printf("<< /Length %d >>\nstream\n%sendstream\nendobj\n", len(draw), draw)
-	channels := 3
-	space := "/DeviceRGB"
-	if grey {
-		channels, space = 1, "/DeviceGray"
-	}
-	if len(icc) > 0 {
-		d.obj(profile)
-		var zb bufferWriter
-		zw := zlib.NewWriter(&zb)
-		zw.Write(icc)
-		zw.Close()
-		c.printf("<< /N %d /Alternate %s /Filter /FlateDecode /Length %d >>\nstream\n", channels, space, len(zb.b))
-		c.Write(zb.b)
-		c.printf("\nendstream\nendobj\n")
-		space = fmt.Sprintf("[/ICCBased %d 0 R]", profile)
-	}
 	// The picture.
 	d.obj(picture)
 	c.printf("<< /Type /XObject /Subtype /Image /Width %d /Height %d /ColorSpace %s /BitsPerComponent 8 ", b.Dx(), b.Dy(), space)
@@ -241,6 +195,146 @@ func (d *Document) AddPage(src pipeline.Source, o *Options) error {
 		c.printf("%d\nendobj\n", length)
 	}
 	return c.err
+}
+
+// head writes what comes before a page's picture: the page, its contents
+// and the picture's colour profile; and returns the objects of the picture
+// and its soft mask (alpha) and the picture's colour space.
+func (d *Document) head(w, h int, grey, alpha bool, icc []byte, density float64) (picture, pictureLen, mask, maskLen int, space string, channels int) {
+	// A profile of other channels than the picture's (an RGB one on what
+	// was made grey) is left out: a reader could not apply it.
+	if len(icc) >= 20 && (string(icc[16:20]) == "GRAY") != grey {
+		icc = nil
+	}
+	c := d.c
+	page, contents := d.alloc(), d.alloc()
+	picture, pictureLen = d.alloc(), d.alloc()
+	var profile int
+	if alpha {
+		mask, maskLen = d.alloc(), d.alloc()
+	}
+	if len(icc) > 0 {
+		profile = d.alloc()
+	}
+	d.kids = append(d.kids, page)
+	dpi := density
+	if !(dpi > 0) {
+		dpi = 72
+	}
+	pw, ph := float64(w)*72/dpi, float64(h)*72/dpi
+	// Acrobat's largest page is 14400 units (200 inches): a larger one is
+	// made smaller, the picture keeping all its pixels.
+	if big := max(pw, ph); big > 14400 {
+		pw, ph = float64(pw*14400)/big, float64(ph*14400)/big
+	}
+	d.obj(page)
+	c.printf("<< /Type /Page /Parent %d 0 R /MediaBox [0 0 %s %s] /Resources << /XObject << /Im0 %d 0 R >> /ProcSet [/PDF /ImageC /ImageB] >> /Contents %d 0 R >>\nendobj\n",
+		pages, num(pw), num(ph), picture, contents)
+	draw := fmt.Sprintf("q %s 0 0 %s 0 0 cm /Im0 Do Q\n", num(pw), num(ph))
+	d.obj(contents)
+	c.printf("<< /Length %d >>\nstream\n%sendstream\nendobj\n", len(draw), draw)
+	channels = 3
+	space = "/DeviceRGB"
+	if grey {
+		channels, space = 1, "/DeviceGray"
+	}
+	if len(icc) > 0 {
+		d.obj(profile)
+		var zb bufferWriter
+		zw := zlib.NewWriter(&zb)
+		zw.Write(icc)
+		zw.Close()
+		c.printf("<< /N %d /Alternate %s /Filter /FlateDecode /Length %d >>\nstream\n", channels, space, len(zb.b))
+		c.Write(zb.b)
+		c.printf("\nendstream\nendobj\n")
+		space = fmt.Sprintf("[/ICCBased %d 0 R]", profile)
+	}
+	return picture, pictureLen, mask, maskLen, space, channels
+}
+
+// AddJPEG writes a page whose picture is a JPEG as it is, all of r: w x h
+// pixels of grey or YCbCr (see ScanJPEG), with the colour profile icc, at
+// density pixels per inch (0: 72).
+func (d *Document) AddJPEG(r io.Reader, w, h int, grey bool, icc []byte, density float64) error {
+	picture, pictureLen, _, _, space, _ := d.head(w, h, grey, false, icc, density)
+	c := d.c
+	d.obj(picture)
+	c.printf("<< /Type /XObject /Subtype /Image /Width %d /Height %d /ColorSpace %s /BitsPerComponent 8 /Filter /DCTDecode /Length %d 0 R >>\nstream\n",
+		w, h, space, pictureLen)
+	start := c.n
+	if _, err := io.Copy(c, r); err != nil {
+		return err
+	}
+	if c.err != nil {
+		return c.err
+	}
+	length := c.n - start
+	c.printf("\nendstream\nendobj\n")
+	d.obj(pictureLen)
+	c.printf("%d\nendobj\n", length)
+	return c.err
+}
+
+// ScanJPEG reads a JPEG up to its frame header and reports whether a PDF
+// reader can take it as it is: Huffman coded, baseline, extended or
+// progressive, 8 bits, of one component (grey) or three (YCbCr: not an
+// Adobe file that says its three are RGB).
+func ScanJPEG(r io.Reader) (w, h int, grey, ok bool) {
+	br := bufio.NewReaderSize(r, 4096)
+	var m [2]byte
+	if _, err := io.ReadFull(br, m[:]); err != nil || m != [2]byte{0xff, 0xd8} {
+		return 0, 0, false, false
+	}
+	rgb := false
+	for {
+		// A marker: 0xff (any number of them), then its code.
+		b, err := br.ReadByte()
+		if err != nil || b != 0xff {
+			return 0, 0, false, false
+		}
+		for b == 0xff {
+			if b, err = br.ReadByte(); err != nil {
+				return 0, 0, false, false
+			}
+		}
+		var l [2]byte
+		if _, err := io.ReadFull(br, l[:]); err != nil {
+			return 0, 0, false, false
+		}
+		n := int(l[0])<<8 | int(l[1]) - 2
+		if n < 0 {
+			return 0, 0, false, false
+		}
+		switch {
+		case b == 0xc0 || b == 0xc1 || b == 0xc2:
+			var f [6]byte
+			if n < 6 {
+				return 0, 0, false, false
+			}
+			if _, err := io.ReadFull(br, f[:]); err != nil {
+				return 0, 0, false, false
+			}
+			h, w = int(f[1])<<8|int(f[2]), int(f[3])<<8|int(f[4])
+			comps := int(f[5])
+			ok = f[0] == 8 && w > 0 && h > 0 && (comps == 1 || comps == 3 && !rgb)
+			return w, h, comps == 1, ok
+		case b >= 0xc3 && b <= 0xcf && b != 0xc4 && b != 0xc8 && b != 0xcc:
+			return 0, 0, false, false // lossless, hierarchical or arithmetic
+		case b == 0xee && n >= 12:
+			// Adobe's segment: transform 0 on three components is RGB.
+			var a [12]byte
+			if _, err := io.ReadFull(br, a[:]); err != nil {
+				return 0, 0, false, false
+			}
+			if string(a[:5]) == "Adobe" && a[11] == 0 {
+				rgb = true
+			}
+			n -= 12
+		}
+		if _, err := br.Discard(n); err != nil {
+			return 0, 0, false, false
+		}
+	}
 }
 
 // Close writes the tree of pages and the cross-reference table.

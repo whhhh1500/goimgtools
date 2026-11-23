@@ -27,6 +27,7 @@ type Spill struct {
 	bw       *bufio.Writer
 	size     int64
 	err      error
+	hint     int64 // the total Expect was told, 0 if it was not
 }
 
 // NewSpill returns an empty spill buffer that draws on env's budget.
@@ -36,6 +37,7 @@ func NewSpill(env *Env) *Spill { return &Spill{env: env} }
 // When that cannot fit in memory the spill goes to disk straight away,
 // instead of filling memory up to the limit first. It is only a hint.
 func (s *Spill) Expect(total int64) {
+	s.hint = total
 	if s.f != nil || s.err != nil || len(s.chunks) != 0 {
 		return
 	}
@@ -77,7 +79,14 @@ func (s *Spill) Write(p []byte) (int, error) {
 				continue
 			}
 			s.reserved += spillChunk
-			s.chunks = append(s.chunks, make([]byte, 0, spillChunk))
+			// The first chunk only as large as the data expected: a small
+			// spill (a tile's JPEG) does not take a whole chunk each time.
+			// It grows to a whole one as it fills, like the others.
+			c := int64(spillChunk)
+			if len(s.chunks) == 0 && s.hint > 0 {
+				c = min(c, max(4<<10, (s.hint+4<<10-1)&^(4<<10-1)))
+			}
+			s.chunks = append(s.chunks, make([]byte, 0, c))
 		}
 		last := &s.chunks[len(s.chunks)-1]
 		k := min(len(p), spillChunk-len(*last))

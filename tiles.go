@@ -18,6 +18,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/whhhh1500/goimgtools/pipeline"
@@ -257,6 +258,11 @@ func (m *Image) tiles(zw *zip.Writer, base string, o TileOptions) error {
 		t.name = path.Base(base)
 	}
 	t.alpha = !t.grey && !pipeline.IsOpaque(src)
+	// The tiles are encoded with a budget of their own: what the image's
+	// stages hold is no business of theirs, and counted against them it
+	// left no room to stage a tile's JPEG in memory (each went to a
+	// temporary file).
+	t.enc = pipeline.NewEnv(t.env.Budget.Limit(), t.env.TempDir)
 	defer t.release()
 	if t.layout == TileDeepZoom {
 		t.dir, t.margin, t.step = base+"_files", o.Overlap, o.Size
@@ -515,6 +521,32 @@ type tiler struct {
 	count                       atomic.Int64
 	top                         *tileLevel
 	reserved                    int64
+	enc                         *pipeline.Env // the tiles' encoding (see tiles)
+	// Tiles' pixels to use again, one for each tile being encoded at once.
+	mu  sync.Mutex
+	pix [][]byte
+}
+
+// pixels returns storage for a tile's n bytes of pixels; give it back with
+// done.
+func (t *tiler) pixels(n int) []byte {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if k := len(t.pix); k > 0 {
+		p := t.pix[k-1]
+		t.pix = t.pix[:k-1]
+		if cap(p) >= n {
+			return p[:n]
+		}
+	}
+	c := t.size + 2*t.margin
+	return make([]byte, n, max(n, 4*c*c))
+}
+
+func (t *tiler) done(p []byte) {
+	t.mu.Lock()
+	t.pix = append(t.pix, p)
+	t.mu.Unlock()
 }
 
 func (t *tiler) release() {
@@ -716,8 +748,11 @@ func (l *tileLevel) writeRow(r, bottom int) error {
 		}
 		rect := image.Rect(0, 0, right-left, bottom-top)
 		var img image.Image
+		// Every byte of the tile is written below.
+		px := t.pixels(4 * rect.Dx() * rect.Dy())
+		defer t.done(px)
 		if t.grey {
-			g := image.NewGray(rect)
+			g := &image.Gray{Pix: px[:rect.Dx()*rect.Dy()], Stride: rect.Dx(), Rect: rect}
 			for y := top; y < bottom; y++ {
 				src := l.rows[y-l.y0][4*left : 4*right]
 				dst := g.Pix[(y-top)*g.Stride:]
@@ -727,7 +762,7 @@ func (l *tileLevel) writeRow(r, bottom int) error {
 			}
 			img = g
 		} else {
-			n := image.NewNRGBA(rect)
+			n := &image.NRGBA{Pix: px, Stride: 4 * rect.Dx(), Rect: rect}
 			for y := top; y < bottom; y++ {
 				copy(n.Pix[(y-top)*n.Stride:], l.rows[y-l.y0][4*left:4*right])
 			}
@@ -827,7 +862,7 @@ func (t *tiler) writeTile(name string, img image.Image) error {
 
 // encode writes a tile in a format, without metadata.
 func (t *tiler) encode(w io.Writer, format string, options any, img image.Image) error {
-	src := pipeline.FromImage(img, t.env)
+	src := pipeline.FromImage(img, t.enc)
 	defer src.Close()
 	return t.m.encodeWith(w, src, format, options, 0, pipeline.Meta{})
 }

@@ -8,8 +8,11 @@ import (
 	"image/color"
 	"image/jpeg"
 	"io"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 
 	. "github.com/whhhh1500/goimgtools"
@@ -249,4 +252,64 @@ func pdfObjectsErr(pdf []byte) map[int][]byte {
 		objs[i] = pdf[off+len(head) : off+end]
 	}
 	return objs
+}
+
+// TestPDFJPEGAsIs: a JPEG stored without loss is put in the document as it
+// is (its bytes, DCTDecode), with its profile and resolution, on a page of
+// one image and in Pages; grey too; but not after an operation, at a
+// quality, nor a CMYK JPEG: those are decoded and written as before.
+func TestPDFJPEGAsIs(t *testing.T) {
+	photo, err := FromImage(photoLike(160, 100)).Density(150).ToProfile(ProfileDisplayP3()).JPEG(JPEGOptions{Quality: 85}).ToBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	asIs := func(what string, pdf []byte, jpg []byte, space string, mediaBox string) {
+		t.Helper()
+		objs := pdfObjects(t, pdf)
+		if !bytes.Contains(objs[3], []byte(mediaBox)) {
+			t.Errorf("%s: page %s", what, objs[3])
+		}
+		dict, data := pdfStream(t, objs, 5)
+		if !strings.Contains(dict, "/DCTDecode") || !strings.Contains(dict, space) || !bytes.Equal(data, jpg) {
+			t.Errorf("%s: not the JPEG as it is: %s (%d bytes of %d)", what, dict, len(data), len(jpg))
+		}
+	}
+	pdf, err := FromBytes(photo).PDF().ToBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	asIs("one page", pdf, photo, "/ICCBased", "/MediaBox [0 0 76.8 48]")
+	pdf, err = Pages([]*Image{FromBytes(photo), FromBytes(photo)}).ToBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	asIs("Pages", pdf, photo, "/ICCBased", "/MediaBox [0 0 76.8 48]")
+	grey, err := FromImage(testutil.Images(40, 30)["gray"]).JPEG().ToBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pdf, err = FromBytes(grey).PDF().ToBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	asIs("grey", pdf, grey, "/DeviceGray", "/MediaBox [0 0 40 30]")
+	// Decoded: after an operation, at a quality, a CMYK file.
+	cmyk, err := os.ReadFile(filepath.Join("testdata", "icc", "cmyk-plain.jpg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for what, m := range map[string]*Image{
+		"resized":    FromBytes(photo).Resize(80, 0).PDF(),
+		"quality 80": FromBytes(photo).PDF(PDFOptions{Quality: 80}),
+		"CMYK":       FromBytes(cmyk).PDF(),
+	} {
+		pdf, err := m.ToBytes()
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, data := pdfStream(t, pdfObjects(t, pdf), 5)
+		if bytes.Equal(data, photo) || bytes.Equal(data, cmyk) {
+			t.Errorf("%s: the JPEG as it is", what)
+		}
+	}
 }

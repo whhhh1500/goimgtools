@@ -8,6 +8,7 @@ import (
 	"image/gif"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"golang.org/x/image/bmp"
@@ -18,7 +19,9 @@ import (
 )
 
 // TestBMPAndTIFFOutput: the files are the ones the x/image encoders write
-// for the same pixels, whether chosen by method or by file extension.
+// for the same pixels, whether chosen by method or by file extension; but a
+// TIFF of an opaque image, which is RGB where x/image writes RGBA (three
+// samples a pixel, the same pixels).
 func TestBMPAndTIFFOutput(t *testing.T) {
 	imgs := testutil.Images(97, 61)
 	dir := t.TempDir()
@@ -63,6 +66,20 @@ func TestBMPAndTIFFOutput(t *testing.T) {
 			got, err := c.got()
 			if err != nil {
 				t.Fatalf("%s %s: %v", name, c.what, err)
+			}
+			if name == "rgba-opaque" && strings.Contains(strings.ToLower(c.what), "tif") {
+				if spp := tiffSamples(t, got); spp != 3 {
+					t.Errorf("%s %s: %d samples a pixel, want 3", name, c.what, spp)
+				}
+				m, err := tiff.Decode(bytes.NewReader(got))
+				if err != nil {
+					t.Fatalf("%s %s: %v", name, c.what, err)
+				}
+				sameImage(t, name+" "+c.what, m, dec)
+				if !strings.Contains(c.what, "deflate") && len(got) > len(c.want)-97*61+64 {
+					t.Errorf("%s %s: %d bytes, the RGBA file %d", name, c.what, len(got), len(c.want))
+				}
+				continue
 			}
 			if !bytes.Equal(got, c.want) {
 				t.Errorf("%s %s: differs from the x/image encoder", name, c.what)
@@ -317,6 +334,68 @@ func TestWebPOutput(t *testing.T) {
 	for _, bad := range []WebPOptions{{Quality: 101}, {Quality: -3}} {
 		if _, err := FromBytes(in).WebP(bad).ToBytes(); err == nil {
 			t.Errorf("%+v accepted", bad)
+		}
+	}
+}
+
+// tiffSamples is the SamplesPerPixel of the first directory of a little-endian
+// TIFF.
+func tiffSamples(t *testing.T, b []byte) int {
+	t.Helper()
+	le := func(p []byte) int {
+		v := 0
+		for i := len(p) - 1; i >= 0; i-- {
+			v = v<<8 | int(p[i])
+		}
+		return v
+	}
+	if len(b) < 8 || string(b[:2]) != "II" {
+		t.Fatal("not a little-endian TIFF")
+	}
+	off := le(b[4:8])
+	n := le(b[off : off+2])
+	for i := 0; i < n; i++ {
+		e := b[off+2+12*i:]
+		if le(e[:2]) == 277 {
+			return le(e[8:10])
+		}
+	}
+	return 1
+}
+
+// TestFileOutputInPlace: written to a file, BMP rows and the compressed
+// data of a TIFF go to their places in it, the header filled in at the
+// end, rather than through a temporary file: with a temporary directory
+// that cannot be written and data larger than the part of the limit that
+// may be staged, the files are the bytes written through a writer.
+func TestFileOutputInPlace(t *testing.T) {
+	img := testutil.Natural(1500, 1000, 3)
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "no", "such", "dir")
+	for _, c := range []struct {
+		name string
+		f    func(*Image) *Image
+	}{
+		{"bmp", func(m *Image) *Image { return m.BMP() }},
+		{"grey.bmp", func(m *Image) *Image { return m.Grayscale().BMP() }},
+		{"deflate.tif", func(m *Image) *Image { return m.TIFF(TIFFOptions{Compression: TIFFDeflate, Predictor: true}) }},
+		{"lzw.tif", func(m *Image) *Image { return m.TIFF(TIFFOptions{Compression: TIFFLZW}) }},
+		{"tiled.tif", func(m *Image) *Image { return m.TIFF(TIFFOptions{Compression: TIFFDeflate, Tile: 256}) }},
+	} {
+		want, err := c.f(FromImage(img)).ToBytes()
+		if err != nil {
+			t.Fatal(err)
+		}
+		p := filepath.Join(dir, c.name)
+		if err := c.f(FromImage(img).MemoryLimit(16 << 20).TempDir(missing)).ToFile(p); err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		got, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(got, want) {
+			t.Errorf("%s: %d bytes, through a writer %d", c.name, len(got), len(want))
 		}
 	}
 }

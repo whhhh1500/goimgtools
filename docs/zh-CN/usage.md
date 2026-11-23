@@ -129,7 +129,7 @@ err := goimgtools.Open("in.jpg").
 | `ToProfile(icc)` | 把颜色转换到 ICC 配置 `icc` 的色彩空间（须是由原色与色调曲线描述的 RGB 配置：`ProfileDisplayP3()`、`ProfileAdobeRGB()` 或文件中的），并随输出写入；输入有自己的配置时直接从它转换，sRGB 表现不了的颜色得以保留；与 LittleCMS 相差不超过 1 级 |
 | `ICNS(ICNSOptions{Sizes})` | macOS 图标：不超过原图的各标准尺寸（或给 `Sizes`，取自 16、32、64、128、256、512、1024）的正方形 PNG，图像按比例放入、居中，四周透明；每张同时充当一半尺寸的 Retina 图；带目录，同 iconutil 的写法 |
 | `Pages(images).PDF()` | 多页 PDF，每张图一页、按顺序，各自按自己的配方在写到它那一页时读取（内存只占一页）；命令行 `goimgtools pages a.jpg b.png out.pdf` |
-| `PDF(PDFOptions{Quality})` | 单页 PDF，页面大小按图像分辨率（无分辨率时 72 dpi，一个像素一点）：图像无损存储（Flate，逐行按 PNG 的方式滤波），或给 `Quality` 存为 JPEG；透明作为软蒙版；保留颜色配置。pdfium 渲染结果与原图相差不超过 1 级 |
+| `PDF(PDFOptions{Quality})` | 单页 PDF，页面大小按图像分辨率（无分辨率时 72 dpi，一个像素一点）：图像无损存储（Flate，逐行按 PNG 的方式滤波；没有任何操作、不转换颜色的 JPEG 原样放入（DCTDecode），既不解码也不重新编码），或给 `Quality` 存为 JPEG；透明作为软蒙版；保留颜色配置。pdfium 渲染结果与原图相差不超过 1 级 |
 | `PNM()` | Netpbm，同 Pillow 的写法：灰度图写 PGM（P5），其余写 PPM（P6），图像有 16 位时每值 16 位；透明部分铺黑底（同 JPEG） |
 | `ICO(ICOOptions{Sizes})` | 图标（favicon.ico）：图像原样（至多 256×256），或给 `Sizes`（如 `[]int{16, 32, 48, 256}`），把图像按比例缩放到每个尺寸以内（Lanczos3，同 Pillow），每个尺寸存为带透明的 PNG。读取 ICO 或 CUR 时取其中最大的一张 |
 | `TIFF(TIFFOptions{Compression, Predictor, Quality})` | 不压缩、`TIFFDeflate`、`TIFFLZW`（libtiff 的写法）或 `TIFFJPEG`（有损，同 libtiff 为 libvips 与 sharp 写的方式，sharp 的 TIFF 默认即 JPEG：`Quality` 低于 90 时 YCbCr 4:2:0，90 起 4:4:4，灰度图存灰度；`Quality` 0 即 80；不能带透明）；`Predictor` 把每个样本存为与左侧像素之差（水平差分），照片压缩效果好得多（即 sharp 的 `predictor: "horizontal"`；一张 2400 万像素照片：LZW 82 → 52MB，Deflate 67 → 45MB）。像素数据超过 1MB 的压缩图像按约 1MB 一条分条带写入。`Tile: 256` 改按方形瓦片写，`Pyramid: true` 再依次加上二分之一、四分之一……的缩小图（即 libvips 与 sharp 的 `tile` 与 `pyramid`，供图像服务器与缩放查看器使用），样本为 8 位；每层在内存里留一行瓦片 |
