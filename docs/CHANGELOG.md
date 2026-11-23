@@ -89,6 +89,7 @@ English | [中文](zh-CN/CHANGELOG.md)
 
 ### Changed
 
+- `Dilate` and `Erode` combine two pixels at a time as 64-bit words, across one by one for squares up to 9 wide and in blocks without a division per pixel beyond: the same bytes. A 6000×4000 JPEG, width 2: 0.37s → 0.25s (libvips 0.18s); width 40: 1.77s → 0.98s.
 - `BlurLibvips` with AVX2 on amd64 (the `purego` build tag leaves it out): the running totals of a row, the weighted sums of the boxes across and their moving down, eight sums at a time, in the same uint32 arithmetic, so the same bytes. A 6000×4000 JPEG blurred with sigma 3 and written again: 0.84s → 0.26s (libvips 0.20s).
 - With `FastShrinkOnLoad` (and the default method, not in linear light) a pyramid TIFF is read from its smallest level at least the size the image is reduced to, as libvips' thumbnail picks a page: the output differs a little from that without the option (the level's own pixels are reduced). A 6000×4000 pyramid to a JPEG of 1536 wide: 0.31s → 0.088s, 13.3MB of memory.
 - Animated GIF output takes less memory: the two other ways each frame of changes is tried (without transparency, and with it over runs) are written into the same storage from frame to frame instead of copied anew (51MB of the 75MB allocated for 18 frames of 768×512). Reduced to a GIF of the same size, lossy 24: 34.8MB → 23.8MB; without loss 35.1MB → 24.4MB; the same files.

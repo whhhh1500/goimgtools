@@ -34,69 +34,120 @@ func Morph(src pipeline.Source, width int, dilate bool) (pipeline.Source, error)
 	// (those past the edges being copies).
 	rv, rh := min(width, max(b.Dy()-1, 0)), min(width, max(w-1, 0))
 	return newWindow(src, rv, func() func(win [][]uint8, dst []uint8) {
-		col := make([]uint32, w)
-		pre, suf := make([]uint32, w+2*rh), make([]uint32, w+2*rh)
-		return func(win [][]uint8, dst []uint8) { morphRow(win, dst, col, pre, suf, rh, dilate) }
+		pad := make([]uint8, 4*(w+2*rh))
+		var pre, suf []uint32
+		if rh > maxDirectMorph {
+			pre, suf = make([]uint32, w+2*rh), make([]uint32, w+2*rh)
+		}
+		return func(win [][]uint8, dst []uint8) { morphRow(win, dst, pad, pre, suf, w, rh, dilate) }
 	})
 }
 
-// morphRow makes a row of the result from the rows of its window.
-func morphRow(win [][]uint8, dst []uint8, col, pre, suf []uint32, r int, and bool) {
-	w := len(col)
-	// Down: the rows of the window, each once (the copies past the edges
-	// are the same rows).
-	first := win[0][:4*w]
-	for x := range col {
-		col[x] = binary.LittleEndian.Uint32(first[4*x:])
+// maxDirectMorph is the widest r for which morphRow combines the pixels of
+// the square across one by one rather than through blocks.
+const maxDirectMorph = 4
+
+func le64(b []uint8) uint64 { return binary.LittleEndian.Uint64(b) }
+func le32(b []uint8) uint32 { return binary.LittleEndian.Uint32(b) }
+
+// morphRow makes a row of the result from the rows of its window, through
+// pad, the row combined down with r copies of its ends beyond them.
+func morphRow(win [][]uint8, dst, pad []uint8, pre, suf []uint32, w, r int, and bool) {
+	if w == 0 {
+		return
 	}
+	// Down: the rows of the window, each once (the copies past the edges
+	// are the same rows), two pixels at a time.
+	c := pad[4*r : 4*(r+w)]
+	copy(c, win[0][:4*w])
 	last := &win[0][0]
 	for _, row := range win[1:] {
 		if &row[0] == last {
 			continue
 		}
 		last = &row[0]
-		row = row[:4*w]
+		row = row[:len(c)]
+		i := 0
 		if and {
-			for x := range col {
-				col[x] &= binary.LittleEndian.Uint32(row[4*x:])
+			for ; i+8 <= len(c); i += 8 {
+				binary.LittleEndian.PutUint64(c[i:], le64(c[i:])&le64(row[i:]))
 			}
 		} else {
-			for x := range col {
-				col[x] |= binary.LittleEndian.Uint32(row[4*x:])
+			for ; i+8 <= len(c); i += 8 {
+				binary.LittleEndian.PutUint64(c[i:], le64(c[i:])|le64(row[i:]))
+			}
+		}
+		if i < len(c) {
+			if and {
+				binary.LittleEndian.PutUint32(c[i:], le32(c[i:])&le32(row[i:]))
+			} else {
+				binary.LittleEndian.PutUint32(c[i:], le32(c[i:])|le32(row[i:]))
 			}
 		}
 	}
-	// Across: the row with r copies of its ends beyond them, in blocks of
-	// n; pre holds the combination of each pixel with those before it in
-	// its block, suf with those after. The square at x is the pixels x to
-	// x+2r of that row: the end of one block and the start of the next,
-	// or one whole block.
+	for k := 0; k < r; k++ {
+		copy(pad[4*k:4*k+4], c[:4])
+		copy(pad[4*(r+w+k):4*(r+w+k)+4], c[4*(w-1):])
+	}
+	// Across: the square at x is the pixels x to x+2r of pad.
 	n := 2*r + 1
-	at := func(j int) uint32 { return col[min(max(j-r, 0), w-1)] }
-	m := len(pre)
-	for j := 0; j < m; j++ {
-		v := at(j)
-		if j%n != 0 {
-			if and {
-				v &= pre[j-1]
-			} else {
-				v |= pre[j-1]
-			}
-		}
-		pre[j] = v
-	}
-	for j := m - 1; j >= 0; j-- {
-		v := at(j)
-		if j%n != n-1 && j != m-1 {
-			if and {
-				v &= suf[j+1]
-			} else {
-				v |= suf[j+1]
-			}
-		}
-		suf[j] = v
-	}
 	d := dst[:4*w]
+	if r <= maxDirectMorph {
+		x := 0
+		for ; x+2 <= w; x += 2 {
+			v := le64(pad[4*x:])
+			if and {
+				for k := 1; k < n; k++ {
+					v &= le64(pad[4*(x+k):])
+				}
+			} else {
+				for k := 1; k < n; k++ {
+					v |= le64(pad[4*(x+k):])
+				}
+			}
+			binary.LittleEndian.PutUint64(d[4*x:], v)
+		}
+		for ; x < w; x++ {
+			v := le32(pad[4*x:])
+			for k := 1; k < n; k++ {
+				if and {
+					v &= le32(pad[4*(x+k):])
+				} else {
+					v |= le32(pad[4*(x+k):])
+				}
+			}
+			binary.LittleEndian.PutUint32(d[4*x:], v)
+		}
+		return
+	}
+	// Wider, as van Herk and Gil and Werman: in blocks of n, pre holds the
+	// combination of each pixel with those before it in its block, suf with
+	// those after; the square is the end of one block and the start of the
+	// next, or one whole block.
+	m := w + 2*r
+	for b0 := 0; b0 < m; b0 += n {
+		e := min(b0+n, m)
+		v := le32(pad[4*b0:])
+		pre[b0] = v
+		for j := b0 + 1; j < e; j++ {
+			if and {
+				v &= le32(pad[4*j:])
+			} else {
+				v |= le32(pad[4*j:])
+			}
+			pre[j] = v
+		}
+		v = le32(pad[4*(e-1):])
+		suf[e-1] = v
+		for j := e - 2; j >= b0; j-- {
+			if and {
+				v &= le32(pad[4*j:])
+			} else {
+				v |= le32(pad[4*j:])
+			}
+			suf[j] = v
+		}
+	}
 	for x := 0; x < w; x++ {
 		v := suf[x]
 		if and {
