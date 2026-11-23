@@ -105,7 +105,7 @@ goimgtools batch -resize 1920x1920 -no-enlarge -quality 80 -format jpeg in_dir o
 | PDF | — | ✓（一页，或用 `Pages` 每张图一页，页面大小按图像分辨率；无损（JPEG 原样放入）或按质量存 JPEG；透明作软蒙版；带颜色配置） | 边读图像边写出 |
 | Netpbm（PBM、PGM、PPM、PAM、PFM） | ✓（文本或二进制，任意最大值，按 Pillow 的方式缩放；PAM 带透明） | ✓（PGM 或 PPM，与 Pillow 逐字节相同） | 按文件偏移读行 |
 
-暂存区数据不超过内存上限的 1/8（默认 8MB）时驻留内存，超出部分写入临时文件，用后删除。
+暂存区数据不超过内存上限的 1/8（默认 8MB）时驻留内存，超出部分写入临时文件，用后删除。WebP 编码器例外：它为大图暂存的数据不论上限多大都直接写入临时文件。
 
 ## 限制
 

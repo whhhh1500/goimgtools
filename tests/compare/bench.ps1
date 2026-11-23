@@ -20,14 +20,19 @@ function Row($group, $label, $out, $exe, $a) {
   if ($only -and $group -notmatch $only) { return }
   if ($out -and (Test-Path $out)) { Remove-Item $out -Force }
   $line = & $rp -n $n -label "$group | $label" $exe @a 2>&1 | Select-Object -Last 1
-  $size = ''
-  if ($out -and (Test-Path $out)) { $size = '  out {0:N0}' -f (Get-Item $out).Length }
+  $size = ''; $outBytes = 0
+  if ($out -and (Test-Path $out)) {
+    $outBytes = [int64](Get-ChildItem $out -Recurse -File | Measure-Object Length -Sum).Sum
+    $size = '  out {0:N0}' -f $outBytes
+  }
+  # What the process wrote beyond its output went to temporary files.
+  if ($line -match 'wrote (\d+)') { $size += '  temp {0:N1}MB' -f (([int64]$matches[1] - $outBytes) / 1MB) }
   "$line$size"
 }
-function Sharp($group, $task, $in, $ext, $label = 'sharp') { $o = "$O\sharp_$($group -replace '\W','')_$task.$ext"; Row $group $label $o 'node' @("$H\bench_sharp.js", $task, $in, $o, $T) }
-function Pil($group, $task, $in, $ext, $label = 'Pillow') { $o = "$O\pil_$($group -replace '\W','')_$task.$ext"; Row $group $label $o 'python' @("$H\bench_pil.py", $task, $in, $o) }
-function Ours($group, $label, $ext, $a, $in) { $o = "$O\ours_$($group -replace '\W','')_$($label -replace '\W','').$ext"; Row $group $label $o $gi (@('-threads', $T) + $a + @($in, $o)) }
-function Vips($group, $label, $ext, $a, $suffix = '') { $o = "$O\vips_$($group -replace '\W','')_$($label -replace '\W','').$ext"; $a2 = $a | ForEach-Object { $_ -replace '%OUT%', "$o$suffix" }; Row $group $label $o $vips $a2 }
+function Sharp($group, $task, $in, $ext, $label = 'sharp') { $file = "$O\sharp_$($group -replace '\W','')_$task.$ext"; Row $group $label $file 'node' @("$H\bench_sharp.js", $task, $in, $file, $T) }
+function Pil($group, $task, $in, $ext, $label = 'Pillow') { $file = "$O\pil_$($group -replace '\W','')_$task.$ext"; Row $group $label $file 'python' @("$H\bench_pil.py", $task, $in, $file) }
+function Ours($group, $label, $ext, $a, $in) { $file = "$O\ours_$($group -replace '\W','')_$($label -replace '\W','').$ext"; Row $group $label $file $gi (@('-threads', $T) + $a + @($in, $file)) }
+function Vips($group, $label, $ext, $a, $suffix = '') { $file = "$O\vips_$($group -replace '\W','')_$($label -replace '\W','').$ext"; $a2 = $a | ForEach-Object { $_ -replace '%OUT%', "$file$suffix" }; Row $group $label $file $vips $a2 }
 
 # Start-up footprints.
 Row 'base' 'goimgtools formats' '' $gi @('formats')

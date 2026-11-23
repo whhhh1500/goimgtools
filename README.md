@@ -105,7 +105,7 @@ goimgtools batch -resize 1920x1920 -no-enlarge -quality 80 -format jpeg in_dir o
 | PDF | — | ✓ (a page the size of the image at its resolution, or one for each image with `Pages`; lossless (a JPEG as it is), or JPEG with a quality; transparency as a soft mask; colour profile) | Written as the image is read |
 | Netpbm (PBM, PGM, PPM, PAM, PFM) | ✓ (text or binary, any maximum, as Pillow scales it; PAM with transparency) | ✓ (PGM or PPM, Pillow's bytes) | Rows read by file offset |
 
-Staged data is kept in memory up to 1/8 of the memory limit (8MB by default); beyond that it is written to temporary files, which are deleted after use.
+Staged data is kept in memory up to 1/8 of the memory limit (8MB by default); beyond that it is written to temporary files, which are deleted after use. The WebP encoders are the exception: what they stage of a large picture goes to a temporary file at once, whatever the limit.
 
 ## Limitations
 

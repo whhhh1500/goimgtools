@@ -2,8 +2,19 @@ English | [中文](zh-CN/CHANGELOG.md)
 
 # Changelog
 
-## Unreleased
+## 0.3.0 (2026-11-23)
 
+### Upgrading from 0.2.0
+
+Nothing exported was removed or changed (`apidiff` against 0.2.0 reports additions only). What can still surprise code written for 0.2.0:
+
+- HEIC, AVIF and JPEG XL are not read or written: the `heic` and `avif` modules of 0.2.0 are no longer kept up (see Removed), and such a file is an unknown format.
+- TIFF of an opaque image is written as RGB, three samples a pixel, no longer RGBA; the pixels are the same.
+- WebP no longer keeps the colour of fully transparent pixels unless `WebPOptions.Exact` is set, as libwebp, sharp and Pillow.
+- `Text` whose every colour is grey, on an opaque background, is a grey image: its strips are `*image.Gray`, and a PNG or JPEG of it has one channel.
+- With `FastShrinkOnLoad`, a pyramid TIFF is reduced from one of its levels, so the pixels differ a little from those of 0.2.0, as they already did for JPEG and WebP.
+- A PDF of a JPEG read and written without changes holds the JPEG itself instead of its pixels compressed again.
+- PNG at levels 8 to 10 and lossless WebP make smaller files than 0.2.0 did, so their bytes differ; the pixels are the same.
 ### Added
 
 - `ICOOptions.CompressionLevel` and `ICNSOptions.CompressionLevel` (`-png-level` on the command line): the PNG level of the images of an icon file, 9 as before when not given. An icon of the standard sizes up to 1024 from a 6000×4000 JPEG: 1.56s and 1.90MB at 9, 0.36s and 2.08MB at 7 (Pillow 0.43s, 2.33MB).
@@ -90,6 +101,8 @@ English | [中文](zh-CN/CHANGELOG.md)
 
 ### Changed
 
+- Pillow's bilinear sampling (`Transform`, `RotatePillow` with `PillowBilinear`) reads its 2×2 pixels from the cached tile at once when they are in one, and the tile before again otherwise, as the bicubic one does: the same bytes; a 6000×4000 perspective `Transform` 1.48s → 1.01s (Pillow 0.76s).
+- JPEG with optimized tables (the tiles of `ToTiles` among them) keeps its two staging buffers from one image to the next, and an image whose symbols fit in the first (a tile's) is coded again from it without a spill: the same bytes. Google tiles of a 6000×4000 photograph: 88MB allocated → 13.6MB, peak 46.3MB → 39.0MB.
 - `inspect.Stats` (`stats`) takes the sums of an opaque row from those of its levels instead of weighting each pixel by its alpha: the same figures; a 6000×4000 JPEG 0.41s → 0.37s.
 - `Text` whose every colour (text, outline, shadow, background) is grey, on an opaque background and without colour glyphs, is a grey image: a PNG or JPEG of it has one channel, the same pixels. Black text of 40 lines, 2000 wide, on white, to a PNG: 0.22s → 0.14s, 536KB → 337KB.
 - Animated GIF output (without loss) is faster, with the same files: a trial of how a frame codes stops once it is no smaller than the best so far, the colours of a frame are counted in a small table of their own instead of maps, and the LZW coder keeps its state in registers. An APNG of 18 photographs (768×512) to a GIF: 1.41s → 1.15s.
