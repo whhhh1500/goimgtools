@@ -125,8 +125,11 @@ type undoEntry struct {
 }
 
 const (
-	bruteLines    = 4
-	bruteHashBits = 13
+	bruteLines = 4
+	// bruteHashBits: with 13 the chains of a photograph's rows were mostly
+	// other data of the same hash, each a load from far off; with 15 a
+	// 6000×4000 photograph at level 9 took 9% less time, the file the same.
+	bruteHashBits = 15
 	bruteWindow   = 32 << 10 // deflate's
 	// bruteChain is how many earlier positions a match is looked for at:
 	// at level 8 bruteChain, at 9 bruteChain9 (the 17 images of level 9

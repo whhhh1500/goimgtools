@@ -255,8 +255,9 @@ const (
 	estChain       = 16
 	estWindow      = 8 << 10
 	estimatorBytes = 4<<estHashBits + 2*estWindow + 8*(286+30) + 8*286
-	// From level 8, as far back as deflate looks.
-	estHashBitsNear    = 13
+	// From level 8, as far back as deflate looks (15 bits, for the reason of
+	// bruteHashBits).
+	estHashBitsNear    = 15
 	estWindowNear      = 32 << 10
 	nearEstimatorBytes = 4<<estHashBitsNear + 2*estWindowNear + 8*(286+30) + 8*286
 )
