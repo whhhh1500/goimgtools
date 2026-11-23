@@ -546,8 +546,29 @@ func (e *apngEncoder) choose(i int, mode apngMode, pend apngChoice) (apngChoice,
 	if level >= 8 {
 		trial = 7
 	}
+	// A candidate whose rows would be those of one before it is left out,
+	// its data being the same: the same rectangle without blending, or
+	// blending that clears the same pixels (none: as without blending).
+	type rows struct {
+		rect    image.Rectangle
+		cleared uint64 // which pixels blending clears, hashed; 0 for none
+	}
+	seen := map[rows]bool{}
 	var best apngChoice
 	for _, c := range cands {
+		k := rows{rect: c.rect}
+		if c.over {
+			if k.cleared, err = e.cleared(i, c.dispose, pend.rect, c.rect, pic, base); err != nil {
+				if best.data != nil {
+					best.data.Close()
+				}
+				return apngChoice{}, err
+			}
+		}
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
 		var keep func(y int, buf []byte) error
 		if c.over {
 			d := c.dispose
@@ -581,6 +602,38 @@ func (e *apngEncoder) choose(i int, mode apngMode, pend apngChoice) (apngChoice,
 		}
 	}
 	return best, nil
+}
+
+// cleared tells which pixels of rect of picture i blending over what it is
+// drawn on (the frame before, whose rectangle is prev, disposed of by d)
+// makes transparent, as encodeRect does: those as they are beneath and not
+// already transparent black. They come as a hash of their places (FNV-1a),
+// 0 for none. pic and base are rows of the canvas to work in.
+func (e *apngEncoder) cleared(i int, d byte, prev, rect image.Rectangle, pic, base []byte) (uint64, error) {
+	const offset, prime = 14695981039346656037, 1099511628211
+	h, any := uint64(offset), false
+	for y := rect.Min.Y; y < rect.Max.Y; y++ {
+		p := pic[4*rect.Min.X : 4*rect.Max.X]
+		if _, err := e.store.ReadAt(p, e.pictureAt(i, rect.Min.X, y)); err != nil {
+			return 0, err
+		}
+		if err := e.baseRow(i, d, prev, y, base); err != nil {
+			return 0, err
+		}
+		b := base[4*rect.Min.X : 4*rect.Max.X]
+		for x := 0; x < len(p); x += 4 {
+			v := binary.LittleEndian.Uint32(p[x:])
+			bit := uint64(0)
+			if v != 0 && v == binary.LittleEndian.Uint32(b[x:]) {
+				bit, any = 1, true
+			}
+			h = (h ^ bit) * prime
+		}
+	}
+	if !any {
+		return 0, nil
+	}
+	return h | 1, nil
 }
 
 // apngDelay is how long a frame shows as a fraction of a second: in

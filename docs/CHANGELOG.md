@@ -89,6 +89,7 @@ English | [中文](zh-CN/CHANGELOG.md)
 
 ### Changed
 
+- Animated PNG output compresses each way of writing a frame only once: a way whose rows would be those of one tried before (the same rectangle without blending, or blending that clears the same pixels, or none) is left out, its data being the same. The same files; the GIF of 18 photographs (768×512) to an APNG: 3.06s → 1.35s.
 - `Dilate` and `Erode` combine two pixels at a time as 64-bit words, across one by one for squares up to 9 wide and in blocks without a division per pixel beyond: the same bytes. A 6000×4000 JPEG, width 2: 0.37s → 0.25s (libvips 0.18s); width 40: 1.77s → 0.98s.
 - `BlurLibvips` with AVX2 on amd64 (the `purego` build tag leaves it out): the running totals of a row, the weighted sums of the boxes across and their moving down, eight sums at a time, in the same uint32 arithmetic, so the same bytes. A 6000×4000 JPEG blurred with sigma 3 and written again: 0.84s → 0.26s (libvips 0.20s).
 - With `FastShrinkOnLoad` (and the default method, not in linear light) a pyramid TIFF is read from its smallest level at least the size the image is reduced to, as libvips' thumbnail picks a page: the output differs a little from that without the option (the level's own pixels are reduced). A 6000×4000 pyramid to a JPEG of 1536 wide: 0.31s → 0.088s, 13.3MB of memory.
