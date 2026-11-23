@@ -484,7 +484,7 @@ type ICOOptions struct {
 	Sizes []int
 	// CompressionLevel is the PNG level of each image, 1 to 10 as
 	// PNGOptions.CompressionLevel; 0 means 9, the smallest files short of
-	// 10 (7 writes them several times as fast, a few percent larger).
+	// 10 (7 writes them about four times as fast, some 10% larger).
 	CompressionLevel int
 }
 

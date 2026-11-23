@@ -26,6 +26,7 @@ import (
 	"math"
 	mbits "math/bits"
 	"sort"
+	"sync"
 
 	"github.com/whhhh1500/goimgtools/pipeline"
 )
@@ -186,10 +187,18 @@ func (e *encoder) writeDHTSpecs(ids []byte, specs []huffmanSpec) {
 
 const stagedReadBuf = 64 << 10
 
+// stageBufs and readBufs keep the two buffers of writeOptimized from one
+// image to the next: the tiles of a pyramid are many small images, and each
+// took 96KB of them anew, and the first piece of a spill.
+var (
+	stageBufs = sync.Pool{New: func() any { return new([stageFlush + stageBlockMax]byte) }}
+	readBufs  = sync.Pool{New: func() any { return new([stagedReadBuf]byte) }}
+)
+
 // The staged symbols of writeOptimized go to the spill in pieces of about
 // stageFlush bytes; a block's take at most stageBlockMax.
 const (
-	stageFlush    = 32 << 10
+	stageFlush    = 64 << 10
 	stageBlockMax = 3 * blockSize
 )
 
@@ -301,7 +310,9 @@ func (e *encoder) writeOptimized(src pipeline.Source, first image.Image, size im
 	// Pass 1: the symbols of the scan, into the spill, counted.
 	var freq [nHuffIndex][257]int64
 	var prevDC [3]int32
-	staged := make([]byte, 0, stageFlush+stageBlockMax)
+	sb := stageBufs.Get().(*[stageFlush + stageBlockMax]byte)
+	defer stageBufs.Put(sb)
+	staged := sb[:0]
 	var werr error
 	err := e.quantBlocks(src, first, func(zz *qblock, comp int) {
 		q := quantIndex((comp + 1) / 2)
@@ -311,7 +322,10 @@ func (e *encoder) writeOptimized(src pipeline.Source, first image.Image, size im
 			staged = staged[:0]
 		}
 	})
-	if err == nil && werr == nil {
+	// Symbols that all fit in the staging buffer (a tile's) are read back
+	// from it; the spill is not made.
+	direct := sp.Size() == 0
+	if err == nil && werr == nil && !direct {
 		_, werr = sp.Write(staged)
 	}
 	if err != nil {
@@ -339,11 +353,16 @@ func (e *encoder) writeOptimized(src pipeline.Source, first image.Image, size im
 	}
 
 	// Pass 2: the same symbols with the new codes.
-	if err := env.Budget.Reserve(stagedReadBuf, "jpeg optimize read buffer"); err != nil {
-		return err
+	rd := &stageReader{sp: sp, buf: sb[:], w: len(staged)}
+	if !direct {
+		if err := env.Budget.Reserve(stagedReadBuf, "jpeg optimize read buffer"); err != nil {
+			return err
+		}
+		defer env.Budget.Release(stagedReadBuf)
+		rb := readBufs.Get().(*[stagedReadBuf]byte)
+		defer readBufs.Put(rb)
+		rd = &stageReader{sp: sp, buf: rb[:]}
 	}
-	defer env.Budget.Release(stagedReadBuf)
-	rd := &stageReader{sp: sp, buf: make([]byte, stagedReadBuf)}
 	// Each symbol's code goes in with its value bits, in an accumulator of
 	// up to 64 bits held in local variables for the block (see
 	// writeQuantized).
