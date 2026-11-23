@@ -40,6 +40,7 @@ func (c *Compressor) splitAndFlush(block []byte, cacheEnd int, isFirst, isFinal 
 		makeCodes(&f, &cd)
 		starts[k] = partLens{cd.litlenLens, cd.offsetLens}
 	}
+	c.marks = c.marks[:0] // the parts are parsed again
 	// Where the matches of each part end in the cache.
 	ends := c.ends[:len(bounds)]
 	ends[len(bounds)-1] = cacheEnd
@@ -67,9 +68,100 @@ const (
 	maxSplitBlocks = 15   // the most parts of a block, as zopfli's default
 )
 
+// splitStride is how far apart the marks of the parse are (more than a
+// match is long, so that each stride has an item start).
+const splitStride = 8192
+
+// splitMarks are used (a variable for the tests).
+var splitMarks = true
+
+// A splitMark is where the first item start at or after a multiple of
+// splitStride is in the parse of a block, with the counts of the symbols
+// of the items before it and their extra bits: the counts of a range are
+// those of the marks around it, and of the few items between the marks
+// and its ends, so that the searches of the split points, which count the
+// symbols of a range at every point they try, do not count the whole range
+// each time. The counts are the same.
+type splitMark struct {
+	pos   int
+	extra uint32
+	f     freqs
+}
+
+// markItems sets the marks of c.items, the parse of a block of n bytes.
+func (c *Compressor) markItems(n int) {
+	marks := c.marks[:0]
+	if !splitMarks || cap(marks) == 0 {
+		c.marks = marks
+		return
+	}
+	var m splitMark
+	for i := 0; i < n; {
+		if i >= len(marks)*splitStride && len(marks) < cap(marks) {
+			m.pos = i
+			marks = append(marks, m)
+		}
+		i += m.add(c.items[i], 1)
+	}
+	c.marks = marks
+}
+
+// add counts the symbols of item d times (1 or -1 as a uint32) and
+// returns the item's length.
+func (m *splitMark) add(item, d uint32) int {
+	if item < numLiterals {
+		m.f.litlen[item] += d
+		return 1
+	}
+	length := item >> optimumLenShift
+	ls := lengthSlot[length]
+	os := offsetSlot(item & optimumOffsetMask)
+	m.f.litlen[firstLenSym+uint32(ls)] += d
+	m.f.offset[os] += d
+	m.extra += d * (uint32(extraLengthBits[ls]) + uint32(extraOffsetBits[os]))
+	return int(length)
+}
+
+// markBefore returns the last mark at or before p (nil if there are no
+// marks).
+func (c *Compressor) markBefore(p int) *splitMark {
+	if len(c.marks) == 0 {
+		return nil
+	}
+	k := min(p/splitStride, len(c.marks)-1)
+	if c.marks[k].pos > p {
+		k--
+	}
+	return &c.marks[k]
+}
+
 // rangeFreqs counts the symbols of the items starting in [a, b) of c.items
 // (a an item's start), with the end of block, and returns the extra bits.
 func (c *Compressor) rangeFreqs(a, b int, f *freqs) (extra uint32) {
+	if ma, mb := c.markBefore(a), c.markBefore(b); ma != nil && mb.pos-ma.pos > 2*splitStride {
+		// The counts before b less those before a.
+		m := splitMark{extra: mb.extra - ma.extra}
+		for s := range m.f.litlen {
+			m.f.litlen[s] = mb.f.litlen[s] - ma.f.litlen[s]
+		}
+		for s := range m.f.offset {
+			m.f.offset[s] = mb.f.offset[s] - ma.f.offset[s]
+		}
+		for i := ma.pos; i < a; {
+			i += m.add(c.items[i], 1<<32-1)
+		}
+		for i := mb.pos; i < b; {
+			i += m.add(c.items[i], 1)
+		}
+		for s := range f.litlen {
+			f.litlen[s] += m.f.litlen[s]
+		}
+		for s := range f.offset {
+			f.offset[s] += m.f.offset[s]
+		}
+		f.litlen[endOfBlock]++
+		return m.extra
+	}
 	for i := a; i < b; {
 		item := c.items[i]
 		if item < numLiterals {
@@ -89,8 +181,12 @@ func (c *Compressor) rangeFreqs(a, b int, f *freqs) (extra uint32) {
 	return extra
 }
 
-// nextItem is the first item start at or after p (or n).
+// nextItem is the first item start at or after p (or n), a an item start
+// before p.
 func (c *Compressor) nextItem(a, p, n int) int {
+	if m := c.markBefore(p); m != nil && m.pos > a {
+		a = m.pos // an item start too, nearer p
+	}
 	for i := a; i < n; {
 		if i >= p {
 			return i
@@ -168,6 +264,7 @@ func headerBits(cd *codes) uint32 {
 // it splits the largest part that may still gain, where its two halves
 // cost least, until no part gains or there are maxSplitBlocks.
 func (c *Compressor) findSplits(n int) []int {
+	c.markItems(n)
 	bounds := append(c.bounds[:0], 0, n)
 	done := append(c.done[:0], false) // by part
 	for len(bounds)-1 < c.p.maxParts() {

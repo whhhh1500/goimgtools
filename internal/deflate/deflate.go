@@ -120,7 +120,7 @@ func (p Params) Bytes() int64 {
 	}
 	parts := int64(p.maxParts())
 	return matchfinderBytes + 4*int64(p.cacheLength()) + 4*int64(maxBlock+maxMatch+1) + 4*int64(maxBlock) + int64(unsafe.Sizeof(Compressor{})) +
-		parts*int64(unsafe.Sizeof(partLens{})) + 3*8*(parts+1)
+		parts*int64(unsafe.Sizeof(partLens{})) + 3*8*(parts+1) + int64(p.maxMarks())*int64(unsafe.Sizeof(splitMark{}))
 }
 
 // lazyItems is the length of the lazy parsing's record of a block: one
@@ -138,6 +138,15 @@ func (p Params) maxParts() int {
 		return p.maxBlockLength()/minSplitBlock + 1
 	}
 	return maxSplitBlocks
+}
+
+// maxMarks is the number of marks of a block's parse (none without the
+// splitting by cost).
+func (p Params) maxMarks() int {
+	if !p.SplitByCost {
+		return 0
+	}
+	return p.maxBlockLength()/splitStride + 1
 }
 
 func (p Params) maxBlockLength() int {
@@ -219,6 +228,7 @@ type Compressor struct {
 	// Splitting by cost (see split.go).
 	partLens []partLens // the codes each part of a split block starts from, maxParts of them
 	bounds   []int
+	marks    []splitMark // of the parse of the block (see markItems), maxMarks of them
 	ends     []int
 	done     []bool
 
@@ -262,6 +272,7 @@ func New(p Params) *Compressor {
 		bounds:    make([]int, 0, p.maxParts()+1),
 		ends:      make([]int, 0, p.maxParts()+1),
 		done:      make([]bool, 0, p.maxParts()+1),
+		marks:     make([]splitMark, 0, p.maxMarks()),
 	}
 }
 

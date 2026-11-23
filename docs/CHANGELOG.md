@@ -2,6 +2,12 @@ English | [中文](zh-CN/CHANGELOG.md)
 
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- PNG at level 9 takes a third less time (a 6000×4000 photograph 30s rather than 45s), the file the same: the search for the split points of a block takes the counts of the symbols from marks kept every 8KB of the parse rather than counting the part again at each point.
+
 ## 0.3.0 (2026-11-23)
 
 ### Upgrading from 0.2.0
