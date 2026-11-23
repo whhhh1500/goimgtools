@@ -71,6 +71,9 @@ type TextOptions struct {
 //	        goimgtools.CompositeOptions{Gravity: goimgtools.SouthEast, Left: -24, Top: -24}).
 //	    ToFile("out.jpg")
 //
+// Text whose every colour is grey, on an opaque background, is a grey image:
+// a PNG or JPEG of it has one channel.
+//
 // A font file is never loaded whole: only the glyphs the text uses are read
 // from it, so a 20MB Chinese font costs about 0.1MB. Fallback fonts are
 // opened only when a character needs them. What a font takes, and the

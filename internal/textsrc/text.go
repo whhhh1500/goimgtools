@@ -8,6 +8,7 @@ import (
 	"image/draw"
 	"io"
 	"math"
+	"slices"
 	"strings"
 
 	"golang.org/x/image/font"
@@ -80,7 +81,10 @@ type source struct {
 	align  Align
 	fg, bg *image.Uniform
 	opaque bool
-	next   int // next line
+	// grey holds the rows handed out as grey, when every colour drawn is
+	// grey and the background opaque (nil otherwise).
+	grey *image.Gray
+	next int // next line
 
 	// win holds the rows from base on. A line with an outline or a shadow
 	// reaches m rows into its neighbours, so rows are handed out only once
@@ -106,7 +110,8 @@ type source struct {
 	closed    bool
 }
 
-// New lays text out and returns it as a Source of RGBA strips, one line of
+// New lays text out and returns it as a Source of RGBA strips (grey ones
+// when every colour drawn is grey and the background opaque), one line of
 // text per strip, so its memory is one line however long the text is.
 //
 // Fonts are read from their files as glyphs are needed, never whole; every
@@ -204,6 +209,11 @@ func New(text string, o Options, env *pipeline.Env) (pipeline.Source, error) {
 
 	s.winH = s.lineH + 2*s.pad
 	need := int64(s.w) * 4 * int64(s.winH)
+	greyOut := greyRows && s.opaque && isGrey(fg) && isGrey(bg) && (s.strokeC == nil || isGrey(s.strokeC.C)) &&
+		(s.shadowC == nil || isGrey(s.shadowC.C)) && !slices.ContainsFunc(s.lines, s.hasColour)
+	if greyOut {
+		need += int64(s.w) * int64(s.winH)
+	}
 	effects := s.strokeC != nil || s.shadowC != nil
 	maskH := s.lineH + 2*s.m
 	if effects {
@@ -214,6 +224,9 @@ func New(text string, o Options, env *pipeline.Env) (pipeline.Source, error) {
 	}
 	s.reserved += need
 	s.win = image.NewRGBA(image.Rect(0, 0, s.w, s.winH))
+	if greyOut {
+		s.grey = image.NewGray(image.Rect(0, 0, s.w, s.winH))
+	}
 	draw.Draw(s.win, s.win.Rect, s.bg, image.Point{}, draw.Src)
 	if effects {
 		s.maskA = image.NewAlpha(image.Rect(0, 0, s.w, maskH))
@@ -497,10 +510,24 @@ func (l line) glyphs0End(n int, s *source) fixed.Int26_6 {
 	return g.x + adv
 }
 
+// greyRows lets a source hand out grey rows; tests turn it off to compare.
+var greyRows = true
+
+// isGrey reports whether c has the same red, green and blue.
+func isGrey(c color.Color) bool {
+	r, g, b, _ := c.RGBA()
+	return r == g && g == b
+}
+
 func (s *source) Env() *pipeline.Env      { return s.env }
 func (s *source) Bounds() image.Rectangle { return image.Rect(0, 0, s.w, s.h) }
-func (s *source) ColorModel() color.Model { return color.RGBAModel }
-func (s *source) Opaque() bool            { return s.opaque }
+func (s *source) ColorModel() color.Model {
+	if s.grey != nil {
+		return color.GrayModel
+	}
+	return color.RGBAModel
+}
+func (s *source) Opaque() bool { return s.opaque }
 
 func (s *source) Close() error {
 	if s.closed {
@@ -544,9 +571,17 @@ func (s *source) Next() (image.Image, error) {
 			end = s.pad + s.next*s.lineH - s.m
 		}
 		if end > s.base {
+			s.emitted = end - s.base
+			if s.grey != nil {
+				// The pixels are grey: their red, a third of the bytes.
+				g := s.grey.Pix[:s.emitted*s.w]
+				for i := range g {
+					g[i] = s.win.Pix[4*i]
+				}
+				return &image.Gray{Pix: g, Stride: s.w, Rect: image.Rect(0, s.base, s.w, end)}, nil
+			}
 			out := *s.win
 			out.Rect = image.Rect(0, s.base, s.w, end)
-			s.emitted = end - s.base
 			return &out, nil
 		}
 	}
