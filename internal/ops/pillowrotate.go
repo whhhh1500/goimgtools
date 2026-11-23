@@ -336,7 +336,7 @@ func (t *rotated) renderPillow(out *image.RGBA, x0, x1 int, c *tileCache) error 
 				xin, yin := m.at(x, y)
 				var err error
 				if m.filter == PillowBilinear {
-					v, ok, err = t.pillowBilinear(xin, yin, sample)
+					v, ok, err = t.pillowBilinear(xin, yin, sample, c)
 				} else {
 					v, ok, err = t.pillowBicubic(xin, yin, sample, c)
 				}
@@ -365,7 +365,8 @@ func (t *rotated) inside(xin, yin float64) bool {
 	return xin >= 0 && xin < float64(t.sw) && yin >= 0 && yin < float64(t.sh)
 }
 
-func (t *rotated) pillowBilinear(xin, yin float64, at func(x, y int) ([4]uint8, error)) ([4]uint8, bool, error) {
+// c, when not nil, is the cache at reads through, as for pillowBicubic.
+func (t *rotated) pillowBilinear(xin, yin float64, at func(x, y int) ([4]uint8, error), c *tileCache) ([4]uint8, bool, error) {
 	if !t.inside(xin, yin) {
 		return [4]uint8{}, false, nil
 	}
@@ -373,6 +374,52 @@ func (t *rotated) pillowBilinear(xin, yin float64, at func(x, y int) ([4]uint8, 
 	yin -= 0.5
 	x, y := pfloor(xin), pfloor(yin)
 	dx, dy := xin-float64(x), yin-float64(y)
+	lerp := func(a, b, d float64) float64 { return a + float64((b-a)*d) }
+	if c != nil && x >= 0 && y >= 0 && x+1 < t.sw && y+1 < t.sh && x/tileSide == (x+1)/tileSide && y/tileSide == (y+1)/tileSide {
+		// The 2 x 2 pixels within one tile, read from it at once.
+		tl, err := c.tile(t.sc, (y/tileSide)*t.tilesX+x/tileSide)
+		if err != nil {
+			return [4]uint8{}, false, err
+		}
+		o := ((y%tileSide)*tileSide + x%tileSide) * 4
+		px := func(o int) [4]uint8 {
+			p := tl[o : o+4 : o+4]
+			if t.pil.premul {
+				return pilPremul(p)
+			}
+			return [4]uint8{p[0], p[1], p[2], p[3]}
+		}
+		p00, p01, p10, p11 := px(o), px(o+4), px(o+4*tileSide), px(o+4*tileSide+4)
+		var v [4]uint8
+		for b := 0; b < t.pil.bands; b++ {
+			v1 := lerp(float64(p00[b]), float64(p01[b]), dx)
+			v2 := lerp(float64(p10[b]), float64(p11[b]), dx)
+			v[b] = uint8(lerp(v1, v2, dy))
+		}
+		return v, true, nil
+	}
+	if c != nil {
+		// Each pixel at gives, the tile of the one before used again when
+		// it is the same.
+		last := -1
+		var tl []uint8
+		at = func(xx, yy int) ([4]uint8, error) {
+			xx, yy = max(0, min(xx, t.sw-1)), max(0, min(yy, t.sh-1))
+			if ti := (yy/tileSide)*t.tilesX + xx/tileSide; ti != last {
+				var err error
+				if tl, err = c.tile(t.sc, ti); err != nil {
+					return [4]uint8{}, err
+				}
+				last = ti
+			}
+			o := ((yy%tileSide)*tileSide + xx%tileSide) * 4
+			p := tl[o : o+4 : o+4]
+			if t.pil.premul {
+				return pilPremul(p), nil
+			}
+			return [4]uint8{p[0], p[1], p[2], p[3]}, nil
+		}
+	}
 	p00, err := at(x, y)
 	if err != nil {
 		return [4]uint8{}, false, err
@@ -391,7 +438,6 @@ func (t *rotated) pillowBilinear(xin, yin float64, at func(x, y int) ([4]uint8, 
 			return [4]uint8{}, false, err
 		}
 	}
-	lerp := func(a, b, d float64) float64 { return a + float64((b-a)*d) }
 	var v [4]uint8
 	for b := 0; b < t.pil.bands; b++ {
 		v1 := lerp(float64(p00[b]), float64(p01[b]), dx)
