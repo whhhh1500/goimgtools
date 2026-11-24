@@ -26,9 +26,9 @@ The behaviour tests of the library itself are all located in `tests/` and use th
 | WebAssembly (WASI) | wasm | Library behaviour tests, `pipeline`, `inspect`, resizing, basic operations | GitHub Actions, wasmtime |
 | WebAssembly (`GOOS=js`, for browsers / node) | wasm | As above; peak node memory 425–455MB for the full behaviour test suite | GitHub Actions, node 18, 20 and 22 on Linux |
 
-BSD, Solaris, Android, iOS, the emulated processors and WebAssembly run only the packages listed above, not the format decoders' and encoders' own tests (which are too slow under emulation); the behaviour tests themselves, however, read and write all six formats. The same image produces byte-for-byte identical output files on Linux and Windows.
+BSD, Solaris, Android, iOS, the emulated processors and WebAssembly run only the packages listed above, not the format decoders' and encoders' own tests (which are too slow under emulation); the behaviour tests themselves, however, read and write every format. The same image produces byte-for-byte identical output files on Linux and Windows.
 
-The CI configuration is in [.github/workflows/test.yml](../.github/workflows/test.yml). Every push runs the tests in the table above with the latest Go 1.27, and the full suite with the oldest supported Go (the version in `go.mod`, 1.26), together with race detection, short runs of the four fuzz tests, builds and static checks for the remaining targets, and a comparison of the exported API with the last release, which fails on any incompatible change (see [CONTRIBUTING](../.github/CONTRIBUTING.md)).
+The CI configuration is in [.github/workflows/test.yml](../.github/workflows/test.yml). Every push runs the tests in the table above with the latest Go 1.27, and the full suite with the oldest supported Go (the version in `go.mod`, 1.26), together with race detection, short runs of the fuzz tests, builds and static checks for the remaining targets, and a comparison of the exported API with the last release, which fails on any incompatible change (see [CONTRIBUTING](../.github/CONTRIBUTING.md)).
 
 Built and statically checked only, **not actually run**: AIX and Plan 9 (no test machines available).
 

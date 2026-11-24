@@ -12,7 +12,7 @@ The scripts behind [docs/comparison.md](../../docs/comparison.md). They need the
 | `mktable.py lines en\|zh out.md` | The tables of the other features from what `bench_more.ps1` printed: each cell the time, the peak working set / peak private memory and what went to temporary files; the verdict weighs memory first, then the time when it is more than twice the fastest |
 | `quality_more.py images...` | The lossy outputs `quality.py` leaves out (PNG and GIF of 256 colours, lossy GIF, near-lossless WebP, JPEG in TIFF, the JPEG options), every tool at the same setting: total size, mean SSIMULACRA2 and butteraugli, each output decoded by libvips |
 | `quality.py jpeg\|webp images...` | Lossy encoders: the file size each needs for the same SSIMULACRA2 and the same butteraugli |
-| `resizeq.py width images...` | Downscaling: each tool's Lanczos 3 against the exact convolution |
+| `resizeq.py width images...`, `resize_sharp.js` | Downscaling: each tool's Lanczos 3 against the exact convolution (sharp's through the second script) |
 | `cm.py goimgtools outdir profiles...` | Colour management: conversion to sRGB against LittleCMS |
 | `librsvg.ps1 outdir`, `passcount.py tests outdir` | librsvg on resvg's test suite, and how many tests a directory of renderings passes |
 

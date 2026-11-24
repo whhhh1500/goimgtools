@@ -26,9 +26,9 @@ go test ./...
 | WebAssembly（WASI） | wasm | 库的行为测试、`pipeline`、`inspect`、缩放、基本操作 | GitHub Actions，wasmtime |
 | WebAssembly（用于浏览器 / node 的 `GOOS=js`） | wasm | 同上；运行整套行为测试时 node 内存峰值 425–455MB | GitHub Actions，Linux 上的 node 18、20、22 |
 
-BSD、Solaris、Android、iOS、模拟处理器与 WebAssembly 仅运行上述各包，不运行各格式解码器、编码器自身的测试（这些测试在模拟环境中过慢）；但行为测试本身会对六种格式逐一读写。同一图像在 Linux 与 Windows 上输出的文件逐字节一致。
+BSD、Solaris、Android、iOS、模拟处理器与 WebAssembly 仅运行上述各包，不运行各格式解码器、编码器自身的测试（这些测试在模拟环境中过慢）；但行为测试本身会对各种格式逐一读写。同一图像在 Linux 与 Windows 上输出的文件逐字节一致。
 
-自动测试配置见 [.github/workflows/test.yml](../../.github/workflows/test.yml)。每次推送均用最新的 Go 1.27 运行上表中的测试，并用支持的最低版本（`go.mod` 中的 1.26）运行全部测试，另含竞态检测、四个模糊测试的短时运行、其余目标平台的编译与静态检查，以及导出接口与上一发布版本的比较，有任何不兼容改动即失败（见 [CONTRIBUTING](../../.github/CONTRIBUTING.md)）。
+自动测试配置见 [.github/workflows/test.yml](../../.github/workflows/test.yml)。每次推送均用最新的 Go 1.27 运行上表中的测试，并用支持的最低版本（`go.mod` 中的 1.26）运行全部测试，另含竞态检测、各模糊测试的短时运行、其余目标平台的编译与静态检查，以及导出接口与上一发布版本的比较，有任何不兼容改动即失败（见 [CONTRIBUTING](../../.github/CONTRIBUTING.md)）。
 
 仅编译与静态检查、**未实际运行**：AIX 与 Plan 9（无可用测试机）。
 
