@@ -51,6 +51,14 @@ func TestMinSSIM(t *testing.T) {
 	if got, want := must(FromBytes(photo).JPEG(JPEGOptions{Quality: 70}).MinSSIM(0.99999).ToBytes()), must(FromBytes(photo).JPEG(JPEGOptions{Quality: 70}).ToBytes()); !bytes.Equal(got, want) {
 		t.Error("out of reach: not the quality asked for")
 	}
+	// Under a small memory limit the same file: each of the eight or so
+	// measurements gives back what it took (it used to keep the strips of
+	// both pictures reserved, and the later ones found no room).
+	big := noisyPhoto(1600, 1200, false)
+	want := must(FromImage(big).JPEG().MinSSIM(0.97).ToBytes())
+	if got, err := FromImage(big).MemoryLimit(2 << 20).JPEG().MinSSIM(0.97).ToBytes(); err != nil || !bytes.Equal(got, want) {
+		t.Errorf("under a limit of 2MB: %d bytes, %v; without, %d bytes", len(got), err, len(want))
+	}
 	for i, bad := range []*Image{FromBytes(photo).JPEG().MinSSIM(0), FromBytes(photo).JPEG().MinSSIM(1.5),
 		FromBytes(photo).JPEG().MinSSIM(0.9).MaxFileSize(10000), FromBytes(photo).WebP(WebPOptions{Lossless: true}).MinSSIM(0.9),
 		FromBytes(encodeAll(t, testAnimation(32, 24))).Animated().GIF().MinSSIM(0.9)} {
