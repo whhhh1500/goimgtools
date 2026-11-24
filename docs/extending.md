@@ -2,7 +2,7 @@ English | [中文](zh-CN/extending.md)
 
 # Extending
 
-One of the library's design goals is that functionality can be extended without modifying its source. Every stage of processing provides an extension point, and the built-in features use the same extension points: the six built-in formats are held in the same table as registered formats, and built-in operations are of the same kind as custom operations.
+One of the library's design goals is that functionality can be extended without modifying its source. Every stage of processing provides an extension point, and the built-in features use the same extension points: the built-in formats are held in the same table as registered formats, and built-in operations are of the same kind as custom operations.
 
 | Purpose | API |
 |---|---|
