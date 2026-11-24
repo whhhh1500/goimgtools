@@ -2,7 +2,7 @@
 
 # 命令行
 
-用于查看和检查图像的子命令（`info`、`check`、`compare`、`stats`、`hash`、`exif`、`formats`）详见[用法](usage.md#小工具查看和检查图片)。
+用于查看和检查图像的子命令（`info`、`check`、`compare`、`stats`、`hash`、`placeholder`、`exif`、`readmark`、`formats`）详见[用法](usage.md#小工具查看和检查图片)。
 
 ```
 goimgtools [选项] 输入文件 输出文件
@@ -15,6 +15,8 @@ goimgtools stats [-json] 文件...
 goimgtools hash [-similar 位数] 文件...
 goimgtools placeholder [-components 4x3] 文件...
 goimgtools exif [-json] 文件...
+goimgtools readmark -key K 文件...
+goimgtools pages [-quality N] 图像... out.pdf
 goimgtools formats
 goimgtools fonts [-all]
 goimgtools ops
@@ -92,7 +94,7 @@ goimgtools -op median:3 -op normalize -op "tint:#704214" scan.jpg out.jpg
 | `-font`、`-font-size`、`-text-color`、`-text-background`、`-text-width` | 字体（以逗号分隔，可为文件或字体名）、字号、颜色、背景、换行宽度 |
 | `-stroke-width`、`-stroke-color` | 描边 |
 | `-shadow-color`、`-shadow-offset X,Y`、`-shadow-blur` | 阴影 |
-| `-format` | `jpeg`、`png`、`webp`、`gif`、`bmp`、`tiff`；默认由扩展名决定 |
+| `-format` | `jpeg`、`png`、`webp`、`gif`、`bmp`、`tiff`、`ico`、`icns`、`qoi`、`pnm`、`tga` 或 `pdf`（`goimgtools formats` 列出能读、能写的格式）；默认由扩展名决定 |
 | `-quality N` | JPEG 或有损 WebP 的质量 |
 | `-jpeg-optimize`、`-jpeg-progressive` | JPEG：优化编码表；渐进式编码（文件更小，像素不变） |
 | `-jpeg-trellis` | JPEG：网格量化（同等观感下文件更小，像素会改变；可与上述两项同时使用） |
@@ -101,7 +103,9 @@ goimgtools -op median:3 -op normalize -op "tint:#704214" scan.jpg out.jpg
 | `-jpeg-quant-table N` | JPEG：量化表 0–8，编号与 mozjpeg 的 `-quant-table` 一致（默认 0 为标准表，3 为 mozjpeg 的默认表）；9 为按 jpegli 方法生成的表，文件最小（见[压缩](compression.md)） |
 | `-png-colors N`、`-no-dither` | PNG：减至 N 色（2–256）；关闭抖动 |
 | `-ico-sizes 16,32,48,256` | ICO：要写的图标尺寸，图像按比例缩放到每个尺寸以内；不给时原样写（至多 256×256）。输出文件扩展名为 `.ico` 即选 ICO |
+| `-icns-sizes 16,32,128,256,512` | ICNS：要写的图标尺寸，取自 16、32、64、128、256、512、1024，图像按比例缩放到每个尺寸以内；不给时写不超过图像大小的各标准尺寸。输出文件扩展名为 `.icns` 即选 ICNS |
 | `-max-size 大小` | 文件大小不超过此值（`200KB`、`1.5MB` 或字节数），自动降低质量（JPEG、有损 WebP）或颜色数（PNG 先试无损；GIF）；与 `-animated` 同用时动画报错 |
+| `-min-ssim S` | 在与原图的 SSIM 不低于 S（如 0.98）的前提下把文件做到最小：自动选最低的质量（PNG、GIF 为最少的颜色数）（JPEG、有损 WebP、PNG、GIF、JPEG 压缩的 TIFF）；不能与 `-max-size` 同用（见[压缩](compression.md)） |
 | `-tile-size N`、`-tile-overlap N`、`-tile-layout 名称` | 输出文件名以 `.dzi`、`.dz` 或 `.zip`（写入 ZIP 压缩包）结尾时写瓦片金字塔（同 sharp 的 `tile`）：瓦片边长（256）、重叠像素（0）与布局：`dz`（Deep Zoom，默认）、`google`、`iiif`、`iiif3` 或 `zoomify`（瓦片写入以输出名去掉 `.dz` 命名的目录） |
 | `-skip-larger` | 结果不小于原文件（同格式）时保留原文件；适用于仅做压缩的任务 |
 | `-webp-lossless`、`-webp-effort N` | 无损 WebP；力度 1（最快）至 9（文件最小），默认 5。力度也作用于有损 WebP：5 已用上全部手段（5 以上只在透明通道上多做），2 耗时约减半，1 约为三分之一 |
@@ -119,6 +123,7 @@ goimgtools -op median:3 -op normalize -op "tint:#704214" scan.jpg out.jpg
 | `-exif-copyright 文字`、`-exif-artist 文字`、`-exif-description 文字` | 写入这些 EXIF 字段（配合 `-keep-exif` 写进保留的块，否则单独成块） |
 | `-density DPI` | 在输出中记录每英寸 DPI 个像素的分辨率（JPEG、PNG、TIFF、BMP）；默认保留输入的分辨率 |
 | `-srgb` | 依据色彩配置将颜色转换至 sRGB，输出不含配置（转为 GIF、BMP 时自动执行） |
+| `-profile p3\|adobe-rgb\|文件` | 把颜色转换到这个 ICC 配置并写入输出：Display P3、Adobe RGB (1998)，或一个配置文件 |
 | `-mem MB`、`-threads N`、`-tmp 目录` | 内存上限（默认 64）、线程数（默认 1，最多为 CPU 核数，见 [CPU 与线程](performance.md#cpu-与线程)）、临时目录 |
 | `-max-pixels N` | 可接受与生成的最大图像，单位为百万像素（默认 268，即 16383×16383）；使用 `-animated` 时按所有帧合计 |
 

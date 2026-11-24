@@ -2,7 +2,7 @@ English | [中文](zh-CN/cli.md)
 
 # Command line
 
-The subcommands for inspecting and checking images (`info`, `check`, `compare`, `stats`, `hash`, `exif`, `formats`) are described in [Usage](usage.md#inspecting-and-checking-images).
+The subcommands for inspecting and checking images (`info`, `check`, `compare`, `stats`, `hash`, `placeholder`, `exif`, `readmark`, `formats`) are described in [Usage](usage.md#inspecting-and-checking-images).
 
 ```
 goimgtools [options] input output
@@ -15,6 +15,8 @@ goimgtools stats [-json] file...
 goimgtools hash [-similar bits] file...
 goimgtools placeholder [-components 4x3] file...
 goimgtools exif [-json] file...
+goimgtools readmark -key K file...
+goimgtools pages [-quality N] image... out.pdf
 goimgtools formats
 goimgtools fonts [-all]
 goimgtools ops
@@ -92,7 +94,7 @@ Operations run in a fixed order: rotate → flip → trim → crop → resize �
 | `-font`, `-font-size`, `-text-color`, `-text-background`, `-text-width` | Font (comma-separated files or font names), font size, colour, background, wrap width |
 | `-stroke-width`, `-stroke-color` | Stroke |
 | `-shadow-color`, `-shadow-offset X,Y`, `-shadow-blur` | Shadow |
-| `-format` | `jpeg`, `png`, `webp`, `gif`, `bmp`, `tiff`; determined by the extension by default |
+| `-format` | `jpeg`, `png`, `webp`, `gif`, `bmp`, `tiff`, `ico`, `icns`, `qoi`, `pnm`, `tga` or `pdf` (`goimgtools formats` lists what is read and written); determined by the extension by default |
 | `-quality N` | Quality for JPEG or lossy WebP |
 | `-jpeg-optimize`, `-jpeg-progressive` | JPEG: optimised coding tables; progressive encoding (smaller files, pixels unchanged) |
 | `-jpeg-trellis` | JPEG: trellis quantization (smaller files at the same perceived quality; pixels change; can be combined with the two options above) |
@@ -101,7 +103,9 @@ Operations run in a fixed order: rotate → flip → trim → crop → resize �
 | `-jpeg-quant-table N` | JPEG: quantization tables 0–8, numbered as mozjpeg's `-quant-table` (0, the default, the standard's; 3 mozjpeg's default), or 9, made as jpegli makes them: the smallest files (see [Compression](compression.md)) |
 | `-png-colors N`, `-no-dither` | PNG: reduce to N colours (2–256); disable dithering |
 | `-ico-sizes 16,32,48,256` | ICO: the sizes of the icons to write, the image fitted to each; without it the image as it is (at most 256×256). A `.ico` output file selects ICO |
+| `-icns-sizes 16,32,128,256,512` | ICNS: the sizes of the icons to write, among 16, 32, 64, 128, 256, 512 and 1024, the image fitted into each; without it the standard sizes up to the image's. A `.icns` output file selects ICNS |
 | `-max-size size` | Limit the file to this size (`200KB`, `1.5MB` or a number of bytes) by lowering the quality automatically (JPEG, lossy WebP) or the number of colours (PNG, first without loss; GIF); with `-animated`, an animation is an error |
+| `-min-ssim S` | Make the file as small as the quality (the number of colours, for PNG and GIF) allows while its SSIM against the image stays at least S, such as 0.98 (JPEG, lossy WebP, PNG, GIF, JPEG TIFF); not together with `-max-size` (see [Compression](compression.md)) |
 | `-tile-size N`, `-tile-overlap N`, `-tile-layout NAME` | For an output named `.dzi`, `.dz` or `.zip` (in a ZIP archive), which writes a pyramid of tiles (as sharp's `tile`): the side of a tile (256), the overlap (0), and the layout: `dz` (Deep Zoom, the default), `google`, `iiif`, `iiif3` or `zoomify` (the tiles then go in a directory named as the output without `.dz`) |
 | `-skip-larger` | Keep the original file if the result is not smaller than it (same format); intended for compression-only jobs |
 | `-webp-lossless`, `-webp-effort N` | Lossless WebP; effort 1 (fastest) to 9 (smallest file), 5 by default. The effort also applies to lossy WebP, where 5 already does all there is (above 5, only the alpha plane gets more), 2 takes about half the time and 1 about a third |
@@ -119,6 +123,7 @@ Operations run in a fixed order: rotate → flip → trim → crop → resize �
 | `-exif-copyright TEXT`, `-exif-artist TEXT`, `-exif-description TEXT` | Write these EXIF fields (into the kept block with `-keep-exif`, else a block of their own) |
 | `-density DPI` | Record a resolution of DPI pixels per inch in the output (JPEG, PNG, TIFF, BMP); by default the input's is kept |
 | `-srgb` | Convert colours to sRGB using the colour profile; the output contains no profile (applied automatically when converting to GIF or BMP) |
+| `-profile p3\|adobe-rgb\|FILE` | Convert the colours into this ICC profile and write it: Display P3, Adobe RGB (1998), or a profile file |
 | `-mem MB`, `-threads N`, `-tmp directory` | Memory limit (default 64), number of threads (default 1, at most the number of CPU cores; see [CPU and threads](performance.md#cpu-and-threads)), temporary directory |
 | `-max-pixels N` | Maximum size of accepted and produced images, in megapixels (default 268, i.e. 16383×16383); with `-animated`, the total over all frames |
 
