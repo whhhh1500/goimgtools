@@ -246,8 +246,10 @@ type ExtendOptions struct {
 	// default), or the image itself, as sharp's extendWith copy, repeat
 	// or mirror. A border wider than the image goes on repeating or
 	// mirroring it. A top or bottom border that repeats or mirrors the
-	// image keeps the image in working storage (a temporary file beyond
-	// its share of the limit).
+	// image keeps the rows it needs again in working storage (a temporary
+	// file when the image is beyond its share of the limit): the rows of
+	// the border for a mirrored border no taller than the image and for
+	// the image repeated below it, else the whole image.
 	Mode ExtendMode
 }
 
