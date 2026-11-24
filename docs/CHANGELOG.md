@@ -2,7 +2,11 @@ English | [中文](zh-CN/CHANGELOG.md)
 
 # Changelog
 
-## Unreleased
+## 0.3.1 (2026-11-24)
+
+### Upgrading from 0.3.0
+
+The exported API is that of 0.3.0: nothing was added, removed or changed. PNG files written at levels 8 and 9 (and the PNG images of ICO and ICNS files, which are written at level 9 unless another is asked for) can differ from 0.3.0's by a few bytes: 17 test images are 5 bytes larger in all at level 8 and 152 bytes smaller at level 9. Their pixels are the same, and nothing else that is written changes.
 
 ### Changed
 
