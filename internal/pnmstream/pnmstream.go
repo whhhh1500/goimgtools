@@ -443,6 +443,11 @@ func (s *stream) decode(n int) error {
 			}
 			return err
 		}
+		if h.maxval == 255 {
+			// A byte a value, taken as it is: most files there are.
+			s.direct(raw, n)
+			return nil
+		}
 		switch {
 		case h.magic == '4':
 			get = func(k, x, c int) (int, error) {
@@ -516,6 +521,37 @@ func (s *stream) decode(n int) error {
 		}
 	}
 	return nil
+}
+
+// direct fills n rows of the band from the rows of a binary file of
+// maximum 255, in raw: its bytes are the values, grey to grey, and grey
+// with alpha, RGB or RGBA to NRGBA.
+func (s *stream) direct(raw []byte, n int) {
+	w, depth := s.h.w, s.h.depth
+	switch b := s.band.(type) {
+	case *image.Gray:
+		for k := 0; k < n; k++ {
+			copy(b.Pix[k*b.Stride:][:w], raw[k*w:])
+		}
+	case *image.NRGBA:
+		for k := 0; k < n; k++ {
+			src, dst := raw[k*w*depth:][:w*depth], b.Pix[k*b.Stride:][:4*w]
+			switch depth {
+			case 2:
+				for x := 0; x < w; x++ {
+					g, d := src[2*x], dst[4*x:4*x+4:4*x+4]
+					d[0], d[1], d[2], d[3] = g, g, g, src[2*x+1]
+				}
+			case 3:
+				for x := 0; x < w; x++ {
+					p, d := src[3*x:3*x+3:3*x+3], dst[4*x:4*x+4:4*x+4]
+					d[0], d[1], d[2], d[3] = p[0], p[1], p[2], 255
+				}
+			default:
+				copy(dst, src)
+			}
+		}
+	}
 }
 
 // encode16 is a linear light, 0 to 1 (PFM stores radiance), in the sRGB
