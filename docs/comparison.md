@@ -78,8 +78,8 @@ Every other feature, one thread, on the same photograph unless a heading says ot
 | Feature | goimgtools | libvips | sharp | Pillow | Other | Verdict |
 |---|---|---|---|---|---|---|
 | in.bmp | 0.12s, 9.3MB / 15.7MB |  |  | 0.28s, 144MB / 139MB |  | less memory |
-| in.qoi | 0.34s, 12.4MB / 18.8MB |  |  | 26.48s, 186MB / 254MB |  | less memory |
-| in.ppm | 0.38s, 9.4MB / 15.7MB |  |  | 0.27s, 144MB / 139MB |  | less memory |
+| in.qoi | 0.33s, 9.4MB / 16.0MB |  |  | 26.48s, 186MB / 254MB |  | less memory |
+| in.ppm | 0.16s, 9.2MB / 15.4MB |  |  | 0.27s, 144MB / 139MB |  | less memory |
 | in.tga | 0.36s, 9.2MB / 15.5MB |  |  | 0.30s, 146MB / 141MB |  | less memory |
 | in.psd | 0.18s, 9.2MB / 15.8MB |  |  | 0.30s, 162MB / 157MB |  | less memory |
 | in.dds | 0.21s, 9.2MB / 15.4MB |  |  | 20.76s, 185MB / 252MB |  | less memory |
@@ -104,7 +104,7 @@ Every other feature, one thread, on the same photograph unless a heading says ot
 | Feature | goimgtools | libvips | sharp | Pillow | Other | Verdict |
 |---|---|---|---|---|---|---|
 | bmp | 0.17s, 8.3MB / 14.8MB, file 68.7MB |  |  | 0.21s, 114MB / 110MB, file 68.7MB |  | less memory |
-| qoi | 0.45s, 22.1MB / 28.1MB, file 44.4MB |  |  | 23.14s, 198MB / 199MB, file 44.4MB |  | less memory |
+| qoi | 0.33s, 8.2MB / 14.6MB, file 44.4MB |  |  | 23.14s, 198MB / 199MB, file 44.4MB |  | less memory |
 | ppm | 0.17s, 8.2MB / 14.6MB, file 68.7MB |  |  | 0.21s, 114MB / 110MB, file 68.7MB |  | less memory |
 | tga | 0.24s, 8.2MB / 14.6MB, file 68.5MB |  |  | 0.23s, 116MB / 111MB, file 68.7MB |  | less memory |
 | pdf | 0.01s, 7.6MB / 14.0MB, file 7.2MB |  |  |  |  | this package only |
@@ -134,7 +134,7 @@ Every other feature, one thread, on the same photograph unless a heading says ot
 | jpeg 4:4:4 | 0.22s, 7.7MB / 14.0MB, file 7.0MB | 0.19s, 32.8MB / 21.2MB, file 6.7MB | 0.39s, 354MB / 354MB, file 6.1MB | 0.28s, 206MB / 201MB, file 6.7MB |  | less memory |
 | jpeg overshoot deringing | 0.18s, 7.7MB / 14.1MB, file 6.0MB | 0.20s, 32.8MB / 21.2MB, file 5.7MB | 0.30s, 218MB / 216MB, file 5.2MB |  |  | less memory |
 | jpeg -max-size 1MB | 0.35s, 20.6MB / 29.8MB, 34.3MB to temporary files, file 1012KB |  |  |  |  | this package only |
-| jpeg -min-ssim 0.98 | 16.19s, 26.5MB / 32.6MB, 78.1MB to temporary files, file 7.0MB |  |  |  |  | this package only |
+| jpeg -min-ssim 0.98 | 6.60s, 31.1MB / 37.7MB, 78.1MB to temporary files, file 7.0MB |  |  |  |  | this package only |
 | deep zoom tiles | 0.34s, 34.1MB / 40.5MB, file 5.1MB | 0.33s, 41.7MB / 30.3MB, file 5.0MB | 0.71s, 94.3MB / 93.0MB, file 5.1MB |  |  | less memory |
 | google tiles | 0.36s, 39.6MB / 46.1MB, file 5.1MB | 0.36s, 46.2MB / 34.6MB, file 4.9MB | 0.77s, 99.8MB / 97.6MB, file 5.1MB |  |  | less memory |
 | zoomify tiles | 0.34s, 35.8MB / 42.2MB, file 5.1MB | 0.31s, 41.4MB / 29.9MB, file 4.9MB | 0.71s, 93.8MB / 91.5MB, file 5.1MB |  |  | less memory |
@@ -145,7 +145,7 @@ Every other feature, one thread, on the same photograph unless a heading says ot
 |---|---|---|---|---|---|---|
 | crop 3000x2000 | 0.12s, 8.3MB / 14.6MB | 0.10s, 27.5MB / 17.7MB | 0.20s, 110MB / 110MB | 0.21s, 160MB / 155MB |  | less memory |
 | trim | 0.25s, 9.4MB / 15.6MB, 91.6MB to temporary files |  | 4.58s, 269MB / 278MB | 0.39s, 412MB / 408MB |  | less memory |
-| extend 100 mirror | 0.29s, 9.2MB / 15.4MB, 91.6MB to temporary files | 0.18s, 98.2MB / 86.8MB | 0.36s, 281MB / 287MB |  |  | less memory |
+| extend 100 mirror | 0.24s, 9.3MB / 15.7MB, 4.6MB to temporary files | 0.18s, 98.2MB / 86.8MB | 0.36s, 281MB / 287MB |  |  | less memory |
 | flip | 0.40s, 14.3MB / 20.6MB, 91.6MB to temporary files | 0.17s, 98.9MB / 87.6MB | 0.35s, 269MB / 276MB | 0.29s, 298MB / 293MB |  | less memory, 2.3 times the fastest's time |
 | flop | 0.20s, 8.8MB / 15.0MB | 0.17s, 98.9MB / 87.6MB | 0.32s, 219MB / 217MB | 0.29s, 297MB / 293MB |  | less memory |
 | rotate 180 | 0.42s, 14.2MB / 20.5MB, 91.6MB to temporary files | 0.20s, 98.9MB / 87.6MB | 0.36s, 269MB / 276MB | 0.29s, 298MB / 293MB |  | less memory, 2.2 times the fastest's time |
@@ -191,7 +191,7 @@ Every other feature, one thread, on the same photograph unless a heading says ot
 | `enhance:sharpness,2` | 0.59s, 9.2MB / 15.4MB |  |  | 0.59s, 298MB / 293MB |  | less memory |
 | `equalize` | 0.27s, 9.8MB / 16.0MB, 91.6MB to temporary files | 0.22s, 96.1MB / 84.9MB |  | 0.32s, 297MB / 293MB |  | less memory |
 | `erode:2` | 0.26s, 9.4MB / 15.6MB | 0.15s, 31.3MB / 19.7MB | 0.32s, 217MB / 215MB | 9.78s, 297MB / 293MB |  | less memory |
-| `extend:200,200,200,200,mirror` | 0.31s, 9.2MB / 15.5MB, 91.6MB to temporary files |  |  |  |  | this package only |
+| `extend:200,200,200,200,mirror` | 0.26s, 9.4MB / 15.7MB, 9.2MB to temporary files |  |  |  |  | this package only |
 | `extract-channel:green` | 0.18s, 8.8MB / 15.0MB | 0.13s, 29.1MB / 17.5MB | 0.29s, 169MB / 167MB | 0.27s, 229MB / 224MB |  | less memory |
 | `filter:blur` | 0.78s, 9.2MB / 15.4MB |  |  | 0.82s, 297MB / 293MB |  | less memory |
 | `filter:contour` | 0.67s, 9.2MB / 15.4MB |  |  | 0.60s, 298MB / 293MB |  | less memory |
@@ -246,8 +246,8 @@ Every other feature, one thread, on the same photograph unless a heading says ot
 | logo 20% wide, multiply | 0.19s, 14.5MB / 20.9MB |  |  |  |  | this package only |
 | text watermark | 0.20s, 14.1MB / 19.8MB |  | 0.32s, 222MB / 216MB | 0.27s, 206MB / 201MB |  | less memory |
 | text watermark tiled | 0.26s, 13.6MB / 19.5MB |  |  |  |  | this package only |
-| invisible mark, blind | 3.55s, 12.4MB / 18.5MB |  |  |  |  | this package only |
-| invisible mark, screen | 3.54s, 12.4MB / 18.5MB |  |  |  |  | this package only |
+| invisible mark, blind | 1.22s, 14.4MB / 20.2MB |  |  |  |  | this package only |
+| invisible mark, screen | 1.20s, 14.4MB / 20.5MB |  |  |  |  | this package only |
 | text image, wrapped | 0.14s, 13.5MB / 20.7MB |  | 0.10s, 70.3MB / 71.2MB | 0.21s, 32.0MB / 26.8MB |  | less memory |
 
 #### Animation (the GIF of 18 photographs, 768×512)
