@@ -150,7 +150,7 @@ func batch(args []string, stdout, stderr io.Writer) error {
 	ext := ""
 	if *o.format != "" {
 		f, ok := goimgtools.FormatByName(*o.format)
-		if !ok {
+		if c, _ := goimgtools.CodecByName(f.Name); !ok || c.Encode == nil { // unknown, or only read
 			return fmt.Errorf("-format: cannot write %q (%s)", *o.format, formatNames())
 		}
 		ext = f.Extensions[0]

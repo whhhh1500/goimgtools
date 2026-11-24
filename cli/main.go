@@ -347,17 +347,20 @@ func (o *options) outputKind(out string) (string, error) {
 		return formatOf(out), nil
 	}
 	f, ok := goimgtools.FormatByName(*o.format)
-	if !ok {
+	if c, _ := goimgtools.CodecByName(f.Name); !ok || c.Encode == nil { // unknown, or only read
 		return "", fmt.Errorf("-format: cannot write %q (%s)", *o.format, formatNames())
 	}
 	return f.Name, nil
 }
 
-// formatNames lists the formats for messages: "jpeg, png, ... or tiff".
+// formatNames lists the formats that can be written, for messages: "jpeg,
+// png, ... or tga".
 func formatNames() string {
 	var names []string
 	for _, f := range goimgtools.Formats() {
-		names = append(names, f.Name)
+		if c, _ := goimgtools.CodecByName(f.Name); c.Encode != nil {
+			names = append(names, f.Name)
+		}
 	}
 	return strings.Join(names[:len(names)-1], ", ") + " or " + names[len(names)-1]
 }
@@ -860,6 +863,12 @@ func (o *options) image(in, out string) (*goimgtools.Image, error) {
 		im.GIF(goimgtools.GIFOptions{Colors: *o.gifColors, NoDither: *o.noDither, FixedPalette: *o.gifFixed, Lossy: *o.gifLossy, Effort: *o.gifEffort})
 	case "bmp":
 		im.BMP()
+	case "qoi":
+		im.QOI()
+	case "pnm":
+		im.PNM()
+	case "tga":
+		im.TGA()
 	case "tiff":
 		c, ok := map[string]goimgtools.TIFFCompression{"none": goimgtools.TIFFNone, "deflate": goimgtools.TIFFDeflate,
 			"lzw": goimgtools.TIFFLZW, "jpeg": goimgtools.TIFFJPEG}[strings.ToLower(*o.tiffComp)]

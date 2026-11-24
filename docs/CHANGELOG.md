@@ -22,6 +22,7 @@ The exported API is that of 0.3.0: nothing was added, removed or changed. PNG fi
 ### Fixed
 
 - `MinSSIM` under a small memory limit no longer fails for want of room it had itself left reserved: each of its eight or so measurements kept the strips of both pictures counted in the limit after it was done (`inspect.SSIM` did the same, once). A 1600×1200 image under a limit of 2MB (`MemoryLimit(2<<20)`) was refused with `ErrMemoryLimit`; it now gives the file it gives without the limit.
+- On the command line `-format qoi`, `-format pnm` and `-format tga` were not applied when the output's name did not end in that format's extension: the name decided, and a name of no known format was an error. `-format` with a format that is only read (`psd`, `svg` and the like) is now refused as one that cannot be written, and the help lists only the formats that can.
 
 ## 0.3.0 (2026-11-23)
 

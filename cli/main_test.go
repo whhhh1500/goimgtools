@@ -135,6 +135,7 @@ func TestBadArguments(t *testing.T) {
 		{"-watermark", in, "-offset", "1", in, out},
 		{"-watermark", filepath.Join(dir, "nope.png"), in, out},
 		{"-format", "heic", in, out},
+		{"-format", "psd", in, out}, // read, not written
 		{"-max-size", "big", in, out},
 		{"-lossless", in, out},
 		{"-progressive", in, out},
@@ -281,6 +282,17 @@ func TestNewOptions(t *testing.T) {
 	out = filepath.Join(dir, "f.bin")
 	must("-format", "webp", "-webp-lossless", in, out)
 	same("lossless webp", out, goimgtools.Open(in).WebP(goimgtools.WebPOptions{Lossless: true}))
+	// -format for every format that is written, whatever the output is
+	// called: the ones without options of their own too.
+	for name, want := range map[string]*goimgtools.Image{
+		"qoi": goimgtools.Open(in).QOI(), "pnm": goimgtools.Open(in).PNM(), "tga": goimgtools.Open(in).TGA(),
+		"bmp": goimgtools.Open(in).BMP(), "pdf": goimgtools.Open(in).PDF(), "icns": goimgtools.Open(in).ICNS(),
+	} {
+		other := filepath.Join(dir, "format-"+name+".bin")
+		must("-format", name, in, other)
+		same("-format "+name, other, want)
+	}
+	must("-format", "webp", "-webp-lossless", in, out)
 	back, err := goimgtools.Open(out).PNG().ToBytes()
 	if err != nil {
 		t.Fatal(err)
