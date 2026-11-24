@@ -41,8 +41,18 @@ func Watermark(src pipeline.Source, payload []byte, k watermark.Key, o watermark
 	if err != nil {
 		return nil, err
 	}
-	var out pipeline.Source
-	out, err = newWindowAt(in, m.Radius(), m.NewRow)
+	// Each of the goroutines that share the rows keeps what it has worked
+	// out of the window's rows while that fits beside what else is staged
+	// in memory (watermark.NewRowKept: the same rows, sooner); one that it
+	// does not fit for works it out again for every row.
+	var ws *windowStage
+	ws, err = newWindowAt(in, m.Radius(), func() func(y int, win [][]uint8, dst []uint8) {
+		if n := m.KeptBytes(); ws.env.Budget.TryReserve(n) {
+			ws.reserved += n
+			return m.NewRowKept()
+		}
+		return m.NewRow()
+	})
 	if err != nil {
 		if rec != nil {
 			in.Close()
@@ -50,6 +60,7 @@ func Watermark(src pipeline.Source, payload []byte, k watermark.Key, o watermark
 		}
 		return nil, err
 	}
+	var out pipeline.Source = ws
 	if rec != nil {
 		out = &recorded{Source: out, rec: rec, src: src}
 	}

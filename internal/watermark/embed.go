@@ -137,17 +137,72 @@ func NewMarker(payload []byte, k Key, o Options, w, h int) (*Marker, error) {
 // Radius is the number of rows above and below a row that Row needs.
 func (m *Marker) Radius() int { return m.r }
 
-// rowScratch is a row's working storage: the window's column sums.
+// rowScratch is a row's working storage: the window's column sums, and
+// what is kept of the window's rows from one row to the next (NewRowKept).
 type rowScratch struct {
 	sum, sum2, lo, hi []float64
+	kept              *keptRows
+}
+
+// keptRows is what the column sums of a window are made from, held for
+// each source row while a window has it: the row's luma, and its darkest
+// and brightest channel. The luma is summed from there for every row (in
+// the window's order, which the sum's last bits depend on); the darkest
+// and brightest channel are whole numbers, so their sums down the columns
+// are carried from one row to the next.
+type keptRows struct {
+	tag      []int       // the source row each place holds (place = row % len), -1 none
+	l        [][]float64 // luma
+	mn, mx   [][]uint8   // the darkest and the brightest channel
+	clo, chi []uint32    // mn and mx summed down the window of row at
+	at       int         // -1: of no row
+	rows     [][]float64 // the luma rows of the window, in its order
+	place    []int       // and where they are held
 }
 
 // NewRow returns a function that marks row y of NRGBA pixels: win holds
 // the rows y-Radius to y+Radius (repeated past the edges), dst receives
 // the marked row. One function for each goroutine.
 func (m *Marker) NewRow() func(y int, win [][]uint8, dst []uint8) {
-	s := &rowScratch{sum: make([]float64, m.w), sum2: make([]float64, m.w), lo: make([]float64, m.w), hi: make([]float64, m.w)}
+	s := m.newScratch(false)
 	return func(y int, win [][]uint8, dst []uint8) { m.row(s, y, win, dst) }
+}
+
+// KeptBytes is the size of what a function of NewRowKept holds besides
+// what one of NewRow does.
+func (m *Marker) KeptBytes() int64 {
+	return int64(2*m.r+1)*int64(m.w)*(8+2) + 2*4*int64(m.w)
+}
+
+// NewRowKept is NewRow with the same rows to the byte, made faster where
+// the rows are asked for in order or nearly (a few skipped, as when
+// several goroutines share out the rows of a strip): each source row's
+// part in the column sums is worked out once and kept while the window has
+// it, KeptBytes in all, where NewRow works it out again for every row of
+// the window (2 Radius + 1 times). win must be as NewRow describes it.
+func (m *Marker) NewRowKept() func(y int, win [][]uint8, dst []uint8) {
+	s := m.newScratch(true)
+	return func(y int, win [][]uint8, dst []uint8) { m.row(s, y, win, dst) }
+}
+
+// newScratch is the working storage of a row function, with what is kept
+// of the window's rows if kept.
+func (m *Marker) newScratch(kept bool) *rowScratch {
+	s := &rowScratch{sum: make([]float64, m.w), sum2: make([]float64, m.w), lo: make([]float64, m.w), hi: make([]float64, m.w)}
+	if !kept {
+		return s
+	}
+	n := 2*m.r + 1
+	k := &keptRows{tag: make([]int, n), l: make([][]float64, n), mn: make([][]uint8, n), mx: make([][]uint8, n),
+		clo: make([]uint32, m.w), chi: make([]uint32, m.w), at: -1, rows: make([][]float64, n), place: make([]int, n)}
+	flat, bytes := make([]float64, n*m.w), make([]uint8, 2*n*m.w)
+	for i := range n {
+		k.tag[i] = -1
+		k.l[i] = flat[i*m.w:][:m.w:m.w]
+		k.mn[i], k.mx[i] = bytes[2*i*m.w:][:m.w:m.w], bytes[(2*i+1)*m.w:][:m.w:m.w]
+	}
+	s.kept = k
+	return s
 }
 
 const nvfTheta = 75.0 / 400.0 // the noise visibility function's theta
@@ -166,22 +221,124 @@ const nvfTheta = 75.0 / 400.0 // the noise visibility function's theta
 // white screenshot after JPEG 70: 275 against 280.)
 const shiftTexture = 4.0
 
-func (m *Marker) row(s *rowScratch, y int, win [][]uint8, dst []uint8) {
-	w, r := m.w, m.r
-	// Down each column of the window: luma, its square, the darkest and
-	// the brightest channel.
-	for x := range w {
-		var sum, sum2, lo, hi float64
+// columns sums down each column of the window: luma, its square, the
+// darkest and the brightest channel (whole numbers, summed as such).
+func (m *Marker) columns(s *rowScratch, win [][]uint8) {
+	for x := range m.w {
+		var sum, sum2 float64
+		var lo, hi uint32
 		for _, row := range win {
 			p := row[4*x : 4*x+3 : 4*x+3]
 			cr, cg, cb := float64(p[0]), float64(p[1]), float64(p[2])
 			l := float64(0.299*cr) + float64(0.587*cg) + float64(0.114*cb)
 			sum += l
 			sum2 += float64(l * l)
-			lo += min(cr, cg, cb)
-			hi += max(cr, cg, cb)
+			lo += uint32(min(p[0], p[1], p[2]))
+			hi += uint32(max(p[0], p[1], p[2]))
 		}
-		s.sum[x], s.sum2[x], s.lo[x], s.hi[x] = sum, sum2, lo, hi
+		s.sum[x], s.sum2[x], s.lo[x], s.hi[x] = sum, sum2, float64(lo), float64(hi)
+	}
+}
+
+// columnsKept is columns for the window of row y, from what is kept of its
+// rows (see keptRows): the same sums to the bit.
+func (m *Marker) columnsKept(s *rowScratch, y int, win [][]uint8) {
+	k, w, r := s.kept, m.w, m.r
+	n := len(k.tag)
+	at := func(sy int) int { return max(0, min(m.h-1, sy)) }
+	// The darkest and brightest channel: from the sums of the row before,
+	// or of one a little before, less the rows that left the window (while
+	// they are still held) and, below, plus those that came in.
+	step := y - k.at
+	carry := k.at >= 0 && step >= 1 && step <= r
+	if carry {
+		for sy := k.at - r; sy < y-r; sy++ {
+			p := at(sy) % n
+			if k.tag[p] != at(sy) {
+				carry = false
+				break
+			}
+			mn, mx := k.mn[p], k.mx[p]
+			for x := range w {
+				k.clo[x] -= uint32(mn[x])
+				k.chi[x] -= uint32(mx[x])
+			}
+		}
+	}
+	for i, row := range win {
+		sy := at(y - r + i)
+		p := sy % n
+		if k.tag[p] != sy {
+			k.tag[p] = sy
+			l, mn, mx := k.l[p], k.mn[p], k.mx[p]
+			for x := range w {
+				q := row[4*x : 4*x+3 : 4*x+3]
+				cr, cg, cb := float64(q[0]), float64(q[1]), float64(q[2])
+				l[x] = float64(0.299*cr) + float64(0.587*cg) + float64(0.114*cb)
+				mn[x], mx[x] = min(q[0], q[1], q[2]), max(q[0], q[1], q[2])
+			}
+		}
+		k.rows[i], k.place[i] = k.l[p], p
+	}
+	if carry {
+		for sy := k.at + r + 1; sy <= y+r; sy++ {
+			p := at(sy) % n
+			mn, mx := k.mn[p], k.mx[p]
+			for x := range w {
+				k.clo[x] += uint32(mn[x])
+				k.chi[x] += uint32(mx[x])
+			}
+		}
+	} else {
+		clear(k.clo)
+		clear(k.chi)
+		for _, p := range k.place {
+			mn, mx := k.mn[p], k.mx[p]
+			for x := range w {
+				k.clo[x] += uint32(mn[x])
+				k.chi[x] += uint32(mx[x])
+			}
+		}
+	}
+	k.at = y
+	// Luma and its square, a row of the window after another as columns
+	// sums them, four columns at a time.
+	x := 0
+	for ; x+4 <= w; x += 4 {
+		var a0, a1, a2, a3, b0, b1, b2, b3 float64
+		for _, l := range k.rows {
+			v := l[x : x+4 : x+4]
+			a0 += v[0]
+			b0 += float64(v[0] * v[0])
+			a1 += v[1]
+			b1 += float64(v[1] * v[1])
+			a2 += v[2]
+			b2 += float64(v[2] * v[2])
+			a3 += v[3]
+			b3 += float64(v[3] * v[3])
+		}
+		s.sum[x], s.sum[x+1], s.sum[x+2], s.sum[x+3] = a0, a1, a2, a3
+		s.sum2[x], s.sum2[x+1], s.sum2[x+2], s.sum2[x+3] = b0, b1, b2, b3
+	}
+	for ; x < w; x++ {
+		var a, b float64
+		for _, l := range k.rows {
+			a += l[x]
+			b += float64(l[x] * l[x])
+		}
+		s.sum[x], s.sum2[x] = a, b
+	}
+	for x := range w {
+		s.lo[x], s.hi[x] = float64(k.clo[x]), float64(k.chi[x])
+	}
+}
+
+func (m *Marker) row(s *rowScratch, y int, win [][]uint8, dst []uint8) {
+	w, r := m.w, m.r
+	if s.kept != nil && len(win) == 2*r+1 {
+		m.columnsKept(s, y, win)
+	} else {
+		m.columns(s, win)
 	}
 	// The field's row: the chips above and below the row's centre.
 	c := (float64(y)+0.5)/m.chip - 0.5
