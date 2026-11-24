@@ -44,6 +44,7 @@ type stream struct {
 	channels int
 	index    [64][4]uint8
 	px       [4]uint8
+	tmp      [4]uint8 // the bytes of a chunk, read here so that none is allocated for it
 	run      int
 	band     *image.NRGBA
 	n, y     int
@@ -137,17 +138,16 @@ func (s *stream) chunk() error {
 	p := &s.px
 	switch {
 	case b1 == opRGB:
-		var c [3]byte
-		if _, err := io.ReadFull(s.r, c[:]); err != nil {
+		c := s.tmp[:3]
+		if _, err := io.ReadFull(s.r, c); err != nil {
 			return err
 		}
 		p[0], p[1], p[2] = c[0], c[1], c[2]
 	case b1 == opRGBA:
-		var c [4]byte
-		if _, err := io.ReadFull(s.r, c[:]); err != nil {
+		if _, err := io.ReadFull(s.r, s.tmp[:]); err != nil {
 			return err
 		}
-		*p = c
+		*p = s.tmp
 	case b1&0xc0 == opIndex:
 		*p = s.index[b1]
 	case b1&0xc0 == opDiff:
@@ -170,6 +170,11 @@ func (s *stream) chunk() error {
 	return nil
 }
 
+// encodeBuffer is the size of the buffer Encode gathers its chunks in
+// before writing them: at least the 14 bytes of the header. The tests make
+// it small, so that it fills at every kind of chunk.
+var encodeBuffer = 64 << 10
+
 // noClose keeps the caller's source open when the band converter closes.
 type noClose struct{ pipeline.Source }
 
@@ -186,13 +191,14 @@ func Encode(w io.Writer, src pipeline.Source) error {
 	if pipeline.IsOpaque(src) {
 		channels = 3
 	}
-	bw := bufio.NewWriterSize(w, 64<<10)
-	var h [14]byte
-	copy(h[:], "qoif")
-	binary.BigEndian.PutUint32(h[4:], uint32(b.Dx()))
-	binary.BigEndian.PutUint32(h[8:], uint32(b.Dy()))
-	h[12], h[13] = byte(channels), 0
-	bw.Write(h[:])
+	// The chunks are put in out, which is written whenever it has less
+	// room left than a pixel can take: the byte of a run and five more.
+	out := make([]byte, encodeBuffer)
+	copy(out, "qoif")
+	binary.BigEndian.PutUint32(out[4:], uint32(b.Dx()))
+	binary.BigEndian.PutUint32(out[8:], uint32(b.Dy()))
+	out[12], out[13] = byte(channels), 0
+	n := 14
 	var index [64][4]uint8
 	prev := [4]uint8{0, 0, 0, 255}
 	run := 0
@@ -217,36 +223,52 @@ func Encode(w io.Writer, src pipeline.Source) error {
 					px[3] = 255
 				}
 				left--
+				if n > len(out)-6 {
+					if err := writeAll(w, out[:n]); err != nil {
+						return err
+					}
+					n = 0
+				}
 				if px == prev {
 					run++
 					if run == 62 || left == 0 {
-						bw.WriteByte(opRun | byte(run-1))
+						out[n] = opRun | byte(run-1)
+						n++
 						run = 0
 					}
 					continue
 				}
 				if run > 0 {
-					bw.WriteByte(opRun | byte(run-1))
+					out[n] = opRun | byte(run-1)
+					n++
 					run = 0
 				}
 				i := hash(px)
 				switch {
 				case index[i] == px:
-					bw.WriteByte(opIndex | byte(i))
+					out[n] = opIndex | byte(i)
+					n++
 				case px[3] != prev[3]:
 					index[i] = px
-					bw.Write([]byte{opRGBA, px[0], px[1], px[2], px[3]})
+					c := out[n : n+5 : n+5]
+					c[0], c[1], c[2], c[3], c[4] = opRGBA, px[0], px[1], px[2], px[3]
+					n += 5
 				default:
 					index[i] = px
 					vr, vg, vb := int8(px[0]-prev[0]), int8(px[1]-prev[1]), int8(px[2]-prev[2])
 					vgr, vgb := vr-vg, vb-vg
 					switch {
 					case vr > -3 && vr < 2 && vg > -3 && vg < 2 && vb > -3 && vb < 2:
-						bw.WriteByte(opDiff | byte(vr+2)<<4 | byte(vg+2)<<2 | byte(vb+2))
+						out[n] = opDiff | byte(vr+2)<<4 | byte(vg+2)<<2 | byte(vb+2)
+						n++
 					case vgr > -9 && vgr < 8 && vg > -33 && vg < 32 && vgb > -9 && vgb < 8:
-						bw.Write([]byte{opLuma | byte(vg+32), byte(vgr+8)<<4 | byte(vgb+8)})
+						c := out[n : n+2 : n+2]
+						c[0], c[1] = opLuma|byte(vg+32), byte(vgr+8)<<4|byte(vgb+8)
+						n += 2
 					default:
-						bw.Write([]byte{opRGB, px[0], px[1], px[2]})
+						c := out[n : n+4 : n+4]
+						c[0], c[1], c[2], c[3] = opRGB, px[0], px[1], px[2]
+						n += 4
 					}
 				}
 				prev = px
@@ -256,6 +278,22 @@ func Encode(w io.Writer, src pipeline.Source) error {
 	if left != 0 {
 		return io.ErrUnexpectedEOF
 	}
-	bw.Write([]byte{0, 0, 0, 0, 0, 0, 0, 1})
-	return bw.Flush()
+	if n > len(out)-8 { // the end marker
+		if err := writeAll(w, out[:n]); err != nil {
+			return err
+		}
+		n = 0
+	}
+	n += copy(out[n:], []byte{0, 0, 0, 0, 0, 0, 0, 1})
+	return writeAll(w, out[:n])
+}
+
+// writeAll writes p to w; a writer that takes less without saying why has
+// failed (io.ErrShortWrite).
+func writeAll(w io.Writer, p []byte) error {
+	n, err := w.Write(p)
+	if err == nil && n < len(p) {
+		err = io.ErrShortWrite
+	}
+	return err
 }
