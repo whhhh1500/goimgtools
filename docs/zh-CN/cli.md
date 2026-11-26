@@ -108,10 +108,11 @@ goimgtools -op median:3 -op normalize -op "tint:#704214" scan.jpg out.jpg
 | `-min-ssim S` | 在与原图的 SSIM 不低于 S（如 0.98）的前提下把文件做到最小：自动选最低的质量（PNG、GIF 为最少的颜色数）（JPEG、有损 WebP、PNG、GIF、JPEG 压缩的 TIFF）；不能与 `-max-size` 同用（见[压缩](compression.md)） |
 | `-tile-size N`、`-tile-overlap N`、`-tile-layout 名称` | 输出文件名以 `.dzi`、`.dz` 或 `.zip`（写入 ZIP 压缩包）结尾时写瓦片金字塔（同 sharp 的 `tile`）：瓦片边长（256）、重叠像素（0）与布局：`dz`（Deep Zoom，默认）、`google`、`iiif`、`iiif3` 或 `zoomify`（瓦片写入以输出名去掉 `.dz` 命名的目录） |
 | `-skip-larger` | 结果不小于原文件（同格式）时保留原文件；适用于仅做压缩的任务 |
-| `-webp-lossless`、`-webp-effort N` | 无损 WebP；力度 1（最快）至 9（文件最小），默认 5。力度也作用于有损 WebP：5 已用上全部手段（5 以上只在透明通道上多做），2 耗时约减半，1 约为三分之一 |
+| `-webp-lossless`、`-webp-effort N` | 无损 WebP；力度 1（最快）至 9（文件最小），默认 5。力度也作用于有损 WebP：5 已用上全部手段（5 以上只在透明通道上多做；7 起动画的每一帧把各种写法全试一遍，而非只试一部分），2 耗时约减半，1 约为三分之一 |
 | `-webp-near-lossless` | 近无损 WebP，同 libwebp：按无损编码，但与邻像素本就有差别的像素各通道可略作改动，程度由 `-quality` 定（100 不改，80–99 至多差 1 级，60–79 差 2，40–59 差 4，20–39 差 8，更低差 16；默认 75）；照片比无损小约 37% |
 | `-webp-exact` | 精确保留全透明像素的颜色（默认像 libwebp、sharp、Pillow 一样丢掉，带透明的图因此更小） |
 | `-webp-alpha-quality N` | 有损 WebP：透明度的质量 1–99，取值降到较少的级数（70 以下 2–16 级），0 与 255 不变；默认（100）精确保留 |
+| `-webp-mixed` | 有损 WebP 动画（配合 `-animated`）：每帧另按无损编码一次，取较小者，同 libwebp 的 `allow_mixed`、sharp 的 `mixed`、gif2webp 的 `-mixed`；色块平整的动画会小很多，耗时为数倍（见[压缩](compression.md)） |
 | `-png-level N`、`-gif-colors N`、`-gif-fixed-palette`、`-tiff-compression none\|deflate\|lzw\|jpeg`、`-tiff-predictor`、`-tiff-tile N`、`-tiff-pyramid` | 各格式专用选项（JPEG 压缩的 TIFF 用 `-quality`；边长 N 像素的瓦片；图像之后写逐级减半的金字塔；`-png-level` 也设定 ICO、ICNS 中 PNG 图像的级别，默认 9） |
 | `-gif-lossy N` | GIF：有损压缩，可接受的颜色差 1–255（照片类动画 16–32，带抖动的静态图 8–16；见[压缩](compression.md)） |
 | `-gif-effort N` | GIF：1（最快）到 9（最小，默认）：调色板细化几遍、动图每帧试几种编码 |

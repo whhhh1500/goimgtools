@@ -429,7 +429,12 @@ var codeLengthCodeOrder = [19]uint8{17, 18, 0, 1, 2, 3, 4, 5, 16, 6, 7, 8, 9, 10
 
 // putHuffCode writes the description of a code (VP8L "normal" code lengths:
 // the lengths are themselves Huffman coded, with runs of zeros shortened).
-func putHuffCode(bw *bitWriter, lens []uint8) {
+func putHuffCode(bw *bitWriter, lens []uint8) { putHuffCodeLens(bw, lens, false) }
+
+// putHuffCodeLens is putHuffCode; with short, the lengths of the code the
+// lengths are coded with stop at the last one in use (they come in an
+// order that puts the usual ones first), which saves up to 45 bits.
+func putHuffCodeLens(bw *bitWriter, lens []uint8, short bool) {
 	type item struct {
 		sym   uint8
 		extra uint8
@@ -467,9 +472,13 @@ func putHuffCode(bw *bitWriter, lens []uint8) {
 		}
 	}
 	cl := newHuffCode(huffLengths(hist[:], 7))
-	bw.put(0, 1)    // not a "simple" code
-	bw.put(19-4, 4) // all 19 code length code lengths follow
-	for _, s := range codeLengthCodeOrder {
+	n := len(codeLengthCodeOrder) // all 19 code length code lengths follow
+	for short && n > 4 && cl.lens[codeLengthCodeOrder[n-1]] == 0 {
+		n--
+	}
+	bw.put(0, 1) // not a "simple" code
+	bw.put(uint32(n-4), 4)
+	for _, s := range codeLengthCodeOrder[:n] {
 		bw.put(uint32(cl.lens[s]), 3)
 	}
 	bw.put(0, 1) // code lengths for the whole alphabet

@@ -93,6 +93,11 @@ func (e *encoder) codeAlpha() error {
 	if e.alpha == nil || !e.alpha.transparent() {
 		return nil
 	}
+	if e.maskCell > 0 {
+		if ok, err := e.codeMask(e.maskCell); ok || err != nil {
+			return err
+		}
+	}
 	if q := e.alphaQ; q > 0 && q < 100 {
 		e.alpha.reduceLevels(q)
 	}

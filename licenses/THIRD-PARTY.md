@@ -373,7 +373,12 @@ against libwebp's output.
 specification. How a GIF's frame delays and loop count become a WebP's
 (10ms or less shown as 100ms; a finite loop count plus one; no looping
 extension as one play) follows libwebp's `examples/gif2webp.c`; no code
-of it is included.
+of it is included. What a lossy frame leaves out follows libwebp's
+animation encoder (`src/mux/anim_encode.c`: `QualityToMaxDiff`,
+`PixelsAreSimilar`, `FlattenSimilarBlocks`): which pixels count as
+unchanged at a quality, and the blocks of them made transparent in a frame
+that is blended onto the picture. It was rewritten in Go (`lossy.go`,
+which says where it differs from libwebp's).
 
 `blendNonPremult` in `animate.go` blends a frame of an animated WebP onto
 the picture as libwebp's animation decoder does (`src/demux/anim_decode.c`:

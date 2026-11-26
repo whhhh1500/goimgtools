@@ -184,11 +184,12 @@ type encoder struct {
 	mbh  int
 	dbg  *debug
 
-	effort  int
-	exact   bool // Options.Exact
-	alphaQ  int  // Options.AlphaQuality, 0 for none
-	sharp   bool // convert colours with sharp YUV (sharp.go)
-	trellis bool // quantize 4x4 blocks by trellis (trellis.go)
+	effort   int
+	exact    bool // Options.Exact
+	maskCell int  // Options.AlphaBlocks
+	alphaQ   int  // Options.AlphaQuality, 0 for none
+	sharp    bool // convert colours with sharp YUV (sharp.go)
+	trellis  bool // quantize 4x4 blocks by trellis (trellis.go)
 	// fast: the 16x16 and chroma predictions chosen by their error
 	// before coding, and only those coded (effort 1); i4Tries: how many
 	// 4x4 modes of each block's ranking are coded.

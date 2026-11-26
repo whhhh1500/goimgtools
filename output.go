@@ -371,12 +371,15 @@ type WebPOptions struct {
 	// 0 to 2 pick them), and two rather than four 4x4 modes coded for each
 	// block: 28% less time than 2, files 2.5% to 4% larger. Above 5, only
 	// transparency gets more: every filter of the alpha plane is tried, and
-	// planes of more than 4 megapixels get the optimal parse too. Lossless
-	// output gets more at every level: on photographs 3 takes a quarter of
-	// the time of 5 for files 1% larger, and 1 an eighth for 4%;
-	// screenshots and drawings gain more from 4, which has the optimal
-	// parse (6% over 3, in 3.5 times its time); 5 adds 0.6%, in 1.7 times
-	// the time of 4, and 7 another 0.3%.
+	// planes of more than 4 megapixels get the optimal parse too; and from
+	// 7 the frames of an animation (Animated) are each encoded every way
+	// they can be written, not some of them (1% smaller on 13 animations,
+	// 8% at most, in about twice the time). Lossless output gets more at
+	// every level: on photographs 3 takes a quarter of the time of 5 for
+	// files 1% larger, and 1 an eighth for 4%; screenshots and drawings
+	// gain more from 4, which has the optimal parse (6% over 3, in 3.5
+	// times its time); 5 adds 0.6%, in 1.7 times the time of 4, and 7
+	// another 0.3%.
 	Effort int
 	// NearLossless writes lossless WebP whose pixels may come back a
 	// little changed where they differ from a neighbour by more than the
@@ -411,6 +414,17 @@ type WebPOptions struct {
 	// 99; the fully transparent and the fully opaque ones stay) before they
 	// are coded. 0 and 100 keep it exactly, the default.
 	AlphaQuality int
+	// Mixed lets the frames of a lossy animation (Animated) be lossless
+	// where that is smaller, as libwebp's allow_mixed, sharp's mixed and
+	// gif2webp -mixed: every frame is encoded both ways and the smaller
+	// kept. Animations of flat colours gain most (one of two colours comes
+	// out a third the size), photographs nothing; on 13 animated GIFs the
+	// files are 12% smaller at the same PSNR, in 3 to 33 times the time
+	// (the lossless encoder's for every frame, on top). A still image
+	// is written as without it, and so is an animation with Lossless or
+	// NearLossless. Under a memory limit the lossless encoder may code a
+	// frame larger, so which frames are lossless can depend on the limit.
+	Mixed bool
 }
 
 // WebP selects WebP output: lossy by default, like a JPEG that can also

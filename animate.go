@@ -32,15 +32,21 @@ import (
 // A WebP holds the first frame whole and every later one as the rectangle
 // that changed; a frame that changes nothing lengthens the one before, and
 // a GIF of one frame (or of frames all alike) becomes a still WebP.
-// WebPOptions apply to every frame (lossy or lossless, Quality, Effort);
-// lossless frames without transparency leave the unchanged pixels of their
-// rectangle transparent, blended onto the picture. The frames are encoded
-// as they come: what is kept is the frame before and this one (in working
-// storage) and the frames written so far (in a spill buffer). Frames shown
-// for 10ms or less are written as 100ms, as browsers show them, and the
-// GIF's loop count becomes a WebP's (a GIF says how often it repeats, a
-// WebP how often it plays), as gif2webp converts them. A WebP's become a
-// GIF's the other way, and its durations hundredths of a second.
+// WebPOptions apply to every frame (lossy or lossless, Quality, Effort).
+// A frame without transparency leaves out what stays as it was in its
+// rectangle, transparent there and blended onto the picture: a lossless
+// frame the unchanged pixels; a lossy one, to which a pixel a few levels
+// off (5 at quality 75, as libwebp's animation encoder counts) has not
+// changed, the unchanged blocks of 8x8 or of 4x4 pixels, when the frame is
+// smaller so than whole (so a lossy frame that is nowhere further off than
+// that lengthens the one before too). With WebPOptions.Mixed the frames of
+// a lossy animation are lossless where that is smaller. The frames are
+// encoded as they come: what is kept is the picture so far and this frame
+// (in working storage) and the frames written so far (in a spill buffer).
+// Frames shown for 10ms or less are written as 100ms, as browsers show
+// them, and the GIF's loop count becomes a WebP's (a GIF says how often it
+// repeats, a WebP how often it plays), as gif2webp converts them. A WebP's
+// become a GIF's the other way, and its durations hundredths of a second.
 //
 // An APNG is written without loss: with one palette for all the frames
 // when they have 256 colours or fewer, else as RGB (RGBA with
@@ -760,7 +766,7 @@ func (m *Image) writeAnimated(w io.Writer, f *input, env *pipeline.Env, input, f
 	case "webp":
 		return webpanim.Encode(w, env, webpanim.Options{
 			LoopCount: webpLoopCount(plays), Lossless: wo.Lossless || wo.NearLossless, Quality: wo.Quality, Effort: wo.Effort,
-			NearLossless: nl, Exact: wo.Exact, AlphaQuality: wo.AlphaQuality,
+			NearLossless: nl, Exact: wo.Exact, AlphaQuality: wo.AlphaQuality, Mixed: wo.Mixed,
 		}, seq.next)
 	case "png":
 		return pngstream.EncodeAnimation(w, env, pngstream.AnimOptions{

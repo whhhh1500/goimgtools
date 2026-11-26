@@ -62,6 +62,13 @@ type Options struct {
 	// AlphaQuality, 1 to 99, reduces the alpha plane to fewer levels
 	// before it is coded (alphaquant.go); 0 or 100 keeps it exactly.
 	AlphaQuality int
+	// AlphaBlocks says that the alpha plane is a mask of blocks: every
+	// pixel fully transparent or opaque, and those of each block of
+	// AlphaBlocks x AlphaBlocks pixels, on the grid from the top left
+	// corner, alike. Such a plane is coded by a coder of its own (mask.go),
+	// which takes a fraction of the lossless encoder's time and memory. A
+	// plane that turns out not to be one is coded as usual.
+	AlphaBlocks int
 }
 
 // DefaultQuality is used when Options is nil or Quality is 0.
@@ -95,6 +102,7 @@ type debug struct {
 	p0Len      int64 // size of the first partition
 	spool      int64 // size of the spool
 	segments   int   // segments used
+	maskBits   int64 // size of the alpha plane coded as a mask of blocks, 0 if it was not
 	segQ       [4]int
 }
 
@@ -129,6 +137,9 @@ func encode(w io.Writer, src pipeline.Source, o *Options, dbg *debug) error {
 		return fmt.Errorf("goimgtools: webp: image %dx%d is larger than %d pixels a side", b.Dx(), b.Dy(), maxDimension)
 	}
 	e := &encoder{env: pipeline.EnvOf(src), b: b, w: b.Dx(), h: b.Dy(), dbg: dbg, effort: effort, exact: o != nil && o.Exact}
+	if o != nil {
+		e.maskCell = o.AlphaBlocks
+	}
 	if o != nil && o.AlphaQuality != 0 {
 		if o.AlphaQuality < 0 || o.AlphaQuality > 100 {
 			return fmt.Errorf("goimgtools: webp alpha quality %d out of range 1..100", o.AlphaQuality)

@@ -527,6 +527,16 @@ func TestLibwebp(t *testing.T) {
 				mustEncode(t, pipeline.FromImage(alphaImage(name, sz[0], sz[1]), nil), 60, nil))
 		}
 	}
+	// Alpha planes that are masks of blocks, by the coder made for them.
+	for _, kind := range maskKinds {
+		for _, c := range [][3]int{{150, 150, 8}, {150, 150, 4}, {9, 17, 4}, {300, 7, 8}, {257, 129, 4}, {1, 1, 8}} {
+			var buf bytes.Buffer
+			if err := encode(&buf, pipeline.FromImage(maskImage(kind, c[0], c[1], c[2]), nil), &Options{Quality: 60, AlphaBlocks: c[2]}, nil); err != nil {
+				t.Fatal(err)
+			}
+			add(fmt.Sprintf("mask_%s_%dx%d_%d", kind, c[0], c[1], c[2]), buf.Bytes())
+		}
+	}
 
 	listFile := filepath.Join(dir, "list.txt")
 	if err := os.WriteFile(listFile, []byte(list.String()), 0o644); err != nil {

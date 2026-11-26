@@ -679,4 +679,32 @@ func TestAnimatedColours(t *testing.T) {
 	if _, _, err := cli("-animated", "-frame-delay", "x", in, out); err == nil {
 		t.Error("-frame-delay x: no error")
 	}
+
+	// -webp-mixed is WebPOptions.Mixed: a drawing's frames are lossless.
+	d := &gif.GIF{}
+	for k := 0; k < 3; k++ {
+		m := image.NewPaletted(image.Rect(0, 0, 80, 48), color.Palette{color.White, color.RGBA{200, 30, 30, 255}})
+		for y := 16; y < 32; y++ {
+			for x := 8 + 16*k; x < 24+16*k; x++ {
+				m.SetColorIndex(x, y, 1)
+			}
+		}
+		d.Image, d.Delay = append(d.Image, m), append(d.Delay, 5)
+	}
+	buf.Reset()
+	if err := gif.EncodeAll(&buf, d); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(in, buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out = filepath.Join(dir, "out.webp")
+	if _, _, err := cli("-animated", "-webp-mixed", "-quality", "80", in, out); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = os.ReadFile(out)
+	want, _ = goimgtools.FromBytes(buf.Bytes()).Animated().WebP(goimgtools.WebPOptions{Quality: 80, Mixed: true}).ToBytes()
+	if !bytes.Equal(got, want) || !bytes.Contains(got, []byte("VP8L")) {
+		t.Error("-webp-mixed: not the library's file with Mixed, or no lossless frame in it")
+	}
 }
