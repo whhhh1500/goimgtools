@@ -382,7 +382,7 @@ which says where it differs from libwebp's).
 
 `blendNonPremult` in `animate.go` blends a frame of an animated WebP onto
 the picture as libwebp's animation decoder does (`src/demux/anim_decode.c`:
-`BlendPixelNonPremult`, `BlendChannelNonPremult`), with its integer
+`BlendPixelRowNonPremult`, `BlendPixelNonPremult`, `BlendChannelNonPremult`), with its integer
 arithmetic, so that the frames come out as libwebp draws them; it was
 rewritten in Go.
 

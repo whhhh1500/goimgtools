@@ -513,10 +513,17 @@ func (c *canvas) drawNRGBA(f pipeline.Source, af animFrame, saved *pipeline.Spil
 }
 
 // blendNonPremult puts the NRGBA pixel src over dst, as libwebp's animation
-// decoder does (anim_decode.c, BlendPixelNonPremult).
+// decoder does (anim_decode.c): an opaque pixel as it is, which
+// BlendPixelRowNonPremult passes over (the arithmetic below would make
+// each of its channels a level darker), a transparent one not at all, and
+// the others by BlendPixelNonPremult.
 func blendNonPremult(dst, src []uint8) {
 	sa := uint32(src[3])
-	if sa == 0 {
+	switch sa {
+	case 0:
+		return
+	case 0xff:
+		copy(dst, src)
 		return
 	}
 	da := uint32(dst[3])
