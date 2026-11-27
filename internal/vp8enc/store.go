@@ -8,23 +8,35 @@ import (
 
 // store is an append-then-read byte store for data whose size is not known
 // in advance. Small amounts stay in a slice that grows as needed; beyond
-// memMax the data moves to a pipeline.Spill, which keeps it in memory or in a
-// temporary file depending on the budget. (A Spill by itself reserves
-// memory a megabyte at a time, far more than a small image needs.)
+// memMax the data moves to a temporary file (a pipeline.Spill sent to disk
+// at once).
+//
+// A Spill left to itself would keep the data in memory while less than an
+// eighth of the budget is in use (pipeline.StagingShare), megabytes of it
+// for a large image. Everything the encoder stores is written once and
+// read back in order, which costs nothing measurable on disk, while what is
+// in memory when the garbage collector runs lets the heap grow to twice as
+// much before it runs again: the alpha plane was in memory just when the
+// lossless encoder took its share, and garbage then gathered up to twice
+// the two together. With every store on disk beyond its slice, a
+// photograph of 6000x4000 is coded in 15.6MB rather than 21.2MB (the whole
+// program, one thread; 16.7MB rather than 22.1MB from a PNG, which goes
+// through sharp YUV) and one in a soft round window in 24.9MB rather than
+// 33.4MB (the median of 15 runs, which ran from 22.6MB to 28.4MB as the
+// collector happened to run while the alpha plane was coded), in the same
+// time, with 4.6MB and 3.8MB more in temporary files.
 type store struct {
 	env      *pipeline.Env
 	mem      []byte
 	memMax   int
 	reserved int64
 	sp       *pipeline.Spill
-	toDisk   bool // what goes beyond the slice goes to a temporary file at once
 }
 
-// expect says that n bytes will be written and nothing else should be
-// kept in memory: a store for n bytes of at most max goes in one slice
-// of that size, a larger one to a temporary file from the start.
+// expect says that n bytes will be written: a store for n bytes of at most
+// max goes in one slice of that size, a larger one to a temporary file
+// from the start.
 func (s *store) expect(n int64, max int) {
-	s.toDisk = true
 	if n <= int64(max) && s.grow(int(n)) {
 		s.memMax = int(n)
 		return
@@ -69,11 +81,8 @@ func (s *store) Write(p []byte) (int, error) {
 			return len(p), nil
 		}
 		s.sp = pipeline.NewSpill(s.env)
-		// A Spill holds on to memory while it can. With a small budget
-		// that could starve the other stores, so send it to disk at once.
-		if b := s.env.Budget; s.toDisk || b.Limit()-b.Used() < 4<<20 {
-			s.sp.Expect(b.Limit() + 1)
-		}
+		// More than the budget could hold: the Spill goes to disk at once.
+		s.sp.Expect(s.env.Budget.Limit() + 1)
 		_, err := s.sp.Write(s.mem)
 		s.mem = nil
 		s.env.Budget.Release(s.reserved)

@@ -881,7 +881,9 @@ func TestLargeImage(t *testing.T) {
 		if env.Budget.Peak() > env.Budget.Limit() {
 			t.Errorf("budget peak %d over the limit %d", env.Budget.Peak(), env.Budget.Limit())
 		}
-		if limit == 0 && env.Budget.Peak() > 4<<20+alphaBudget+3*int64(len(data)) {
+		// The encoder's rows and the alpha coder's share: neither the alpha
+		// plane nor what the first pass leaves waits in memory (store.go).
+		if limit == 0 && env.Budget.Peak() > 4<<20+alphaBudget {
 			t.Errorf("budget peak %d for a file of %d bytes", env.Budget.Peak(), len(data))
 		}
 		if env.Budget.Used() != 0 {
