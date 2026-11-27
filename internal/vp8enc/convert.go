@@ -43,7 +43,7 @@ func init() {
 //
 // Sources of Y'CbCr or gray are converted sample by sample. Colour
 // sources are converted with sharp YUV (sharp.go) when sharp is set, which
-// hands out each pair of rows eight rows after it took it in.
+// hands out each pair of rows four rows after it took it in.
 type converter struct {
 	b     image.Rectangle
 	w, h  int // image size
@@ -73,7 +73,7 @@ func converterBytes(w int, alpha bool) int64 {
 }
 
 // alphaRing is how many rows of alpha the converter keeps: those of the
-// macroblock row it completes, which sharp YUV hands out up to ten rows
+// macroblock row it completes, which sharp YUV hands out up to six rows
 // after it took them in.
 const alphaRing = 32
 

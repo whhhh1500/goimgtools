@@ -4,7 +4,7 @@
 
 本包的每一项能力，都与该项最强的工具对照：同一任务、同一输入，两边的数字都在同一台机器上实测。每一行的结论是**领先**、**持平**或**落后**；落后的项列在文末，写明差多少、为什么不做。
 
-测量于 2026 年 11 月 22 日与 23 日：Windows 10，Intel Core i7-12700K，Go 1.27.1。对手：libvips 8.18.7（其 `vips` 与 `vipsthumbnail` 程序，带 mozjpeg、libpng、libwebp、cgif、librsvg），sharp 0.35.5（Node 24.14.1），Pillow 12.1.1（Python 3.14.3），libwebp 1.6.0（`cwebp`、`dwebp`），jpegli（提交 031a007），gifsicle 1.98，LittleCMS（经 Pillow 的 `ImageCms`），以及 libjxl 的 SSIMULACRA2 与 butteraugli。
+测量于 2026 年 11 月 22 日与 23 日（动图 WebP 一行的默认设置与「画质」表的有损 WebP 一行于 11 月 27 日重测，当天有损 WebP 的颜色换算有改动）：Windows 10，Intel Core i7-12700K，Go 1.27.1。对手：libvips 8.18.7（其 `vips` 与 `vipsthumbnail` 程序，带 mozjpeg、libpng、libwebp、cgif、librsvg），sharp 0.35.5（Node 24.14.1），Pillow 12.1.1（Python 3.14.3），libwebp 1.6.0（`cwebp`、`dwebp`），jpegli（提交 031a007），gifsicle 1.98，LittleCMS（经 Pillow 的 `ImageCms`），以及 libjxl 的 SSIMULACRA2 与 butteraugli。
 
 - **时间**是整个进程（启动、读取、处理、写出）三次运行中最短的一次。**内存**是三次运行中操作系统记录的峰值工作集（进程驻留的内存）的最大值；斜杠后若还有一个数，是私有（已提交）内存的峰值，即进程向系统申请的内存，不论是否驻留，编解码器的缓冲都算在内。**临时文件**是进程写出的字节数（系统的计数）减去输出文件的大小，有才列出。只启动不干活时，本包占 6.8MB（私有 13.5MB），`vips` 7.8MB（4.0MB），加载了 sharp 的 Node 57MB（31MB），加载了 Pillow 的 Python 18.2MB（13.1MB）。MB 指 2^20 字节，文件大小也是。
 - 内存排在时间之前。第一张表中，内存更低、时间相差不到一成的行算领先；其余功能的各表中，内存与其他工具中最小者相差 5% 以内算持平，时间超过最快者两倍（且相差 0.05 秒以上）时注明。
@@ -38,7 +38,7 @@
 | 亮度、饱和度与色相 | 0.45s、9.2 / 15.3MB | | 1.13s、230 / 228MB | | | 领先 |
 | 叠加一个标志 | 0.18s、9.6 / 16.0MB | | 0.29s（CPU 0.42s）、217 / 215MB | 0.27s、204 / 199MB | | 领先 |
 | 动图 GIF（18 帧，768×512）缩到 384 宽 | 0.69s、22.2 / 28.3MB、919KB，临时文件 6.8MB；0.31s、23.0 / 29.2MB、925KB（力度 1） | | 2.09s、75.3 / 75.8MB、1.34MB | | gifsicle 0.32s、17.9 / 17.0MB、1.35MB（它的默认取样）；0.47s、21.1 / 20.6MB、1.36MB（`--resize-method lanczos3 -O3`） | 文件领先（小三分之一）；力度 1 时时间与 gifsicle 持平，内存**落后** 4–5MB |
-| 动图 GIF 转动图 WebP | 0.53s、25.9 / 33.0MB、834KB，临时文件 10.1MB（力度 1）；1.26s、26.2 / 32.7MB、918KB（默认） | 0.57s、29.9 / 20.6MB、924KB | 0.64s、78.4 / 78.4MB、923KB | 0.47s、35.0 / 31.4MB、1.28MB | | 力度 1 时工作集与文件领先；私有内存比 libvips 多 12MB |
+| 动图 GIF 转动图 WebP | 0.53s、25.9 / 33.0MB、834KB，临时文件 10.1MB（力度 1）；1.27s、24.9 / 31.1MB、913KB（默认） | 0.57s、29.9 / 20.6MB、924KB | 0.64s、78.4 / 78.4MB、923KB | 0.47s、35.0 / 31.4MB、1.28MB | | 力度 1 时工作集与文件领先；私有内存比 libvips 多 12MB |
 
 四个线程（`-threads 4`、`VIPS_CONCURRENCY=4`、`sharp.concurrency(4)`）：
 
@@ -61,7 +61,7 @@
 |---|---|---|---|---|---|
 | 缩小（Lanczos 3） | 24 张 Kodak 照片缩到 300 宽，以及 6000×4000 的 PNG 缩到 1536 宽，对照精确的 Lanczos 3 卷积（各通道用 32 位浮点缩放，只舍入一次） | 平均 PSNR；单个通道的最大差 | 默认方法：55.7dB、1（Kodak）；54.7dB、1（2400 万像素）。`MethodPillow` 与 `MethodLibvips` 逐字节给出那两家的像素 | sharp 与 `vips resize`：53.6dB、15；54.0dB、2。Pillow：56.2dB、19；57.7dB、1 | 持平：都在肉眼可见的范围之外；默认方法的最大误差最小，Pillow 的平均值最好（它的像素在本包是一个选项） |
 | JPEG 编码 | 24 张 Kodak 照片、7 档质量；达到同一分数所需的文件大小，以全开的 mozjpeg（trellis、扫描优化、量化表 3、过冲去振铃）为基准 | 同等 SSIMULACRA2 / 同等 butteraugli（3 范数）下的文件大小 | `Progressive`、`Trellis`、`QuantTableJpegli`：小 10.7% / 9.8%。用 mozjpeg 的量化表 3：小 1.8% / 1.8%。默认（与 libjpeg-turbo 逐字节相同）：大 11.5% / 6.5% | jpegli：小 6.7% / 13.0%。libvips 默认：大 10.1% / 8.0% | 领先 mozjpeg；对 jpegli，按 SSIMULACRA2 领先 4.0 个点，按 butteraugli **落后** 3.2 个点 |
-| 有损 WebP 编码 | 同样 24 张照片、6 档质量，以 `cwebp -m 6 -af -sharp_yuv` 为基准 | 同上两项 | 默认：大 0.7% / 小 0.2%。力度 1：大 4.2% / 6.6% | `cwebp` 默认：大 9.9% / 6.5% | 与 libwebp 的最好设置持平，用时是它的四分之一 |
+| 有损 WebP 编码 | 同样 24 张照片、6 档质量，以 `cwebp -m 6 -af -sharp_yuv` 为基准 | 同上两项 | 默认：大 0.3% / 小 0.7%。力度 1：大 4.2% / 6.6% | `cwebp` 默认：大 9.9% / 6.5% | 与 libwebp 的最好设置持平，用时是它的四分之一 |
 | 色彩管理 | 覆盖整个颜色立方体的网格图，分别带 Display P3、Adobe RGB 与两个查找表 CMYK 配置（RSWOP、Chemical proof），转换到 sRGB | 与 LittleCMS（感知意图）的差 | 最大差 1；0.7% 到 1.7% 的值有差，没有差超过 1 的 | 以 LittleCMS 为准 | 持平 |
 | 无损压缩后的大小（PNG、GIF、WebP） | 见[压缩](compression.md) | 文件大小 | 17 张 PNG：9 级比 7 级小 13.35%，oxipng 10.2 `-o max` 小 12.5%；10 级比 ECT 0.9.5 `-9` 小 0.23%。三个动图 GIF：比 gifsicle `-O3` 小 0.2–0.45%。无损 WebP：比 `cwebp -lossless` 小 2.8%（上表） | oxipng、ECT、gifsicle、cwebp | 领先 |
 | 减到 256 色（调色板 PNG、GIF） | 24 张 Kodak 照片，各工具用自己的减色与抖动 | 总大小；SSIMULACRA2 / butteraugli 平均 | PNG 5.35MB、GIF 6.17MB；83.19 / 0.875 | libvips 与 sharp（PNG 用 libimagequant，GIF 用 cgif）：5.58MB、80.01 / 1.119，6.30MB、78.25 / 1.439。Pillow：5.90MB 与 6.89MB、61.17 / 3.818 | 领先：文件更小、得分更好 |

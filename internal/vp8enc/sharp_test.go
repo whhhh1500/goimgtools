@@ -30,19 +30,48 @@ func sharpTestImage(w, h int) *image.NRGBA {
 	return m
 }
 
+// ditheredTestImage has gradients and patches of other colours reduced to
+// eight levels a channel by ordered dither, as a GIF of a photograph is:
+// nearly every 2x2 block holds several colours. Integers only.
+func ditheredTestImage(w, h int) *image.NRGBA {
+	const step = 36
+	bayer := [16]int{0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5}
+	m := image.NewNRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			c := [3]int{x * 255 / w, y * 255 / h, (x + 2*y) * 255 / (w + 2*h)}
+			if (x/9+y/7)%3 == 0 {
+				c = [3]int{255 - c[1], c[2], 255 - c[0]}
+			}
+			o := m.PixOffset(x, y)
+			for i, v := range c {
+				// The threshold of the 4x4 matrix, a column on for each
+				// channel.
+				t := bayer[(y&3)*4+(x+i)&3] * step / 16
+				m.Pix[o+i] = uint8(min(255, (v+t)/step*step))
+			}
+			m.Pix[o+3] = 255
+		}
+	}
+	return m
+}
+
 // TestSharpLibwebp checks sharp YUV against libwebp's: the FNV-64a sums are
 // of the Y, U and V planes (one after the other, unpadded) that libwebp
-// 1.6.0's SharpYuvConvert gives for these images with kSharpYuvMatrixWebp,
-// with its early stop taken out so that it makes its four passes. (On the
-// first image libwebp makes four passes anyway.)
+// 1.6.0's SharpYuvConvert gives for these images with kSharpYuvMatrixWebp.
+// They are images on which libwebp stops after its second pass, as it does
+// on real pictures (see sharpYUV): two with the statistics of photographs
+// and a dithered one. (On sharpTestImage, thin saturated strokes all over,
+// it makes four.)
 func TestSharpLibwebp(t *testing.T) {
 	for _, c := range []struct {
 		name string
 		m    image.Image
 		want uint64
 	}{
-		{"strokes 67x41", sharpTestImage(67, 41), 0xa882b5f6e32428cc},
-		{"noise 33x9", testutil.Images(33, 9)["rgba-opaque"], 0x923c16a43b3c67d8},
+		{"photograph 64x48", testutil.Natural(64, 48, 1), 0x8a89a303ada9e01f},
+		{"photograph 61x35", testutil.Natural(61, 35, 5), 0x39d9f418e68eb778},
+		{"dithered 77x45", ditheredTestImage(77, 45), 0x1a85c4b34df7f42a},
 	} {
 		for _, parts := range []int{1, 3, 4} {
 			b := c.m.Bounds()
@@ -95,7 +124,7 @@ func TestSharpLibwebp(t *testing.T) {
 	}
 }
 
-// TestSharpStrips checks that sharp YUV, which hands out rows eight behind
+// TestSharpStrips checks that sharp YUV, which hands out rows four behind
 // the ones it takes in, gives the same file whatever the strips of the
 // source and the number of goroutines, at sizes around a macroblock row.
 func TestSharpStrips(t *testing.T) {

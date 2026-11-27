@@ -11,18 +11,28 @@ import "github.com/whhhh1500/goimgtools/pipeline"
 // coloured lines. Sharp YUV looks instead for the luma and chroma from
 // which that interpolation gives back the source most closely, comparing
 // in linear light: starting from the plain conversion, it decodes what it
-// has, and corrects luma and chroma by what came out wrong, four times
-// over.
+// has, and corrects luma and chroma by what came out wrong, twice over.
 //
 // libwebp does this on the whole image, one pass over all of it after the
-// other, and may stop after two or three passes when a pass changes little
-// or makes things worse. Here it is done as the rows arrive, keeping six
-// pairs of rows: a pass over a pair of rows needs only the pair above
-// as the same pass left it and the pair below as the pass before left it,
-// so the four passes can follow each other down the image a pair apart. All
-// four passes are always made (whether to stop needs the whole image);
-// otherwise the arithmetic is libwebp's, and with four passes so is every
-// sample (checked against libwebp's sharpyuv; see TestSharpLibwebp).
+// other, and goes on to a third and a fourth only while the pass just made
+// still found luma off by 3/4 of a level a sample or more on average, and
+// by less than the pass before had. On real pictures it stops after two:
+// on each of 39 frames of 13 GIF animations and of 35 photographs the
+// samples made here are libwebp's (the second pass found luma off by 2/3
+// of a level at most, on a dithered banner, and by 1/8 on a photograph).
+// Here the conversion is done as the rows arrive, keeping four pairs of
+// rows: a pass over a pair of rows needs only the pair above as the same
+// pass left it and the pair below as the pass before left it, so the
+// second pass can follow the first down the image a pair behind. Whether
+// to go on needs the whole image, so two passes are always made: a
+// drawing of thin saturated lines all over, on which libwebp makes three
+// or four, comes out with other samples than libwebp's, and its lines as
+// bright (TestSharpColour).
+//
+// Four passes always, which this package made until 0.3.1, were no gain:
+// the 39 frames coded 1.8% larger at the same SSIMULACRA2 and 2.6% at the
+// same butteraugli (those of a heavily dithered animation 5% and 6%),
+// 2.7% smaller at the same PSNR; the photographs the same within 0.4%.
 type sharpYUV struct {
 	w, uvw  int // width rounded up to even, and half of it
 	n       int // pairs taken
@@ -48,10 +58,10 @@ type sharpYUV struct {
 }
 
 const (
-	sharpPasses = 4
-	// Pairs kept: the four being worked on, the one above them and the
-	// one coming in.
-	sharpRing = 6
+	sharpPasses = 2
+	// Pairs kept: those being worked on, the one above them and the one
+	// coming in.
+	sharpRing = sharpPasses + 2
 	sharpMax  = 1<<10 - 1
 	// sharpPartMin is the fewest columns a part of a step is given.
 	sharpPartMin = 512

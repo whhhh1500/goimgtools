@@ -374,7 +374,7 @@ type WebPOptions struct {
 	// planes of more than 4 megapixels get the optimal parse too; and from
 	// 7 the frames of an animation (Animated) are each encoded every way
 	// they can be written, not some of them (1% smaller on 13 animations,
-	// 8% at most, in about twice the time). Lossless output gets more at
+	// 7% at most, in about twice the time). Lossless output gets more at
 	// every level: on photographs 3 takes a quarter of the time of 5 for
 	// files 1% larger, and 1 an eighth for 4%; screenshots and drawings
 	// gain more from 4, which has the optimal parse (6% over 3, in 3.5
@@ -419,7 +419,7 @@ type WebPOptions struct {
 	// gif2webp -mixed: every frame is encoded both ways and the smaller
 	// kept. Animations of flat colours gain most (one of two colours comes
 	// out a third the size), photographs nothing; on 13 animated GIFs the
-	// files are 12% smaller at the same PSNR, in 3 to 33 times the time
+	// files are 15% smaller at the same PSNR, in 3 to 38 times the time
 	// (the lossless encoder's for every frame, on top). A still image
 	// is written as without it, and so is an animation with Lossless or
 	// NearLossless. Under a memory limit the lossless encoder may code a

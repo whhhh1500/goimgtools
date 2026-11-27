@@ -156,7 +156,7 @@ func TestSameOnEveryProcessor(t *testing.T) {
 		}, "39b0657868638dd1"},
 		{"png", func() ([]byte, error) { return clear.Clone().PNG().ToBytes() }, "28793aaceffed8bc"},
 		{"png 40 colours", func() ([]byte, error) { return photo.Clone().PNG(PNGOptions{Colors: 40}).ToBytes() }, "a22a7198a696d7a8"},
-		{"webp", func() ([]byte, error) { return photo.Clone().WebP(WebPOptions{Quality: 70}).ToBytes() }, "3fd53ba37ca99645"},
+		{"webp", func() ([]byte, error) { return photo.Clone().WebP(WebPOptions{Quality: 70}).ToBytes() }, "253af7883523c1af"},
 		{"webp lossless", func() ([]byte, error) { return clear.Clone().WebP(WebPOptions{Lossless: true}).ToBytes() }, "c9e3f3c7f3205db8"},
 		{"webp near-lossless", func() ([]byte, error) {
 			return photo.Clone().WebP(WebPOptions{NearLossless: true, Quality: 60}).ToBytes()
@@ -164,13 +164,13 @@ func TestSameOnEveryProcessor(t *testing.T) {
 		// The alpha plane reduced to fewer levels by k-means in float64.
 		{"webp alpha quality", func() ([]byte, error) {
 			return clear.Clone().WebP(WebPOptions{Quality: 70, AlphaQuality: 40}).ToBytes()
-		}, "cbfe1ae15f59979d"},
+		}, "be24a805a49103ee"},
 		{"invisible watermark", func() ([]byte, error) {
 			return photo.Clone().InvisibleWatermark([]byte("mark"), InvisibleWatermarkOptions{Key: "k", Kind: WatermarkScreen, Strength: 1.3}).BMP().ToBytes()
 		}, "56d395e855d48b6b"},
 		// Transparency: sharp YUV of the colours, the transparent area
 		// made flat, the alpha plane coded by the lossless encoder.
-		{"webp alpha", func() ([]byte, error) { return clear.Clone().WebP(WebPOptions{Quality: 70}).ToBytes() }, "bd4f113e1fb01ed1"},
+		{"webp alpha", func() ([]byte, error) { return clear.Clone().WebP(WebPOptions{Quality: 70}).ToBytes() }, "6199cb6827d53a18"},
 		{"gif", func() ([]byte, error) { return photo.Clone().GIF().ToBytes() }, "88be7f34f4dddfe6"},
 		// Cosines and the sRGB curve of their own: the same placeholders
 		// everywhere.
